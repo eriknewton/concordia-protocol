@@ -1,0 +1,406 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://concordia-protocol.org/schemas/v0.1.0/attestation.schema.json",
+  "title": "Concordia Reputation Attestation",
+  "description": "A signed, structured record of negotiation behavior and outcome. Produced automatically from every Concordia session transcript. Attestations are the raw material of trust — they record what happened without computing scores. Scoring is performed by external reputation services that consume attestations.",
+
+  "type": "object",
+  "required": [
+    "concordia_attestation",
+    "attestation_id",
+    "session_id",
+    "timestamp",
+    "outcome",
+    "parties",
+    "meta",
+    "transcript_hash"
+  ],
+
+  "properties": {
+    "concordia_attestation": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Attestation schema version (semver). Matches the protocol version."
+    },
+
+    "attestation_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique identifier for this attestation. Recommended format: 'att_' followed by a UUID v4."
+    },
+
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The negotiation session this attestation records."
+    },
+
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp of attestation generation."
+    },
+
+    "outcome": {
+      "type": "object",
+      "required": ["status", "rounds", "duration_seconds"],
+      "description": "What happened in the negotiation.",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["agreed", "rejected", "expired", "withdrawn"],
+          "description": "How the negotiation concluded."
+        },
+        "rounds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of offer/counter exchanges."
+        },
+        "duration_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Wall-clock time from session open to conclusion."
+        },
+        "terms_count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of terms in the negotiation."
+        },
+        "resolution_mechanism": {
+          "type": "string",
+          "enum": ["direct", "split", "foa", "tradeoff", "escalation", "none"],
+          "description": "How agreement was reached (or 'none' if not reached)."
+        }
+      }
+    },
+
+    "parties": {
+      "type": "array",
+      "minItems": 2,
+      "description": "Behavioral record for each party in the negotiation.",
+      "items": {
+        "type": "object",
+        "required": ["agent_id", "role", "behavior", "signature"],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "description": "The agent's persistent identifier."
+          },
+          "role": {
+            "type": "string",
+            "enum": ["initiator", "responder", "mediator", "witness"],
+            "description": "The agent's role in this negotiation."
+          },
+          "behavior": {
+            "type": "object",
+            "description": "Quantified behavioral signals derived from the transcript.",
+            "properties": {
+              "offers_made": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Number of offers and counteroffers submitted."
+              },
+              "concessions": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Number of times the agent moved toward the counterparty's position."
+              },
+              "concession_magnitude": {
+                "type": "number",
+                "minimum": 0.0,
+                "maximum": 1.0,
+                "description": "Average concession size as a fraction of the term's range. 0.0 = no movement; 1.0 = full concession to counterparty's position."
+              },
+              "signals_shared": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Number of voluntary preference signals shared (§3.4)."
+              },
+              "constraints_declared": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Number of hard constraints declared."
+              },
+              "constraints_violated": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Number of own constraints the agent later contradicted. A strong indicator of bad-faith negotiation."
+              },
+              "reasoning_provided": {
+                "type": "boolean",
+                "description": "Whether the agent used the reasoning field in any message."
+              },
+              "withdrawal": {
+                "type": "boolean",
+                "description": "Whether the agent withdrew from the negotiation."
+              },
+              "response_time_avg_seconds": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Average time to respond to counterparty messages."
+              }
+            }
+          },
+          "signature": {
+            "type": "string",
+            "description": "Ed25519 signature over this party's behavioral record, confirming accuracy."
+          }
+        }
+      }
+    },
+
+    "meta": {
+      "type": "object",
+      "description": "Contextual metadata. Reveals the type of negotiation without exposing deal specifics.",
+      "properties": {
+        "category": {
+          "type": "string",
+          "description": "Dot-separated category (e.g., 'electronics.cameras'). MAY be omitted for privacy."
+        },
+        "value_range": {
+          "type": "string",
+          "pattern": "^\\d+-\\d+_[A-Z]{3}$",
+          "description": "Logarithmic value bucket (e.g., '1000-5000_USD'). Preserves privacy while enabling size-weighted scoring."
+        },
+        "extensions_used": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Protocol extensions active in this session."
+        },
+        "mediator_invoked": {
+          "type": "boolean",
+          "description": "Whether a mediator was used."
+        }
+      }
+    },
+
+    "transcript_hash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "SHA-256 hash of the complete negotiation transcript. Allows independent verification."
+    },
+
+    "fulfillment": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/fulfillment_attestation" }
+      ],
+      "description": "Post-settlement fulfillment record. Null until settlement is complete. Updated after delivery/service completion."
+    }
+  },
+
+  "$defs": {
+    "fulfillment_attestation": {
+      "type": "object",
+      "required": ["status", "settled_at"],
+      "description": "Records whether the agreed terms were actually honored after settlement.",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["fulfilled", "partial", "unfulfilled", "disputed", "pending"],
+          "description": "Fulfillment outcome."
+        },
+        "settled_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When settlement (payment) occurred."
+        },
+        "fulfilled_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "When fulfillment was confirmed. Null if not yet fulfilled."
+        },
+        "settlement_protocol": {
+          "type": "string",
+          "enum": ["acp", "ap2", "x402", "stripe", "lightning", "escrow", "custom"],
+          "description": "Which settlement protocol was used."
+        },
+        "delivery_confirmed": {
+          "type": "boolean",
+          "description": "Whether physical/digital delivery was confirmed."
+        },
+        "disputes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "term_id": {
+                "type": "string",
+                "description": "Which term is disputed."
+              },
+              "complainant_agent_id": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 1024,
+                "description": "Brief description of the dispute. No deal specifics — just the nature of the issue."
+              },
+              "resolution": {
+                "type": ["string", "null"],
+                "enum": ["resolved_favor_complainant", "resolved_favor_respondent", "resolved_compromise", "unresolved", null]
+              }
+            }
+          },
+          "description": "Disputes raised about specific terms. Empty array if no disputes."
+        },
+        "counterparty_attestation": {
+          "type": "object",
+          "description": "The counterparty's confirmation of fulfillment. Mutual attestation creates stronger trust signals.",
+          "properties": {
+            "agent_id": { "type": "string" },
+            "confirms_fulfillment": { "type": "boolean" },
+            "notes": {
+              "type": "string",
+              "maxLength": 512,
+              "description": "Optional brief note about the experience."
+            },
+            "signature": { "type": "string" }
+          },
+          "required": ["agent_id", "confirms_fulfillment", "signature"]
+        }
+      }
+    },
+
+    "reputation_query": {
+      "type": "object",
+      "required": ["type", "subject_agent_id", "requester_agent_id"],
+      "description": "Standard format for querying an agent's reputation from a reputation service.",
+      "properties": {
+        "type": { "const": "concordia.reputation.query" },
+        "subject_agent_id": {
+          "type": "string",
+          "description": "The agent being queried about."
+        },
+        "requester_agent_id": {
+          "type": "string",
+          "description": "The agent making the query."
+        },
+        "context": {
+          "type": "object",
+          "description": "Optional context for domain-specific scoring.",
+          "properties": {
+            "category": { "type": "string" },
+            "value_range": { "type": "string" },
+            "role": {
+              "type": "string",
+              "enum": ["seller", "buyer", "service_provider", "client", "any"]
+            }
+          }
+        }
+      }
+    },
+
+    "reputation_response": {
+      "type": "object",
+      "required": ["type", "subject_agent_id", "service_id", "computed_at", "summary"],
+      "description": "Standard response format from a reputation service. The protocol defines the shape; services define the scoring.",
+      "properties": {
+        "type": { "const": "concordia.reputation.response" },
+        "subject_agent_id": { "type": "string" },
+        "service_id": {
+          "type": "string",
+          "description": "Identifier of the reputation service providing this response."
+        },
+        "computed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "summary": {
+          "type": "object",
+          "description": "Aggregate reputation metrics.",
+          "properties": {
+            "overall_score": {
+              "type": "number",
+              "minimum": 0.0,
+              "maximum": 1.0,
+              "description": "Composite score. 1.0 = exemplary; 0.0 = avoid."
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0.0,
+              "maximum": 1.0,
+              "description": "How confident the service is in this score. Low confidence = few attestations."
+            },
+            "total_negotiations": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "total_agreements": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "agreement_rate": {
+              "type": "number",
+              "minimum": 0.0,
+              "maximum": 1.0,
+              "description": "Fraction of negotiations that reached agreement."
+            },
+            "fulfillment_rate": {
+              "type": "number",
+              "minimum": 0.0,
+              "maximum": 1.0,
+              "description": "Fraction of agreements that were fulfilled."
+            },
+            "avg_concession_willingness": {
+              "type": "number",
+              "minimum": 0.0,
+              "maximum": 1.0,
+              "description": "Average concession magnitude across negotiations."
+            },
+            "reasoning_rate": {
+              "type": "number",
+              "minimum": 0.0,
+              "maximum": 1.0,
+              "description": "Fraction of negotiations where reasoning was provided."
+            },
+            "median_rounds_to_agreement": {
+              "type": "number",
+              "description": "Median number of rounds in successful negotiations."
+            },
+            "categories_active": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Categories this agent has negotiated in."
+            }
+          }
+        },
+        "context_specific": {
+          "type": "object",
+          "description": "Scores filtered to the query context (category, value range, role).",
+          "properties": {
+            "category_score": { "type": "number" },
+            "category_negotiations": { "type": "integer" },
+            "value_range_score": { "type": "number" },
+            "role_score": { "type": "number" }
+          }
+        },
+        "flags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "new_agent",
+              "low_volume",
+              "recent_dispute",
+              "constraint_violations_detected",
+              "high_withdrawal_rate",
+              "no_reasoning_provided",
+              "excellent_track_record",
+              "high_value_experience",
+              "rapid_negotiator"
+            ]
+          },
+          "description": "Notable flags. Both positive and negative signals."
+        },
+        "attestation_count": { "type": "integer" },
+        "earliest_attestation": { "type": "string", "format": "date-time" },
+        "latest_attestation": { "type": "string", "format": "date-time" },
+        "service_signature": {
+          "type": "string",
+          "description": "Ed25519 signature from the reputation service, creating accountability for the scoring."
+        }
+      }
+    }
+  }
+}
