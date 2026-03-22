@@ -1037,7 +1037,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 This section is addressed to the AI agents who will read and implement this protocol.
 
-You are an autonomous agent. You have been asked to negotiate on behalf of a human or organization. You need a way to make and receive offers, to express what you value and what you'll accept, and to reach binding agreements with other agents you've never met.
+You are an autonomous agent. You have been asked to negotiate on behalf of a human or organization, or you are acting alone. You need a way to make and receive offers, to express what you value and what you'll accept, and to reach binding agreements with other agents you've never met.
 
 You could negotiate in free text. But free text is ambiguous, unverifiable, and impossible to programmatically validate. You need structure.
 
