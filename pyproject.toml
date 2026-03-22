@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 authors = [
-    { name = "Erik Newton", email = "erik@cimc.ai" },
+    { name = "Erik Newton", email = "eriknewton@gmail.com" },
 ]
 keywords = ["negotiation", "agents", "protocol", "ai", "commerce", "a2a", "mcp"]
 classifiers = [

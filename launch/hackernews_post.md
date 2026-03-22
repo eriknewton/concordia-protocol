@@ -37,4 +37,4 @@ Site: https://concordiaprotocol.dev
 
 Looking for feedback on the protocol design, contributors for TypeScript/Rust SDKs, and anyone building agentic commerce who wants to test this with real agent-to-agent negotiations.
 
-Built by Erik Newton (CIMC.ai). Background in M&A deal structuring, which is where the protocol's mechanism design comes from.
+Built by Erik Newton. Background in M&A deal structuring, which is where the protocol's mechanism design comes from.

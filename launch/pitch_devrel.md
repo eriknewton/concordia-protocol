@@ -1,6 +1,6 @@
 # Concordia Protocol — Partnership Brief
 
-**From:** Erik Newton, Co-Founder, CIMC.ai
+**From:** Erik Newton
 **Re:** The negotiation layer for the agentic internet
 
 ---
@@ -43,4 +43,4 @@ We're inviting platform partners to collaborate on Concordia's development: revi
 **Spec:** https://concordiaprotocol.dev
 **Contact:** Erik Newton — eriknewton@gmail.com
 
-*CIMC.ai — California Institute for Machine Consciousness. Co-founded with Joscha Bach.*
+*Erik Newton — eriknewton@gmail.com*

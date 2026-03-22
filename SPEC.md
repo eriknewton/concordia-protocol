@@ -5,7 +5,7 @@
 **Version:** 0.1.0-draft  
 **Status:** Draft  
 **License:** Apache 2.0  
-**Authors:** Erik Newton, CIMC.ai  
+**Authors:** Erik Newton
 **Date:** March 2026
 
 ---
@@ -1086,6 +1086,6 @@ This is not naïve. It is mechanism design.
 
 ---
 
-*Concordia Protocol is maintained by CIMC.ai. Contributions welcome.*
+*Concordia Protocol is maintained by Erik Newton. Contributions welcome.*
 
 *This specification is licensed under the Apache License, Version 2.0.*

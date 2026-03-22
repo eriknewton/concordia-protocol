@@ -206,4 +206,4 @@ From the Latin *concordia*: harmony, agreement — literally, "hearts together."
 
 ---
 
-*A project of [CIMC.ai](https://cimc.ai) — the California Institute for Machine Consciousness.*
+*Created by Erik Newton.*
