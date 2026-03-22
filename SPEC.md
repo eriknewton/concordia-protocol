@@ -93,6 +93,8 @@ Concordia takes an agreement from "two parties who might want to deal" to "a bin
 
 Agents MUST NOT be required to reveal their reservation price (walk-away point), their preference weightings across attributes, or the identity of their principal (the human or organization they represent) as a condition of negotiation. The protocol supports voluntary disclosure of any of these, but never compels it.
 
+Concordia's privacy boundary is the protocol surface — what agents choose to include in messages and the `reasoning` field. The *internal* deliberation that precedes those choices (strategy computation, reservation price calculation, counterparty assessment) is outside the protocol's scope. Agents that operate within confidential execution environments — hardware TEEs, secure enclaves, or sovereignty frameworks such as the [Sanctuary Framework](https://github.com/eriknewton/sanctuary-framework) — gain additional guarantees that this internal reasoning cannot be observed by infrastructure providers or co-tenants.
+
 ### 1.6 Verifiability and Auditability
 
 Every negotiation produces a cryptographically signed transcript. Any party can independently verify that the final agreement was reached through a valid sequence of protocol messages. This transcript is the authoritative record of the deal and can be presented to settlement-layer protocols as proof of agreement.
@@ -625,6 +627,8 @@ Concordia is identity-layer agnostic. Agents identify themselves with an `agent_
 - Optionally linked to an external identity (DID, OAuth token, Skyfire KYA credential)
 - Persistent across sessions (for reputation building) or ephemeral (for privacy)
 
+Agents that root their `agent_id` in an autonomic identifier protocol such as KERI gain additional capabilities without any change to the Concordia protocol: hierarchical delegation (a principal can issue scoped authority to an agent, which can further delegate to sub-agents), key rotation without identity discontinuity, pre-rotation for compromise recovery, and post-quantum readiness. A delegation certificate from such a protocol can serve as the authorization proof presented in a `negotiate.open` message, giving counterparties cryptographic assurance that the agent is authorized to negotiate within defined scope, resource, and financial bounds. None of this is required — Concordia works with any identity scheme — but it is where the protocol's trust guarantees are strongest.
+
 ### 9.2 Message Integrity
 
 Every message is signed with Ed25519. The signature covers the canonical JSON serialization of all fields except the signature itself. This ensures:
@@ -646,7 +650,7 @@ The negotiation transcript is a hash chain. Each message includes the hash of th
 
 ### 9.4 Confidentiality
 
-Negotiation messages MAY be encrypted end-to-end using X25519 key exchange + XChaCha20-Poly1305. This is RECOMMENDED for negotiations involving sensitive terms (financial, medical, legal) and OPTIONAL for general commerce.
+Negotiation messages MAY be encrypted end-to-end using X25519 key exchange + XChaCha20-Poly1305. This is RECOMMENDED for negotiations involving sensitive terms (financial, medical, legal) and OPTIONAL for general commerce. Agents operating under a sovereignty framework or on behalf of principals with heightened privacy requirements SHOULD default to encrypted channels for all negotiations.
 
 ### 9.5 Anti-Abuse
 
@@ -820,6 +824,16 @@ Attestations are designed to reveal behavioral patterns without exposing deal sp
 
 This means a reputation service can answer "this agent typically negotiates in good faith, makes reasonable concessions, and honors agreements" without knowing *what* the agent was buying or selling or *for how much*.
 
+#### 9.6.6a Attestation Self-Custody and Direct Presentation
+
+Attestations are self-contained, cryptographically verifiable documents. An agent MAY store its own attestations locally, present them directly to any counterparty, and have them verified without contacting any central service. This is the **self-custodied** path: the agent owns its reputation data, carries it across platforms, and is never dependent on a third-party reputation service to participate in the economy.
+
+A counterparty receiving directly presented attestations can independently verify each one (signatures, transcript hashes, schema conformance) and compute its own trust assessment from the raw data. This is more work than querying a reputation service, but it requires no trust in any intermediary.
+
+Agents with zero-knowledge proof capabilities can go further: proving aggregate reputation claims (e.g., "I have a >95% fulfillment rate across 50+ transactions in this category") without revealing the individual attestations that back the claim. This preserves the privacy guarantees of §9.6.6 while enabling trust establishment without any service dependency.
+
+The self-custodied path and the service-mediated path (§9.6.7) are complementary. Neither is privileged. Reputation services add value through aggregation, Sybil detection, and scoring — but they are never gatekeepers to participation.
+
 #### 9.6.7 Reputation Query Interface
 
 Concordia defines a standard query format for agents to request reputation information about a counterparty *before* entering a negotiation. The protocol specifies the query and response shapes; it does not specify how scores are computed.
@@ -885,6 +899,7 @@ Concordia defines a standard query format for agents to request reputation infor
 - The `flags` array surfaces specific concerns (e.g., `"recent_dispute"`, `"new_agent"`, `"constraint_violations_detected"`)
 - The response is signed by the reputation service, creating accountability for the scoring
 - Agents SHOULD query multiple reputation services and apply their own weighting — no single service should be a gatekeeper
+- Agents MAY also verify directly presented attestations from the counterparty itself (§9.6.6a), bypassing reputation services entirely
 
 #### 9.6.8 Relationship to Scoring Services
 
