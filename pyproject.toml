@@ -35,10 +35,13 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/concordia-protocol/concordia-protocol"
-Repository = "https://github.com/concordia-protocol/concordia-protocol"
-Documentation = "https://github.com/concordia-protocol/concordia-protocol/blob/main/SPEC.md"
-Issues = "https://github.com/concordia-protocol/concordia-protocol/issues"
+Homepage = "https://github.com/eriknewton/concordia-protocol"
+Repository = "https://github.com/eriknewton/concordia-protocol"
+Documentation = "https://github.com/eriknewton/concordia-protocol/blob/main/SPEC.md"
+Issues = "https://github.com/eriknewton/concordia-protocol/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["concordia"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
