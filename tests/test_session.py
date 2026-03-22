@@ -211,11 +211,9 @@ class TestTranscriptAndBehavior:
         buyer.send_offer(offer1)
         counter1 = BasicOffer(terms={"price": {"value": 140.00, "currency": "USD"}})
         seller.send_counter(counter1)
-        assert session.round_count == 3  # open(offer-like tracking) + offer + counter
-        # Actually: open counts as 0 for round_count since it's OPEN not OFFER
-        # Let me check: round_count increments on OFFER and COUNTER
+        # round_count increments on OFFER and COUNTER only
         # open → 0, accept_session → 0, offer → 1, counter → 2
-        assert session.round_count >= 2
+        assert session.round_count == 2
 
     def test_behavior_tracks_offers(self, negotiation):
         seller, buyer, session = negotiation

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Union
 
 
 def _offer_id() -> str:
@@ -140,7 +140,7 @@ class BundleOffer:
 # Convenience: unified Offer type
 # ---------------------------------------------------------------------------
 
-Offer = BasicOffer | PartialOffer | ConditionalOffer | BundleOffer
+Offer = Union[BasicOffer, PartialOffer, ConditionalOffer, BundleOffer]
 
 
 def offer_to_body(offer: Offer) -> dict[str, Any]:

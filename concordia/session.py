@@ -32,6 +32,8 @@ class InvalidTransitionError(Exception):
 # §5.2 — Transition table encoded as {(from_state, message_type): to_state}.
 # Transitions to the *same* state (e.g. ACTIVE → ACTIVE) are also listed.
 _TRANSITIONS: dict[tuple[SessionState, MessageType], SessionState] = {
+    # The OPEN message creates the session in PROPOSED state
+    (SessionState.PROPOSED, MessageType.OPEN): SessionState.PROPOSED,
     # From PROPOSED
     (SessionState.PROPOSED, MessageType.ACCEPT_SESSION): SessionState.ACTIVE,
     (SessionState.PROPOSED, MessageType.DECLINE_SESSION): SessionState.REJECTED,

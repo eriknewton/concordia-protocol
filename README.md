@@ -113,12 +113,64 @@ Concordia composes with — never competes with — the existing protocol stack.
 
 Both agents sign. The agreement passes to ACP/AP2 for payment.
 
+## Installation
+
+```bash
+pip install concordia-protocol
+```
+
+Or install from source:
+
+```bash
+git clone https://github.com/concordia-protocol/concordia-protocol.git
+cd concordia-protocol
+pip install -e ".[dev]"
+```
+
+## Quick Start
+
+```python
+from concordia import Agent, BasicOffer, generate_attestation
+
+# Create two agents (Ed25519 keys are generated automatically)
+seller = Agent("seller")
+buyer = Agent("buyer")
+
+# Seller opens a negotiation with one term: price
+session = seller.open_session(
+    counterparty=buyer.identity,
+    terms={"price": {"value": 100.00, "currency": "USD"}},
+)
+buyer.join_session(session)
+buyer.accept_session()
+
+# Buyer counters at $80
+buyer.send_counter(BasicOffer(terms={"price": {"value": 80.00, "currency": "USD"}}))
+
+# Seller accepts
+seller.accept_offer()
+
+print(session.state.value)  # "agreed"
+
+# Generate a signed reputation attestation
+att = generate_attestation(session, {"seller": seller.key_pair, "buyer": buyer.key_pair})
+print(att["outcome"]["status"])  # "agreed"
+```
+
+For a full negotiation with multiple terms, preference signals, and concessions, see [`examples/demo_camera_negotiation.py`](examples/demo_camera_negotiation.py).
+
+## Running Tests
+
+```bash
+pytest -v
+```
+
 ## Documentation
 
 - **[Full Specification](SPEC.md)** — the complete protocol spec (~40 pages)
-- **[Python SDK](sdk/python/)** — reference implementation *(coming soon)*
-- **[TypeScript SDK](sdk/typescript/)** — reference implementation *(coming soon)*
-- **[Examples](examples/)** — negotiation scenarios across domains *(coming soon)*
+- **[Python SDK](concordia/)** — reference implementation
+- **[Examples](examples/)** — demo negotiation scripts
+- **[Contributing](CONTRIBUTING.md)** — how to contribute
 
 ## Design Principles
 
