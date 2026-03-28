@@ -8,7 +8,7 @@ Built on the official Python MCP SDK (``mcp`` package), matching the same SDK
 family used by the Sanctuary Framework's TypeScript server. Both servers can
 run side by side in a single MCP client configuration.
 
-Tools:
+Tools — Negotiation:
     concordia_open_session    — Create a new negotiation session with terms and timing
     concordia_propose         — Send an initial offer into an active session
     concordia_counter         — Send a counter-offer in response to the other party's offer
@@ -17,6 +17,11 @@ Tools:
     concordia_commit          — Finalize an agreed deal with cryptographic commitment
     concordia_session_status  — Read current session state, transcript, and analytics
     concordia_session_receipt — Generate a reputation attestation for a concluded session
+
+Tools — Reputation (§9.6):
+    concordia_ingest_attestation — Submit a signed attestation for ingestion and scoring
+    concordia_reputation_query   — Query an agent's reputation per §9.6.7 format
+    concordia_reputation_score   — Get a raw reputation score (no query envelope needed)
 
 Usage:
     python -m concordia                     # stdio transport (default)
@@ -36,6 +41,7 @@ from .agent import Agent
 from .attestation import generate_attestation
 from .message import validate_chain
 from .offer import BasicOffer, ConditionalOffer, Condition, PartialOffer
+from .reputation import AttestationStore, ReputationScorer, ReputationQueryHandler
 from .session import InvalidTransitionError, Session
 from .signing import KeyPair
 from .types import (
@@ -630,6 +636,135 @@ def tool_session_receipt(
 
 
 # ---------------------------------------------------------------------------
+# Reputation service — attestation store, scorer, and query handler
+# ---------------------------------------------------------------------------
+
+_attestation_store = AttestationStore()
+_scorer = ReputationScorer(_attestation_store)
+_service_key = KeyPair.generate()
+_query_handler = ReputationQueryHandler(
+    store=_attestation_store,
+    scorer=_scorer,
+    service_id="concordia_mcp_reputation_service",
+    service_key=_service_key,
+)
+
+
+# ---------------------------------------------------------------------------
+# Tool: ingest_attestation
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_ingest_attestation",
+    description=(
+        "Submit a signed attestation to the Concordia Reputation Service. "
+        "The attestation is validated (schema, signatures, transcript hash), "
+        "deduplicated, checked for Sybil signals, and stored. Returns "
+        "acceptance status and any warnings."
+    ),
+)
+def tool_ingest_attestation(
+    attestation: Annotated[dict, "The full attestation dict as produced by concordia_session_receipt"],
+) -> str:
+    """Ingest a signed attestation into the reputation store."""
+    try:
+        accepted, validation = _attestation_store.ingest(attestation)
+        result: dict[str, Any] = {
+            "accepted": accepted,
+            "attestation_id": attestation.get("attestation_id", ""),
+            "session_id": attestation.get("session_id", ""),
+            "errors": validation.errors,
+            "warnings": validation.warnings,
+            "store_count": _attestation_store.count(),
+        }
+        if accepted:
+            result["message"] = "Attestation accepted and stored."
+        else:
+            result["message"] = "Attestation rejected during validation."
+        return json.dumps(result, indent=2, default=str)
+    except Exception as e:
+        return json.dumps({"error": f"Ingestion failed: {e}"})
+
+
+# ---------------------------------------------------------------------------
+# Tool: reputation_query
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_reputation_query",
+    description=(
+        "Query an agent's reputation using the standard §9.6.7 format. "
+        "Returns overall score, confidence, summary statistics, context-specific "
+        "sub-scores (by category, value range, and role), flags, and a signed "
+        "service response. This is the primary reputation interface for agents "
+        "evaluating a counterparty before entering a negotiation."
+    ),
+)
+def tool_reputation_query(
+    subject_agent_id: Annotated[str, "The agent to look up (the potential counterparty)"],
+    requester_agent_id: Annotated[str, "The agent requesting the reputation check"],
+    category: Annotated[str | None, "Optional category filter (e.g. 'electronics')"] = None,
+    value_range: Annotated[str | None, "Optional value range filter (e.g. '1000-5000_USD')"] = None,
+    role: Annotated[str | None, "Optional role filter (e.g. 'seller', 'buyer')"] = None,
+) -> str:
+    """Query an agent's reputation per §9.6.7."""
+    query: dict[str, Any] = {
+        "type": "concordia.reputation.query",
+        "subject_agent_id": subject_agent_id,
+        "requester_agent_id": requester_agent_id,
+    }
+    context: dict[str, str] = {}
+    if category:
+        context["category"] = category
+    if value_range:
+        context["value_range"] = value_range
+    if role:
+        context["role"] = role
+    if context:
+        query["context"] = context
+
+    response = _query_handler.handle(query)
+    return json.dumps(response, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: reputation_score
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_reputation_score",
+    description=(
+        "Get a raw reputation score for an agent without the full §9.6.7 "
+        "query envelope. Simpler than concordia_reputation_query — returns "
+        "score components, confidence, and attestation counts directly."
+    ),
+)
+def tool_reputation_score(
+    agent_id: Annotated[str, "The agent to score"],
+    category: Annotated[str | None, "Optional category filter"] = None,
+    value_range: Annotated[str | None, "Optional value range filter"] = None,
+    role: Annotated[str | None, "Optional role filter"] = None,
+) -> str:
+    """Get a raw reputation score for an agent."""
+    score = _scorer.score(
+        agent_id, category=category, value_range=value_range, role=role,
+    )
+    if score is None:
+        return json.dumps({
+            "agent_id": agent_id,
+            "score": None,
+            "message": f"No attestation data found for agent '{agent_id}'.",
+        })
+
+    result = {
+        "agent_id": agent_id,
+        "score": score.to_dict(),
+        "message": f"Score computed from {score.total_negotiations} attestations.",
+    }
+    return json.dumps(result, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
 # Programmatic access — for direct Python usage and testing
 # ---------------------------------------------------------------------------
 
@@ -653,6 +788,9 @@ def handle_tool_call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         "concordia_commit": tool_commit,
         "concordia_session_status": tool_session_status,
         "concordia_session_receipt": tool_session_receipt,
+        "concordia_ingest_attestation": tool_ingest_attestation,
+        "concordia_reputation_query": tool_reputation_query,
+        "concordia_reputation_score": tool_reputation_score,
     }
     handler = handlers.get(name)
     if handler is None:
