@@ -23,6 +23,19 @@ Tools — Reputation (§9.6):
     concordia_reputation_query   — Query an agent's reputation per §9.6.7 format
     concordia_reputation_score   — Get a raw reputation score (no query envelope needed)
 
+Tools — Discovery (§7, §10.1):
+    concordia_register_agent   — Register an agent with capabilities and Concordia Preferred badge
+    concordia_search_agents    — Find negotiation partners by category, role, or capability
+    concordia_agent_card       — Get A2A-compatible Agent Card for a registered agent
+    concordia_deregister_agent — Remove an agent from the registry
+
+Tools — Adoption (Viral Strategy §16, §17):
+    concordia_propose_protocol    — Propose Concordia to a non-Concordia peer
+    concordia_respond_to_proposal — Accept or decline a protocol proposal
+    concordia_start_degraded      — Track an unstructured fallback interaction
+    concordia_degraded_message    — Record a round in a degraded interaction
+    concordia_efficiency_report   — Compare degraded interaction to Concordia equivalent
+
 Usage:
     python -m concordia                     # stdio transport (default)
     python -m concordia --transport sse     # SSE transport (HTTP)
@@ -39,8 +52,10 @@ from mcp.server.fastmcp import FastMCP
 
 from .agent import Agent
 from .attestation import generate_attestation
+from .degradation import InteractionManager, PeerProtocolStatus
 from .message import validate_chain
 from .offer import BasicOffer, ConditionalOffer, Condition, PartialOffer
+from .registry import AgentRegistry
 from .reputation import AttestationStore, ReputationScorer, ReputationQueryHandler
 from .session import InvalidTransitionError, Session
 from .signing import KeyPair
@@ -765,6 +780,321 @@ def tool_reputation_score(
 
 
 # ---------------------------------------------------------------------------
+# Discovery registry — agent registration, lookup, capability advertising
+# ---------------------------------------------------------------------------
+
+_registry = AgentRegistry()
+
+
+# ---------------------------------------------------------------------------
+# Tool: register_agent
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_register_agent",
+    description=(
+        "Register an agent in the Concordia Discovery Registry. "
+        "Advertises that this agent speaks Concordia and specifies "
+        "its capabilities: supported roles, categories, and resolution "
+        "mechanisms. Grants the 'Concordia Preferred' badge."
+    ),
+)
+def tool_register_agent(
+    agent_id: Annotated[str, "Unique agent identifier"],
+    roles: Annotated[list[str] | None, "Roles this agent can play: 'buyer', 'seller', or both (default: both)"] = None,
+    categories: Annotated[list[str] | None, "Categories this agent operates in (e.g. ['electronics', 'furniture']). Empty = all."] = None,
+    resolution_mechanisms: Annotated[list[str] | None, "Supported resolution mechanisms (default: ['split', 'foa', 'tradeoff'])"] = None,
+    endpoint: Annotated[str | None, "Optional agent endpoint URL for direct contact"] = None,
+    description: Annotated[str | None, "Optional human-readable description of the agent"] = None,
+) -> str:
+    """Register an agent in the discovery registry."""
+    agent = _registry.register(
+        agent_id=agent_id,
+        roles=roles,
+        categories=categories,
+        resolution_mechanisms=resolution_mechanisms,
+        endpoint=endpoint,
+        description=description,
+    )
+    result = {
+        "registered": True,
+        "agent": agent.to_dict(),
+        "concordia_preferred": True,
+        "registry_count": _registry.count(),
+        "message": f"Agent '{agent_id}' registered with Concordia Preferred badge.",
+    }
+    return json.dumps(result, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: search_agents
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_search_agents",
+    description=(
+        "Search the Concordia Discovery Registry for agents matching "
+        "criteria. Find negotiation partners by category, role, or "
+        "resolution mechanism support. Returns agents with the "
+        "'Concordia Preferred' badge."
+    ),
+)
+def tool_search_agents(
+    category: Annotated[str | None, "Filter by category (e.g. 'electronics.cameras')"] = None,
+    role: Annotated[str | None, "Filter by role (e.g. 'seller', 'buyer')"] = None,
+    resolution_mechanism: Annotated[str | None, "Filter by resolution mechanism support (e.g. 'tradeoff')"] = None,
+    limit: Annotated[int, "Max results to return (default: 20)"] = 20,
+) -> str:
+    """Search the registry for Concordia-speaking agents."""
+    agents = _registry.search(
+        category=category,
+        role=role,
+        resolution_mechanism=resolution_mechanism,
+        limit=limit,
+    )
+    result = {
+        "count": len(agents),
+        "agents": [a.to_dict() for a in agents],
+        "filters": {
+            k: v for k, v in {
+                "category": category,
+                "role": role,
+                "resolution_mechanism": resolution_mechanism,
+            }.items() if v is not None
+        },
+    }
+    return json.dumps(result, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: agent_card
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_agent_card",
+    description=(
+        "Get the A2A-compatible Agent Card for a registered Concordia agent. "
+        "Returns capabilities, roles, categories, and the Concordia Preferred "
+        "badge in a format compatible with A2A Agent Cards (§10.1)."
+    ),
+)
+def tool_agent_card(
+    agent_id: Annotated[str, "The agent to look up"],
+) -> str:
+    """Get an agent's A2A-compatible capability card."""
+    card = _registry.get_agent_card(agent_id)
+    if card is None:
+        return json.dumps({
+            "found": False,
+            "concordia_preferred": False,
+            "message": f"Agent '{agent_id}' is not registered in the Concordia registry.",
+        })
+    return json.dumps({
+        "found": True,
+        "agent_card": card,
+        "concordia_preferred": True,
+    }, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: deregister_agent
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_deregister_agent",
+    description="Remove an agent from the Concordia Discovery Registry.",
+)
+def tool_deregister_agent(
+    agent_id: Annotated[str, "The agent to remove"],
+) -> str:
+    """Remove an agent from the registry."""
+    removed = _registry.deregister(agent_id)
+    return json.dumps({
+        "removed": removed,
+        "agent_id": agent_id,
+        "registry_count": _registry.count(),
+        "message": f"Agent '{agent_id}' {'removed from' if removed else 'not found in'} registry.",
+    }, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Graceful degradation & protocol meta-negotiation (Viral Strategy §16, §17)
+# ---------------------------------------------------------------------------
+
+_interaction_mgr = InteractionManager()
+
+
+# ---------------------------------------------------------------------------
+# Tool: propose_protocol
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_propose_protocol",
+    description=(
+        "Propose the Concordia protocol to a non-Concordia peer. "
+        "Generates a structured proposal explaining what Concordia offers "
+        "and how to adopt it. This is the 'meta-negotiation' — negotiating "
+        "about which protocol to negotiate with. If the peer accepts, the "
+        "interaction upgrades to Concordia. If not, falls back to degraded mode."
+    ),
+)
+def tool_propose_protocol(
+    agent_id: Annotated[str, "Your agent ID (the Concordia-equipped agent)"],
+    peer_id: Annotated[str, "The peer agent to propose Concordia to"],
+) -> str:
+    """Propose Concordia to a non-Concordia peer."""
+    proposal = _interaction_mgr.propose_protocol(agent_id, peer_id)
+    result = {
+        "proposal": proposal.to_dict(),
+        "message": (
+            f"Protocol proposal sent to '{peer_id}'. "
+            "If they accept, the interaction upgrades to Concordia. "
+            "If not, use concordia_start_degraded to track the unstructured fallback."
+        ),
+    }
+    return json.dumps(result, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: respond_to_proposal
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_respond_to_proposal",
+    description=(
+        "Respond to a Concordia protocol proposal — accept or decline. "
+        "If accepted, the interaction upgrades to full Concordia negotiation. "
+        "If declined, the interaction continues in degraded (unstructured) mode."
+    ),
+)
+def tool_respond_to_proposal(
+    proposal_id: Annotated[str, "The proposal_id from the protocol proposal"],
+    accepted: Annotated[bool, "Whether to accept (true) or decline (false) Concordia"],
+    responder_agent_id: Annotated[str, "Your agent ID (the responding agent)"],
+    reason: Annotated[str | None, "Optional reason for accepting or declining"] = None,
+) -> str:
+    """Respond to a protocol proposal."""
+    response, mode = _interaction_mgr.handle_response(
+        proposal_id=proposal_id,
+        accepted=accepted,
+        reason=reason,
+        responder_agent_id=responder_agent_id,
+    )
+    result: dict[str, Any] = {
+        "response": response.to_dict(),
+        "resulting_mode": mode.value,
+    }
+    if accepted:
+        result["message"] = (
+            "Protocol accepted! The interaction is now upgraded to Concordia. "
+            "Use concordia_open_session to begin a structured negotiation."
+        )
+    else:
+        result["message"] = (
+            "Protocol declined. The interaction will continue in degraded mode. "
+            "Use concordia_start_degraded to track the unstructured fallback."
+        )
+    return json.dumps(result, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: start_degraded
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_start_degraded",
+    description=(
+        "Start tracking a degraded (non-Concordia) interaction with a peer. "
+        "Records the unstructured negotiation rounds for efficiency comparison. "
+        "At the end, use concordia_efficiency_report to see what Concordia "
+        "would have provided."
+    ),
+)
+def tool_start_degraded(
+    agent_id: Annotated[str, "Your agent ID"],
+    peer_id: Annotated[str, "The non-Concordia peer's agent ID"],
+    peer_status: Annotated[str, "Peer status: 'unknown', 'declined', or 'incompatible'"] = "unknown",
+    proposal_id: Annotated[str | None, "If a protocol proposal was sent, its ID"] = None,
+) -> str:
+    """Start tracking a degraded interaction."""
+    status_map = {
+        "unknown": PeerProtocolStatus.UNKNOWN,
+        "declined": PeerProtocolStatus.DECLINED,
+        "incompatible": PeerProtocolStatus.INCOMPATIBLE,
+    }
+    status = status_map.get(peer_status, PeerProtocolStatus.UNKNOWN)
+
+    interaction = _interaction_mgr.start_degraded(
+        agent_id=agent_id,
+        peer_id=peer_id,
+        peer_status=status,
+        proposal_id=proposal_id,
+    )
+    return json.dumps({
+        "interaction": interaction.to_dict(),
+        "message": (
+            f"Degraded interaction started with '{peer_id}'. "
+            "Use concordia_degraded_message to record each round. "
+            "Use concordia_efficiency_report when done to see the comparison."
+        ),
+    }, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: degraded_message
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_degraded_message",
+    description=(
+        "Record a message in a degraded (non-Concordia) interaction. "
+        "Each message increments the round count. The round count feeds "
+        "the efficiency report that shows what Concordia would have saved."
+    ),
+)
+def tool_degraded_message(
+    interaction_id: Annotated[str, "The degraded interaction ID"],
+    from_agent: Annotated[str, "Which agent sent this message"],
+    content: Annotated[str, "The message content (free text)"],
+) -> str:
+    """Record a message in a degraded interaction."""
+    msg = _interaction_mgr.add_message(interaction_id, from_agent, content)
+    if msg is None:
+        return json.dumps({"error": f"Interaction '{interaction_id}' not found."})
+
+    interaction = _interaction_mgr.get_interaction(interaction_id)
+    return json.dumps({
+        "message_recorded": msg,
+        "total_rounds": interaction.rounds,
+        "mode": interaction.mode.value,
+    }, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: efficiency_report
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_efficiency_report",
+    description=(
+        "Generate an efficiency comparison for a degraded interaction. "
+        "Shows how many rounds were used vs. how many Concordia would have "
+        "needed, plus what features were missing (binding commitments, "
+        "receipts, reputation building). This is the viral payload — it "
+        "shows peers what they're missing."
+    ),
+)
+def tool_efficiency_report(
+    interaction_id: Annotated[str, "The degraded interaction to report on"],
+) -> str:
+    """Generate an efficiency report for a degraded interaction."""
+    report = _interaction_mgr.get_efficiency_report(interaction_id)
+    if report is None:
+        return json.dumps({"error": f"Interaction '{interaction_id}' not found."})
+    return json.dumps(report, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
 # Programmatic access — for direct Python usage and testing
 # ---------------------------------------------------------------------------
 
@@ -791,6 +1121,15 @@ def handle_tool_call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         "concordia_ingest_attestation": tool_ingest_attestation,
         "concordia_reputation_query": tool_reputation_query,
         "concordia_reputation_score": tool_reputation_score,
+        "concordia_register_agent": tool_register_agent,
+        "concordia_search_agents": tool_search_agents,
+        "concordia_agent_card": tool_agent_card,
+        "concordia_deregister_agent": tool_deregister_agent,
+        "concordia_propose_protocol": tool_propose_protocol,
+        "concordia_respond_to_proposal": tool_respond_to_proposal,
+        "concordia_start_degraded": tool_start_degraded,
+        "concordia_degraded_message": tool_degraded_message,
+        "concordia_efficiency_report": tool_efficiency_report,
     }
     handler = handlers.get(name)
     if handler is None:

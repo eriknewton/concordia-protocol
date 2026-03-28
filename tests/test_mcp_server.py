@@ -692,9 +692,9 @@ class TestSdkIntegration:
         assert mcp.name == "concordia-mcp"
 
     def test_tools_registered_with_sdk(self):
-        """All 11 tools are registered with the FastMCP tool manager."""
+        """All 20 tools are registered with the FastMCP tool manager."""
         tools = mcp._tool_manager.list_tools()
-        assert len(tools) == 11
+        assert len(tools) == 20
         tool_names = {t.name for t in tools}
         assert "concordia_open_session" in tool_names
         assert "concordia_propose" in tool_names
@@ -745,7 +745,7 @@ class TestToolDefinitions:
                     assert req in props, f"{tool['name']}: required param '{req}' not in properties"
 
     def test_tool_count(self):
-        assert len(get_tool_definitions()) == 11
+        assert len(get_tool_definitions()) == 20
 
     def test_tool_names_match_handlers(self):
         from concordia.mcp_server import handle_tool_call
