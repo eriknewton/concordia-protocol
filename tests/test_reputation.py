@@ -779,40 +779,74 @@ class TestReputationMcpTools:
 
     @pytest.fixture(autouse=True)
     def reset_stores(self):
-        """Reset both stores between tests."""
+        """Reset both stores and auth tokens between tests."""
         from concordia.mcp_server import (
-            _store, _attestation_store, _scorer, _query_handler,
+            _store, _attestation_store, _scorer, _query_handler, _auth,
         )
         _store._sessions.clear()
         _attestation_store._by_id.clear()
         _attestation_store._by_session.clear()
         _attestation_store._by_agent.clear()
         _attestation_store._counterparties.clear()
+        _auth._agent_tokens.clear()
+        _auth._session_tokens.clear()
+        _auth._token_to_agent.clear()
         yield
 
     def _parse(self, result_str: str) -> dict:
         return json.loads(result_str)
 
     def test_ingest_valid_attestation(self):
-        from concordia.mcp_server import tool_ingest_attestation
-        att = _make_attestation()
-        result = self._parse(tool_ingest_attestation(att))
+        from concordia.mcp_server import tool_register_agent, tool_ingest_attestation
+        # Register an agent first to get auth_token
+        reg_result = self._parse(tool_register_agent(agent_id="ingest_agent"))
+        agent_id = "ingest_agent"
+        auth_token = reg_result["auth_token"]
+
+        att = _make_attestation(agent_a=agent_id)
+        result = self._parse(tool_ingest_attestation(
+            agent_id=agent_id,
+            auth_token=auth_token,
+            attestation=att,
+        ))
         assert result["accepted"] is True
         assert result["store_count"] == 1
 
     def test_ingest_invalid_attestation(self):
-        from concordia.mcp_server import tool_ingest_attestation
-        result = self._parse(tool_ingest_attestation({"bad": "data"}))
+        from concordia.mcp_server import tool_register_agent, tool_ingest_attestation
+        # Register an agent first to get auth_token
+        reg_result = self._parse(tool_register_agent(agent_id="ingest_agent2"))
+        agent_id = "ingest_agent2"
+        auth_token = reg_result["auth_token"]
+
+        result = self._parse(tool_ingest_attestation(
+            agent_id=agent_id,
+            auth_token=auth_token,
+            attestation={"bad": "data"},
+        ))
         assert result["accepted"] is False
         assert len(result["errors"]) > 0
 
     def test_ingest_duplicate_rejected(self):
-        from concordia.mcp_server import tool_ingest_attestation
-        att = _make_attestation(att_id="dup_test")
-        tool_ingest_attestation(att)
+        from concordia.mcp_server import tool_register_agent, tool_ingest_attestation
+        # Register an agent first to get auth_token
+        reg_result = self._parse(tool_register_agent(agent_id="ingest_agent3"))
+        agent_id = "ingest_agent3"
+        auth_token = reg_result["auth_token"]
 
-        att2 = _make_attestation(att_id="dup_test", session_id="sess_new")
-        result = self._parse(tool_ingest_attestation(att2))
+        att = _make_attestation(att_id="dup_test", agent_a=agent_id)
+        tool_ingest_attestation(
+            agent_id=agent_id,
+            auth_token=auth_token,
+            attestation=att,
+        )
+
+        att2 = _make_attestation(att_id="dup_test", session_id="sess_new", agent_a=agent_id)
+        result = self._parse(tool_ingest_attestation(
+            agent_id=agent_id,
+            auth_token=auth_token,
+            attestation=att2,
+        ))
         assert result["accepted"] is False
 
     def test_reputation_query_no_data(self):
@@ -826,10 +860,21 @@ class TestReputationMcpTools:
         assert "no_data" in result["flags"]
 
     def test_reputation_query_with_data(self):
-        from concordia.mcp_server import tool_ingest_attestation, tool_reputation_query
+        from concordia.mcp_server import (
+            tool_register_agent, tool_ingest_attestation, tool_reputation_query,
+        )
+        # Register agent first to get auth_token
+        reg_result = self._parse(tool_register_agent(agent_id="seller_1"))
+        agent_id = "seller_1"
+        auth_token = reg_result["auth_token"]
+
         for _ in range(5):
             att = _make_attestation(agent_a="seller_1", agent_b="buyer_1")
-            tool_ingest_attestation(att)
+            tool_ingest_attestation(
+                agent_id=agent_id,
+                auth_token=auth_token,
+                attestation=att,
+            )
 
         result = self._parse(tool_reputation_query(
             subject_agent_id="seller_1",
@@ -840,15 +885,30 @@ class TestReputationMcpTools:
         assert result["summary"]["total_negotiations"] == 5
 
     def test_reputation_query_with_context(self):
-        from concordia.mcp_server import tool_ingest_attestation, tool_reputation_query
+        from concordia.mcp_server import (
+            tool_register_agent, tool_ingest_attestation, tool_reputation_query,
+        )
+        # Register agent first to get auth_token
+        reg_result = self._parse(tool_register_agent(agent_id="s"))
+        agent_id = "s"
+        auth_token = reg_result["auth_token"]
+
         for _ in range(5):
-            tool_ingest_attestation(_make_attestation(
-                agent_a="s", agent_b="b", category="electronics",
-            ))
+            tool_ingest_attestation(
+                agent_id=agent_id,
+                auth_token=auth_token,
+                attestation=_make_attestation(
+                    agent_a="s", agent_b="b", category="electronics",
+                ),
+            )
         for _ in range(3):
-            tool_ingest_attestation(_make_attestation(
-                agent_a="s", agent_b="b", category="furniture",
-            ))
+            tool_ingest_attestation(
+                agent_id=agent_id,
+                auth_token=auth_token,
+                attestation=_make_attestation(
+                    agent_a="s", agent_b="b", category="furniture",
+                ),
+            )
 
         result = self._parse(tool_reputation_query(
             subject_agent_id="s",
@@ -863,11 +923,22 @@ class TestReputationMcpTools:
         assert result["score"] is None
 
     def test_reputation_score_with_data(self):
-        from concordia.mcp_server import tool_ingest_attestation, tool_reputation_score
+        from concordia.mcp_server import (
+            tool_register_agent, tool_ingest_attestation, tool_reputation_score,
+        )
+        # Register agent first to get auth_token
+        reg_result = self._parse(tool_register_agent(agent_id="scored_agent"))
+        agent_id = "scored_agent"
+        auth_token = reg_result["auth_token"]
+
         for _ in range(10):
-            tool_ingest_attestation(_make_attestation(
-                agent_a="scored_agent", agent_b="counterparty",
-            ))
+            tool_ingest_attestation(
+                agent_id=agent_id,
+                auth_token=auth_token,
+                attestation=_make_attestation(
+                    agent_a="scored_agent", agent_b="counterparty",
+                ),
+            )
 
         result = self._parse(tool_reputation_score(agent_id="scored_agent"))
         assert result["score"] is not None
@@ -875,12 +946,23 @@ class TestReputationMcpTools:
         assert "components" in result["score"]
 
     def test_handle_tool_call_reputation(self):
-        from concordia.mcp_server import handle_tool_call, tool_ingest_attestation
+        from concordia.mcp_server import (
+            handle_tool_call, tool_register_agent, tool_ingest_attestation,
+        )
+        # Register agent first to get auth_token
+        reg_result = self._parse(tool_register_agent(agent_id="htc_seller"))
+        agent_id = "htc_seller"
+        auth_token = reg_result["auth_token"]
+
         # Ingest some data first
         for _ in range(5):
-            tool_ingest_attestation(_make_attestation(
-                agent_a="htc_seller", agent_b="htc_buyer",
-            ))
+            tool_ingest_attestation(
+                agent_id=agent_id,
+                auth_token=auth_token,
+                attestation=_make_attestation(
+                    agent_a="htc_seller", agent_b="htc_buyer",
+                ),
+            )
 
         # Test via handle_tool_call
         result = handle_tool_call("concordia_reputation_score", {
@@ -890,11 +972,22 @@ class TestReputationMcpTools:
         assert result["score"] is not None
 
     def test_handle_tool_call_query(self):
-        from concordia.mcp_server import handle_tool_call, tool_ingest_attestation
+        from concordia.mcp_server import (
+            handle_tool_call, tool_register_agent, tool_ingest_attestation,
+        )
+        # Register agent first to get auth_token
+        reg_result = self._parse(tool_register_agent(agent_id="q_seller"))
+        agent_id = "q_seller"
+        auth_token = reg_result["auth_token"]
+
         for _ in range(5):
-            tool_ingest_attestation(_make_attestation(
-                agent_a="q_seller", agent_b="q_buyer",
-            ))
+            tool_ingest_attestation(
+                agent_id=agent_id,
+                auth_token=auth_token,
+                attestation=_make_attestation(
+                    agent_a="q_seller", agent_b="q_buyer",
+                ),
+            )
 
         result = handle_tool_call("concordia_reputation_query", {
             "subject_agent_id": "q_seller",
@@ -907,6 +1000,17 @@ class TestReputationMcpTools:
         """End-to-end: open session, negotiate, generate receipt, ingest, score."""
         from concordia.mcp_server import handle_tool_call
 
+        # Register both agents first to get auth_tokens
+        seller_reg = handle_tool_call("concordia_register_agent", {
+            "agent_id": "seller_e2e",
+        })
+        seller_token = seller_reg["auth_token"]
+
+        buyer_reg = handle_tool_call("concordia_register_agent", {
+            "agent_id": "buyer_e2e",
+        })
+        buyer_token = buyer_reg["auth_token"]
+
         # Open a session
         open_result = handle_tool_call("concordia_open_session", {
             "initiator_id": "seller_e2e",
@@ -916,11 +1020,14 @@ class TestReputationMcpTools:
             },
         })
         session_id = open_result["session_id"]
+        initiator_token = open_result["initiator_token"]
+        responder_token = open_result["responder_token"]
 
         # Propose
         handle_tool_call("concordia_propose", {
             "session_id": session_id,
             "role": "initiator",
+            "auth_token": initiator_token,
             "terms": {"price": {"value": 1000}},
             "reasoning": "Starting high",
         })
@@ -929,6 +1036,7 @@ class TestReputationMcpTools:
         handle_tool_call("concordia_counter", {
             "session_id": session_id,
             "role": "responder",
+            "auth_token": responder_token,
             "terms": {"price": {"value": 850}},
             "reasoning": "Meeting in the middle",
         })
@@ -937,12 +1045,14 @@ class TestReputationMcpTools:
         handle_tool_call("concordia_accept", {
             "session_id": session_id,
             "role": "initiator",
+            "auth_token": initiator_token,
             "reasoning": "Deal accepted",
         })
 
         # Generate receipt
         receipt_result = handle_tool_call("concordia_session_receipt", {
             "session_id": session_id,
+            "auth_token": initiator_token,
             "category": "electronics",
             "value_range": "500-1500_USD",
         })
@@ -951,6 +1061,8 @@ class TestReputationMcpTools:
 
         # Ingest
         ingest_result = handle_tool_call("concordia_ingest_attestation", {
+            "agent_id": "seller_e2e",
+            "auth_token": seller_token,
             "attestation": attestation,
         })
         assert ingest_result["accepted"] is True

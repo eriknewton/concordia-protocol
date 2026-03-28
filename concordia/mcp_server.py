@@ -76,6 +76,7 @@ from mcp.server.fastmcp import FastMCP
 
 from .agent import Agent
 from .attestation import generate_attestation
+from .auth import AuthTokenStore
 from .degradation import InteractionManager, PeerProtocolStatus
 from .sanctuary_bridge import (
     SanctuaryBridgeConfig,
@@ -216,6 +217,20 @@ class SessionStore:
 # Global session store — shared across all tool invocations
 _store = SessionStore()
 
+# Global auth token store — validates caller identity on every tool call
+_auth = AuthTokenStore()
+
+
+def _auth_error(identity: str) -> str:
+    """Return a JSON error for failed authentication.
+
+    The error deliberately does NOT include the token value or reveal
+    whether the identity exists — only that authentication failed.
+    """
+    return json.dumps({
+        "error": f"Authentication required: invalid or missing auth_token for '{identity}'."
+    })
+
 
 def _resolve_role(ctx: SessionContext, role: str) -> Agent:
     """Map a role string to the correct agent."""
@@ -318,6 +333,11 @@ def tool_open_session(
         }
         return json.dumps(error_result, indent=2)
 
+    # Issue session-scoped auth tokens for both roles
+    init_token, resp_token = _auth.register_session_tokens(
+        ctx.session.session_id, initiator_id, responder_id,
+    )
+
     result = {
         "session_id": ctx.session.session_id,
         "state": ctx.session.state.value,
@@ -329,6 +349,8 @@ def tool_open_session(
             "agent_id": ctx.responder.agent_id,
             "public_key": ctx.responder_key.public_key_b64(),
         },
+        "initiator_token": init_token,
+        "responder_token": resp_token,
         "terms": terms,
         "timing": {
             "session_ttl": session_ttl,
@@ -357,12 +379,15 @@ def tool_propose(
     session_id: Annotated[str, "The session to send the offer into"],
     role: Annotated[str, "Who is making the offer: 'initiator'/'seller' or 'responder'/'buyer'"],
     terms: Annotated[dict, "The proposed values for each term, e.g. {'price': {'value': 850}}"],
+    auth_token: Annotated[str, "Session-scoped auth token for the claimed role (returned by concordia_open_session)"],
     offer_type: Annotated[str, "Type of offer: 'basic' (default), 'partial', or 'conditional'"] = "basic",
     open_terms: Annotated[list[str] | None, "For partial offers: list of term_ids left open"] = None,
     conditions: Annotated[list[dict] | None, "For conditional offers: list of {'if': ..., 'then': ...} clauses"] = None,
     reasoning: Annotated[str | None, "Natural-language reasoning explaining the offer"] = None,
 ) -> str:
     """Send an initial offer into an active session."""
+    if not _auth.validate_session_token(session_id, role, auth_token):
+        return _auth_error(f"session={session_id}, role={role}")
     ctx = _store.get(session_id)
     if ctx is None:
         return json.dumps({"error": f"Session '{session_id}' not found."})
@@ -407,12 +432,15 @@ def tool_counter(
     session_id: Annotated[str, "The session to send the counter-offer into"],
     role: Annotated[str, "Who is countering: 'initiator'/'seller' or 'responder'/'buyer'"],
     terms: Annotated[dict, "The counter-proposed values for each term"],
+    auth_token: Annotated[str, "Session-scoped auth token for the claimed role (returned by concordia_open_session)"],
     offer_type: Annotated[str, "Type of offer: 'basic', 'partial', or 'conditional'"] = "basic",
     open_terms: Annotated[list[str] | None, "For partial offers: term_ids left open"] = None,
     conditions: Annotated[list[dict] | None, "For conditional offers: if/then clauses"] = None,
     reasoning: Annotated[str | None, "Natural-language reasoning explaining the counter-offer"] = None,
 ) -> str:
     """Send a counter-offer in response to the other party's offer."""
+    if not _auth.validate_session_token(session_id, role, auth_token):
+        return _auth_error(f"session={session_id}, role={role}")
     ctx = _store.get(session_id)
     if ctx is None:
         return json.dumps({"error": f"Session '{session_id}' not found."})
@@ -456,10 +484,13 @@ def tool_counter(
 def tool_accept(
     session_id: Annotated[str, "The session in which to accept the offer"],
     role: Annotated[str, "Who is accepting: 'initiator'/'seller' or 'responder'/'buyer'"],
+    auth_token: Annotated[str, "Session-scoped auth token for the claimed role (returned by concordia_open_session)"],
     offer_id: Annotated[str | None, "Optional: specific offer_id to accept"] = None,
     reasoning: Annotated[str | None, "Natural-language reasoning for accepting"] = None,
 ) -> str:
     """Accept the current offer, moving the session to AGREED."""
+    if not _auth.validate_session_token(session_id, role, auth_token):
+        return _auth_error(f"session={session_id}, role={role}")
     ctx = _store.get(session_id)
     if ctx is None:
         return json.dumps({"error": f"Session '{session_id}' not found."})
@@ -501,10 +532,13 @@ def tool_accept(
 def tool_reject(
     session_id: Annotated[str, "The session to reject"],
     role: Annotated[str, "Who is rejecting: 'initiator'/'seller' or 'responder'/'buyer'"],
+    auth_token: Annotated[str, "Session-scoped auth token for the claimed role (returned by concordia_open_session)"],
     reason: Annotated[str | None, "Structured reason for rejection"] = None,
     reasoning: Annotated[str | None, "Natural-language reasoning for rejection"] = None,
 ) -> str:
     """Reject the negotiation, moving the session to REJECTED."""
+    if not _auth.validate_session_token(session_id, role, auth_token):
+        return _auth_error(f"session={session_id}, role={role}")
     ctx = _store.get(session_id)
     if ctx is None:
         return json.dumps({"error": f"Session '{session_id}' not found."})
@@ -546,9 +580,12 @@ def tool_reject(
 def tool_commit(
     session_id: Annotated[str, "The session to commit"],
     role: Annotated[str, "Who is committing: 'initiator'/'seller' or 'responder'/'buyer'"],
+    auth_token: Annotated[str, "Session-scoped auth token for the claimed role (returned by concordia_open_session)"],
     reasoning: Annotated[str | None, "Natural-language reasoning for the commitment"] = None,
 ) -> str:
     """Finalize an agreed deal with a cryptographic commitment."""
+    if not _auth.validate_session_token(session_id, role, auth_token):
+        return _auth_error(f"session={session_id}, role={role}")
     ctx = _store.get(session_id)
     if ctx is None:
         return json.dumps({"error": f"Session '{session_id}' not found."})
@@ -590,10 +627,13 @@ def tool_commit(
 )
 def tool_session_status(
     session_id: Annotated[str, "The session to query"],
+    auth_token: Annotated[str, "Session-scoped auth token (initiator or responder token from concordia_open_session)"],
     include_transcript: Annotated[bool, "Whether to include a transcript summary (default: false)"] = False,
     transcript_limit: Annotated[int, "Max number of recent messages to include in transcript summary"] = 10,
 ) -> str:
     """Get the current status of a negotiation session."""
+    if _auth.get_any_session_role(session_id, auth_token) is None:
+        return _auth_error(f"session={session_id}")
     ctx = _store.get(session_id)
     if ctx is None:
         return json.dumps({"error": f"Session '{session_id}' not found."})
@@ -655,10 +695,13 @@ def tool_session_status(
 )
 def tool_session_receipt(
     session_id: Annotated[str, "The concluded session to generate a receipt for"],
+    auth_token: Annotated[str, "Session-scoped auth token (initiator or responder token from concordia_open_session)"],
     category: Annotated[str | None, "Optional transaction category (e.g. 'electronics.cameras')"] = None,
     value_range: Annotated[str | None, "Optional value bucket (e.g. '1000-5000_USD')"] = None,
 ) -> str:
     """Generate a cryptographic receipt for a concluded session."""
+    if _auth.get_any_session_role(session_id, auth_token) is None:
+        return _auth_error(f"session={session_id}")
     ctx = _store.get(session_id)
     if ctx is None:
         return json.dumps({"error": f"Session '{session_id}' not found."})
@@ -733,9 +776,13 @@ _query_handler = ReputationQueryHandler(
     ),
 )
 def tool_ingest_attestation(
+    agent_id: Annotated[str, "The agent ingesting this attestation"],
+    auth_token: Annotated[str, "Agent-scoped auth token (returned by concordia_register_agent)"],
     attestation: Annotated[dict, "The full attestation dict as produced by concordia_session_receipt"],
 ) -> str:
     """Ingest a signed attestation into the reputation store."""
+    if not _auth.validate_agent_token(agent_id, auth_token):
+        return _auth_error(agent_id)
     try:
         accepted, validation = _attestation_store.ingest(attestation)
         result: dict[str, Any] = {
@@ -870,9 +917,12 @@ def tool_register_agent(
         endpoint=endpoint,
         description=description,
     )
+    # Issue agent-scoped auth token
+    agent_token = _auth.register_agent_token(agent_id)
     result = {
         "registered": True,
         "agent": agent.to_dict(),
+        "auth_token": agent_token,
         "concordia_preferred": True,
         "registry_count": _registry.count(),
         "message": f"Agent '{agent_id}' registered with Concordia Preferred badge.",
@@ -993,9 +1043,13 @@ def tool_concordia_preferred_badge(
 )
 def tool_deregister_agent(
     agent_id: Annotated[str, "The agent to remove"],
+    auth_token: Annotated[str, "Agent-scoped auth token (returned by concordia_register_agent)"],
 ) -> str:
     """Remove an agent from the registry."""
+    if not _auth.validate_agent_token(agent_id, auth_token):
+        return _auth_error(agent_id)
     removed = _registry.deregister(agent_id)
+    _auth.revoke_agent_token(agent_id)
     return json.dumps({
         "removed": removed,
         "agent_id": agent_id,
@@ -1027,9 +1081,12 @@ _interaction_mgr = InteractionManager()
 )
 def tool_propose_protocol(
     agent_id: Annotated[str, "Your agent ID (the Concordia-equipped agent)"],
+    auth_token: Annotated[str, "Agent-scoped auth token (returned by concordia_register_agent)"],
     peer_id: Annotated[str, "The peer agent to propose Concordia to"],
 ) -> str:
     """Propose Concordia to a non-Concordia peer."""
+    if not _auth.validate_agent_token(agent_id, auth_token):
+        return _auth_error(agent_id)
     proposal = _interaction_mgr.propose_protocol(agent_id, peer_id)
     result = {
         "proposal": proposal.to_dict(),
@@ -1058,9 +1115,12 @@ def tool_respond_to_proposal(
     proposal_id: Annotated[str, "The proposal_id from the protocol proposal"],
     accepted: Annotated[bool, "Whether to accept (true) or decline (false) Concordia"],
     responder_agent_id: Annotated[str, "Your agent ID (the responding agent)"],
+    auth_token: Annotated[str, "Agent-scoped auth token (returned by concordia_register_agent)"],
     reason: Annotated[str | None, "Optional reason for accepting or declining"] = None,
 ) -> str:
     """Respond to a protocol proposal."""
+    if not _auth.validate_agent_token(responder_agent_id, auth_token):
+        return _auth_error(responder_agent_id)
     response, mode = _interaction_mgr.handle_response(
         proposal_id=proposal_id,
         accepted=accepted,
@@ -1099,11 +1159,14 @@ def tool_respond_to_proposal(
 )
 def tool_start_degraded(
     agent_id: Annotated[str, "Your agent ID"],
+    auth_token: Annotated[str, "Agent-scoped auth token (returned by concordia_register_agent)"],
     peer_id: Annotated[str, "The non-Concordia peer's agent ID"],
     peer_status: Annotated[str, "Peer status: 'unknown', 'declined', or 'incompatible'"] = "unknown",
     proposal_id: Annotated[str | None, "If a protocol proposal was sent, its ID"] = None,
 ) -> str:
     """Start tracking a degraded interaction."""
+    if not _auth.validate_agent_token(agent_id, auth_token):
+        return _auth_error(agent_id)
     status_map = {
         "unknown": PeerProtocolStatus.UNKNOWN,
         "declined": PeerProtocolStatus.DECLINED,
@@ -1142,9 +1205,12 @@ def tool_start_degraded(
 def tool_degraded_message(
     interaction_id: Annotated[str, "The degraded interaction ID"],
     from_agent: Annotated[str, "Which agent sent this message"],
+    auth_token: Annotated[str, "Agent-scoped auth token (returned by concordia_register_agent)"],
     content: Annotated[str, "The message content (free text)"],
 ) -> str:
     """Record a message in a degraded interaction."""
+    if not _auth.validate_agent_token(from_agent, auth_token):
+        return _auth_error(from_agent)
     msg = _interaction_mgr.add_message(interaction_id, from_agent, content)
     if msg is None:
         return json.dumps({"error": f"Interaction '{interaction_id}' not found."})
@@ -1203,6 +1269,7 @@ _want_registry = WantRegistry()
 )
 def tool_post_want(
     agent_id: Annotated[str, "The agent posting the Want"],
+    auth_token: Annotated[str, "Agent-scoped auth token (returned by concordia_register_agent)"],
     category: Annotated[str, "Hierarchical category (e.g. 'electronics.cameras.mirrorless')"],
     terms: Annotated[dict, "Term constraints — e.g. {price: {max: 2500, currency: 'USD'}, condition: {min: 'good'}}"],
     location: Annotated[dict | None, "Location constraint — {within_km: 50, of: {lat: 37.77, lng: -122.42}}"] = None,
@@ -1211,6 +1278,8 @@ def tool_post_want(
     metadata: Annotated[dict | None, "Optional metadata"] = None,
 ) -> str:
     """Post a Want and get immediate matches."""
+    if not _auth.validate_agent_token(agent_id, auth_token):
+        return _auth_error(agent_id)
     try:
         want, matches = _want_registry.post_want(
             agent_id=agent_id,
@@ -1251,6 +1320,7 @@ def tool_post_want(
 )
 def tool_post_have(
     agent_id: Annotated[str, "The agent posting the Have"],
+    auth_token: Annotated[str, "Agent-scoped auth token (returned by concordia_register_agent)"],
     category: Annotated[str, "Hierarchical category (e.g. 'electronics.cameras.mirrorless')"],
     terms: Annotated[dict, "Term values — e.g. {price: {min: 1800, currency: 'USD'}, condition: {value: 'like_new'}}"],
     location: Annotated[dict | None, "Location — {coordinates: {lat: 37.78, lng: -122.41}}"] = None,
@@ -1258,6 +1328,8 @@ def tool_post_have(
     metadata: Annotated[dict | None, "Optional metadata"] = None,
 ) -> str:
     """Post a Have and get immediate matches."""
+    if not _auth.validate_agent_token(agent_id, auth_token):
+        return _auth_error(agent_id)
     try:
         have, matches = _want_registry.post_have(
             agent_id=agent_id,
@@ -1328,8 +1400,16 @@ def tool_get_have(
 )
 def tool_withdraw_want(
     want_id: Annotated[str, "The Want ID to withdraw"],
+    agent_id: Annotated[str, "The agent withdrawing the Want (must be the owner)"],
+    auth_token: Annotated[str, "Agent-scoped auth token (returned by concordia_register_agent)"],
 ) -> str:
     """Withdraw a Want."""
+    if not _auth.validate_agent_token(agent_id, auth_token):
+        return _auth_error(agent_id)
+    # Verify ownership before withdrawing
+    want = _want_registry.get_want(want_id)
+    if want is not None and want.agent_id != agent_id:
+        return json.dumps({"error": f"Agent '{agent_id}' does not own want '{want_id}'."})
     removed = _want_registry.withdraw_want(want_id)
     return json.dumps({
         "withdrawn": removed,
@@ -1348,8 +1428,16 @@ def tool_withdraw_want(
 )
 def tool_withdraw_have(
     have_id: Annotated[str, "The Have ID to withdraw"],
+    agent_id: Annotated[str, "The agent withdrawing the Have (must be the owner)"],
+    auth_token: Annotated[str, "Agent-scoped auth token (returned by concordia_register_agent)"],
 ) -> str:
     """Withdraw a Have."""
+    if not _auth.validate_agent_token(agent_id, auth_token):
+        return _auth_error(agent_id)
+    # Verify ownership before withdrawing
+    have = _want_registry.get_have(have_id)
+    if have is not None and have.agent_id != agent_id:
+        return json.dumps({"error": f"Agent '{agent_id}' does not own have '{have_id}'."})
     removed = _want_registry.withdraw_have(have_id)
     return json.dumps({
         "withdrawn": removed,
@@ -1469,6 +1557,7 @@ _relay = NegotiationRelay()
 )
 def tool_relay_create(
     initiator_id: Annotated[str, "The initiating agent's ID"],
+    auth_token: Annotated[str, "Agent-scoped auth token (returned by concordia_register_agent)"],
     responder_id: Annotated[str | None, "The responding agent's ID (can join later if omitted)"] = None,
     concordia_session_id: Annotated[str | None, "Link to an existing Concordia session"] = None,
     session_ttl: Annotated[int, "Session timeout in seconds (default: 86400 = 24h)"] = 86_400,
@@ -1476,6 +1565,8 @@ def tool_relay_create(
     initiator_endpoint: Annotated[str | None, "Optional callback endpoint for the initiator"] = None,
 ) -> str:
     """Create a relay session."""
+    if not _auth.validate_agent_token(initiator_id, auth_token):
+        return _auth_error(initiator_id)
     try:
         session = _relay.create_session(
             initiator_id=initiator_id,
@@ -1507,9 +1598,12 @@ def tool_relay_create(
 def tool_relay_join(
     relay_session_id: Annotated[str, "The relay session to join"],
     agent_id: Annotated[str, "The joining agent's ID"],
+    auth_token: Annotated[str, "Agent-scoped auth token (returned by concordia_register_agent)"],
     endpoint: Annotated[str | None, "Optional callback endpoint"] = None,
 ) -> str:
     """Join a relay session as the responder."""
+    if not _auth.validate_agent_token(agent_id, auth_token):
+        return _auth_error(agent_id)
     session = _relay.join_session(relay_session_id, agent_id, endpoint)
     if session is None:
         return json.dumps({"error": f"Cannot join relay session '{relay_session_id}'. Not found or not pending."})
@@ -1535,11 +1629,14 @@ def tool_relay_join(
 def tool_relay_send(
     relay_session_id: Annotated[str, "The relay session ID"],
     from_agent: Annotated[str, "The sending agent's ID"],
+    auth_token: Annotated[str, "Agent-scoped auth token (returned by concordia_register_agent)"],
     message_type: Annotated[str, "Message type (e.g. 'negotiate.offer', 'negotiate.accept')"],
     payload: Annotated[dict, "The message payload"],
     ttl: Annotated[int, "Message TTL in seconds (default: 3600)"] = 3600,
 ) -> str:
     """Send a message through the relay."""
+    if not _auth.validate_agent_token(from_agent, auth_token):
+        return _auth_error(from_agent)
     try:
         msg = _relay.send_message(
             relay_session_id=relay_session_id,
@@ -1571,10 +1668,13 @@ def tool_relay_send(
 )
 def tool_relay_receive(
     agent_id: Annotated[str, "The receiving agent's ID"],
+    auth_token: Annotated[str, "Agent-scoped auth token (returned by concordia_register_agent)"],
     relay_session_id: Annotated[str | None, "Filter by relay session (optional)"] = None,
     limit: Annotated[int, "Max messages to retrieve (default: 50)"] = 50,
 ) -> str:
     """Receive pending messages from the relay."""
+    if not _auth.validate_agent_token(agent_id, auth_token):
+        return _auth_error(agent_id)
     messages = _relay.receive_messages(
         agent_id=agent_id,
         relay_session_id=relay_session_id,

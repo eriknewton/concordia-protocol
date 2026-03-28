@@ -21,6 +21,7 @@ from concordia.mcp_server import (
     tool_session_receipt,
     mcp,
     _store,
+    _auth,
 )
 from concordia.types import SessionState
 
@@ -69,10 +70,16 @@ COUNTER_TERMS = {
 
 @pytest.fixture(autouse=True)
 def clean_store():
-    """Reset the global session store between tests."""
+    """Reset the global session store and auth tokens between tests."""
     _store._sessions.clear()
+    _auth._agent_tokens.clear()
+    _auth._session_tokens.clear()
+    _auth._token_to_agent.clear()
     yield
     _store._sessions.clear()
+    _auth._agent_tokens.clear()
+    _auth._session_tokens.clear()
+    _auth._token_to_agent.clear()
 
 
 @pytest.fixture
@@ -94,15 +101,17 @@ def session_with_offers(active_session):
         session_id=sid,
         role="initiator",
         terms=OFFER_TERMS,
+        auth_token=active_session["initiator_token"],
         reasoning="Opening offer — fair price for the condition.",
     )
     tool_counter(
         session_id=sid,
         role="responder",
         terms=COUNTER_TERMS,
+        auth_token=active_session["responder_token"],
         reasoning="Asking for lower price but longer warranty.",
     )
-    return sid
+    return active_session
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +217,7 @@ class TestPropose:
         sid = active_session["session_id"]
         result = _parse(tool_propose(
             session_id=sid, role="initiator", terms=OFFER_TERMS,
+            auth_token=active_session["initiator_token"],
         ))
         assert result["type"] == "negotiate.offer"
         assert result["from"] == "seller_01"
@@ -217,6 +227,7 @@ class TestPropose:
         sid = active_session["session_id"]
         result = _parse(tool_propose(
             session_id=sid, role="seller", terms=OFFER_TERMS,
+            auth_token=active_session["initiator_token"],
             reasoning="Fair market value based on recent comparables.",
         ))
         assert "error" not in result
@@ -226,12 +237,14 @@ class TestPropose:
         sid = active_session["session_id"]
         result = _parse(tool_propose(
             session_id=sid, role="buyer", terms=OFFER_TERMS,
+            auth_token=active_session["responder_token"],
         ))
         assert result["from"] == "buyer_42"
 
     def test_propose_missing_session(self):
         result = _parse(tool_propose(
             session_id="fake_id", role="initiator", terms=OFFER_TERMS,
+            auth_token="fake_token",
         ))
         assert "error" in result
 
@@ -239,6 +252,7 @@ class TestPropose:
         sid = active_session["session_id"]
         result = _parse(tool_propose(
             session_id=sid, role="spectator", terms=OFFER_TERMS,
+            auth_token=active_session["initiator_token"],
         ))
         assert "error" in result
 
@@ -249,6 +263,7 @@ class TestPropose:
             terms={"price": {"value": 900}},
             offer_type="partial",
             open_terms=["warranty", "delivery"],
+            auth_token=active_session["initiator_token"],
         ))
         assert "error" not in result
 
@@ -262,6 +277,7 @@ class TestPropose:
                 "if": {"warranty": {"value": "24_months"}},
                 "then": {"price": {"value": 1100}},
             }],
+            auth_token=active_session["initiator_token"],
         ))
         assert "error" not in result
 
@@ -275,9 +291,13 @@ class TestCounter:
 
     def test_basic_counter(self, active_session):
         sid = active_session["session_id"]
-        tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
+        tool_propose(
+            session_id=sid, role="initiator", terms=OFFER_TERMS,
+            auth_token=active_session["initiator_token"],
+        )
         result = _parse(tool_counter(
             session_id=sid, role="responder", terms=COUNTER_TERMS,
+            auth_token=active_session["responder_token"],
         ))
         assert result["type"] == "negotiate.counter"
         assert result["from"] == "buyer_42"
@@ -285,9 +305,13 @@ class TestCounter:
 
     def test_counter_with_reasoning(self, active_session):
         sid = active_session["session_id"]
-        tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
+        tool_propose(
+            session_id=sid, role="initiator", terms=OFFER_TERMS,
+            auth_token=active_session["initiator_token"],
+        )
         result = _parse(tool_counter(
             session_id=sid, role="responder", terms=COUNTER_TERMS,
+            auth_token=active_session["responder_token"],
             reasoning="Price is too high for current market conditions.",
         ))
         assert "error" not in result
@@ -295,6 +319,7 @@ class TestCounter:
     def test_counter_missing_session(self):
         result = _parse(tool_counter(
             session_id="fake", role="responder", terms=COUNTER_TERMS,
+            auth_token="fake_token",
         ))
         assert "error" in result
 
@@ -308,38 +333,61 @@ class TestAccept:
 
     def test_accept_after_offer(self, active_session):
         sid = active_session["session_id"]
-        tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
-        result = _parse(tool_accept(session_id=sid, role="responder"))
+        tool_propose(
+            session_id=sid, role="initiator", terms=OFFER_TERMS,
+            auth_token=active_session["initiator_token"],
+        )
+        result = _parse(tool_accept(
+            session_id=sid, role="responder",
+            auth_token=active_session["responder_token"],
+        ))
         assert result["state"] == "agreed"
         assert result["transcript_valid"] is True
 
     def test_accept_with_reasoning(self, active_session):
         sid = active_session["session_id"]
-        tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
+        tool_propose(
+            session_id=sid, role="initiator", terms=OFFER_TERMS,
+            auth_token=active_session["initiator_token"],
+        )
         result = _parse(tool_accept(
             session_id=sid, role="buyer",
+            auth_token=active_session["responder_token"],
             reasoning="Terms are acceptable.",
         ))
         assert result["state"] == "agreed"
 
     def test_accept_after_counter_exchange(self, session_with_offers):
-        sid = session_with_offers
+        sid = session_with_offers["session_id"]
         result = _parse(tool_accept(
             session_id=sid, role="initiator",
+            auth_token=session_with_offers["initiator_token"],
             reasoning="I'll take the counter-offer terms.",
         ))
         assert result["state"] == "agreed"
 
     def test_accept_missing_session(self):
-        result = _parse(tool_accept(session_id="fake", role="responder"))
+        result = _parse(tool_accept(
+            session_id="fake", role="responder",
+            auth_token="fake_token",
+        ))
         assert "error" in result
 
     def test_cannot_accept_already_agreed(self, active_session):
         sid = active_session["session_id"]
-        tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
-        tool_accept(session_id=sid, role="responder")
+        tool_propose(
+            session_id=sid, role="initiator", terms=OFFER_TERMS,
+            auth_token=active_session["initiator_token"],
+        )
+        tool_accept(
+            session_id=sid, role="responder",
+            auth_token=active_session["responder_token"],
+        )
         # Session is now AGREED — accepting again should fail
-        result = _parse(tool_accept(session_id=sid, role="initiator"))
+        result = _parse(tool_accept(
+            session_id=sid, role="initiator",
+            auth_token=active_session["initiator_token"],
+        ))
         assert "error" in result
 
 
@@ -352,9 +400,13 @@ class TestReject:
 
     def test_basic_reject(self, active_session):
         sid = active_session["session_id"]
-        tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
+        tool_propose(
+            session_id=sid, role="initiator", terms=OFFER_TERMS,
+            auth_token=active_session["initiator_token"],
+        )
         result = _parse(tool_reject(
             session_id=sid, role="responder",
+            auth_token=active_session["responder_token"],
             reason="price_too_high",
             reasoning="The asking price exceeds my budget.",
         ))
@@ -363,13 +415,22 @@ class TestReject:
     def test_reject_without_offer(self, active_session):
         """Reject is valid from ACTIVE even without an offer exchange."""
         sid = active_session["session_id"]
-        result = _parse(tool_reject(session_id=sid, role="responder"))
+        result = _parse(tool_reject(
+            session_id=sid, role="responder",
+            auth_token=active_session["responder_token"],
+        ))
         assert result["state"] == "rejected"
 
     def test_cannot_reject_already_rejected(self, active_session):
         sid = active_session["session_id"]
-        tool_reject(session_id=sid, role="responder")
-        result = _parse(tool_reject(session_id=sid, role="initiator"))
+        tool_reject(
+            session_id=sid, role="responder",
+            auth_token=active_session["responder_token"],
+        )
+        result = _parse(tool_reject(
+            session_id=sid, role="initiator",
+            auth_token=active_session["initiator_token"],
+        ))
         assert "error" in result
 
 
@@ -382,23 +443,36 @@ class TestCommit:
 
     def test_commit_from_active(self, active_session):
         sid = active_session["session_id"]
-        tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
-        result = _parse(tool_commit(session_id=sid, role="initiator"))
+        tool_propose(
+            session_id=sid, role="initiator", terms=OFFER_TERMS,
+            auth_token=active_session["initiator_token"],
+        )
+        result = _parse(tool_commit(
+            session_id=sid, role="initiator",
+            auth_token=active_session["initiator_token"],
+        ))
         assert result["state"] == "agreed"
         assert result["transcript_valid"] is True
 
     def test_commit_with_reasoning(self, session_with_offers):
-        sid = session_with_offers
+        sid = session_with_offers["session_id"]
         result = _parse(tool_commit(
             session_id=sid, role="responder",
+            auth_token=session_with_offers["responder_token"],
             reasoning="Both parties satisfied. Finalizing deal.",
         ))
         assert result["state"] == "agreed"
 
     def test_cannot_commit_from_rejected(self, active_session):
         sid = active_session["session_id"]
-        tool_reject(session_id=sid, role="responder")
-        result = _parse(tool_commit(session_id=sid, role="initiator"))
+        tool_reject(
+            session_id=sid, role="responder",
+            auth_token=active_session["responder_token"],
+        )
+        result = _parse(tool_commit(
+            session_id=sid, role="initiator",
+            auth_token=active_session["initiator_token"],
+        ))
         assert "error" in result
 
 
@@ -411,7 +485,10 @@ class TestSessionStatus:
 
     def test_basic_status(self, active_session):
         sid = active_session["session_id"]
-        result = _parse(tool_session_status(session_id=sid))
+        result = _parse(tool_session_status(
+            session_id=sid,
+            auth_token=active_session["initiator_token"],
+        ))
         assert result["state"] == "active"
         assert result["initiator"] == "seller_01"
         assert result["responder"] == "buyer_42"
@@ -419,9 +496,10 @@ class TestSessionStatus:
         assert result["is_terminal"] is False
 
     def test_status_with_transcript(self, session_with_offers):
-        sid = session_with_offers
+        sid = session_with_offers["session_id"]
         result = _parse(tool_session_status(
             session_id=sid, include_transcript=True, transcript_limit=5,
+            auth_token=session_with_offers["initiator_token"],
         ))
         assert "transcript" in result
         assert len(result["transcript"]) > 0
@@ -429,8 +507,11 @@ class TestSessionStatus:
         assert result["transcript_length"] == 4
 
     def test_status_shows_behaviors(self, session_with_offers):
-        sid = session_with_offers
-        result = _parse(tool_session_status(session_id=sid))
+        sid = session_with_offers["session_id"]
+        result = _parse(tool_session_status(
+            session_id=sid,
+            auth_token=session_with_offers["initiator_token"],
+        ))
         behaviors = result["behaviors"]
         assert "seller_01" in behaviors
         assert "buyer_42" in behaviors
@@ -439,27 +520,45 @@ class TestSessionStatus:
 
     def test_status_after_agreement(self, active_session):
         sid = active_session["session_id"]
-        tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
-        tool_accept(session_id=sid, role="responder")
-        result = _parse(tool_session_status(session_id=sid))
+        tool_propose(
+            session_id=sid, role="initiator", terms=OFFER_TERMS,
+            auth_token=active_session["initiator_token"],
+        )
+        tool_accept(
+            session_id=sid, role="responder",
+            auth_token=active_session["responder_token"],
+        )
+        result = _parse(tool_session_status(
+            session_id=sid,
+            auth_token=active_session["initiator_token"],
+        ))
         assert result["state"] == "agreed"
         assert result["is_terminal"] is True
         assert "concluded_at" in result
 
     def test_status_missing_session(self):
-        result = _parse(tool_session_status(session_id="fake"))
+        result = _parse(tool_session_status(
+            session_id="fake",
+            auth_token="fake_token",
+        ))
         assert "error" in result
 
     def test_status_includes_timing(self, active_session):
         sid = active_session["session_id"]
-        result = _parse(tool_session_status(session_id=sid))
+        result = _parse(tool_session_status(
+            session_id=sid,
+            auth_token=active_session["initiator_token"],
+        ))
         assert result["timing"]["session_ttl"] == 86400
         assert result["timing"]["offer_ttl"] == 3600
         assert result["timing"]["max_rounds"] == 20
 
     def test_status_includes_duration(self, active_session):
         sid = active_session["session_id"]
-        result = _parse(tool_session_status(session_id=sid))
+        result = _parse(tool_session_status(
+            session_id=sid,
+            auth_token=active_session["initiator_token"],
+        ))
         assert "duration_seconds" in result
         assert result["duration_seconds"] >= 0
 
@@ -473,9 +572,18 @@ class TestSessionReceipt:
 
     def test_receipt_after_agreement(self, active_session):
         sid = active_session["session_id"]
-        tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
-        tool_accept(session_id=sid, role="responder")
-        result = _parse(tool_session_receipt(session_id=sid))
+        tool_propose(
+            session_id=sid, role="initiator", terms=OFFER_TERMS,
+            auth_token=active_session["initiator_token"],
+        )
+        tool_accept(
+            session_id=sid, role="responder",
+            auth_token=active_session["responder_token"],
+        )
+        result = _parse(tool_session_receipt(
+            session_id=sid,
+            auth_token=active_session["initiator_token"],
+        ))
         assert "receipt" in result
         receipt = result["receipt"]
         assert receipt["concordia_attestation"] == "0.1.0"
@@ -485,12 +593,19 @@ class TestSessionReceipt:
 
     def test_receipt_with_category(self, active_session):
         sid = active_session["session_id"]
-        tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
-        tool_accept(session_id=sid, role="responder")
+        tool_propose(
+            session_id=sid, role="initiator", terms=OFFER_TERMS,
+            auth_token=active_session["initiator_token"],
+        )
+        tool_accept(
+            session_id=sid, role="responder",
+            auth_token=active_session["responder_token"],
+        )
         result = _parse(tool_session_receipt(
             session_id=sid,
             category="electronics.cameras",
             value_range="500-1000_USD",
+            auth_token=active_session["initiator_token"],
         ))
         receipt = result["receipt"]
         assert receipt["meta"]["category"] == "electronics.cameras"
@@ -498,36 +613,69 @@ class TestSessionReceipt:
 
     def test_receipt_after_rejection(self, active_session):
         sid = active_session["session_id"]
-        tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
-        tool_reject(session_id=sid, role="responder", reason="too_expensive")
-        result = _parse(tool_session_receipt(session_id=sid))
+        tool_propose(
+            session_id=sid, role="initiator", terms=OFFER_TERMS,
+            auth_token=active_session["initiator_token"],
+        )
+        tool_reject(
+            session_id=sid, role="responder", reason="too_expensive",
+            auth_token=active_session["responder_token"],
+        )
+        result = _parse(tool_session_receipt(
+            session_id=sid,
+            auth_token=active_session["initiator_token"],
+        ))
         receipt = result["receipt"]
         assert receipt["outcome"]["status"] == "rejected"
         assert receipt["outcome"]["resolution_mechanism"] == "none"
 
     def test_receipt_not_available_for_active_session(self, active_session):
         sid = active_session["session_id"]
-        result = _parse(tool_session_receipt(session_id=sid))
+        result = _parse(tool_session_receipt(
+            session_id=sid,
+            auth_token=active_session["initiator_token"],
+        ))
         assert "error" in result
 
     def test_receipt_missing_session(self):
-        result = _parse(tool_session_receipt(session_id="fake"))
+        result = _parse(tool_session_receipt(
+            session_id="fake",
+            auth_token="fake_token",
+        ))
         assert "error" in result
 
     def test_receipt_has_signatures(self, active_session):
         sid = active_session["session_id"]
-        tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
-        tool_accept(session_id=sid, role="responder")
-        result = _parse(tool_session_receipt(session_id=sid))
+        tool_propose(
+            session_id=sid, role="initiator", terms=OFFER_TERMS,
+            auth_token=active_session["initiator_token"],
+        )
+        tool_accept(
+            session_id=sid, role="responder",
+            auth_token=active_session["responder_token"],
+        )
+        result = _parse(tool_session_receipt(
+            session_id=sid,
+            auth_token=active_session["initiator_token"],
+        ))
         for party in result["receipt"]["parties"]:
             assert party["signature"]  # non-empty signature
             assert len(party["signature"]) > 0
 
     def test_receipt_has_transcript_hash(self, active_session):
         sid = active_session["session_id"]
-        tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
-        tool_accept(session_id=sid, role="responder")
-        result = _parse(tool_session_receipt(session_id=sid))
+        tool_propose(
+            session_id=sid, role="initiator", terms=OFFER_TERMS,
+            auth_token=active_session["initiator_token"],
+        )
+        tool_accept(
+            session_id=sid, role="responder",
+            auth_token=active_session["responder_token"],
+        )
+        result = _parse(tool_session_receipt(
+            session_id=sid,
+            auth_token=active_session["initiator_token"],
+        ))
         assert result["receipt"]["transcript_hash"].startswith("sha256:")
 
 
@@ -545,8 +693,14 @@ class TestFullLifecycle:
         ))
         sid = session["session_id"]
 
-        tool_propose(session_id=sid, role="seller", terms=OFFER_TERMS)
-        result = _parse(tool_accept(session_id=sid, role="buyer"))
+        tool_propose(
+            session_id=sid, role="seller", terms=OFFER_TERMS,
+            auth_token=session["initiator_token"],
+        )
+        result = _parse(tool_accept(
+            session_id=sid, role="buyer",
+            auth_token=session["responder_token"],
+        ))
         assert result["state"] == "agreed"
 
     def test_multi_round_negotiation(self):
@@ -560,29 +714,33 @@ class TestFullLifecycle:
         tool_propose(session_id=sid, role="seller", terms={
             "price": {"value": 1200}, "warranty": {"value": "6_months"},
             "delivery": {"value": "2026-04-10"},
-        })
+        }, auth_token=session["initiator_token"])
 
         # Round 2: buyer counters low
         tool_counter(session_id=sid, role="buyer", terms={
             "price": {"value": 700}, "warranty": {"value": "24_months"},
             "delivery": {"value": "2026-04-30"},
-        })
+        }, auth_token=session["responder_token"])
 
         # Round 3: seller moves toward middle
         tool_counter(session_id=sid, role="seller", terms={
             "price": {"value": 950}, "warranty": {"value": "12_months"},
             "delivery": {"value": "2026-04-15"},
-        })
+        }, auth_token=session["initiator_token"])
 
         # Round 4: buyer accepts
         result = _parse(tool_accept(
             session_id=sid, role="buyer",
+            auth_token=session["responder_token"],
             reasoning="Good compromise. I accept.",
         ))
         assert result["state"] == "agreed"
 
         # Verify analytics
-        status = _parse(tool_session_status(session_id=sid))
+        status = _parse(tool_session_status(
+            session_id=sid,
+            auth_token=session["initiator_token"],
+        ))
         assert status["round_count"] == 3  # 3 offer/counter rounds
         assert status["behaviors"]["seller"]["offers_made"] == 2
         assert status["behaviors"]["buyer"]["offers_made"] == 1
@@ -590,6 +748,7 @@ class TestFullLifecycle:
         # Generate receipt
         receipt = _parse(tool_session_receipt(
             session_id=sid, category="electronics",
+            auth_token=session["initiator_token"],
         ))
         assert receipt["receipt"]["outcome"]["status"] == "agreed"
         assert receipt["receipt"]["outcome"]["rounds"] == 3
@@ -601,18 +760,28 @@ class TestFullLifecycle:
         ))
         sid = session["session_id"]
 
-        tool_propose(session_id=sid, role="seller", terms=OFFER_TERMS)
+        tool_propose(
+            session_id=sid, role="seller", terms=OFFER_TERMS,
+            auth_token=session["initiator_token"],
+        )
         tool_reject(
             session_id=sid, role="buyer",
+            auth_token=session["responder_token"],
             reason="no_deal",
             reasoning="Cannot afford at any reasonable price point.",
         )
 
-        status = _parse(tool_session_status(session_id=sid))
+        status = _parse(tool_session_status(
+            session_id=sid,
+            auth_token=session["initiator_token"],
+        ))
         assert status["state"] == "rejected"
         assert status["is_terminal"] is True
 
-        receipt = _parse(tool_session_receipt(session_id=sid))
+        receipt = _parse(tool_session_receipt(
+            session_id=sid,
+            auth_token=session["initiator_token"],
+        ))
         assert receipt["receipt"]["outcome"]["status"] == "rejected"
 
     def test_commit_flow(self):
@@ -622,10 +791,17 @@ class TestFullLifecycle:
         ))
         sid = session["session_id"]
 
-        tool_propose(session_id=sid, role="seller", terms=OFFER_TERMS)
-        tool_counter(session_id=sid, role="buyer", terms=COUNTER_TERMS)
+        tool_propose(
+            session_id=sid, role="seller", terms=OFFER_TERMS,
+            auth_token=session["initiator_token"],
+        )
+        tool_counter(
+            session_id=sid, role="buyer", terms=COUNTER_TERMS,
+            auth_token=session["responder_token"],
+        )
         result = _parse(tool_commit(
             session_id=sid, role="seller",
+            auth_token=session["initiator_token"],
             reasoning="Committing to the buyer's counter-offer terms.",
         ))
         assert result["state"] == "agreed"
@@ -637,11 +813,23 @@ class TestFullLifecycle:
         ))
         sid = session["session_id"]
 
-        tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
-        tool_counter(session_id=sid, role="responder", terms=COUNTER_TERMS)
-        tool_accept(session_id=sid, role="initiator")
+        tool_propose(
+            session_id=sid, role="initiator", terms=OFFER_TERMS,
+            auth_token=session["initiator_token"],
+        )
+        tool_counter(
+            session_id=sid, role="responder", terms=COUNTER_TERMS,
+            auth_token=session["responder_token"],
+        )
+        tool_accept(
+            session_id=sid, role="initiator",
+            auth_token=session["initiator_token"],
+        )
 
-        status = _parse(tool_session_status(session_id=sid))
+        status = _parse(tool_session_status(
+            session_id=sid,
+            auth_token=session["initiator_token"],
+        ))
         assert status["transcript_valid"] is True
         assert status["transcript_length"] == 5  # open + accept_session + offer + counter + accept
 

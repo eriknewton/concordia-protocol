@@ -368,7 +368,7 @@ class TestSanctuaryBridgeMcpTools:
 
     @pytest.fixture(autouse=True)
     def reset_bridge(self):
-        from concordia.mcp_server import _bridge_config, _store, _registry
+        from concordia.mcp_server import _bridge_config, _store, _registry, _auth
         _bridge_config.enabled = False
         _bridge_config.identity_map.clear()
         _bridge_config.did_map.clear()
@@ -377,6 +377,9 @@ class TestSanctuaryBridgeMcpTools:
         _bridge_config.reputation_on_receipt = True
         _store._sessions.clear()
         _registry._agents.clear()
+        _auth._agent_tokens.clear()
+        _auth._session_tokens.clear()
+        _auth._token_to_agent.clear()
         yield
 
     def _parse(self, result_str: str) -> dict:
@@ -464,8 +467,10 @@ class TestSanctuaryBridgeMcpTools:
             terms={"price": {"type": "numeric"}},
         ))
         sid = session["session_id"]
-        tool_propose(session_id=sid, role="initiator", terms={"price": {"value": 100}})
-        tool_accept(session_id=sid, role="responder")
+        initiator_token = session["initiator_token"]
+        responder_token = session["responder_token"]
+        tool_propose(session_id=sid, auth_token=initiator_token, role="initiator", terms={"price": {"value": 100}})
+        tool_accept(session_id=sid, auth_token=responder_token, role="responder")
 
         result = self._parse(tool_sanctuary_bridge_commit(session_id=sid))
         assert result["sanctuary_enabled"] is True
@@ -517,14 +522,18 @@ class TestSanctuaryBridgeMcpTools:
             "terms": {"price": {"type": "numeric", "label": "Price"}},
         })
         sid = session["session_id"]
+        initiator_token = session["initiator_token"]
+        responder_token = session["responder_token"]
 
         handle_tool_call("concordia_propose", {
             "session_id": sid,
+            "auth_token": initiator_token,
             "role": "initiator",
             "terms": {"price": {"value": 1000}},
         })
         handle_tool_call("concordia_accept", {
             "session_id": sid,
+            "auth_token": responder_token,
             "role": "responder",
         })
 
@@ -538,7 +547,7 @@ class TestSanctuaryBridgeMcpTools:
         # Generate receipt, then bridge to Sanctuary reputation
         receipt = handle_tool_call("concordia_session_receipt", {
             "session_id": sid,
-            "category": "electronics",
+            "auth_token": initiator_token,
         })
         assert "receipt" in receipt
 

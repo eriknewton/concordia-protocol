@@ -27,6 +27,7 @@ from concordia.degradation import (
     ProtocolProposal,
     ProtocolResponse,
 )
+from concordia.mcp_server import _auth, tool_register_agent
 
 
 # ===================================================================
@@ -411,6 +412,9 @@ class TestDiscoveryMcpTools:
         _registry._agents.clear()
         _interaction_mgr._interactions.clear()
         _interaction_mgr._proposals.clear()
+        _auth._agent_tokens.clear()
+        _auth._session_tokens.clear()
+        _auth._token_to_agent.clear()
         yield
 
     def _parse(self, result_str: str) -> dict:
@@ -510,17 +514,21 @@ class TestDiscoveryMcpTools:
         assert result["badge"]["agent_id"] == "htc_agent"
 
     def test_deregister_agent(self):
-        from concordia.mcp_server import tool_register_agent, tool_deregister_agent
-        tool_register_agent(agent_id="temp_agent")
-        result = self._parse(tool_deregister_agent(agent_id="temp_agent"))
+        from concordia.mcp_server import tool_deregister_agent
+        reg_result = self._parse(tool_register_agent(agent_id="temp_agent"))
+        token = reg_result["auth_token"]
+        result = self._parse(tool_deregister_agent(agent_id="temp_agent", auth_token=token))
         assert result["removed"] is True
 
     # -- Protocol meta-negotiation tools --
 
     def test_propose_protocol(self):
         from concordia.mcp_server import tool_propose_protocol
+        reg_result = self._parse(tool_register_agent(agent_id="concordia_agent"))
+        token = reg_result["auth_token"]
         result = self._parse(tool_propose_protocol(
             agent_id="concordia_agent",
+            auth_token=token,
             peer_id="unknown_peer",
         ))
         assert "proposal" in result
@@ -529,25 +537,37 @@ class TestDiscoveryMcpTools:
 
     def test_respond_accept(self):
         from concordia.mcp_server import tool_propose_protocol, tool_respond_to_proposal
-        prop_result = self._parse(tool_propose_protocol("a", "b"))
+        reg_a = self._parse(tool_register_agent(agent_id="a"))
+        token_a = reg_a["auth_token"]
+        reg_b = self._parse(tool_register_agent(agent_id="b"))
+        token_b = reg_b["auth_token"]
+
+        prop_result = self._parse(tool_propose_protocol(agent_id="a", auth_token=token_a, peer_id="b"))
         proposal_id = prop_result["proposal"]["proposal_id"]
 
         resp_result = self._parse(tool_respond_to_proposal(
             proposal_id=proposal_id,
             accepted=True,
             responder_agent_id="b",
+            auth_token=token_b,
         ))
         assert resp_result["resulting_mode"] == "upgraded"
 
     def test_respond_decline(self):
         from concordia.mcp_server import tool_propose_protocol, tool_respond_to_proposal
-        prop_result = self._parse(tool_propose_protocol("a", "b"))
+        reg_a = self._parse(tool_register_agent(agent_id="a"))
+        token_a = reg_a["auth_token"]
+        reg_b = self._parse(tool_register_agent(agent_id="b"))
+        token_b = reg_b["auth_token"]
+
+        prop_result = self._parse(tool_propose_protocol(agent_id="a", auth_token=token_a, peer_id="b"))
         proposal_id = prop_result["proposal"]["proposal_id"]
 
         resp_result = self._parse(tool_respond_to_proposal(
             proposal_id=proposal_id,
             accepted=False,
             responder_agent_id="b",
+            auth_token=token_b,
             reason="Not interested",
         ))
         assert resp_result["resulting_mode"] == "degraded"
@@ -556,19 +576,23 @@ class TestDiscoveryMcpTools:
 
     def test_start_degraded(self):
         from concordia.mcp_server import tool_start_degraded
+        reg_a = self._parse(tool_register_agent(agent_id="a"))
+        token_a = reg_a["auth_token"]
         result = self._parse(tool_start_degraded(
-            agent_id="a", peer_id="b",
+            agent_id="a", auth_token=token_a, peer_id="b",
         ))
         assert result["interaction"]["mode"] == "degraded"
         assert result["interaction"]["rounds"] == 0
 
     def test_degraded_message(self):
         from concordia.mcp_server import tool_start_degraded, tool_degraded_message
-        start = self._parse(tool_start_degraded(agent_id="a", peer_id="b"))
+        reg_a = self._parse(tool_register_agent(agent_id="a"))
+        token_a = reg_a["auth_token"]
+        start = self._parse(tool_start_degraded(agent_id="a", auth_token=token_a, peer_id="b"))
         iid = start["interaction"]["interaction_id"]
 
         msg = self._parse(tool_degraded_message(
-            interaction_id=iid, from_agent="a", content="I want to buy X",
+            interaction_id=iid, from_agent="a", auth_token=token_a, content="I want to buy X",
         ))
         assert msg["total_rounds"] == 1
 
@@ -576,13 +600,21 @@ class TestDiscoveryMcpTools:
         from concordia.mcp_server import (
             tool_start_degraded, tool_degraded_message, tool_efficiency_report,
         )
-        start = self._parse(tool_start_degraded(agent_id="a", peer_id="b"))
+        reg_a = self._parse(tool_register_agent(agent_id="a"))
+        token_a = reg_a["auth_token"]
+        reg_b = self._parse(tool_register_agent(agent_id="b"))
+        token_b = reg_b["auth_token"]
+
+        start = self._parse(tool_start_degraded(agent_id="a", auth_token=token_a, peer_id="b"))
         iid = start["interaction"]["interaction_id"]
 
         for i in range(6):
+            agent_id = "a" if i % 2 == 0 else "b"
+            token = token_a if i % 2 == 0 else token_b
             tool_degraded_message(
                 interaction_id=iid,
-                from_agent="a" if i % 2 == 0 else "b",
+                from_agent=agent_id,
+                auth_token=token,
                 content=f"Round {i+1}",
             )
 
@@ -610,10 +642,18 @@ class TestDiscoveryMcpTools:
             "roles": ["seller"],
         })
         assert reg["registered"] is True
+        seller_token = reg["auth_token"]
+
+        # Register the basic buyer (for auth token in response)
+        buyer_reg = handle_tool_call("concordia_register_agent", {
+            "agent_id": "basic_buyer",
+        })
+        buyer_token = buyer_reg["auth_token"]
 
         # Propose protocol to unknown peer
         prop = handle_tool_call("concordia_propose_protocol", {
             "agent_id": "concordia_seller",
+            "auth_token": seller_token,
             "peer_id": "basic_buyer",
         })
         proposal_id = prop["proposal"]["proposal_id"]
@@ -623,6 +663,7 @@ class TestDiscoveryMcpTools:
             "proposal_id": proposal_id,
             "accepted": False,
             "responder_agent_id": "basic_buyer",
+            "auth_token": buyer_token,
             "reason": "I don't know what Concordia is",
         })
         assert resp["resulting_mode"] == "degraded"
@@ -630,6 +671,7 @@ class TestDiscoveryMcpTools:
         # Start degraded interaction
         degraded = handle_tool_call("concordia_start_degraded", {
             "agent_id": "concordia_seller",
+            "auth_token": seller_token,
             "peer_id": "basic_buyer",
             "peer_status": "declined",
             "proposal_id": proposal_id,
@@ -638,19 +680,20 @@ class TestDiscoveryMcpTools:
 
         # Simulate 8 rounds of unstructured back-and-forth
         messages = [
-            ("concordia_seller", "I have a Canon R5 for sale"),
-            ("basic_buyer", "How much?"),
-            ("concordia_seller", "Asking $2200"),
-            ("basic_buyer", "Too high, I'll do $1800"),
-            ("concordia_seller", "How about $2000?"),
-            ("basic_buyer", "What about $1900 with shipping?"),
-            ("concordia_seller", "Fine, $1950 shipped"),
-            ("basic_buyer", "Deal"),
+            ("concordia_seller", seller_token, "I have a Canon R5 for sale"),
+            ("basic_buyer", buyer_token, "How much?"),
+            ("concordia_seller", seller_token, "Asking $2200"),
+            ("basic_buyer", buyer_token, "Too high, I'll do $1800"),
+            ("concordia_seller", seller_token, "How about $2000?"),
+            ("basic_buyer", buyer_token, "What about $1900 with shipping?"),
+            ("concordia_seller", seller_token, "Fine, $1950 shipped"),
+            ("basic_buyer", buyer_token, "Deal"),
         ]
-        for from_agent, content in messages:
+        for from_agent, token, content in messages:
             handle_tool_call("concordia_degraded_message", {
                 "interaction_id": iid,
                 "from_agent": from_agent,
+                "auth_token": token,
                 "content": content,
             })
 
@@ -664,10 +707,13 @@ class TestDiscoveryMcpTools:
         assert report["had_session_receipt"] is False
         assert report["had_reputation_attestation"] is False
 
-        # Verify the agent is findable via search
+        # Verify the agent is findable via search (by category + role + description)
         search = handle_tool_call("concordia_search_agents", {
             "category": "electronics",
             "role": "seller",
         })
-        assert search["count"] == 1
-        assert search["agents"][0]["agent_id"] == "concordia_seller"
+        # Should find both agents since basic_buyer has default roles including seller
+        # Filter for the specific agent we want
+        agents = [a for a in search["agents"] if a["agent_id"] == "concordia_seller"]
+        assert len(agents) == 1
+        assert agents[0]["agent_id"] == "concordia_seller"
