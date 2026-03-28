@@ -41,6 +41,18 @@ Tools — Want Registry (§7):
     concordia_search_haves    — Browse active Haves, optionally filtered by category
     concordia_want_registry_stats — Get summary statistics for the Want Registry
 
+Tools — Relay (SERVICE_ARCHITECTURE §3):
+    concordia_relay_create        — Create a relay session for message routing
+    concordia_relay_join          — Responder joins a pending relay session
+    concordia_relay_send          — Route a message through the relay to the counterparty
+    concordia_relay_receive       — Poll for pending messages (store-and-forward)
+    concordia_relay_status        — Get relay session status and participant info
+    concordia_relay_conclude      — Manually conclude a relay session
+    concordia_relay_transcript    — Retrieve the full relayed message transcript
+    concordia_relay_archive       — Archive a concluded session for compliance
+    concordia_relay_list_archives — List transcript archives
+    concordia_relay_stats         — Get relay-wide summary statistics
+
 Tools — Adoption (Viral Strategy §16, §17):
     concordia_propose_protocol    — Propose Concordia to a non-Concordia peer
     concordia_respond_to_proposal — Accept or decline a protocol proposal
@@ -76,6 +88,7 @@ from .sanctuary_bridge import (
 from .message import validate_chain
 from .offer import BasicOffer, ConditionalOffer, Condition, PartialOffer
 from .registry import AgentRegistry
+from .relay import NegotiationRelay
 from .reputation import AttestationStore, ReputationScorer, ReputationQueryHandler
 from .want_registry import WantRegistry
 from .session import InvalidTransitionError, Session
@@ -1409,6 +1422,265 @@ def tool_want_registry_stats() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Negotiation Relay — message routing and session management
+# ---------------------------------------------------------------------------
+
+_relay = NegotiationRelay()
+
+
+# ---------------------------------------------------------------------------
+# Tool: relay_create
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_relay_create",
+    description=(
+        "Create a relay session for routing messages between agents. "
+        "The relay provides store-and-forward delivery, timeout enforcement, "
+        "and transcript archival. Useful when agents lack persistent endpoints "
+        "or need firewall traversal."
+    ),
+)
+def tool_relay_create(
+    initiator_id: Annotated[str, "The initiating agent's ID"],
+    responder_id: Annotated[str | None, "The responding agent's ID (can join later if omitted)"] = None,
+    concordia_session_id: Annotated[str | None, "Link to an existing Concordia session"] = None,
+    session_ttl: Annotated[int, "Session timeout in seconds (default: 86400 = 24h)"] = 86_400,
+    auto_attest: Annotated[bool, "Auto-generate attestation on conclusion (default: true)"] = True,
+    initiator_endpoint: Annotated[str | None, "Optional callback endpoint for the initiator"] = None,
+) -> str:
+    """Create a relay session."""
+    session = _relay.create_session(
+        initiator_id=initiator_id,
+        responder_id=responder_id,
+        concordia_session_id=concordia_session_id,
+        session_ttl=session_ttl,
+        auto_attest=auto_attest,
+        initiator_endpoint=initiator_endpoint,
+    )
+    return json.dumps({
+        "session": session.to_dict(),
+        "message": (
+            f"Relay session '{session.relay_session_id}' created. "
+            + ("Responder can join with concordia_relay_join." if not responder_id else "Both parties connected.")
+        ),
+    }, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: relay_join
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_relay_join",
+    description="Responder joins a pending relay session.",
+)
+def tool_relay_join(
+    relay_session_id: Annotated[str, "The relay session to join"],
+    agent_id: Annotated[str, "The joining agent's ID"],
+    endpoint: Annotated[str | None, "Optional callback endpoint"] = None,
+) -> str:
+    """Join a relay session as the responder."""
+    session = _relay.join_session(relay_session_id, agent_id, endpoint)
+    if session is None:
+        return json.dumps({"error": f"Cannot join relay session '{relay_session_id}'. Not found or not pending."})
+    return json.dumps({
+        "joined": True,
+        "session": session.to_dict(),
+        "message": f"Agent '{agent_id}' joined relay session. Both parties connected.",
+    }, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: relay_send
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_relay_send",
+    description=(
+        "Route a message through the relay to the counterparty. "
+        "The message is stored in the transcript and placed in the "
+        "recipient's mailbox for retrieval via concordia_relay_receive."
+    ),
+)
+def tool_relay_send(
+    relay_session_id: Annotated[str, "The relay session ID"],
+    from_agent: Annotated[str, "The sending agent's ID"],
+    message_type: Annotated[str, "Message type (e.g. 'negotiate.offer', 'negotiate.accept')"],
+    payload: Annotated[dict, "The message payload"],
+    ttl: Annotated[int, "Message TTL in seconds (default: 3600)"] = 3600,
+) -> str:
+    """Send a message through the relay."""
+    msg = _relay.send_message(
+        relay_session_id=relay_session_id,
+        from_agent=from_agent,
+        message_type=message_type,
+        payload=payload,
+        ttl=ttl,
+    )
+    if msg is None:
+        return json.dumps({"error": f"Cannot send message. Session not found, not active, or agent not a participant."})
+    return json.dumps({
+        "sent": True,
+        "message": msg.to_dict(),
+    }, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: relay_receive
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_relay_receive",
+    description=(
+        "Poll for pending messages. Returns messages queued for this agent "
+        "and marks them as delivered. Store-and-forward model."
+    ),
+)
+def tool_relay_receive(
+    agent_id: Annotated[str, "The receiving agent's ID"],
+    relay_session_id: Annotated[str | None, "Filter by relay session (optional)"] = None,
+    limit: Annotated[int, "Max messages to retrieve (default: 50)"] = 50,
+) -> str:
+    """Receive pending messages from the relay."""
+    messages = _relay.receive_messages(
+        agent_id=agent_id,
+        relay_session_id=relay_session_id,
+        limit=limit,
+    )
+    return json.dumps({
+        "messages": [m.to_dict() for m in messages],
+        "count": len(messages),
+        "payloads": [m.payload for m in messages],
+    }, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: relay_status
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_relay_status",
+    description="Get the status of a relay session including participant info and message count.",
+)
+def tool_relay_status(
+    relay_session_id: Annotated[str, "The relay session ID"],
+) -> str:
+    """Get relay session status."""
+    session = _relay.get_session(relay_session_id)
+    if session is None:
+        return json.dumps({"error": f"Relay session '{relay_session_id}' not found."})
+    return json.dumps({
+        "session": session.to_dict(),
+    }, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: relay_conclude
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_relay_conclude",
+    description="Manually conclude a relay session. Use after the Concordia negotiation reaches a terminal state.",
+)
+def tool_relay_conclude(
+    relay_session_id: Annotated[str, "The relay session to conclude"],
+    reason: Annotated[str, "Reason for conclusion (e.g. 'agreed', 'rejected', 'manual')"] = "manual",
+) -> str:
+    """Conclude a relay session."""
+    session = _relay.conclude_session(relay_session_id, reason)
+    if session is None:
+        return json.dumps({"error": f"Relay session '{relay_session_id}' not found."})
+    return json.dumps({
+        "concluded": True,
+        "session": session.to_dict(),
+        "message": f"Relay session concluded (reason: {reason}). Use concordia_relay_archive to archive the transcript.",
+    }, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: relay_transcript
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_relay_transcript",
+    description="Retrieve the full relayed message transcript for a session.",
+)
+def tool_relay_transcript(
+    relay_session_id: Annotated[str, "The relay session ID"],
+    limit: Annotated[int | None, "Limit to last N messages (default: all)"] = None,
+) -> str:
+    """Get relay transcript."""
+    transcript = _relay.get_transcript(relay_session_id, limit)
+    if transcript is None:
+        return json.dumps({"error": f"Relay session '{relay_session_id}' not found."})
+    return json.dumps({
+        "relay_session_id": relay_session_id,
+        "messages": transcript,
+        "count": len(transcript),
+    }, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: relay_archive
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_relay_archive",
+    description=(
+        "Archive a concluded relay session's transcript for compliance and dispute resolution. "
+        "The transcript is frozen and stored with a configurable retention period."
+    ),
+)
+def tool_relay_archive(
+    relay_session_id: Annotated[str, "The concluded relay session to archive"],
+    retention_days: Annotated[int, "How long to retain the archive in days (default: 365)"] = 365,
+) -> str:
+    """Archive a relay session."""
+    archive = _relay.archive_session(relay_session_id, retention_days)
+    if archive is None:
+        return json.dumps({"error": f"Cannot archive session '{relay_session_id}'. Not found or not concluded."})
+    return json.dumps({
+        "archived": True,
+        "archive": archive.to_dict(),
+        "message": f"Transcript archived ({archive.message_count} messages, {retention_days}-day retention).",
+    }, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: relay_list_archives
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_relay_list_archives",
+    description="List transcript archives, optionally filtered by participant agent.",
+)
+def tool_relay_list_archives(
+    agent_id: Annotated[str | None, "Filter by participant agent ID"] = None,
+    limit: Annotated[int, "Max results (default: 20)"] = 20,
+) -> str:
+    """List transcript archives."""
+    archives = _relay.list_archives(agent_id=agent_id, limit=limit)
+    return json.dumps({
+        "archives": [a.to_dict() for a in archives],
+        "count": len(archives),
+    }, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: relay_stats
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_relay_stats",
+    description="Get relay-wide summary statistics — sessions, messages, deliveries, archives.",
+)
+def tool_relay_stats() -> str:
+    """Get relay stats."""
+    return json.dumps(_relay.stats(), indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
 # Sanctuary Bridge — optional Concordia ↔ Sanctuary integration
 # ---------------------------------------------------------------------------
 
@@ -1614,6 +1886,16 @@ def handle_tool_call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         "concordia_search_wants": tool_search_wants,
         "concordia_search_haves": tool_search_haves,
         "concordia_want_registry_stats": tool_want_registry_stats,
+        "concordia_relay_create": tool_relay_create,
+        "concordia_relay_join": tool_relay_join,
+        "concordia_relay_send": tool_relay_send,
+        "concordia_relay_receive": tool_relay_receive,
+        "concordia_relay_status": tool_relay_status,
+        "concordia_relay_conclude": tool_relay_conclude,
+        "concordia_relay_transcript": tool_relay_transcript,
+        "concordia_relay_archive": tool_relay_archive,
+        "concordia_relay_list_archives": tool_relay_list_archives,
+        "concordia_relay_stats": tool_relay_stats,
         "concordia_sanctuary_bridge_configure": tool_sanctuary_bridge_configure,
         "concordia_sanctuary_bridge_commit": tool_sanctuary_bridge_commit,
         "concordia_sanctuary_bridge_attest": tool_sanctuary_bridge_attest,
