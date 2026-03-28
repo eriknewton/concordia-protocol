@@ -1,7 +1,7 @@
 """Tests for the Concordia MCP Server (§10.2).
 
 Covers all 8 MCP tools, session lifecycle flows, error handling,
-JSON-RPC dispatch, and receipt generation.
+tool dispatch, receipt generation, and SDK integration.
 """
 
 import json
@@ -19,10 +19,19 @@ from concordia.mcp_server import (
     tool_commit,
     tool_session_status,
     tool_session_receipt,
-    _handle_jsonrpc,
+    mcp,
     _store,
 )
 from concordia.types import SessionState
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _parse(result_str: str) -> dict:
+    """Parse a JSON string tool result back to a dict."""
+    return json.loads(result_str)
 
 
 # ---------------------------------------------------------------------------
@@ -68,12 +77,13 @@ def clean_store():
 
 @pytest.fixture
 def active_session():
-    """Create an active session and return the result."""
-    return tool_open_session(
+    """Create an active session and return the parsed result."""
+    result_str = tool_open_session(
         initiator_id="seller_01",
         responder_id="buyer_42",
         terms=SAMPLE_TERMS,
     )
+    return _parse(result_str)
 
 
 @pytest.fixture
@@ -153,29 +163,38 @@ class TestOpenSession:
         assert "public_key" in result["responder"]
 
     def test_open_with_custom_timing(self):
-        result = tool_open_session(
+        result = _parse(tool_open_session(
             initiator_id="s", responder_id="b", terms=SAMPLE_TERMS,
             session_ttl=3600, offer_ttl=600, max_rounds=5,
-        )
+        ))
         assert result["timing"]["session_ttl"] == 3600
         assert result["timing"]["max_rounds"] == 5
 
     def test_open_with_metadata(self):
-        result = tool_open_session(
+        result = _parse(tool_open_session(
             initiator_id="s", responder_id="b", terms=SAMPLE_TERMS,
             metadata={"marketplace": "test_market"},
-        )
+        ))
         assert result["session_id"]  # session created successfully
 
     def test_open_with_reasoning(self):
-        result = tool_open_session(
+        result = _parse(tool_open_session(
             initiator_id="s", responder_id="b", terms=SAMPLE_TERMS,
             reasoning="Opening negotiation for a used camera.",
-        )
+        ))
         assert result["state"] == "active"
 
     def test_terms_preserved(self, active_session):
         assert active_session["terms"] == SAMPLE_TERMS
+
+    def test_returns_valid_json(self):
+        """Tool functions return valid JSON strings."""
+        result_str = tool_open_session(
+            initiator_id="s", responder_id="b", terms=SAMPLE_TERMS,
+        )
+        assert isinstance(result_str, str)
+        parsed = json.loads(result_str)
+        assert "session_id" in parsed
 
 
 # ---------------------------------------------------------------------------
@@ -187,55 +206,55 @@ class TestPropose:
 
     def test_basic_propose(self, active_session):
         sid = active_session["session_id"]
-        result = tool_propose(
+        result = _parse(tool_propose(
             session_id=sid, role="initiator", terms=OFFER_TERMS,
-        )
+        ))
         assert result["type"] == "negotiate.offer"
         assert result["from"] == "seller_01"
         assert result["round_count"] == 1
 
     def test_propose_with_reasoning(self, active_session):
         sid = active_session["session_id"]
-        result = tool_propose(
+        result = _parse(tool_propose(
             session_id=sid, role="seller", terms=OFFER_TERMS,
             reasoning="Fair market value based on recent comparables.",
-        )
+        ))
         assert "error" not in result
         assert result["message_id"]
 
     def test_propose_as_buyer(self, active_session):
         sid = active_session["session_id"]
-        result = tool_propose(
+        result = _parse(tool_propose(
             session_id=sid, role="buyer", terms=OFFER_TERMS,
-        )
+        ))
         assert result["from"] == "buyer_42"
 
     def test_propose_missing_session(self):
-        result = tool_propose(
+        result = _parse(tool_propose(
             session_id="fake_id", role="initiator", terms=OFFER_TERMS,
-        )
+        ))
         assert "error" in result
 
     def test_propose_invalid_role(self, active_session):
         sid = active_session["session_id"]
-        result = tool_propose(
+        result = _parse(tool_propose(
             session_id=sid, role="spectator", terms=OFFER_TERMS,
-        )
+        ))
         assert "error" in result
 
     def test_propose_partial_offer(self, active_session):
         sid = active_session["session_id"]
-        result = tool_propose(
+        result = _parse(tool_propose(
             session_id=sid, role="initiator",
             terms={"price": {"value": 900}},
             offer_type="partial",
             open_terms=["warranty", "delivery"],
-        )
+        ))
         assert "error" not in result
 
     def test_propose_conditional_offer(self, active_session):
         sid = active_session["session_id"]
-        result = tool_propose(
+        result = _parse(tool_propose(
             session_id=sid, role="initiator",
             terms=OFFER_TERMS,
             offer_type="conditional",
@@ -243,7 +262,7 @@ class TestPropose:
                 "if": {"warranty": {"value": "24_months"}},
                 "then": {"price": {"value": 1100}},
             }],
-        )
+        ))
         assert "error" not in result
 
 
@@ -257,9 +276,9 @@ class TestCounter:
     def test_basic_counter(self, active_session):
         sid = active_session["session_id"]
         tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
-        result = tool_counter(
+        result = _parse(tool_counter(
             session_id=sid, role="responder", terms=COUNTER_TERMS,
-        )
+        ))
         assert result["type"] == "negotiate.counter"
         assert result["from"] == "buyer_42"
         assert result["round_count"] == 2
@@ -267,16 +286,16 @@ class TestCounter:
     def test_counter_with_reasoning(self, active_session):
         sid = active_session["session_id"]
         tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
-        result = tool_counter(
+        result = _parse(tool_counter(
             session_id=sid, role="responder", terms=COUNTER_TERMS,
             reasoning="Price is too high for current market conditions.",
-        )
+        ))
         assert "error" not in result
 
     def test_counter_missing_session(self):
-        result = tool_counter(
+        result = _parse(tool_counter(
             session_id="fake", role="responder", terms=COUNTER_TERMS,
-        )
+        ))
         assert "error" in result
 
 
@@ -290,29 +309,29 @@ class TestAccept:
     def test_accept_after_offer(self, active_session):
         sid = active_session["session_id"]
         tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
-        result = tool_accept(session_id=sid, role="responder")
+        result = _parse(tool_accept(session_id=sid, role="responder"))
         assert result["state"] == "agreed"
         assert result["transcript_valid"] is True
 
     def test_accept_with_reasoning(self, active_session):
         sid = active_session["session_id"]
         tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
-        result = tool_accept(
+        result = _parse(tool_accept(
             session_id=sid, role="buyer",
             reasoning="Terms are acceptable.",
-        )
+        ))
         assert result["state"] == "agreed"
 
     def test_accept_after_counter_exchange(self, session_with_offers):
         sid = session_with_offers
-        result = tool_accept(
+        result = _parse(tool_accept(
             session_id=sid, role="initiator",
             reasoning="I'll take the counter-offer terms.",
-        )
+        ))
         assert result["state"] == "agreed"
 
     def test_accept_missing_session(self):
-        result = tool_accept(session_id="fake", role="responder")
+        result = _parse(tool_accept(session_id="fake", role="responder"))
         assert "error" in result
 
     def test_cannot_accept_already_agreed(self, active_session):
@@ -320,7 +339,7 @@ class TestAccept:
         tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
         tool_accept(session_id=sid, role="responder")
         # Session is now AGREED — accepting again should fail
-        result = tool_accept(session_id=sid, role="initiator")
+        result = _parse(tool_accept(session_id=sid, role="initiator"))
         assert "error" in result
 
 
@@ -334,23 +353,23 @@ class TestReject:
     def test_basic_reject(self, active_session):
         sid = active_session["session_id"]
         tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
-        result = tool_reject(
+        result = _parse(tool_reject(
             session_id=sid, role="responder",
             reason="price_too_high",
             reasoning="The asking price exceeds my budget.",
-        )
+        ))
         assert result["state"] == "rejected"
 
     def test_reject_without_offer(self, active_session):
         """Reject is valid from ACTIVE even without an offer exchange."""
         sid = active_session["session_id"]
-        result = tool_reject(session_id=sid, role="responder")
+        result = _parse(tool_reject(session_id=sid, role="responder"))
         assert result["state"] == "rejected"
 
     def test_cannot_reject_already_rejected(self, active_session):
         sid = active_session["session_id"]
         tool_reject(session_id=sid, role="responder")
-        result = tool_reject(session_id=sid, role="initiator")
+        result = _parse(tool_reject(session_id=sid, role="initiator"))
         assert "error" in result
 
 
@@ -364,22 +383,22 @@ class TestCommit:
     def test_commit_from_active(self, active_session):
         sid = active_session["session_id"]
         tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
-        result = tool_commit(session_id=sid, role="initiator")
+        result = _parse(tool_commit(session_id=sid, role="initiator"))
         assert result["state"] == "agreed"
         assert result["transcript_valid"] is True
 
     def test_commit_with_reasoning(self, session_with_offers):
         sid = session_with_offers
-        result = tool_commit(
+        result = _parse(tool_commit(
             session_id=sid, role="responder",
             reasoning="Both parties satisfied. Finalizing deal.",
-        )
+        ))
         assert result["state"] == "agreed"
 
     def test_cannot_commit_from_rejected(self, active_session):
         sid = active_session["session_id"]
         tool_reject(session_id=sid, role="responder")
-        result = tool_commit(session_id=sid, role="initiator")
+        result = _parse(tool_commit(session_id=sid, role="initiator"))
         assert "error" in result
 
 
@@ -392,7 +411,7 @@ class TestSessionStatus:
 
     def test_basic_status(self, active_session):
         sid = active_session["session_id"]
-        result = tool_session_status(session_id=sid)
+        result = _parse(tool_session_status(session_id=sid))
         assert result["state"] == "active"
         assert result["initiator"] == "seller_01"
         assert result["responder"] == "buyer_42"
@@ -401,9 +420,9 @@ class TestSessionStatus:
 
     def test_status_with_transcript(self, session_with_offers):
         sid = session_with_offers
-        result = tool_session_status(
+        result = _parse(tool_session_status(
             session_id=sid, include_transcript=True, transcript_limit=5,
-        )
+        ))
         assert "transcript" in result
         assert len(result["transcript"]) > 0
         # Should have open + accept_session + offer + counter = 4 messages
@@ -411,7 +430,7 @@ class TestSessionStatus:
 
     def test_status_shows_behaviors(self, session_with_offers):
         sid = session_with_offers
-        result = tool_session_status(session_id=sid)
+        result = _parse(tool_session_status(session_id=sid))
         behaviors = result["behaviors"]
         assert "seller_01" in behaviors
         assert "buyer_42" in behaviors
@@ -422,25 +441,25 @@ class TestSessionStatus:
         sid = active_session["session_id"]
         tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
         tool_accept(session_id=sid, role="responder")
-        result = tool_session_status(session_id=sid)
+        result = _parse(tool_session_status(session_id=sid))
         assert result["state"] == "agreed"
         assert result["is_terminal"] is True
         assert "concluded_at" in result
 
     def test_status_missing_session(self):
-        result = tool_session_status(session_id="fake")
+        result = _parse(tool_session_status(session_id="fake"))
         assert "error" in result
 
     def test_status_includes_timing(self, active_session):
         sid = active_session["session_id"]
-        result = tool_session_status(session_id=sid)
+        result = _parse(tool_session_status(session_id=sid))
         assert result["timing"]["session_ttl"] == 86400
         assert result["timing"]["offer_ttl"] == 3600
         assert result["timing"]["max_rounds"] == 20
 
     def test_status_includes_duration(self, active_session):
         sid = active_session["session_id"]
-        result = tool_session_status(session_id=sid)
+        result = _parse(tool_session_status(session_id=sid))
         assert "duration_seconds" in result
         assert result["duration_seconds"] >= 0
 
@@ -456,7 +475,7 @@ class TestSessionReceipt:
         sid = active_session["session_id"]
         tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
         tool_accept(session_id=sid, role="responder")
-        result = tool_session_receipt(session_id=sid)
+        result = _parse(tool_session_receipt(session_id=sid))
         assert "receipt" in result
         receipt = result["receipt"]
         assert receipt["concordia_attestation"] == "0.1.0"
@@ -468,11 +487,11 @@ class TestSessionReceipt:
         sid = active_session["session_id"]
         tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
         tool_accept(session_id=sid, role="responder")
-        result = tool_session_receipt(
+        result = _parse(tool_session_receipt(
             session_id=sid,
             category="electronics.cameras",
             value_range="500-1000_USD",
-        )
+        ))
         receipt = result["receipt"]
         assert receipt["meta"]["category"] == "electronics.cameras"
         assert receipt["meta"]["value_range"] == "500-1000_USD"
@@ -481,25 +500,25 @@ class TestSessionReceipt:
         sid = active_session["session_id"]
         tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
         tool_reject(session_id=sid, role="responder", reason="too_expensive")
-        result = tool_session_receipt(session_id=sid)
+        result = _parse(tool_session_receipt(session_id=sid))
         receipt = result["receipt"]
         assert receipt["outcome"]["status"] == "rejected"
         assert receipt["outcome"]["resolution_mechanism"] == "none"
 
     def test_receipt_not_available_for_active_session(self, active_session):
         sid = active_session["session_id"]
-        result = tool_session_receipt(session_id=sid)
+        result = _parse(tool_session_receipt(session_id=sid))
         assert "error" in result
 
     def test_receipt_missing_session(self):
-        result = tool_session_receipt(session_id="fake")
+        result = _parse(tool_session_receipt(session_id="fake"))
         assert "error" in result
 
     def test_receipt_has_signatures(self, active_session):
         sid = active_session["session_id"]
         tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
         tool_accept(session_id=sid, role="responder")
-        result = tool_session_receipt(session_id=sid)
+        result = _parse(tool_session_receipt(session_id=sid))
         for party in result["receipt"]["parties"]:
             assert party["signature"]  # non-empty signature
             assert len(party["signature"]) > 0
@@ -508,7 +527,7 @@ class TestSessionReceipt:
         sid = active_session["session_id"]
         tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
         tool_accept(session_id=sid, role="responder")
-        result = tool_session_receipt(session_id=sid)
+        result = _parse(tool_session_receipt(session_id=sid))
         assert result["receipt"]["transcript_hash"].startswith("sha256:")
 
 
@@ -521,20 +540,20 @@ class TestFullLifecycle:
 
     def test_open_propose_accept(self):
         """Simplest possible deal: open, propose, accept."""
-        session = tool_open_session(
+        session = _parse(tool_open_session(
             initiator_id="seller", responder_id="buyer", terms=SAMPLE_TERMS,
-        )
+        ))
         sid = session["session_id"]
 
         tool_propose(session_id=sid, role="seller", terms=OFFER_TERMS)
-        result = tool_accept(session_id=sid, role="buyer")
+        result = _parse(tool_accept(session_id=sid, role="buyer"))
         assert result["state"] == "agreed"
 
     def test_multi_round_negotiation(self):
         """Multiple rounds of offers and counters before agreement."""
-        session = tool_open_session(
+        session = _parse(tool_open_session(
             initiator_id="seller", responder_id="buyer", terms=SAMPLE_TERMS,
-        )
+        ))
         sid = session["session_id"]
 
         # Round 1: seller opens high
@@ -556,30 +575,30 @@ class TestFullLifecycle:
         })
 
         # Round 4: buyer accepts
-        result = tool_accept(
+        result = _parse(tool_accept(
             session_id=sid, role="buyer",
             reasoning="Good compromise. I accept.",
-        )
+        ))
         assert result["state"] == "agreed"
 
         # Verify analytics
-        status = tool_session_status(session_id=sid)
+        status = _parse(tool_session_status(session_id=sid))
         assert status["round_count"] == 3  # 3 offer/counter rounds
         assert status["behaviors"]["seller"]["offers_made"] == 2
         assert status["behaviors"]["buyer"]["offers_made"] == 1
 
         # Generate receipt
-        receipt = tool_session_receipt(
+        receipt = _parse(tool_session_receipt(
             session_id=sid, category="electronics",
-        )
+        ))
         assert receipt["receipt"]["outcome"]["status"] == "agreed"
         assert receipt["receipt"]["outcome"]["rounds"] == 3
 
     def test_rejection_flow(self):
         """Open, propose, reject, generate receipt."""
-        session = tool_open_session(
+        session = _parse(tool_open_session(
             initiator_id="seller", responder_id="buyer", terms=SAMPLE_TERMS,
-        )
+        ))
         sid = session["session_id"]
 
         tool_propose(session_id=sid, role="seller", terms=OFFER_TERMS)
@@ -589,40 +608,40 @@ class TestFullLifecycle:
             reasoning="Cannot afford at any reasonable price point.",
         )
 
-        status = tool_session_status(session_id=sid)
+        status = _parse(tool_session_status(session_id=sid))
         assert status["state"] == "rejected"
         assert status["is_terminal"] is True
 
-        receipt = tool_session_receipt(session_id=sid)
+        receipt = _parse(tool_session_receipt(session_id=sid))
         assert receipt["receipt"]["outcome"]["status"] == "rejected"
 
     def test_commit_flow(self):
         """Open, exchange offers, commit to finalize."""
-        session = tool_open_session(
+        session = _parse(tool_open_session(
             initiator_id="seller", responder_id="buyer", terms=SAMPLE_TERMS,
-        )
+        ))
         sid = session["session_id"]
 
         tool_propose(session_id=sid, role="seller", terms=OFFER_TERMS)
         tool_counter(session_id=sid, role="buyer", terms=COUNTER_TERMS)
-        result = tool_commit(
+        result = _parse(tool_commit(
             session_id=sid, role="seller",
             reasoning="Committing to the buyer's counter-offer terms.",
-        )
+        ))
         assert result["state"] == "agreed"
 
     def test_transcript_integrity(self):
         """Verify the hash chain remains valid through a full negotiation."""
-        session = tool_open_session(
+        session = _parse(tool_open_session(
             initiator_id="s", responder_id="b", terms=SAMPLE_TERMS,
-        )
+        ))
         sid = session["session_id"]
 
         tool_propose(session_id=sid, role="initiator", terms=OFFER_TERMS)
         tool_counter(session_id=sid, role="responder", terms=COUNTER_TERMS)
         tool_accept(session_id=sid, role="initiator")
 
-        status = tool_session_status(session_id=sid)
+        status = _parse(tool_session_status(session_id=sid))
         assert status["transcript_valid"] is True
         assert status["transcript_length"] == 5  # open + accept_session + offer + counter + accept
 
@@ -662,78 +681,48 @@ class TestToolDispatcher:
 
 
 # ---------------------------------------------------------------------------
-# JSON-RPC protocol handling
+# SDK integration
 # ---------------------------------------------------------------------------
 
-class TestJsonRpc:
-    """Tests for the JSON-RPC 2.0 server layer."""
+class TestSdkIntegration:
+    """Tests for official MCP SDK integration."""
 
-    def test_initialize(self):
-        response = _handle_jsonrpc({
-            "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {},
-        })
-        assert response["id"] == 1
-        assert response["result"]["serverInfo"]["name"] == "concordia-mcp"
-        assert "tools" in response["result"]["capabilities"]
+    def test_server_instance_exists(self):
+        """The FastMCP server instance is properly configured."""
+        assert mcp.name == "concordia-mcp"
 
-    def test_tools_list(self):
-        response = _handle_jsonrpc({
-            "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {},
-        })
-        tools = response["result"]["tools"]
+    def test_tools_registered_with_sdk(self):
+        """All 8 tools are registered with the FastMCP tool manager."""
+        tools = mcp._tool_manager.list_tools()
         assert len(tools) == 8
-        tool_names = {t["name"] for t in tools}
+        tool_names = {t.name for t in tools}
         assert "concordia_open_session" in tool_names
         assert "concordia_propose" in tool_names
+        assert "concordia_counter" in tool_names
         assert "concordia_accept" in tool_names
+        assert "concordia_reject" in tool_names
+        assert "concordia_commit" in tool_names
+        assert "concordia_session_status" in tool_names
         assert "concordia_session_receipt" in tool_names
 
-    def test_tools_call(self):
-        response = _handle_jsonrpc({
-            "jsonrpc": "2.0", "id": 3, "method": "tools/call",
-            "params": {
-                "name": "concordia_open_session",
-                "arguments": {
-                    "initiator_id": "s", "responder_id": "b",
-                    "terms": SAMPLE_TERMS,
-                },
-            },
-        })
-        assert response["id"] == 3
-        content = response["result"]["content"]
-        assert len(content) == 1
-        assert content[0]["type"] == "text"
-        parsed = json.loads(content[0]["text"])
-        assert "session_id" in parsed
+    def test_tools_have_schemas(self):
+        """Each registered tool has auto-generated parameter schemas."""
+        tools = mcp._tool_manager.list_tools()
+        for tool in tools:
+            assert tool.parameters is not None
+            assert tool.parameters.get("type") == "object"
+            assert "properties" in tool.parameters
 
-    def test_tools_call_error(self):
-        response = _handle_jsonrpc({
-            "jsonrpc": "2.0", "id": 4, "method": "tools/call",
-            "params": {"name": "concordia_session_status", "arguments": {
-                "session_id": "nonexistent",
-            }},
-        })
-        content = response["result"]["content"]
-        parsed = json.loads(content[0]["text"])
-        assert "error" in parsed
-        assert response["result"]["isError"] is True
-
-    def test_unknown_method(self):
-        response = _handle_jsonrpc({
-            "jsonrpc": "2.0", "id": 5, "method": "unknown/method", "params": {},
-        })
-        assert "error" in response
-        assert response["error"]["code"] == -32601
-
-    def test_notification_no_response(self):
-        response = _handle_jsonrpc({
-            "jsonrpc": "2.0", "method": "notifications/initialized", "params": {},
-        })
-        assert response == {}
+    def test_tools_have_descriptions(self):
+        """Each registered tool has a description."""
+        tools = mcp._tool_manager.list_tools()
+        for tool in tools:
+            assert tool.description
+            assert len(tool.description) > 10
 
 
 # ---------------------------------------------------------------------------
-# Tool definitions schema validation
+# Tool definitions (via get_tool_definitions helper)
 # ---------------------------------------------------------------------------
 
 class TestToolDefinitions:
@@ -759,7 +748,10 @@ class TestToolDefinitions:
         assert len(get_tool_definitions()) == 8
 
     def test_tool_names_match_handlers(self):
-        from concordia.mcp_server import _TOOL_HANDLERS
+        from concordia.mcp_server import handle_tool_call
         def_names = {t["name"] for t in get_tool_definitions()}
-        handler_names = set(_TOOL_HANDLERS.keys())
-        assert def_names == handler_names
+        # Verify each defined tool dispatches without "Unknown tool" error
+        for name in def_names:
+            result = handle_tool_call(name, {})
+            if "error" in result:
+                assert "Unknown tool" not in result["error"]

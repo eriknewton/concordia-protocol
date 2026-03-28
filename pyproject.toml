@@ -26,6 +26,7 @@ classifiers = [
 dependencies = [
     "cryptography>=42.0",
     "jsonschema>=4.20",
+    "mcp>=1.0",
 ]
 
 [project.optional-dependencies]
