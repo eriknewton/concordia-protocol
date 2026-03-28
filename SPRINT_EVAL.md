@@ -1,0 +1,219 @@
+# SPRINT_EVAL.md — SEC-007: Independent QA Evaluation
+
+**Date:** 2026-03-28
+**Evaluator posture:** Skeptical QA — did not write this code, does not trust self-assessment.
+**Finding:** SEC-007 — Concordia Has Zero Caller Authentication: Any MCP Client Can Impersonate Any Agent
+**Branch:** `security-review`
+
+---
+
+## 1. ROOT CAUSE
+
+**Question:** The finding is that any MCP client can impersonate any agent — zero caller authentication. Does the fix address the root cause?
+
+**Verdict: PASS.**
+
+The root cause was that every identity-dependent tool accepted `agent_id`, `role`, `initiator_id`, `responder_id`, or `from_agent` as plain trusted strings with no authentication binding. The fix introduces bearer-token authentication at two scopes (agent-scoped and session-scoped) via a new `AuthTokenStore` class in `concordia/auth.py`.
+
+I independently traced the validation path for representative tools:
+
+- `tool_propose` (line 378): `auth_token` is a required parameter. Line 389 calls `_auth.validate_session_token(session_id, role, auth_token)` — this is the **first executable line** of the handler, before `_store.get()` (line 391) or any state mutation. If validation fails, `_auth_error()` returns immediately.
+- `tool_deregister_agent` (line 1044): `auth_token` is required. Line 1049 validates via `_auth.validate_agent_token(agent_id, auth_token)` before `_registry.deregister()` at line 1051.
+- `tool_relay_receive` (line 1669): `auth_token` required. Line 1676 validates before any relay interaction.
+
+I confirmed via grep that **24 identity-dependent tools** have `auth_token` validation, and in every case the validation precedes any state access or mutation. An unauthenticated caller receives `{"error": "Authentication required: invalid or missing auth_token for '<identity>'."}` — an explicit rejection, not a missing-parameter error. The error message is produced by `_auth_error()` (line 224), which uses a static template that does not leak the expected token value.
+
+The `_auth_error` function interpolates the identity string into the error message. This identity string is user-controlled (it's the claimed `agent_id` or role). The interpolation is into a JSON string value via `json.dumps`, not into any executable context. This is safe.
+
+---
+
+## 2. TOKEN SECURITY
+
+### 2a. Cryptographically secure source
+
+**Verdict: PASS.**
+
+`generate_token()` at `auth.py:23` uses `secrets.token_hex(32)`, which produces 256 bits (64 hex characters) from the OS CSPRNG (`os.urandom` under the hood). This is not `random.random()`, not `uuid4()`, not `hashlib`. The `secrets` module is the stdlib-recommended source for security-sensitive randomness.
+
+### 2b. Constant-time comparison
+
+**Verdict: PASS.**
+
+`validate_agent_token()` at `auth.py:69` uses `hmac.compare_digest(expected, token)`. `validate_session_token()` at `auth.py:111` uses the same. `get_any_session_role()` at `auth.py:117` also uses `hmac.compare_digest`. All three validation paths use constant-time comparison. No equality operator (`==`) is used for token comparison anywhere in `auth.py`.
+
+### 2c. Token revocation
+
+**Verdict: CONDITIONAL PASS.**
+
+`revoke_agent_token()` at `auth.py:55-59` removes the token from both `_agent_tokens` and `_token_to_agent` dicts. It is called from `tool_deregister_agent` (mcp_server.py:1052) after successful deregistration. A revoked token would fail `validate_agent_token()` because the `_agent_tokens.get(agent_id)` lookup returns `None` at line 67, causing the function to return `False`.
+
+However, **there is no test that verifies a revoked token is rejected.** `TestDeregisterAuth.test_deregister_accepts_correct_token` (test_authentication.py:226-232) calls deregister with the correct token and asserts `removed: True`, but does not attempt to use the revoked token afterward. This is a gap — the revocation code path is untested.
+
+Additionally, there is no revocation mechanism for session-scoped tokens. Once issued, session tokens remain valid for the lifetime of the in-memory store. This is consistent with Concordia's in-memory architecture (sessions themselves are ephemeral), but it means a leaked session token cannot be invalidated without restarting the server.
+
+Re-registration of the same `agent_id` (line 44-53 of auth.py) does correctly revoke the old token and issue a new one — the old token is removed from `_token_to_agent` at line 50. This is good defensive behavior.
+
+### 2d. Token unpredictability
+
+**Verdict: PASS.**
+
+Tokens are `secrets.token_hex(32)` — 256 bits of OS-level randomness. No sequential component, no timestamp, no agent_id derivation. Tokens cannot be inferred or predicted.
+
+---
+
+## 3. REGRESSION TESTS
+
+**File:** `tests/test_authentication.py` (312 lines, 17 tests in 9 test classes)
+
+**Verdict: CONDITIONAL PASS.**
+
+**Present and verified:**
+
+| Test Scenario | Test(s) | Verified |
+|---|---|---|
+| No token → rejected | `TestNoToken` (3 tests): propose, accept, session_status with `auth_token=""` | PASS — all assert `"error" in result` and `"Authentication required" in result["error"]` |
+| Wrong token → rejected | `TestWrongToken` (2 tests): propose and reject with fabricated 64-char hex | PASS |
+| Correct token → succeeds | `TestCorrectToken` (2 tests): propose with initiator, counter with responder | PASS |
+| Role isolation | `TestRoleIsolation` (2 tests): initiator token as responder and vice versa | PASS |
+| Cross-agent deregistration rejected | `TestDeregisterAuth` (2 tests) | PASS |
+| Cross-agent relay receive rejected | `TestRelayAuth` (1 test) | PASS |
+| Token issuance verified | `TestTokenIssuance` (2 tests): 64-char hex, distinct tokens | PASS |
+| Public tools without tokens | `TestPublicTools` (2 tests): search_agents, reputation_score | PASS |
+| Cross-agent want withdrawal rejected | `TestWantAuth` (1 test) | PASS |
+
+**Missing:**
+
+- **No revoked-token test.** There is no test that: (1) registers an agent, (2) deregisters the agent (which revokes the token), (3) attempts to use the revoked token and asserts rejection. The revocation code path (`revoke_agent_token`) is exercised only as a side effect of deregistration but never verified to actually block subsequent use.
+
+**Full test suite (independently executed):**
+
+```
+458 passed in 0.42s
+```
+
+441 original + 17 new = 458. All passing. Matches the sprint result claim.
+
+---
+
+## 4. SCOPE CREEP CHECK
+
+**Sprint result claims SEC-008, SEC-009, and SEC-015 are closed as collateral.**
+
+### SEC-008 (Agent deregistration has no ownership verification)
+
+**Verdict: Legitimate collateral closure.**
+
+SEC-008's root cause was that `concordia_deregister_agent` accepted any `agent_id` without verifying the caller owned it. The fix adds `auth_token` validation at mcp_server.py:1049 — the caller must present the token that was issued when that agent was registered. This directly and naturally addresses SEC-008 as a consequence of the authentication layer. No separate, unrelated code was needed.
+
+### SEC-009 (Relay: any agent can read any other agent's messages)
+
+**Verdict: Legitimate collateral closure.**
+
+SEC-009's root cause was that `concordia_relay_receive` trusted the `agent_id` parameter. The fix adds `auth_token` validation at mcp_server.py:1676 — the caller must present the agent token matching the claimed `agent_id`. This directly addresses SEC-009. The `TestRelayAuth.test_relay_receive_rejects_wrong_agent` test (line 238-255) explicitly tests this scenario.
+
+### SEC-015 (Want/Have registry has no identity verification)
+
+**Verdict: Legitimate collateral closure.**
+
+SEC-015's root cause was that `post_want`, `post_have`, `withdraw_want`, and `withdraw_have` accepted `agent_id` without verification. The fix adds `auth_token` validation to all four tools (lines 1281, 1331, 1407, 1435 of mcp_server.py). Additionally, `withdraw_want` and `withdraw_have` now perform ownership verification — they check that the authenticated agent actually owns the want/have being withdrawn. The `TestWantAuth` test (line 289-311) verifies cross-agent withdrawal is rejected.
+
+**All three collateral closures are natural consequences of the authentication layer. No unrelated changes were bundled.**
+
+---
+
+## 5. PUBLIC SURFACE
+
+**Question:** Can the tools left open be used to exfiltrate private state or manipulate identity-dependent data?
+
+**Verdict: CONDITIONAL PASS.**
+
+The sprint contract and result identify these tools as public (no token required):
+
+**Safe public tools (read-only, no private data):**
+- `concordia_search_agents`, `concordia_agent_card`, `concordia_preferred_badge` — return public registry data (agent_id, roles, categories). No private keys, no tokens, no deal terms.
+- `concordia_search_wants`, `concordia_search_haves`, `concordia_find_matches`, `concordia_want_registry_stats`, `concordia_get_want`, `concordia_get_have` — return public marketplace data.
+- `concordia_reputation_query`, `concordia_reputation_score` — return public reputation data. Attestations by design contain behavioral signals only, not deal terms (per CLAUDE.md §8).
+- `concordia_relay_stats` — returns aggregate statistics only.
+- `concordia_efficiency_report` — returns interaction analysis by `interaction_id`. Requires knowing the ID, which is opaque.
+
+**Entry points (must be public to bootstrap):**
+- `concordia_open_session` — creates a session and returns tokens. This must be public because it is the token issuance point. A caller can open sessions between any two agent IDs, but this is by design — the authentication prevents *impersonation within* sessions, not session creation. This is consistent with the sprint contract's threat model.
+- `concordia_register_agent` — registers an agent and returns a token. Same reasoning.
+
+**Tools with residual risk (not token-gated, flagged by sprint result):**
+- `concordia_relay_conclude` — any caller can conclude any relay session. Requires knowing the `relay_session_id`.
+- `concordia_relay_archive` — any caller can archive any concluded relay session.
+- `concordia_relay_transcript` — access control is optional (the `agent_id` parameter is `None` by default). If omitted, the full transcript is returned to any caller. This is a **data exposure risk**: relay transcripts contain negotiation messages that may include sensitive terms and strategies.
+- `concordia_relay_list_archives` — returns archive metadata for all participants.
+- `concordia_relay_status` — returns session details including participant IDs.
+- `concordia_session_list` (if it exists) — sprint result notes this is unrestricted.
+- `concordia_sanctuary_bridge_commit` — generates commitment payloads including agreed terms. No auth check. Requires knowing the session ID.
+- `concordia_sanctuary_bridge_attest` — accepts arbitrary attestation dicts with no auth check.
+
+The sprint result *does* disclose items 4-6 under "ADJACENT FINDINGS NOTICED (NOT FIXED)" which is appropriate transparency. However, `relay_transcript` without a mandatory `agent_id` and auth check is a meaningful data exposure path, and `sanctuary_bridge_commit`/`sanctuary_bridge_attest` operating without tokens means the bridge boundary remains unauthenticated — partially undermining the sovereignty model described in CLAUDE.md §4.
+
+These are **not regressions** introduced by this sprint — they are pre-existing gaps that the sprint did not claim to fix. They should be tracked as follow-up findings.
+
+---
+
+## 6. PROMPT INJECTION
+
+**Question:** Does any authentication input path accept user-controlled strings that could reach a model prompt unsanitized?
+
+**Verdict: PASS.**
+
+The sprint contract addresses this at section "PROMPT INJECTION CONSIDERATION." I verified independently:
+
+1. The `auth_token` parameter is a random hex string. Validation is `hmac.compare_digest(expected, token)` — a byte comparison, not a parse or eval.
+2. The `_auth_error()` helper at line 224-232 interpolates the `identity` string (user-controlled) into a JSON string value via `json.dumps()`. This is a data serialization path, not a prompt construction path. The resulting JSON is returned as the MCP tool response. No part of the authentication flow constructs prompts, calls LLMs, or feeds user input into any execution context beyond string formatting.
+3. The `_canonical_role()` method at line 78-85 normalizes role strings via `.lower()` and string comparison. No eval, no regex, no dynamic dispatch on the role value.
+4. Token storage uses `dict[str, str]` and `dict[tuple[str, str], str]` — Python dicts with string keys and values. No serialization to external stores, no SQL, no command construction.
+
+No new prompt injection surface is introduced. The existing prompt injection surface (acknowledged in the sprint contract as "SEC-ADD-01, SEC-ADD-02") remains open and is out of scope for this sprint.
+
+---
+
+## GRADE: CONDITIONAL PASS
+
+The fix correctly addresses the SEC-007 root cause. Token generation is cryptographically sound, validation uses constant-time comparison, and all 24 identity-dependent tools are gated. The test suite passes at 458/458. The collateral closures of SEC-008, SEC-009, and SEC-015 are legitimate. No prompt injection surface is introduced.
+
+**Conditions for full PASS (must be addressed before SEC-007 can be marked RESOLVED):**
+
+1. **Add a revoked-token regression test.** A test must: register an agent, deregister the agent (triggering `revoke_agent_token`), then attempt an identity-dependent operation with the revoked token and assert rejection. Without this test, the revocation path is unverified. This is a test-only change — no source code modification needed.
+
+2. **Document the relay transcript/conclude/archive auth gap as a tracked finding.** `concordia_relay_transcript` with no mandatory `agent_id` exposes full relay transcripts to any caller who knows the session ID. `concordia_relay_conclude` allows any caller to terminate any relay session. These are pre-existing gaps, not regressions from this sprint, but they should be tracked explicitly (e.g., as SEC-025 or similar) rather than left as informal notes in SPRINT_RESULT.md.
+
+**Non-blocking observations for follow-up:**
+
+- Session tokens have no revocation mechanism. A leaked session token remains valid until server restart. Acceptable for v0.1.0 but should be addressed before production deployment.
+- `concordia_sanctuary_bridge_commit` and `concordia_sanctuary_bridge_attest` operate without authentication. Since these generate payloads for Sanctuary (which independently verifies cryptographically), the risk is limited to information disclosure of agreed terms and potential spam. Still, token-gating these tools would be consistent with the authentication model.
+- No token rotation mechanism exists. Re-registration is the only way to get a new agent token. Acceptable for v0.1.0.
+- The `concordia_open_session` tool allows any caller to open sessions between arbitrary agent IDs. This is acknowledged in the threat model as a design choice (authentication prevents impersonation *within* sessions). However, it means a single MCP client can still create sessions and drive one side to completion using the issued tokens. The Sybil detector remains the only defense against fabricated reputation from self-dealing sessions.
+
+---
+
+## SEC-007 CONDITIONAL PASS — Follow-Up Resolution (2026-03-28)
+
+**Evaluator:** Targeted re-check of the two conditions from the CONDITIONAL PASS evaluation.
+
+**CONDITION 1 — Revocation test: PASS**
+
+`test_revoked_token_rejected_after_deregistration()` in `tests/test_authentication.py` (line 234) satisfies all four requirements:
+- (a) Registers `agent_a` via `tool_register_agent` and captures `auth_token` ✓
+- (b) Confirms the token works by calling `tool_post_want` and asserting success ✓
+- (c) Deregisters `agent_a` via `tool_deregister_agent` (which triggers `revoke_agent_token`) and asserts `removed is True` ✓
+- (d) Attempts `tool_post_want` with the revoked token and asserts `"Authentication required"` in the error, plus explicitly asserts `"not found"` is NOT in the error ✓
+
+Full test suite: **459/459 passed** (up from 458 at original evaluation — the new revocation test accounts for the +1).
+
+**CONDITION 2 — Relay gaps logged: PASS**
+
+HP-16 and HP-17 are present in REMEDIATION_PLAN.md Section 2 (High Priority):
+- **HP-16** correctly identifies `concordia_relay_transcript` as exposing full session transcripts to unauthenticated callers and prescribes adding `auth_token`/`agent_id` validation ✓
+- **HP-17** correctly identifies `concordia_relay_conclude` as allowing any caller to terminate any relay session and prescribes the same auth gating ✓
+- Both entries use the standard format (`Finding`, `Remediation`, `Effort`, `Dependencies`) consistent with HP-14/HP-15 and other Section 2 entries ✓
+- Both reference SEC-007 evaluator condition 2 as provenance ✓
+
+**OVERALL GRADE: PASS**
+
+Both conditions from the CONDITIONAL PASS have been resolved. SEC-007 may be marked RESOLVED.
