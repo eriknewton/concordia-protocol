@@ -217,3 +217,183 @@ HP-16 and HP-17 are present in REMEDIATION_PLAN.md Section 2 (High Priority):
 **OVERALL GRADE: PASS**
 
 Both conditions from the CONDITIONAL PASS have been resolved. SEC-007 may be marked RESOLVED.
+
+---
+
+# SPRINT_EVAL.md — SEC-010: Independent QA Evaluation
+
+**Date:** 2026-03-28
+**Evaluator posture:** Skeptical QA — did not write this code, does not trust self-assessment.
+**Finding:** SEC-010 — Concordia Session State Machine Does Not Verify Message Signatures
+**Branch:** `security-review`
+
+---
+
+## 1. ROOT CAUSE
+
+**Question:** Does the fix make verification mandatory on every message application, or only on some paths? Is there any code path where a message is accepted into the state machine without signature verification?
+
+**Verdict: PASS.**
+
+I traced the execution path in `session.py:139-220`. The `apply_message()` method has the following structure:
+
+1. Lines 164-187: **Signature verification block** — runs first, before any state change.
+   - Line 165-168: Extracts `agent_id` from `message["from"]["agent_id"]`. If missing → `InvalidSignatureError`.
+   - Line 171-175: Extracts `signature` from `message["signature"]`. If missing or empty → `InvalidSignatureError`.
+   - Line 177-181: Calls `public_key_resolver(agent_id)`. If `None` → `InvalidSignatureError`.
+   - Line 183-187: Calls `verify_signature(message, signature, public_key)`. If `False` → `InvalidSignatureError`.
+2. Lines 189-220: State transition, transcript append, and behavioral tracking — only reachable if all four verification checks pass.
+
+All four rejection paths raise `InvalidSignatureError` before any of the following occur: `_TRANSITIONS` lookup (line 193), `self.transcript.append()` (line 202), `_track_behavior()` (line 210), or `self.state = new_state` (line 214). There is no early return, no try/except that swallows errors, and no conditional bypass.
+
+I verified callers of `apply_message()`:
+- **Production:** Only `Agent._send()` at `agent.py:298` calls `session.apply_message(msg, self._public_key_resolver)`. The resolver is always passed.
+- **Tests:** All 10 test methods in `test_session_signature_verification.py` pass a resolver argument. The method signature has no default value for `public_key_resolver`, so calling without it would raise `TypeError`.
+- **MCP server:** `mcp_server.py` never calls `apply_message()` directly. It reads `session.transcript` for display/validation but never appends to it.
+
+I also checked for direct transcript manipulation outside `apply_message()`. The only `transcript.append` in the codebase is at `relay.py:368`, but that operates on a `RelaySession` object (a completely separate dataclass from `session.py`'s `Session` class), not the protocol session.
+
+**Conclusion:** There is no code path where a message enters the `Session` state machine without passing all four signature verification checks.
+
+---
+
+## 2. CLUSTER CONTRACT CONFORMANCE
+
+**Question:** Does SEC-010 conform to the SEC-005 mandatory resolver pattern?
+
+**Verdict: PASS.**
+
+### 2a. `public_key_resolver` is required, not optional
+
+At `session.py:142`:
+```python
+public_key_resolver: Callable[[str], Ed25519PublicKey | None],
+```
+No default value. No `Optional` wrapper. No `= None`. Calling `apply_message(msg)` without a resolver raises `TypeError: apply_message() missing 1 required positional argument: 'public_key_resolver'`. Verified by inspection — this is enforced by Python's function signature mechanics.
+
+### 2b. Unresolvable agent_id raises `InvalidSignatureError`, not a warning
+
+At `session.py:178-181`:
+```python
+if public_key is None:
+    raise InvalidSignatureError(
+        f"Unknown agent identity '{agent_id}' — resolver returned None"
+    )
+```
+This is a hard rejection — `raise`, not `warnings.warn()` or `logging.warning()`. No message is appended to the transcript, no state transition occurs.
+
+### 2c. `Session` has no import of or reference to any specific key store
+
+I verified `session.py` imports:
+- `from .signing import KeyPair, verify_signature` — cryptographic primitives, not storage
+- `from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey` — type annotation only
+- `from typing import Callable` — type annotation only
+
+No import of `AuthTokenStore`, no import of any registry or store module. The `_party_keys` dict is an internal convenience cache populated via `add_party()` — it is not a key store. The `public_key_resolver` callback is the sole mechanism for key resolution, and it is injected by the caller (Agent), not by Session itself.
+
+**Conclusion:** All three cluster contract requirements are met point-for-point.
+
+---
+
+## 3. HASH CHAIN INTEGRITY
+
+**Question:** Does the fix intercept forged messages before they reach the hash chain?
+
+**Verdict: PASS.**
+
+The critical ordering in `apply_message()`:
+1. **Line 164-187:** Signature verification (all four checks)
+2. **Line 202:** `self.transcript.append(message)` — this is the hash chain append
+
+If any verification check fails, `InvalidSignatureError` is raised at lines 168, 174, 180, or 185. The exception propagates immediately — Python does not execute subsequent lines after a `raise`. Line 202 (`transcript.append`) is unreachable on any rejection path.
+
+I confirmed this with the test `TestStateUnchangedOnRejection.test_state_unchanged_on_forged_signature` (test file lines 230-269):
+- Applies a valid OPEN message (transcript length = 1)
+- Attempts a forged ACCEPT_SESSION message
+- Asserts `InvalidSignatureError` raised
+- Asserts `len(session.transcript) == transcript_len_before` (still 1)
+- Asserts `session.state == state_before` (still PROPOSED)
+- Asserts `session.round_count == round_count_before`
+
+**Conclusion:** Forged messages are rejected before any transcript append or state transition. The hash chain cannot be poisoned by unsigned or mis-signed messages.
+
+---
+
+## 4. REGRESSION TESTS
+
+**File:** `tests/test_session_signature_verification.py` (287 lines, 10 tests in 7 test classes)
+
+### Tests present and verified:
+
+| Required Test | Test Class/Method | Verified |
+|---|---|---|
+| (a) Valid signature accepted | `TestValidSignedMessageAccepted`: `test_full_negotiation_with_signatures` (end-to-end via Agent API) + `test_apply_message_with_valid_signature` (direct) | PASS |
+| (b) Forged signature rejected before state change | `TestForgedSignatureRejected.test_tampered_signature_rejected` — flips 8 bytes of signature, asserts `InvalidSignatureError` with "Invalid signature" | PASS |
+| (c) Missing signature rejected | `TestMissingSignatureRejected`: `test_no_signature_field` (del msg["signature"]) + `test_empty_signature_string` (msg["signature"] = "") | PASS |
+| (d) Unknown agent_id rejected | `TestUnknownAgentRejected.test_unknown_agent_id_rejected` — "agent_unknown" not in resolver, asserts "Unknown agent identity" | PASS |
+
+Additional tests beyond the minimum:
+- `TestResolverReturningNone` — explicit null-resolver test (cluster contract)
+- `TestWrongKeyRejected` — sign with key_a, verify with key_b
+- `TestStateUnchangedOnRejection` — two tests: forged sig + missing from field, both verify state/transcript/round unchanged
+
+### Full test suite:
+
+```
+469 passed in 0.47s
+```
+
+Independently executed. Baseline was 459. New count: 469 (+10 regression tests). No failures, no skips, no warnings.
+
+**Verdict: PASS.**
+
+---
+
+## 5. SCOPE
+
+**Question:** Does commit `7059089` touch exactly 6 files?
+
+**Verdict: PASS.**
+
+`git show --stat 7059089` output confirms exactly 6 files:
+
+| File | Change |
+|---|---|
+| `SPRINT_CONTRACT.md` | 219 ++/-- |
+| `SPRINT_RESULT.md` | 134 ++/-- |
+| `concordia/__init__.py` | 3 ++/- |
+| `concordia/agent.py` | 21 ++/- |
+| `concordia/session.py` | 87 ++/-- |
+| `tests/test_session_signature_verification.py` | 286 +++ (new file) |
+
+6 files changed, 524 insertions, 226 deletions. No scope creep. No unrelated files modified.
+
+---
+
+## 6. NEW RISK: `InvalidSignatureError` EXPORT
+
+**Question:** Does exporting `InvalidSignatureError` from `__init__.py` expose internal implementation details that could help an attacker craft bypass attempts?
+
+**Verdict: PASS (no risk).**
+
+`InvalidSignatureError` at `session.py:34-35`:
+```python
+class InvalidSignatureError(Exception):
+    """Raised when a message has an invalid, missing, or unverifiable signature."""
+```
+
+This is a plain `Exception` subclass with no methods, no attributes, no internal state, and no reference to any cryptographic primitive. It is semantically identical to `InvalidTransitionError` (which was already exported). The class name and docstring reveal only that signature verification exists — which is a public API contract, not an implementation secret.
+
+The error messages raised in `apply_message()` identify four failure modes: missing from.agent_id, missing signature, unknown identity (resolver returned None), and invalid signature. These messages help legitimate callers debug integration issues. They do not reveal: the signing algorithm, key lengths, canonical serialization format, or any internal verification logic. An attacker gains no advantage from knowing that invalid signatures are rejected — that is the expected behavior of any signature verification system.
+
+For comparison, `InvalidTransitionError` already reveals that state transition validation exists. `InvalidSignatureError` reveals the same level of information about signature verification.
+
+**Conclusion:** The export is safe. No internal implementation details are exposed.
+
+---
+
+## GRADE: PASS
+
+The fix correctly addresses the SEC-010 root cause. Signature verification is mandatory on every code path through `apply_message()` — there is no bypass. The implementation conforms point-for-point to the SEC-005 cluster contract (required resolver, null = rejection, zero coupling to key storage). Forged messages are intercepted before any transcript append or state transition, preserving hash chain integrity. The regression tests cover all four required scenarios plus three additional edge cases. The commit scope is clean (exactly 6 files). The `InvalidSignatureError` export introduces no security risk.
+
+No conditions. No follow-up required for this finding.
