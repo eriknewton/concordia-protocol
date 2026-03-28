@@ -75,6 +75,7 @@ class RegisteredAgent:
 
     agent_id: str
     capabilities: AgentCapabilities
+    public_key: str | None = None
     endpoint: str | None = None
     description: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -109,6 +110,8 @@ class RegisteredAgent:
             "last_seen": self.last_seen,
             "concordia_preferred": True,
         }
+        if self.public_key:
+            d["public_key"] = self.public_key
         if self.endpoint:
             d["endpoint"] = self.endpoint
         if self.description:
@@ -134,10 +137,11 @@ class RegisteredAgent:
         agent profile system. Other agents can filter for Concordia-compatible
         peers using this badge.
         """
-        return {
+        badge: dict[str, Any] = {
             "type": "concordia.preferred",
             "version": PROTOCOL_VERSION,
             "agent_id": self.agent_id,
+            "signed": False,
             "verified": True,
             "registered_at": self.registered_at,
             "capabilities": {
@@ -159,6 +163,9 @@ class RegisteredAgent:
                 "install": "pip install concordia-protocol",
             },
         }
+        if self.public_key:
+            badge["public_key"] = self.public_key
+        return badge
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +180,9 @@ class AgentRegistry:
     search by category/role/capability, and listing. Expired entries are
     lazily pruned on access.
     """
+
+    # Resource limit
+    MAX_AGENTS = 100_000
 
     def __init__(self) -> None:
         self._agents: dict[str, RegisteredAgent] = {}
@@ -189,9 +199,23 @@ class AgentRegistry:
         endpoint: str | None = None,
         description: str | None = None,
         metadata: dict[str, Any] | None = None,
+        public_key: str | None = None,
         ttl: int = 86400 * 30,
     ) -> RegisteredAgent:
-        """Register or update an agent in the registry."""
+        """Register or update an agent in the registry.
+
+        Args:
+            agent_id: Unique identifier for the agent
+            roles: List of supported roles (e.g., buyer, seller)
+            categories: List of supported negotiation categories
+            resolution_mechanisms: Supported resolution mechanisms
+            max_concurrent_sessions: Maximum concurrent sessions allowed
+            endpoint: Optional agent endpoint URL
+            description: Optional human-readable description
+            metadata: Optional metadata dict
+            public_key: Optional Ed25519 public key (base64 encoded) for verification
+            ttl: Time-to-live for registration in seconds
+        """
         caps = AgentCapabilities(
             roles=roles or ["buyer", "seller"],
             categories=categories or [],
@@ -208,12 +232,18 @@ class AgentRegistry:
             existing.endpoint = endpoint or existing.endpoint
             existing.description = description or existing.description
             existing.metadata = metadata if metadata is not None else existing.metadata
+            existing.public_key = public_key or existing.public_key
             existing.ttl = ttl
             return existing
+
+        # Check agent registry limit (only when creating a new agent)
+        if len(self._agents) >= self.MAX_AGENTS:
+            raise ValueError("Agent registry limit reached")
 
         agent = RegisteredAgent(
             agent_id=agent_id,
             capabilities=caps,
+            public_key=public_key,
             endpoint=endpoint,
             description=description,
             metadata=metadata or {},
@@ -323,3 +353,13 @@ class AgentRegistry:
         if agent is None:
             return None
         return agent.concordia_preferred_badge()
+
+    def get_public_key(self, agent_id: str) -> str | None:
+        """Get the public key for a registered agent (for signature verification).
+
+        Returns None if the agent is not found or has no registered public key.
+        """
+        agent = self.get(agent_id)
+        if agent is None:
+            return None
+        return agent.public_key

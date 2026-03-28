@@ -95,6 +95,11 @@ def build_commitment_payload(
         - ``arguments``: The arguments to pass
         - ``agreement_summary``: Human-readable summary of what's committed
     """
+    if not agreed_terms or not isinstance(agreed_terms, dict):
+        raise ValueError("agreed_terms must be a non-empty dict")
+    if not parties or not isinstance(parties, list):
+        raise ValueError("parties must be a non-empty list")
+
     agreement = {
         "concordia_session_id": session_id,
         "agreed_terms": agreed_terms,
@@ -271,6 +276,12 @@ def bridge_on_agreement(
         - A commitment payload (if config.commitment_on_agree)
         - No reputation payloads yet (those come from attestations)
     """
+    if not session_id or not isinstance(session_id, str) or not session_id.strip():
+        return BridgeResult(
+            session_id=session_id or "",
+            skipped_reason="Invalid session_id: must be a non-empty string.",
+        )
+
     if not config.enabled:
         return BridgeResult(
             session_id=session_id,
@@ -301,6 +312,19 @@ def bridge_on_attestation(
     """
     session_id = attestation.get("session_id", "")
 
+    if not session_id or not isinstance(session_id, str):
+        return BridgeResult(
+            session_id=session_id or "",
+            skipped_reason="Invalid session_id in attestation.",
+        )
+
+    parties = attestation.get("parties", [])
+    if not parties:
+        return BridgeResult(
+            session_id=session_id,
+            skipped_reason="Attestation has no parties.",
+        )
+
     if not config.enabled:
         return BridgeResult(
             session_id=session_id,
@@ -310,7 +334,6 @@ def bridge_on_attestation(
     result = BridgeResult(session_id=session_id)
 
     if config.reputation_on_receipt:
-        parties = attestation.get("parties", [])
         for party in parties:
             agent_id = party.get("agent_id")
             if agent_id and config.get_sanctuary_id(agent_id):

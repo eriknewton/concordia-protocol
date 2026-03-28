@@ -381,6 +381,11 @@ class WantRegistry:
     Stores Wants and Haves, lazily expires them, and computes matches.
     """
 
+    # Resource limits
+    MAX_WANTS = 50_000
+    MAX_HAVES = 50_000
+    MAX_MATCHES = 100_000
+
     def __init__(self) -> None:
         self._wants: dict[str, Want] = {}
         self._haves: dict[str, Have] = {}
@@ -405,6 +410,10 @@ class WantRegistry:
 
         Returns (want, list_of_matches).
         """
+        # Check want registry limit
+        if len(self._wants) >= self.MAX_WANTS:
+            raise ValueError("Want registry limit reached")
+
         want_id = f"want_{uuid.uuid4().hex[:12]}"
         want = Want(
             id=want_id,
@@ -470,6 +479,10 @@ class WantRegistry:
 
         Returns (have, list_of_matches).
         """
+        # Check have registry limit
+        if len(self._haves) >= self.MAX_HAVES:
+            raise ValueError("Have registry limit reached")
+
         have_id = f"have_{uuid.uuid4().hex[:12]}"
         have = Have(
             id=have_id,
@@ -529,7 +542,9 @@ class WantRegistry:
                 continue
             m = compute_match(want, have)
             if m is not None:
-                self._matches[m.match_id] = m
+                # Cap stored matches at MAX_MATCHES
+                if len(self._matches) < self.MAX_MATCHES:
+                    self._matches[m.match_id] = m
                 matches.append(m)
         # Sort by score descending
         matches.sort(key=lambda m: m.score, reverse=True)
@@ -543,7 +558,9 @@ class WantRegistry:
                 continue
             m = compute_match(want, have)
             if m is not None:
-                self._matches[m.match_id] = m
+                # Cap stored matches at MAX_MATCHES
+                if len(self._matches) < self.MAX_MATCHES:
+                    self._matches[m.match_id] = m
                 matches.append(m)
         matches.sort(key=lambda m: m.score, reverse=True)
         return matches

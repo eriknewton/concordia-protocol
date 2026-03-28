@@ -128,6 +128,9 @@ class AttestationStore:
     agent_id for efficient querying by the scoring engine.
     """
 
+    # Resource limit
+    MAX_ATTESTATIONS = 100_000
+
     # Required top-level fields per attestation schema
     REQUIRED_FIELDS = {
         "concordia_attestation", "attestation_id", "session_id",
@@ -194,6 +197,12 @@ class AttestationStore:
             validation.errors.append(
                 f"Duplicate session_id: attestation for session '{session_id}' already exists."
             )
+            return False, validation
+
+        # Check capacity before proceeding
+        if len(self._by_id) >= self.MAX_ATTESTATIONS:
+            validation.valid = False
+            validation.errors.append("Attestation store capacity reached")
             return False, validation
 
         # Step 3: Sybil detection
@@ -305,6 +314,10 @@ class AttestationStore:
                 for f in self.REQUIRED_PARTY_FIELDS:
                     if f not in party:
                         errors.append(f"Party {i}: missing required field '{f}'")
+                # Validate that signature is not empty
+                sig = party.get("signature", "")
+                if not sig or not sig.strip():
+                    errors.append(f"Party {i}: signature must not be empty")
 
         # Transcript hash format
         transcript_hash = attestation.get("transcript_hash", "")
@@ -314,24 +327,33 @@ class AttestationStore:
             )
 
         # Signature verification (if public keys provided)
-        if public_keys and not errors:
-            for party in parties:
-                agent_id = party.get("agent_id", "")
-                signature = party.get("signature", "")
-                if agent_id in public_keys and signature:
-                    signable = {k: v for k, v in party.items() if k != "signature"}
-                    try:
-                        valid = verify_signature(
-                            signable, signature, public_keys[agent_id]
-                        )
-                        if not valid:
-                            errors.append(
-                                f"Invalid signature for agent '{agent_id}'"
+        if not errors:
+            has_signatures = any(party.get("signature") for party in parties)
+            if has_signatures and not public_keys:
+                # Warn that signatures are present but cannot be verified
+                warnings.append(
+                    "Signatures are present but public_keys not provided. "
+                    "Signature verification will be skipped. "
+                    "It is strongly recommended to provide public_keys for security."
+                )
+            elif public_keys:
+                for party in parties:
+                    agent_id = party.get("agent_id", "")
+                    signature = party.get("signature", "")
+                    if agent_id in public_keys and signature:
+                        signable = {k: v for k, v in party.items() if k != "signature"}
+                        try:
+                            valid = verify_signature(
+                                signable, signature, public_keys[agent_id]
                             )
-                    except Exception as e:
-                        errors.append(
-                            f"Signature verification failed for '{agent_id}': {e}"
-                        )
+                            if not valid:
+                                errors.append(
+                                    f"Invalid signature for agent '{agent_id}'"
+                                )
+                        except Exception as e:
+                            errors.append(
+                                f"Signature verification failed for '{agent_id}': {e}"
+                            )
 
         return ValidationResult(
             valid=len(errors) == 0,

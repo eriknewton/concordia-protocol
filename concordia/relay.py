@@ -205,6 +205,12 @@ class NegotiationRelay:
         5. Optionally trigger attestation generation
     """
 
+    # Security and resource limits
+    MAX_SESSIONS = 10_000
+    MAX_ARCHIVES = 50_000
+    MAX_MAILBOX_SIZE = 1_000
+    MAX_TRANSCRIPT_SIZE = 10_000
+
     def __init__(self) -> None:
         self._sessions: dict[str, RelaySession] = {}
         self._archives: dict[str, TranscriptArchive] = {}
@@ -226,6 +232,14 @@ class NegotiationRelay:
         metadata: dict[str, Any] | None = None,
     ) -> RelaySession:
         """Create a relay session. Responder can join later if not specified."""
+        # Prevent self-sessions
+        if responder_id and initiator_id == responder_id:
+            raise ValueError("Cannot create relay session with same agent as both initiator and responder")
+
+        # Check session limit
+        if len(self._sessions) >= self.MAX_SESSIONS:
+            raise ValueError("Relay session limit reached")
+
         relay_id = f"relay_{uuid.uuid4().hex[:12]}"
         initiator = RelayParticipant(
             agent_id=initiator_id,
@@ -318,6 +332,10 @@ class NegotiationRelay:
         if session is None:
             return None
 
+        # Verify sender is a participant
+        if self._get_participant(session, from_agent) is None:
+            return None
+
         # Check session is active
         if session.state not in (RelaySessionState.ACTIVE, RelaySessionState.PENDING):
             return None
@@ -325,6 +343,10 @@ class NegotiationRelay:
         # Check timeout
         if session.is_timed_out:
             self._timeout_session(session)
+            return None
+
+        # Check transcript size limit
+        if len(session.transcript) >= self.MAX_TRANSCRIPT_SIZE:
             return None
 
         # Determine recipient
@@ -351,8 +373,11 @@ class NegotiationRelay:
             sender_participant.messages_sent += 1
             sender_participant.last_seen = time.time()
 
-        # Place in recipient's mailbox
-        self._mailboxes.setdefault(to_agent, []).append(msg)
+        # Place in recipient's mailbox (with size limit check)
+        mailbox = self._mailboxes.setdefault(to_agent, [])
+        if len(mailbox) >= self.MAX_MAILBOX_SIZE:
+            return None
+        mailbox.append(msg)
 
         # Check for terminal message types
         if message_type in ("negotiate.accept", "negotiate.reject",
@@ -405,12 +430,21 @@ class NegotiationRelay:
     def get_transcript(
         self,
         relay_session_id: str,
+        requesting_agent: str | None = None,
         limit: int | None = None,
     ) -> list[dict[str, Any]] | None:
-        """Retrieve the full message transcript for a relay session."""
+        """Retrieve the full message transcript for a relay session.
+
+        If requesting_agent is provided, verify the agent is a participant
+        before returning the transcript.
+        """
         session = self._sessions.get(relay_session_id)
         if session is None:
             return None
+        # Access control: only participants can read transcripts
+        if requesting_agent is not None:
+            if self._get_participant(session, requesting_agent) is None:
+                return None
         messages = session.transcript
         if limit:
             messages = messages[-limit:]
@@ -460,6 +494,10 @@ class NegotiationRelay:
             RelaySessionState.TIMED_OUT,
         ):
             return None
+
+        # Check archive limit
+        if len(self._archives) >= self.MAX_ARCHIVES:
+            raise ValueError("Archive limit reached")
 
         parties = [session.initiator.agent_id]
         if session.responder:

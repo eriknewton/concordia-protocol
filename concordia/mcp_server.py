@@ -142,6 +142,8 @@ class SessionStore:
     complete negotiation through tool calls alone — no external state needed.
     """
 
+    MAX_SESSIONS = 10_000
+
     def __init__(self) -> None:
         self._sessions: dict[str, SessionContext] = {}
 
@@ -154,7 +156,16 @@ class SessionStore:
         reasoning: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> SessionContext:
-        """Create a new session with a fresh agent pair and open it."""
+        """Create a new session with a fresh agent pair and open it.
+
+        Raises ValueError if initiator and responder are the same agent.
+        """
+        if len(self._sessions) >= self.MAX_SESSIONS:
+            raise ValueError("Session store capacity reached")
+
+        if initiator_id == responder_id:
+            raise ValueError("Self-negotiation is not allowed: initiator and responder must be different agents")
+
         initiator = Agent(initiator_id)
         responder = Agent(responder_id)
 
@@ -289,14 +300,23 @@ def tool_open_session(
         max_rounds=max_rounds,
     )
 
-    ctx = _store.create(
-        initiator_id=initiator_id,
-        responder_id=responder_id,
-        terms=terms,
-        timing=timing,
-        reasoning=reasoning,
-        metadata=metadata,
-    )
+    try:
+        ctx = _store.create(
+            initiator_id=initiator_id,
+            responder_id=responder_id,
+            terms=terms,
+            timing=timing,
+            reasoning=reasoning,
+            metadata=metadata,
+        )
+    except ValueError as e:
+        error_result = {
+            "error": str(e),
+            "session_id": None,
+            "state": "error",
+            "message": f"Failed to open session: {e}",
+        }
+        return json.dumps(error_result, indent=2)
 
     result = {
         "session_id": ctx.session.session_id,
@@ -1191,26 +1211,29 @@ def tool_post_want(
     metadata: Annotated[dict | None, "Optional metadata"] = None,
 ) -> str:
     """Post a Want and get immediate matches."""
-    want, matches = _want_registry.post_want(
-        agent_id=agent_id,
-        category=category,
-        terms=terms,
-        location=location,
-        ttl=ttl,
-        notify=notify,
-        metadata=metadata,
-    )
-    result = {
-        "want": want.to_dict(),
-        "immediate_matches": [m.to_dict() for m in matches],
-        "match_count": len(matches),
-        "message": (
-            f"Want '{want.id}' posted. "
-            f"Found {len(matches)} immediate match(es)."
-            + (" Use concordia_open_session to start negotiating with a match." if matches else "")
-        ),
-    }
-    return json.dumps(result, indent=2, default=str)
+    try:
+        want, matches = _want_registry.post_want(
+            agent_id=agent_id,
+            category=category,
+            terms=terms,
+            location=location,
+            ttl=ttl,
+            notify=notify,
+            metadata=metadata,
+        )
+        result = {
+            "want": want.to_dict(),
+            "immediate_matches": [m.to_dict() for m in matches],
+            "match_count": len(matches),
+            "message": (
+                f"Want '{want.id}' posted. "
+                f"Found {len(matches)} immediate match(es)."
+                + (" Use concordia_open_session to start negotiating with a match." if matches else "")
+            ),
+        }
+        return json.dumps(result, indent=2, default=str)
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
 
 
 # ---------------------------------------------------------------------------
@@ -1235,25 +1258,28 @@ def tool_post_have(
     metadata: Annotated[dict | None, "Optional metadata"] = None,
 ) -> str:
     """Post a Have and get immediate matches."""
-    have, matches = _want_registry.post_have(
-        agent_id=agent_id,
-        category=category,
-        terms=terms,
-        location=location,
-        ttl=ttl,
-        metadata=metadata,
-    )
-    result = {
-        "have": have.to_dict(),
-        "immediate_matches": [m.to_dict() for m in matches],
-        "match_count": len(matches),
-        "message": (
-            f"Have '{have.id}' posted. "
-            f"Found {len(matches)} immediate match(es)."
-            + (" Use concordia_open_session to start negotiating with a match." if matches else "")
-        ),
-    }
-    return json.dumps(result, indent=2, default=str)
+    try:
+        have, matches = _want_registry.post_have(
+            agent_id=agent_id,
+            category=category,
+            terms=terms,
+            location=location,
+            ttl=ttl,
+            metadata=metadata,
+        )
+        result = {
+            "have": have.to_dict(),
+            "immediate_matches": [m.to_dict() for m in matches],
+            "match_count": len(matches),
+            "message": (
+                f"Have '{have.id}' posted. "
+                f"Found {len(matches)} immediate match(es)."
+                + (" Use concordia_open_session to start negotiating with a match." if matches else "")
+            ),
+        }
+        return json.dumps(result, indent=2, default=str)
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
 
 
 # ---------------------------------------------------------------------------
@@ -1450,21 +1476,24 @@ def tool_relay_create(
     initiator_endpoint: Annotated[str | None, "Optional callback endpoint for the initiator"] = None,
 ) -> str:
     """Create a relay session."""
-    session = _relay.create_session(
-        initiator_id=initiator_id,
-        responder_id=responder_id,
-        concordia_session_id=concordia_session_id,
-        session_ttl=session_ttl,
-        auto_attest=auto_attest,
-        initiator_endpoint=initiator_endpoint,
-    )
-    return json.dumps({
-        "session": session.to_dict(),
-        "message": (
-            f"Relay session '{session.relay_session_id}' created. "
-            + ("Responder can join with concordia_relay_join." if not responder_id else "Both parties connected.")
-        ),
-    }, indent=2, default=str)
+    try:
+        session = _relay.create_session(
+            initiator_id=initiator_id,
+            responder_id=responder_id,
+            concordia_session_id=concordia_session_id,
+            session_ttl=session_ttl,
+            auto_attest=auto_attest,
+            initiator_endpoint=initiator_endpoint,
+        )
+        return json.dumps({
+            "session": session.to_dict(),
+            "message": (
+                f"Relay session '{session.relay_session_id}' created. "
+                + ("Responder can join with concordia_relay_join." if not responder_id else "Both parties connected.")
+            ),
+        }, indent=2, default=str)
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
 
 
 # ---------------------------------------------------------------------------
@@ -1511,19 +1540,22 @@ def tool_relay_send(
     ttl: Annotated[int, "Message TTL in seconds (default: 3600)"] = 3600,
 ) -> str:
     """Send a message through the relay."""
-    msg = _relay.send_message(
-        relay_session_id=relay_session_id,
-        from_agent=from_agent,
-        message_type=message_type,
-        payload=payload,
-        ttl=ttl,
-    )
-    if msg is None:
-        return json.dumps({"error": f"Cannot send message. Session not found, not active, or agent not a participant."})
-    return json.dumps({
-        "sent": True,
-        "message": msg.to_dict(),
-    }, indent=2, default=str)
+    try:
+        msg = _relay.send_message(
+            relay_session_id=relay_session_id,
+            from_agent=from_agent,
+            message_type=message_type,
+            payload=payload,
+            ttl=ttl,
+        )
+        if msg is None:
+            return json.dumps({"error": f"Cannot send message. Session not found, not active, or agent not a participant."})
+        return json.dumps({
+            "sent": True,
+            "message": msg.to_dict(),
+        }, indent=2, default=str)
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
 
 
 # ---------------------------------------------------------------------------
@@ -1608,12 +1640,13 @@ def tool_relay_conclude(
 )
 def tool_relay_transcript(
     relay_session_id: Annotated[str, "The relay session ID"],
+    agent_id: Annotated[str | None, "Optional: the requesting agent's ID (for access control)"] = None,
     limit: Annotated[int | None, "Limit to last N messages (default: all)"] = None,
 ) -> str:
     """Get relay transcript."""
-    transcript = _relay.get_transcript(relay_session_id, limit)
+    transcript = _relay.get_transcript(relay_session_id, requesting_agent=agent_id, limit=limit)
     if transcript is None:
-        return json.dumps({"error": f"Relay session '{relay_session_id}' not found."})
+        return json.dumps({"error": f"Relay session '{relay_session_id}' not found or access denied."})
     return json.dumps({
         "relay_session_id": relay_session_id,
         "messages": transcript,
@@ -1637,14 +1670,17 @@ def tool_relay_archive(
     retention_days: Annotated[int, "How long to retain the archive in days (default: 365)"] = 365,
 ) -> str:
     """Archive a relay session."""
-    archive = _relay.archive_session(relay_session_id, retention_days)
-    if archive is None:
-        return json.dumps({"error": f"Cannot archive session '{relay_session_id}'. Not found or not concluded."})
-    return json.dumps({
-        "archived": True,
-        "archive": archive.to_dict(),
-        "message": f"Transcript archived ({archive.message_count} messages, {retention_days}-day retention).",
-    }, indent=2, default=str)
+    try:
+        archive = _relay.archive_session(relay_session_id, retention_days)
+        if archive is None:
+            return json.dumps({"error": f"Cannot archive session '{relay_session_id}'. Not found or not concluded."})
+        return json.dumps({
+            "archived": True,
+            "archive": archive.to_dict(),
+            "message": f"Transcript archived ({archive.message_count} messages, {retention_days}-day retention).",
+        }, indent=2, default=str)
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
 
 
 # ---------------------------------------------------------------------------

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -51,12 +52,30 @@ class KeyPair:
         )
 
 
+def _check_no_special_floats(data: Any) -> None:
+    """Reject NaN, Infinity, and -0.0 which break deterministic JSON."""
+    if isinstance(data, float):
+        if math.isnan(data) or math.isinf(data):
+            raise ValueError(f"Cannot serialize special float: {data}")
+        if data == 0.0 and math.copysign(1.0, data) < 0:
+            raise ValueError("Cannot serialize negative zero (-0.0)")
+    elif isinstance(data, dict):
+        for v in data.values():
+            _check_no_special_floats(v)
+    elif isinstance(data, (list, tuple)):
+        for v in data:
+            _check_no_special_floats(v)
+
+
 def canonical_json(data: dict[str, Any]) -> bytes:
     """Produce a deterministic JSON serialization for signing.
 
     Keys are sorted, no extra whitespace, and non-ASCII characters
     are preserved (ensure_ascii=False for readability).
+
+    Rejects special floats (NaN, Infinity, -0.0) which break determinism.
     """
+    _check_no_special_floats(data)
     return json.dumps(data, sort_keys=True, separators=(",", ":"),
                       ensure_ascii=False).encode("utf-8")
 
@@ -67,6 +86,7 @@ def sign_message(data: dict[str, Any], key_pair: KeyPair) -> str:
     The ``signature`` field, if present, is excluded before signing.
     """
     signable = {k: v for k, v in data.items() if k != "signature"}
+    _check_no_special_floats(signable)
     payload = canonical_json(signable)
     raw_sig = key_pair.private_key.sign(payload)
     return base64.urlsafe_b64encode(raw_sig).decode()
