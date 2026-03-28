@@ -1,171 +1,124 @@
-# SPRINT_CONTRACT.md — SEC-007: Add Caller Authentication to Concordia MCP Endpoint
+# SPRINT CONTRACT — SEC-010: Session State Machine Never Verifies Signatures
 
-**Date:** 2026-03-28
-**Finding:** SEC-007 (Critical) — Concordia has zero caller authentication
+**Sprint Date:** 2026-03-28
+**Finding:** SEC-010 (High)
 **Branch:** `security-review`
-**Scope:** Concordia codebase only. No Sanctuary changes.
+**Cluster:** Second of three (SEC-005, SEC-010, SEC-014) — this sprint conforms to the resolver pattern established by SEC-005.
 
 ---
 
-## ARCHITECTURE DECISION
+## Cluster Contract Conformance
 
-### a) Threat Model
+SEC-005 (Import skips signature verification, Sanctuary TypeScript) established the verification pattern for the entire signature verification cluster. This sprint implements the identical pattern in the Concordia Python codebase. Conformance point-by-point:
 
-**Who are the callers?** MCP clients connecting to the Concordia server over stdio or SSE transport. Each client claims an identity by passing `agent_id`, `role`, `initiator_id`, `responder_id`, or `from_agent` as a plain string parameter.
+| SEC-005 Cluster Contract Requirement | SEC-010 Implementation |
+|---|---|
+| Callback signature: `(identifier: string) => PublicKey \| null` | `public_key_resolver: Callable[[str], Ed25519PublicKey \| None]` — same semantic shape in Python |
+| Verification is **mandatory, not optional** | `public_key_resolver` is a required parameter on `apply_message()` — no default value, no `Optional` type |
+| Null return from resolver → **rejection, not warning** | If resolver returns `None`, raise `InvalidSignatureError` — hard rejection, message not appended to transcript |
+| Response includes structured rejection counts | `InvalidSignatureError` raised with descriptive message identifying the failure mode (unknown identity vs. invalid signature) |
 
-**What are they claiming?** That they are authorized to act as a specific agent in a negotiation session, registry operation, relay exchange, or reputation query.
-
-**What is the harm if a caller lies?**
-
-1. **Session hijacking.** A caller claims `role: "initiator"` in a session they don't own. They can send offers, accept deals, or reject sessions on behalf of the real initiator.
-2. **Message interception.** A caller claims another agent's `agent_id` in `concordia_relay_receive`. All queued messages for the real agent are dequeued and delivered to the attacker. The real agent sees nothing.
-3. **Agent deregistration.** A caller deregisters another agent from the discovery registry, removing their market presence.
-4. **Fabricated reputation.** A single caller creates a session between two fabricated IDs, drives both sides to agreement, generates an attestation, and ingests it — manufacturing legitimate-looking reputation from nothing.
-5. **Want/Have registry manipulation.** A caller withdraws another agent's Wants or Haves.
-
-**Current state:** Zero authentication. Every identity claim is trusted at face value. The only defense is the Sybil detector, which flags but does not block.
-
-### b) Available Authentication Mechanisms
-
-| Mechanism | Feasibility | Notes |
-|---|---|---|
-| **Bearer tokens (session-scoped + agent-scoped)** | High | Server generates 256-bit random tokens at registration/session-creation time. Tokens returned to the caller. Subsequent calls must include the token. Simple, stateless validation. No changes to MCP protocol needed — token is just another tool parameter. |
-| **Cryptographic signatures per call** | Low for this sprint | Would require the MCP client (agent harness) to hold a signing key and sign each tool call. Concordia already generates keypairs server-side, so the client doesn't have the private key. Redesigning key custody is out of scope. |
-| **KERI-based identity** | Out of scope | No KERI infrastructure exists in either codebase. |
-| **Allowlist by transport** | Insufficient | Stdio is single-client by nature, but SSE can serve multiple clients. An allowlist doesn't solve impersonation within a single client that fabricates multiple agent IDs. |
-| **Session tokens + HMAC** | Over-engineered | HMAC adds complexity without meaningful benefit over random bearer tokens for this threat model. |
-
-**Chosen mechanism:** Bearer tokens (256-bit random, hex-encoded), issued at two scopes:
-
-1. **Agent-scoped token** — issued by `concordia_register_agent`. Required for all subsequent calls that reference that `agent_id` in non-session contexts (deregister, relay, want/have, reputation ingest).
-2. **Session-scoped tokens** — issued by `concordia_open_session`. One token per role (initiator token, responder token). Required for all session-bound tool calls (`propose`, `counter`, `accept`, `reject`, `commit`, `session_status`, `session_receipt`).
-
-This is transport-level authentication, not cryptographic identity verification. It prevents trivial impersonation from a second MCP client but does not prove the caller possesses a specific private key.
-
-### c) Minimum Viable Fix
-
-1. Add an `AuthTokenStore` class that maps tokens to (scope, identity) pairs.
-2. On `concordia_register_agent`: generate and return an agent token. Store the mapping.
-3. On `concordia_open_session`: generate and return one token per role. Store the mappings.
-4. Add an `auth_token` parameter to every tool that requires identity verification.
-5. Before executing any identity-dependent tool handler, validate the token against the claimed identity. If missing or invalid, return an error immediately.
-6. Read-only tools that don't claim an identity (`search_agents`, `agent_card`, `search_wants`, `search_haves`, `find_matches`, `want_registry_stats`, `reputation_query`, `reputation_score`, `relay_stats`, `relay_list_archives`, `efficiency_report`) do NOT require tokens. They are public queries.
-7. Deny-by-default: if a tool requires a token and none is provided, the call fails.
-
-### d) Backwards Compatibility
-
-The `auth_token` parameter is added as a required parameter to identity-dependent tools. This is a **breaking change by design** — the entire point of SEC-007 is that unauthenticated access must be denied. There is no backwards-compatible way to close this vulnerability.
-
-Existing tests will be updated to pass tokens. A helper function `_get_auth_token_from_response()` will be added to the test utilities.
+The SEC-005 evaluator explicitly noted: "A future implementer working on SEC-010 or SEC-014 can follow this pattern without reading the SEC-005 implementation." This contract follows that pattern exactly.
 
 ---
 
-## FILES TO MODIFY
+## Architecture Decision
 
-### New file: `concordia/auth.py`
-- `AuthTokenStore` class: token generation, storage, validation
-- `generate_token() -> str`: 256-bit random, hex-encoded
-- `register_agent_token(agent_id: str) -> str`: creates and stores an agent-scoped token
-- `register_session_tokens(session_id: str, initiator_id: str, responder_id: str) -> tuple[str, str]`: creates initiator and responder tokens
-- `validate_agent_token(agent_id: str, token: str) -> bool`
-- `validate_session_token(session_id: str, role: str, token: str) -> bool`
-- `get_agent_id_for_token(token: str) -> str | None`: reverse lookup
+### a) Root cause — not the symptom
 
-### Modified file: `concordia/mcp_server.py`
-- Import `AuthTokenStore` and instantiate global `_auth`
-- `tool_register_agent` (~line 856): generate and return agent token
-- `tool_open_session` (~line 286): generate and return session tokens (initiator_token, responder_token)
-- All identity-dependent tools: add `auth_token` parameter, validate before execution
-- Specifically, these tools gain `auth_token`:
-  - Session tools: `concordia_propose` (356), `concordia_counter` (398), `concordia_accept` (448), `concordia_reject` (494), `concordia_commit` (538), `concordia_session_status` (583), `concordia_session_receipt` (647)
-  - Registry: `concordia_deregister_agent` (994)
-  - Relay: `concordia_relay_create` (1461), `concordia_relay_join` (1503), `concordia_relay_send` (1527), `concordia_relay_receive` (1572)
-  - Want/Have: `concordia_post_want` (1134), `concordia_post_have` (1195), `concordia_withdraw_want` (1289), `concordia_withdraw_have` (1307)
-  - Attestation: `concordia_ingest_attestation` (726)
-  - Degradation: `concordia_propose_protocol` (1018), `concordia_respond_to_proposal` (1049), `concordia_start_degraded` (1091), `concordia_degraded_message` (1325)
+The `apply_message()` method in `session.py:115-155` validates state transitions and tracks behavioral signals, but never calls `verify_signature()` from `signing.py`. The root cause is identical to SEC-005: the session module has no concept of identity resolution. It receives messages with a `from.agent_id` field and a `signature` field but has no mechanism to resolve the agent_id to a public key for verification. The `verify_signature()` function exists and is correctly implemented (`signing.py:95-108`) but is dead code — never called from any session lifecycle path.
 
-### New file: `tests/test_authentication.py`
-- Regression tests per RT-05 specification
+### b) Smallest change that closes the vulnerability
 
-### Modified file: `tests/test_mcp_server.py` (and other test files as needed)
-- Update all calls to identity-dependent tools to include valid auth tokens
+Add a mandatory `public_key_resolver` callback parameter to `Session.apply_message()`:
 
----
+```python
+def apply_message(
+    self,
+    message: dict[str, Any],
+    public_key_resolver: Callable[[str], Ed25519PublicKey | None],
+) -> SessionState:
+```
 
-## BEHAVIOR: BEFORE
+Before any state transition or transcript append:
+1. Extract `agent_id` from `message["from"]["agent_id"]`
+2. Extract `signature` from `message["signature"]`
+3. Call `public_key_resolver(agent_id)`. If it returns `None`, raise `InvalidSignatureError` (unknown identity — hard rejection per cluster contract).
+4. Call `verify_signature(message, signature, public_key)`. If it returns `False`, raise `InvalidSignatureError` (invalid signature — hard rejection).
+5. Only if both checks pass: proceed with transition validation, transcript append, and behavioral tracking.
 
-Any MCP client can:
-- Open sessions between any two agent IDs
-- Send offers, accept, reject on behalf of any role in any session
-- Deregister any agent from the registry
-- Read any agent's relay messages
-- Post wants/haves as any agent
-- Ingest attestations without restriction
+Add a new `InvalidSignatureError` exception class in `session.py` alongside `InvalidTransitionError`.
 
-No token, signature, or credential is required for any operation.
+Update `Agent._send()` to pass a resolver callback when calling `apply_message()`. The `Agent` class already has access to both parties' key pairs (its own and the counterparty's via the session's `parties` mapping), so the resolver wiring is straightforward.
 
-## BEHAVIOR: AFTER
+### c) Interactions with other findings
 
-**Authenticated operations** (require valid `auth_token`):
-- Session operations require the session-scoped token for the claimed role
-- Registry deregistration requires the agent token from registration
-- Relay create/join/send/receive require agent tokens
-- Want/Have post/withdraw require agent tokens
-- Attestation ingestion requires an agent token
-- Degradation tools require agent tokens
+- **SEC-005** (closed, PASS): Established the cluster pattern. This sprint conforms to it.
+- **SEC-014** (attestation signature verification optional): Third in cluster. Will follow the same mandatory resolver pattern on `AttestationStore.ingest()`.
+- **SEC-007** (Concordia zero caller authentication, closed): The auth layer added by SEC-007 is orthogonal — it authenticates the MCP *caller*, while SEC-010 verifies the cryptographic *message signature*. Both are required: SEC-007 prevents impersonation at the transport layer, SEC-010 prevents forged messages at the protocol layer.
 
-**Public operations** (no token required):
-- `concordia_search_agents`, `concordia_agent_card`, `concordia_preferred_badge`
-- `concordia_search_wants`, `concordia_search_haves`, `concordia_find_matches`, `concordia_want_registry_stats`
-- `concordia_get_want`, `concordia_get_have`
-- `concordia_reputation_query`, `concordia_reputation_score`
-- `concordia_relay_status`, `concordia_relay_transcript`, `concordia_relay_archive`, `concordia_relay_list_archives`, `concordia_relay_stats`
-- `concordia_efficiency_report`
-- `concordia_open_session` (returns tokens — this is the entry point)
-- `concordia_register_agent` (returns token — this is the entry point)
+### d) New risk introduced
 
-**Denied operations** (missing or wrong token):
-- Return `{"error": "Authentication required: invalid or missing auth_token for <identity>"}`.
-- No tool handler logic executes. The denial happens before any state mutation.
+- All callers of `apply_message()` must now provide a `public_key_resolver`. The only production caller is `Agent._send()` (agent.py:298). Tests that call `apply_message()` directly must also provide a resolver. This is the **correct** behavior — the cluster contract mandates that verification cannot be bypassed.
+- Messages with missing `signature` or `from` fields will now raise `InvalidSignatureError` instead of `KeyError`. This is a strictness improvement, not a regression.
 
 ---
 
-## REGRESSION TEST (tests/test_authentication.py)
+## Fix Specification
 
-Assertions:
+### Files to modify
 
-1. `test_session_tool_rejects_no_token` — Call `concordia_propose` with valid session_id but no auth_token. Expect error response.
-2. `test_session_tool_rejects_wrong_token` — Call `concordia_propose` with wrong token. Expect error response.
-3. `test_session_tool_accepts_correct_token` — Call `concordia_propose` with correct initiator token. Expect success.
-4. `test_session_token_role_isolation` — Initiator token cannot act as responder and vice versa.
-5. `test_deregister_rejects_wrong_agent_token` — Register agent A and agent B. Try to deregister A with B's token. Expect error.
-6. `test_relay_receive_rejects_wrong_agent` — Agent A's token cannot receive agent B's messages.
-7. `test_open_session_returns_tokens` — `concordia_open_session` response includes `initiator_token` and `responder_token`.
-8. `test_register_agent_returns_token` — `concordia_register_agent` response includes `auth_token`.
-9. `test_public_tools_require_no_token` — `concordia_search_agents`, `concordia_reputation_score` work without tokens.
-10. `test_want_withdraw_rejects_wrong_agent` — Agent A's token cannot withdraw agent B's wants.
+1. **`concordia/session.py`** — `apply_message()` method (lines 115-155)
+   - Add `public_key_resolver` required parameter
+   - Add `InvalidSignatureError` exception class
+   - Add signature verification block before state transition
+   - Add import for `verify_signature` from `.signing`
+   - Add import for `Ed25519PublicKey` from `cryptography`
+   - Add import for `Callable` from `typing`
 
----
+2. **`concordia/agent.py`** — `_send()` method (lines 276-299)
+   - Wire `public_key_resolver` callback using `self.key_pair.public_key` and counterparty keys
+   - The Agent has access to its own key pair; for the resolver, it needs to map agent_ids to public keys from the session's party list
 
-## DEFINITION OF DONE
+3. **`concordia/__init__.py`** — Export `InvalidSignatureError`
 
-The evaluator will grade PASS if and only if ALL of these criteria are met:
+### Behavior before
 
-1. **All 441 existing tests pass** (no decrease in test count, no failures).
-2. **All 10 regression tests pass.**
-3. **Unauthenticated calls to identity-dependent tools return error responses** without executing handler logic.
-4. **Wrong-token calls to identity-dependent tools return error responses** without executing handler logic.
-5. **Correct-token calls succeed** as before.
-6. **Public/read-only tools continue to work without tokens.**
-7. **No new dependencies added** — only stdlib `secrets` module for token generation.
-8. **Token values are 256-bit (64 hex chars).**
-9. **Tokens are not logged or included in error messages** (only the fact of failure is reported).
-10. **The fix does not modify any cryptographic code** (signing.py, session.py hash chain, etc.).
+`apply_message()` accepts any message dict, validates only the state transition, appends to transcript, and tracks behavior. Messages with invalid, absent, or forged signatures are accepted and become permanent parts of the hash-chained transcript.
 
----
+### Behavior after
 
-## PROMPT INJECTION CONSIDERATION
+`apply_message()` requires a `public_key_resolver` callback. Before any state transition:
+- If `message["signature"]` is missing or empty: raises `InvalidSignatureError`
+- If `public_key_resolver(agent_id)` returns `None`: raises `InvalidSignatureError` (unknown identity)
+- If `verify_signature()` returns `False`: raises `InvalidSignatureError` (invalid signature)
+- Session state is unchanged on any rejection — no transcript append, no behavioral tracking
 
-This fix adds an `auth_token` parameter to tool calls. The token value is a random hex string, not user-controlled content. The validation is a constant-time string comparison, not a parse or eval. The error message on failure is a static template with the claimed identity interpolated — the identity string is user-controlled but is only used in a JSON string value, not in any executable context. No new prompt injection surface is introduced.
+### Regression tests
 
-The existing prompt injection surface (SEC-ADD-01, SEC-ADD-02) is not addressed by this sprint and remains open.
+New file: `tests/test_session_signature_verification.py`
+
+Tests:
+1. **Valid signed message accepted** — create a session with properly signed messages, verify state transitions work as before.
+2. **Forged signature rejected** — create a valid message, tamper with the signature, verify `InvalidSignatureError` raised and session state unchanged.
+3. **Missing signature rejected** — create a message with no `signature` field, verify rejection.
+4. **Unknown agent_id rejected** — create a message with a valid signature but an agent_id the resolver doesn't recognize, verify rejection.
+5. **Resolver returning None rejected** — verify that a resolver that returns `None` causes rejection, matching cluster contract.
+6. **Wrong key rejected** — sign a message with key A but have the resolver return key B's public key, verify rejection.
+7. **State unchanged on rejection** — verify that after any rejection, session state, transcript length, and round count are all unchanged.
+
+### Prompt injection
+
+`apply_message()` processes message dicts that contain user-controlled content (body, reasoning fields). These fields are stored in the transcript and used for behavioral tracking but never reach any model prompt. No prompt injection surface.
+
+### Definition of done (evaluator criteria)
+
+1. `apply_message()` has a **mandatory** `public_key_resolver` parameter (not optional, no default).
+2. Messages with invalid signatures raise `InvalidSignatureError` — session state unchanged.
+3. Messages with unknown agent_ids (resolver returns `None`) raise `InvalidSignatureError`.
+4. Messages with missing signatures raise `InvalidSignatureError`.
+5. The resolver follows the SEC-005 cluster contract: `Callable[[str], PublicKey | None]`, mandatory, null → rejection.
+6. All 7 regression tests pass.
+7. Full test suite count >= 459 (no decrease from baseline).
+8. `Agent._send()` correctly wires the resolver.
+9. The fix does not couple `Session` to any specific key storage — the resolver is a pure callback.

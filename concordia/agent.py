@@ -70,7 +70,7 @@ class Agent:
         session = Session(timing=timing)
         self.session = session
         self._role = PartyRole.INITIATOR
-        session.add_party(self.agent_id, PartyRole.INITIATOR)
+        session.add_party(self.agent_id, PartyRole.INITIATOR, self.key_pair.public_key)
 
         body: dict[str, Any] = {"terms": terms}
         if timing:
@@ -92,7 +92,7 @@ class Agent:
         """Join an existing session as the responder."""
         self.session = session
         self._role = PartyRole.RESPONDER
-        session.add_party(self.agent_id, PartyRole.RESPONDER)
+        session.add_party(self.agent_id, PartyRole.RESPONDER, self.key_pair.public_key)
 
     def accept_session(self, reasoning: str | None = None) -> dict[str, Any]:
         """Send ``negotiate.accept_session`` (PROPOSED → ACTIVE)."""
@@ -295,5 +295,20 @@ class Agent:
             reasoning=reasoning,
         )
 
-        self.session.apply_message(msg)
+        self.session.apply_message(msg, self._public_key_resolver)
         return msg
+
+    def _public_key_resolver(self, agent_id: str) -> Any:
+        """Resolve an agent_id to its Ed25519 public key.
+
+        Returns the public key if the agent_id matches this agent,
+        or looks up registered keys in the session's key registry.
+        Returns ``None`` for unrecognized identities (per SEC-005
+        cluster contract: null return = rejection).
+        """
+        if agent_id == self.agent_id:
+            return self.key_pair.public_key
+        # Look up counterparty keys registered on the session
+        if self.session is not None and hasattr(self.session, '_party_keys'):
+            return self.session._party_keys.get(agent_id)
+        return None
