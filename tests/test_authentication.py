@@ -231,6 +231,35 @@ class TestDeregisterAuth:
         ))
         assert result["removed"] is True
 
+    def test_revoked_token_rejected_after_deregistration(self):
+        """SEC-007 evaluator condition 1: verify revoked tokens are rejected."""
+        # (a) Register an agent and get a valid token
+        reg = _parse(tool_register_agent(agent_id="agent_a"))
+        token = reg["auth_token"]
+        # Sanity check: token works before revocation
+        posted = _parse(tool_post_want(
+            agent_id="agent_a", auth_token=token,
+            category="electronics", terms={"price": {"max": 50}},
+        ))
+        assert "want" in posted
+
+        # (b) Deregister the agent (triggers revoke_agent_token)
+        dereg = _parse(tool_deregister_agent(
+            agent_id="agent_a", auth_token=token,
+        ))
+        assert dereg["removed"] is True
+
+        # (c) Attempt to use the revoked token on an identity-dependent operation
+        result = _parse(tool_post_want(
+            agent_id="agent_a", auth_token=token,
+            category="electronics", terms={"price": {"max": 100}},
+        ))
+
+        # (d) Assert rejection with an authentication error, not a not-found error
+        assert "error" in result
+        assert "Authentication required" in result["error"]
+        assert "not found" not in result.get("error", "").lower()
+
 
 # ---- Test 6: Relay receive rejects wrong agent ----
 
