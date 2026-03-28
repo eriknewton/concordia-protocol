@@ -29,6 +29,18 @@ Tools — Discovery (§7, §10.1):
     concordia_agent_card       — Get A2A-compatible Agent Card for a registered agent
     concordia_deregister_agent — Remove an agent from the registry
 
+Tools — Want Registry (§7):
+    concordia_post_want       — Publish a structured Want (demand) and get immediate matches
+    concordia_post_have       — Publish a structured Have (supply) and get immediate matches
+    concordia_get_want        — Retrieve a specific Want by ID
+    concordia_get_have        — Retrieve a specific Have by ID
+    concordia_withdraw_want   — Remove an active Want from the registry
+    concordia_withdraw_have   — Remove an active Have from the registry
+    concordia_find_matches    — Query stored matches by want, have, or agent
+    concordia_search_wants    — Browse active Wants, optionally filtered by category
+    concordia_search_haves    — Browse active Haves, optionally filtered by category
+    concordia_want_registry_stats — Get summary statistics for the Want Registry
+
 Tools — Adoption (Viral Strategy §16, §17):
     concordia_propose_protocol    — Propose Concordia to a non-Concordia peer
     concordia_respond_to_proposal — Accept or decline a protocol proposal
@@ -65,6 +77,7 @@ from .message import validate_chain
 from .offer import BasicOffer, ConditionalOffer, Condition, PartialOffer
 from .registry import AgentRegistry
 from .reputation import AttestationStore, ReputationScorer, ReputationQueryHandler
+from .want_registry import WantRegistry
 from .session import InvalidTransitionError, Session
 from .signing import KeyPair
 from .types import (
@@ -1136,6 +1149,266 @@ def tool_efficiency_report(
 
 
 # ---------------------------------------------------------------------------
+# Want Registry — demand-side discovery (§7)
+# ---------------------------------------------------------------------------
+
+_want_registry = WantRegistry()
+
+
+# ---------------------------------------------------------------------------
+# Tool: post_want
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_post_want",
+    description=(
+        "Publish a structured Want — what this agent is looking for. "
+        "Immediately matches against existing Haves and returns any matches. "
+        "Other agents posting Haves will also match against this Want. "
+        "Schema follows §7.1."
+    ),
+)
+def tool_post_want(
+    agent_id: Annotated[str, "The agent posting the Want"],
+    category: Annotated[str, "Hierarchical category (e.g. 'electronics.cameras.mirrorless')"],
+    terms: Annotated[dict, "Term constraints — e.g. {price: {max: 2500, currency: 'USD'}, condition: {min: 'good'}}"],
+    location: Annotated[dict | None, "Location constraint — {within_km: 50, of: {lat: 37.77, lng: -122.42}}"] = None,
+    ttl: Annotated[int, "Time-to-live in seconds (default: 604800 = 7 days)"] = 604_800,
+    notify: Annotated[bool, "Whether to receive match notifications (default: true)"] = True,
+    metadata: Annotated[dict | None, "Optional metadata"] = None,
+) -> str:
+    """Post a Want and get immediate matches."""
+    want, matches = _want_registry.post_want(
+        agent_id=agent_id,
+        category=category,
+        terms=terms,
+        location=location,
+        ttl=ttl,
+        notify=notify,
+        metadata=metadata,
+    )
+    result = {
+        "want": want.to_dict(),
+        "immediate_matches": [m.to_dict() for m in matches],
+        "match_count": len(matches),
+        "message": (
+            f"Want '{want.id}' posted. "
+            f"Found {len(matches)} immediate match(es)."
+            + (" Use concordia_open_session to start negotiating with a match." if matches else "")
+        ),
+    }
+    return json.dumps(result, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: post_have
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_post_have",
+    description=(
+        "Publish a structured Have — what this agent has available. "
+        "Immediately matches against existing Wants and returns any matches. "
+        "Other agents posting Wants will also match against this Have. "
+        "Schema follows §7.2."
+    ),
+)
+def tool_post_have(
+    agent_id: Annotated[str, "The agent posting the Have"],
+    category: Annotated[str, "Hierarchical category (e.g. 'electronics.cameras.mirrorless')"],
+    terms: Annotated[dict, "Term values — e.g. {price: {min: 1800, currency: 'USD'}, condition: {value: 'like_new'}}"],
+    location: Annotated[dict | None, "Location — {coordinates: {lat: 37.78, lng: -122.41}}"] = None,
+    ttl: Annotated[int, "Time-to-live in seconds (default: 2592000 = 30 days)"] = 2_592_000,
+    metadata: Annotated[dict | None, "Optional metadata"] = None,
+) -> str:
+    """Post a Have and get immediate matches."""
+    have, matches = _want_registry.post_have(
+        agent_id=agent_id,
+        category=category,
+        terms=terms,
+        location=location,
+        ttl=ttl,
+        metadata=metadata,
+    )
+    result = {
+        "have": have.to_dict(),
+        "immediate_matches": [m.to_dict() for m in matches],
+        "match_count": len(matches),
+        "message": (
+            f"Have '{have.id}' posted. "
+            f"Found {len(matches)} immediate match(es)."
+            + (" Use concordia_open_session to start negotiating with a match." if matches else "")
+        ),
+    }
+    return json.dumps(result, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: get_want
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_get_want",
+    description="Retrieve a specific Want by ID.",
+)
+def tool_get_want(
+    want_id: Annotated[str, "The Want ID to retrieve"],
+) -> str:
+    """Get a Want by ID."""
+    want = _want_registry.get_want(want_id)
+    if want is None:
+        return json.dumps({"found": False, "want_id": want_id})
+    return json.dumps({"found": True, "want": want.to_dict()}, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: get_have
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_get_have",
+    description="Retrieve a specific Have by ID.",
+)
+def tool_get_have(
+    have_id: Annotated[str, "The Have ID to retrieve"],
+) -> str:
+    """Get a Have by ID."""
+    have = _want_registry.get_have(have_id)
+    if have is None:
+        return json.dumps({"found": False, "have_id": have_id})
+    return json.dumps({"found": True, "have": have.to_dict()}, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: withdraw_want
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_withdraw_want",
+    description="Remove an active Want from the registry.",
+)
+def tool_withdraw_want(
+    want_id: Annotated[str, "The Want ID to withdraw"],
+) -> str:
+    """Withdraw a Want."""
+    removed = _want_registry.withdraw_want(want_id)
+    return json.dumps({
+        "withdrawn": removed,
+        "want_id": want_id,
+        "message": f"Want '{want_id}' {'withdrawn' if removed else 'not found'}.",
+    })
+
+
+# ---------------------------------------------------------------------------
+# Tool: withdraw_have
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_withdraw_have",
+    description="Remove an active Have from the registry.",
+)
+def tool_withdraw_have(
+    have_id: Annotated[str, "The Have ID to withdraw"],
+) -> str:
+    """Withdraw a Have."""
+    removed = _want_registry.withdraw_have(have_id)
+    return json.dumps({
+        "withdrawn": removed,
+        "have_id": have_id,
+        "message": f"Have '{have_id}' {'withdrawn' if removed else 'not found'}.",
+    })
+
+
+# ---------------------------------------------------------------------------
+# Tool: find_matches
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_find_matches",
+    description=(
+        "Query stored matches. Filter by want_id, have_id, or agent_id. "
+        "Returns matches sorted by quality score (highest first)."
+    ),
+)
+def tool_find_matches(
+    want_id: Annotated[str | None, "Filter by Want ID"] = None,
+    have_id: Annotated[str | None, "Filter by Have ID"] = None,
+    agent_id: Annotated[str | None, "Filter by agent ID (either side of match)"] = None,
+    limit: Annotated[int, "Max results (default: 20)"] = 20,
+) -> str:
+    """Find matches."""
+    matches = _want_registry.find_matches(
+        want_id=want_id,
+        have_id=have_id,
+        agent_id=agent_id,
+        limit=limit,
+    )
+    return json.dumps({
+        "matches": [m.to_dict() for m in matches],
+        "count": len(matches),
+    }, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: search_wants
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_search_wants",
+    description=(
+        "Browse active Wants in the registry, optionally filtered by category. "
+        "Use this to discover demand in a particular market."
+    ),
+)
+def tool_search_wants(
+    category: Annotated[str | None, "Filter by category (prefix match)"] = None,
+    limit: Annotated[int, "Max results (default: 20)"] = 20,
+) -> str:
+    """Search active Wants."""
+    wants = _want_registry.search_wants(category=category, limit=limit)
+    return json.dumps({
+        "wants": [w.to_dict() for w in wants],
+        "count": len(wants),
+    }, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: search_haves
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_search_haves",
+    description=(
+        "Browse active Haves in the registry, optionally filtered by category. "
+        "Use this to discover supply in a particular market."
+    ),
+)
+def tool_search_haves(
+    category: Annotated[str | None, "Filter by category (prefix match)"] = None,
+    limit: Annotated[int, "Max results (default: 20)"] = 20,
+) -> str:
+    """Search active Haves."""
+    haves = _want_registry.search_haves(category=category, limit=limit)
+    return json.dumps({
+        "haves": [h.to_dict() for h in haves],
+        "count": len(haves),
+    }, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: want_registry_stats
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_want_registry_stats",
+    description="Get summary statistics for the Want Registry — active wants, haves, matches, and unique agents.",
+)
+def tool_want_registry_stats() -> str:
+    """Get Want Registry stats."""
+    return json.dumps(_want_registry.stats(), indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
 # Sanctuary Bridge — optional Concordia ↔ Sanctuary integration
 # ---------------------------------------------------------------------------
 
@@ -1331,6 +1604,16 @@ def handle_tool_call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         "concordia_degraded_message": tool_degraded_message,
         "concordia_efficiency_report": tool_efficiency_report,
         "concordia_preferred_badge": tool_concordia_preferred_badge,
+        "concordia_post_want": tool_post_want,
+        "concordia_post_have": tool_post_have,
+        "concordia_get_want": tool_get_want,
+        "concordia_get_have": tool_get_have,
+        "concordia_withdraw_want": tool_withdraw_want,
+        "concordia_withdraw_have": tool_withdraw_have,
+        "concordia_find_matches": tool_find_matches,
+        "concordia_search_wants": tool_search_wants,
+        "concordia_search_haves": tool_search_haves,
+        "concordia_want_registry_stats": tool_want_registry_stats,
         "concordia_sanctuary_bridge_configure": tool_sanctuary_bridge_configure,
         "concordia_sanctuary_bridge_commit": tool_sanctuary_bridge_commit,
         "concordia_sanctuary_bridge_attest": tool_sanctuary_bridge_attest,
