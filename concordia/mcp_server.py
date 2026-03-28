@@ -53,6 +53,14 @@ from mcp.server.fastmcp import FastMCP
 from .agent import Agent
 from .attestation import generate_attestation
 from .degradation import InteractionManager, PeerProtocolStatus
+from .sanctuary_bridge import (
+    SanctuaryBridgeConfig,
+    BridgeResult,
+    bridge_on_agreement,
+    bridge_on_attestation,
+    build_commitment_payload,
+    build_reveal_payload,
+)
 from .message import validate_chain
 from .offer import BasicOffer, ConditionalOffer, Condition, PartialOffer
 from .registry import AgentRegistry
@@ -897,6 +905,39 @@ def tool_agent_card(
 
 
 # ---------------------------------------------------------------------------
+# Tool: concordia_preferred_badge
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_preferred_badge",
+    description=(
+        "Get the machine-readable 'Concordia Preferred' badge for an agent. "
+        "This is a structured, embeddable signal that the agent speaks Concordia, "
+        "including capabilities, supported features, and adoption info. "
+        "Can be embedded in A2A Agent Cards, MCP metadata, or any profile system."
+    ),
+)
+def tool_concordia_preferred_badge(
+    agent_id: Annotated[str, "The agent to get the badge for"],
+) -> str:
+    """Get the Concordia Preferred badge for an agent."""
+    badge = _registry.get_badge(agent_id)
+    if badge is None:
+        return json.dumps({
+            "found": False,
+            "concordia_preferred": False,
+            "message": (
+                f"Agent '{agent_id}' is not registered. "
+                "Register with concordia_register_agent to earn the badge."
+            ),
+        })
+    return json.dumps({
+        "found": True,
+        "badge": badge,
+    }, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
 # Tool: deregister_agent
 # ---------------------------------------------------------------------------
 
@@ -1095,6 +1136,165 @@ def tool_efficiency_report(
 
 
 # ---------------------------------------------------------------------------
+# Sanctuary Bridge — optional Concordia ↔ Sanctuary integration
+# ---------------------------------------------------------------------------
+
+_bridge_config = SanctuaryBridgeConfig(enabled=False)
+
+
+# ---------------------------------------------------------------------------
+# Tool: sanctuary_bridge_configure
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_sanctuary_bridge_configure",
+    description=(
+        "Configure the Sanctuary bridge. When enabled, Concordia agreements "
+        "produce Sanctuary commitment payloads (L3), and attestations produce "
+        "Sanctuary reputation payloads (L4). Map Concordia agent IDs to "
+        "Sanctuary identity IDs and DIDs."
+    ),
+)
+def tool_sanctuary_bridge_configure(
+    enabled: Annotated[bool, "Enable or disable the Sanctuary bridge"],
+    identity_mappings: Annotated[list[dict] | None, "List of {agent_id, sanctuary_id, did} mappings"] = None,
+    default_context: Annotated[str | None, "Default reputation context (default: 'concordia_negotiation')"] = None,
+    commitment_on_agree: Annotated[bool, "Auto-generate commitment payloads on AGREED (default: true)"] = True,
+    reputation_on_receipt: Annotated[bool, "Auto-generate reputation payloads on receipt (default: true)"] = True,
+) -> str:
+    """Configure the Sanctuary bridge."""
+    _bridge_config.enabled = enabled
+    _bridge_config.commitment_on_agree = commitment_on_agree
+    _bridge_config.reputation_on_receipt = reputation_on_receipt
+
+    if default_context:
+        _bridge_config.default_context = default_context
+
+    if identity_mappings:
+        for mapping in identity_mappings:
+            agent_id = mapping.get("agent_id", "")
+            sanctuary_id = mapping.get("sanctuary_id", "")
+            did = mapping.get("did")
+            if agent_id and sanctuary_id:
+                _bridge_config.map_identity(agent_id, sanctuary_id, did)
+
+    return json.dumps({
+        "enabled": _bridge_config.enabled,
+        "identity_count": len(_bridge_config.identity_map),
+        "default_context": _bridge_config.default_context,
+        "commitment_on_agree": _bridge_config.commitment_on_agree,
+        "reputation_on_receipt": _bridge_config.reputation_on_receipt,
+        "message": f"Sanctuary bridge {'enabled' if enabled else 'disabled'}.",
+    }, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: sanctuary_bridge_commit
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_sanctuary_bridge_commit",
+    description=(
+        "Generate a Sanctuary commitment payload for a Concordia agreement. "
+        "Returns a pre-built payload ready to forward to sanctuary/proof_commitment. "
+        "The commitment binds the agreed terms cryptographically via Sanctuary's L3."
+    ),
+)
+def tool_sanctuary_bridge_commit(
+    session_id: Annotated[str, "The Concordia session that reached agreement"],
+) -> str:
+    """Generate a Sanctuary commitment payload for a Concordia agreement."""
+    if not _bridge_config.enabled:
+        return json.dumps({
+            "error": "Sanctuary bridge is not enabled. Use concordia_sanctuary_bridge_configure first.",
+        })
+
+    ctx = _store.get(session_id)
+    if ctx is None:
+        return json.dumps({"error": f"Session '{session_id}' not found."})
+
+    session = ctx.session
+    if session.state.value not in ("agreed",):
+        return json.dumps({
+            "error": f"Session is in state '{session.state.value}'. "
+                     "Sanctuary commitments require an agreed session.",
+        })
+
+    from .message import validate_chain
+    transcript_hash = None
+    if session.transcript:
+        last_msg = session.transcript[-1]
+        transcript_hash = last_msg.get("previous_hash")
+
+    parties = [ctx.initiator.agent_id, ctx.responder.agent_id]
+
+    result = bridge_on_agreement(
+        session_id=session_id,
+        agreed_terms=ctx.terms,
+        parties=parties,
+        transcript_hash=transcript_hash,
+        config=_bridge_config,
+    )
+
+    return json.dumps(result.to_dict(), indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: sanctuary_bridge_attest
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_sanctuary_bridge_attest",
+    description=(
+        "Generate Sanctuary reputation payloads from a Concordia attestation. "
+        "Returns pre-built payloads ready to forward to sanctuary/reputation_record. "
+        "One payload per party that has a Sanctuary identity mapped."
+    ),
+)
+def tool_sanctuary_bridge_attest(
+    attestation: Annotated[dict, "The Concordia attestation dict"],
+) -> str:
+    """Generate Sanctuary reputation payloads from a Concordia attestation."""
+    if not _bridge_config.enabled:
+        return json.dumps({
+            "error": "Sanctuary bridge is not enabled. Use concordia_sanctuary_bridge_configure first.",
+        })
+
+    result = bridge_on_attestation(attestation, _bridge_config)
+
+    return json.dumps(result.to_dict(), indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: sanctuary_bridge_status
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_sanctuary_bridge_status",
+    description=(
+        "Check the status of the Sanctuary bridge — whether it's enabled, "
+        "how many identity mappings are configured, and what features are active."
+    ),
+)
+def tool_sanctuary_bridge_status() -> str:
+    """Get the current Sanctuary bridge configuration status."""
+    return json.dumps({
+        "enabled": _bridge_config.enabled,
+        "identity_mappings": {
+            agent_id: {
+                "sanctuary_id": sid,
+                "did": _bridge_config.get_did(agent_id),
+            }
+            for agent_id, sid in _bridge_config.identity_map.items()
+        },
+        "identity_count": len(_bridge_config.identity_map),
+        "default_context": _bridge_config.default_context,
+        "commitment_on_agree": _bridge_config.commitment_on_agree,
+        "reputation_on_receipt": _bridge_config.reputation_on_receipt,
+    }, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
 # Programmatic access — for direct Python usage and testing
 # ---------------------------------------------------------------------------
 
@@ -1130,6 +1330,11 @@ def handle_tool_call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         "concordia_start_degraded": tool_start_degraded,
         "concordia_degraded_message": tool_degraded_message,
         "concordia_efficiency_report": tool_efficiency_report,
+        "concordia_preferred_badge": tool_concordia_preferred_badge,
+        "concordia_sanctuary_bridge_configure": tool_sanctuary_bridge_configure,
+        "concordia_sanctuary_bridge_commit": tool_sanctuary_bridge_commit,
+        "concordia_sanctuary_bridge_attest": tool_sanctuary_bridge_attest,
+        "concordia_sanctuary_bridge_status": tool_sanctuary_bridge_status,
     }
     handler = handlers.get(name)
     if handler is None:

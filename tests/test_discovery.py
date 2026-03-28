@@ -459,6 +459,56 @@ class TestDiscoveryMcpTools:
         assert result["found"] is False
         assert result["concordia_preferred"] is False
 
+    # -- Concordia Preferred Badge tool --
+
+    def test_preferred_badge(self):
+        from concordia.mcp_server import tool_register_agent, tool_concordia_preferred_badge
+        tool_register_agent(
+            agent_id="badge_agent",
+            categories=["electronics"],
+            roles=["seller"],
+        )
+        result = self._parse(tool_concordia_preferred_badge(agent_id="badge_agent"))
+        assert result["found"] is True
+        badge = result["badge"]
+        assert badge["type"] == "concordia.preferred"
+        assert badge["agent_id"] == "badge_agent"
+        assert badge["verified"] is True
+        assert badge["capabilities"]["roles"] == ["seller"]
+        assert badge["capabilities"]["categories"] == ["electronics"]
+        assert badge["features"]["structured_offers"] is True
+        assert badge["features"]["binding_commitments"] is True
+        assert badge["features"]["session_receipts"] is True
+        assert "adopt" in badge
+        assert "install" in badge["adopt"]
+
+    def test_preferred_badge_not_found(self):
+        from concordia.mcp_server import tool_concordia_preferred_badge
+        result = self._parse(tool_concordia_preferred_badge(agent_id="nobody"))
+        assert result["found"] is False
+        assert result["concordia_preferred"] is False
+
+    def test_preferred_badge_sanctuary_flag(self):
+        from concordia.mcp_server import _registry, tool_concordia_preferred_badge
+        _registry.register(
+            agent_id="sanc_agent",
+            metadata={"sanctuary_enabled": True},
+        )
+        result = self._parse(tool_concordia_preferred_badge(agent_id="sanc_agent"))
+        assert result["badge"]["features"]["sanctuary_bridge"] is True
+
+    def test_preferred_badge_via_handle_tool_call(self):
+        from concordia.mcp_server import handle_tool_call
+        handle_tool_call("concordia_register_agent", {
+            "agent_id": "htc_agent",
+            "roles": ["buyer"],
+        })
+        result = handle_tool_call("concordia_preferred_badge", {
+            "agent_id": "htc_agent",
+        })
+        assert result["found"] is True
+        assert result["badge"]["agent_id"] == "htc_agent"
+
     def test_deregister_agent(self):
         from concordia.mcp_server import tool_register_agent, tool_deregister_agent
         tool_register_agent(agent_id="temp_agent")

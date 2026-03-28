@@ -126,6 +126,40 @@ class RegisteredAgent:
             "concordia_preferred": True,
         }
 
+    def concordia_preferred_badge(self) -> dict[str, Any]:
+        """Machine-readable 'Concordia Preferred' badge (Viral Strategy §19).
+
+        A structured, embeddable signal that this agent speaks Concordia.
+        Can be included in A2A Agent Cards, MCP server metadata, or any
+        agent profile system. Other agents can filter for Concordia-compatible
+        peers using this badge.
+        """
+        return {
+            "type": "concordia.preferred",
+            "version": PROTOCOL_VERSION,
+            "agent_id": self.agent_id,
+            "verified": True,
+            "registered_at": self.registered_at,
+            "capabilities": {
+                "roles": self.capabilities.roles,
+                "categories": self.capabilities.categories,
+                "resolution_mechanisms": self.capabilities.resolution_mechanisms,
+            },
+            "features": {
+                "structured_offers": True,
+                "binding_commitments": True,
+                "session_receipts": True,
+                "reputation_attestations": True,
+                "conditional_offers": True,
+                "reasoning_fields": True,
+                "sanctuary_bridge": self.metadata.get("sanctuary_enabled", False),
+            },
+            "adopt": {
+                "spec": "https://github.com/eriknewton/concordia-protocol",
+                "install": "pip install concordia-protocol",
+            },
+        }
+
 
 # ---------------------------------------------------------------------------
 # Registry
@@ -282,3 +316,10 @@ class AgentRegistry:
         if agent is None:
             return None
         return agent.to_agent_card()
+
+    def get_badge(self, agent_id: str) -> dict[str, Any] | None:
+        """Get the machine-readable Concordia Preferred badge for an agent."""
+        agent = self.get(agent_id)
+        if agent is None:
+            return None
+        return agent.concordia_preferred_badge()
