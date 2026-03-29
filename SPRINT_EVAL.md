@@ -741,3 +741,123 @@ The Sprint Result also does **not** mention 3 additional gaps in the Sanctuary B
 Both `tool_relay_transcript` and `tool_relay_conclude` now enforce `_auth.validate_agent_token()` using the identical pattern established by SEC-007 across 14 other tools. The gate is placed before all business logic with no bypass path. Five existing tests were updated with genuine auth tokens (none deleted, none skipped). Four new regression tests cover both rejection and acceptance for both findings. The test suite passes at 483/483 (+4 from baseline 479). Code changes are confined to the 3 expected files. The relay tool family has 3 remaining lower-severity auth gaps (`relay_status`, `relay_archive`, `relay_list_archives`) and 3 bridge tool gaps noted for future hardening — none of which were in scope for this sprint.
 
 No conditions. No follow-up required for HP-16 or HP-17.
+
+---
+
+# SPRINT_EVAL.md — SEC-003: Cross-Repo Canonical JSON Divergence
+
+**Date:** 2026-03-28
+**Evaluator posture:** Skeptical QA — did not write this code, does not trust self-assessment.
+**Finding:** SEC-003 — Canonical JSON Serialization Divergence Between TypeScript and Python
+**Sanctuary commit:** `82f3321`
+**Concordia commit:** `bc615ad`
+**Branch:** `security-review` (both repos)
+
+---
+
+## 1. DIVERGENCE COVERAGE
+
+**Question:** Are all five identified divergence points addressed?
+
+**(a) Number formatting — `1.0` vs `"1"`:** PASS. Python's `_format_number_ecmascript()` (signing.py:70-162) implements ECMAScript Number::toString rules. Integer-valued floats drop the decimal (`1.0` → `"1"`). Scientific notation thresholds match V8 (decimal up to 10^21, exponential beyond). TypeScript side already followed ECMAScript natively via `JSON.stringify(value)` at bridge.ts:69. Test vectors in both repos verify `{"v":1}` not `{"v":1.0}`.
+
+**(b) Unicode escaping — `\uXXXX` vs raw UTF-8:** PASS. The vanilla `json.dumps()` call in `sanctuary_bridge.py:113` (which defaulted to `ensure_ascii=True`, escaping non-ASCII as `\uXXXX`) has been replaced with `canonical_json(agreement).decode("utf-8")` at sanctuary_bridge.py:115. Python's `_stable_stringify` uses `json.dumps(value, ensure_ascii=False)` for strings (signing.py:190), matching V8's raw UTF-8 output. Test vectors cover `café` and `你好世界` in both repos.
+
+**(c) Negative zero — asymmetric validation:** PASS. TypeScript now rejects `-0` with `Object.is(value, -0)` check at bridge.ts:63-67, throwing an error. Python already rejected it via `_check_no_special_floats` (signing.py:60-61). Both repos now reject symmetrically. Both test suites have explicit `-0` rejection tests.
+
+**(d) Unsorted key bypass in `bridge.ts` and `sanctuary_bridge.py`:** PASS. The commitment signing payload at bridge.ts:139 now uses `stableStringify(commitmentPayload)` instead of `JSON.stringify`. The verification payload at bridge.ts:199 also uses `stableStringify(commitmentPayload)`. The Python bridge at sanctuary_bridge.py:115 now uses `canonical_json(agreement).decode("utf-8")` instead of `json.dumps(agreement, sort_keys=True, separators=(",",":"))`. Comments at bridge.ts:137-138 and bridge.ts:188-189 explicitly reference SEC-003. Comments at sanctuary_bridge.py:113-114 do the same.
+
+**(e) undefined vs None structural gap:** PASS (acknowledged as non-practical). TypeScript's `stableStringify` maps `undefined` → `"null"` (bridge.ts:55). Python has no `undefined` concept; `None` maps to `"null"` (signing.py:179). No cross-repo divergence is possible because Python never produces `undefined` and TypeScript serializes it to the same output as `null`. The sprint contract correctly identified this as "not a practical cross-repo divergence, but a spec gap." No fix needed. Accepted.
+
+---
+
+## 2. CANONICAL FORMAT CORRECTNESS
+
+**(a) Python `_format_number_ecmascript()` implementation:**
+
+I inspected signing.py:70-162 line by line.
+
+- Integer-valued floats: `value.is_integer()` → formats as `str(int(value))` with decimal notation up to 21 digits (matching V8's threshold). Correct.
+- Zero: explicitly returns `"0"` (line 88). Correct.
+- Bool rejection: `isinstance(value, bool)` raises TypeError (line 82). Necessary because Python's `bool` subclasses `int`. Correct.
+- Negative handling: extracts sign, operates on absolute value (lines 91-93). Correct.
+- Non-integer floats: uses `repr(value)` to get shortest representation, then reformats per ECMA-262 §6.1.6.1.20 rules (lines 113-161). The thresholds match V8: `k <= n <= 21` for trailing zeros, `0 < n <= 21` for decimal within digits, `-6 < n <= 0` for small decimals, else exponential. Correct.
+- Exponential format uses `"e+"` or `"e-"` (line 156). Matches V8. Correct.
+- `-0.0` is pre-rejected by `_check_no_special_floats` before reaching this function. Correct.
+
+**(b) TypeScript `stableStringify` key sorting vs Python `_stable_stringify`:**
+
+TypeScript (bridge.ts:76): `Object.keys(obj).sort()` — default lexicographic sort by code point.
+Python (signing.py:194): `sorted(value.keys())` — default lexicographic sort by code point.
+Both use `JSON.stringify(k)` / `json.dumps(k, ensure_ascii=False)` for key strings.
+Both recurse identically on values. Both handle arrays, null, booleans, strings, and numbers consistently.
+
+Key sort order: identical. Nested object handling: identical. Separator handling: both use compact `","` and `":"` with no whitespace. Confirmed consistent.
+
+---
+
+## 3. CALL SITE COVERAGE
+
+**Original vulnerable call sites:**
+
+- `bridge.ts` line 131 (now 139): WAS `JSON.stringify(commitmentPayload)` → NOW `stableStringify(commitmentPayload)`. FIXED. ✓
+- `bridge.ts` line 189 (now 199): WAS `JSON.stringify(commitmentPayload)` → NOW `stableStringify(commitmentPayload)`. FIXED. ✓
+- `sanctuary_bridge.py` line 113 (now 115): WAS `json.dumps(agreement, sort_keys=True, separators=(",",":"))` → NOW `canonical_json(agreement).decode("utf-8")`. FIXED. ✓
+
+**Residual `json.dumps` in Concordia `concordia/`:** 80+ remaining `json.dumps` calls — all in `mcp_server.py` for MCP tool response formatting (human-readable output to the agent harness). These are display-layer serialization, not signing or commitment computation. The only `json.dumps` in `signing.py` is within `_stable_stringify` (lines 190, 196) for individual string values with `ensure_ascii=False`. CLEAN.
+
+---
+
+## 4. CROSS-LANGUAGE TEST VECTORS
+
+**Concordia:** 16 test methods in `TestCrossLanguageCanonicalJSON` class + 2 tests in `test_sanctuary_bridge.py` (unicode preservation and integer formatting) + 1 additional `test_ecmascript_number_formatting` = 19 total. The class includes 13 shared vectors that assert exact byte equality (`assert canonical_json(data) == expected` where expected is a byte literal).
+
+**Sanctuary:** 16 new tests in `bridge.test.ts` within `cross-language canonical JSON vectors (SEC-003)` describe block. Includes 14 shared vectors in a single test (`matches shared cross-language test vectors`) that assert exact string equality.
+
+**Divergence point coverage:**
+- Number formatting: Covered (integer, float, negative, zero)
+- Unicode: Covered (café, 你好世界, emoji ☺)
+- Negative zero: Covered (rejection tests)
+- Sorted keys: Covered (alphabetical, nested)
+- undefined/None: Not directly tested cross-language (accepted — no practical divergence exists)
+
+**Byte-identical assertions:** Both repos assert exact string/byte equality against hardcoded expected values. Confirmed.
+
+**Edge cases:** Empty objects/arrays ✓, nested structures (3+ levels) ✓, Unicode (Latin, CJK, emoji) ✓, floats/integers ✓, negative zero rejection ✓, NaN/Infinity rejection ✓, control characters ✓, mixed-type arrays ✓.
+
+---
+
+## 5. MIGRATION IMPACT
+
+Verified: Neither `security-review` branch is merged to `main` in either repo. Concordia uses in-memory storage only. No persistent signatures exist. Zero migration impact confirmed.
+
+---
+
+## 6. COMMIT SCOPE
+
+**Concordia commit `bc615ad`:** 6 files, all within sprint contract scope.
+- `concordia/signing.py` ✓
+- `concordia/sanctuary_bridge.py` ✓
+- `tests/test_signing.py` ✓ (new)
+- `tests/test_sanctuary_bridge.py` ✓ (listed in contract)
+- `SPRINT_CONTRACT.md` ✓
+- `SPRINT_RESULT.md` ✓
+
+**Sanctuary commit `82f3321`:** 8 files — 4 expected + 4 from SEC-ADD-03 bundled in. See Sanctuary's SPRINT_EVAL.md for details.
+
+---
+
+## 7. TEST SUITE RESULTS
+
+**Sanctuary:** 303 passed, 0 failed (baseline 287, +16 new). ✓
+**Concordia:** 517 passed, 0 failed (baseline 483, +34 new). ✓
+
+---
+
+## Grade: CONDITIONAL PASS
+
+**Condition:** The SEC-ADD-03 changes bundled in Sanctuary commit `82f3321` are out of scope for the SEC-003 sprint. This is a process violation (bundling two findings), not a correctness issue. The SEC-003 fix itself is complete and correct across both repos.
+
+**To reach unconditional PASS:** Acknowledge that SEC-ADD-03's fix commit is `82f3321` and log it in COWORK_CONTEXT.md as sharing a commit with SEC-003. No code changes required.
+
+All five divergence points are addressed. Canonical format implementation is correct. All three vulnerable call sites are fixed. Test vectors cover identified divergence points with byte-identical assertions. Migration impact is zero. Test suites pass at 303/303 and 517/517.
