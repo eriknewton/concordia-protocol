@@ -20,7 +20,9 @@ import json
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from ..signing import KeyPair, verify_signature
 
@@ -163,21 +165,22 @@ class AttestationStore:
     def ingest(
         self,
         attestation: dict[str, Any],
-        public_keys: dict[str, Any] | None = None,
+        public_key_resolver: Callable[[str], Ed25519PublicKey | None],
     ) -> tuple[bool, ValidationResult]:
         """Validate and store an attestation.
 
         Args:
             attestation: The attestation dict to ingest.
-            public_keys: Optional mapping of agent_id → Ed25519 public key
-                         for signature verification. If not provided,
-                         signature verification is skipped.
+            public_key_resolver: Mandatory callback that maps an agent_id
+                to its Ed25519 public key, or returns ``None`` if the
+                identity is unknown.  Follows the SEC-005 cluster contract:
+                mandatory parameter, null return = rejection.
 
         Returns:
             (accepted, validation_result) tuple.
         """
         # Step 1: Validate
-        validation = self._validate(attestation, public_keys)
+        validation = self._validate(attestation, public_key_resolver)
         if not validation.valid:
             return False, validation
 
@@ -277,9 +280,14 @@ class AttestationStore:
     def _validate(
         self,
         attestation: dict[str, Any],
-        public_keys: dict[str, Any] | None = None,
+        public_key_resolver: Callable[[str], Ed25519PublicKey | None],
     ) -> ValidationResult:
-        """Run the full validation pipeline on an attestation."""
+        """Run the full validation pipeline on an attestation.
+
+        Signature verification is mandatory — follows the SEC-005 cluster
+        contract.  The ``public_key_resolver`` callback must be provided;
+        if it returns ``None`` for any party the attestation is rejected.
+        """
         errors: list[str] = []
         warnings: list[str] = []
 
@@ -326,34 +334,36 @@ class AttestationStore:
                 f"Invalid transcript_hash format: must start with 'sha256:'"
             )
 
-        # Signature verification (if public keys provided)
+        # Mandatory signature verification (SEC-014 fix — cluster contract)
+        # No fallback path: every party's signature must be verified.
         if not errors:
-            has_signatures = any(party.get("signature") for party in parties)
-            if has_signatures and not public_keys:
-                # Warn that signatures are present but cannot be verified
-                warnings.append(
-                    "Signatures are present but public_keys not provided. "
-                    "Signature verification will be skipped. "
-                    "It is strongly recommended to provide public_keys for security."
-                )
-            elif public_keys:
-                for party in parties:
-                    agent_id = party.get("agent_id", "")
-                    signature = party.get("signature", "")
-                    if agent_id in public_keys and signature:
-                        signable = {k: v for k, v in party.items() if k != "signature"}
-                        try:
-                            valid = verify_signature(
-                                signable, signature, public_keys[agent_id]
-                            )
-                            if not valid:
-                                errors.append(
-                                    f"Invalid signature for agent '{agent_id}'"
-                                )
-                        except Exception as e:
-                            errors.append(
-                                f"Signature verification failed for '{agent_id}': {e}"
-                            )
+            for party in parties:
+                agent_id = party.get("agent_id", "")
+                signature = party.get("signature", "")
+                if not signature:
+                    # Already caught by empty-signature check above,
+                    # but guard defensively.
+                    continue
+
+                public_key = public_key_resolver(agent_id)
+                if public_key is None:
+                    errors.append(
+                        f"Unknown agent identity '{agent_id}' — "
+                        "resolver returned None, signature cannot be verified"
+                    )
+                    continue
+
+                signable = {k: v for k, v in party.items() if k != "signature"}
+                try:
+                    valid = verify_signature(signable, signature, public_key)
+                    if not valid:
+                        errors.append(
+                            f"Invalid signature for agent '{agent_id}'"
+                        )
+                except Exception as e:
+                    errors.append(
+                        f"Signature verification failed for '{agent_id}': {e}"
+                    )
 
         return ValidationResult(
             valid=len(errors) == 0,

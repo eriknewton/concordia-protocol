@@ -784,7 +784,26 @@ def tool_ingest_attestation(
     if not _auth.validate_agent_token(agent_id, auth_token):
         return _auth_error(agent_id)
     try:
-        accepted, validation = _attestation_store.ingest(attestation)
+        # Build public key resolver from session store (SEC-014 fix).
+        # The attestation's session_id maps to a SessionContext which holds
+        # both parties' key pairs.  If the session is not found, the resolver
+        # returns None for every agent_id — the attestation will be rejected
+        # (fail-closed per the SEC-005 cluster contract).
+        session_id = attestation.get("session_id", "")
+        ctx = _store.get(session_id) if session_id else None
+
+        def _resolve_attestation_key(aid: str) -> "Ed25519PublicKey | None":
+            if ctx is None:
+                return None
+            if aid == ctx.initiator.agent_id:
+                return ctx.initiator_key.public_key
+            if aid == ctx.responder.agent_id:
+                return ctx.responder_key.public_key
+            return None
+
+        accepted, validation = _attestation_store.ingest(
+            attestation, public_key_resolver=_resolve_attestation_key,
+        )
         result: dict[str, Any] = {
             "accepted": accepted,
             "attestation_id": attestation.get("attestation_id", ""),

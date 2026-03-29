@@ -1,24 +1,24 @@
-# SPRINT CONTRACT — SEC-010: Session State Machine Never Verifies Signatures
+# SPRINT CONTRACT — SEC-014: Attestation Signature Verification Is Optional
 
 **Sprint Date:** 2026-03-28
-**Finding:** SEC-010 (High)
+**Finding:** SEC-014 (High)
 **Branch:** `security-review`
-**Cluster:** Second of three (SEC-005, SEC-010, SEC-014) — this sprint conforms to the resolver pattern established by SEC-005.
+**Cluster:** Third and final of three (SEC-005, SEC-010, SEC-014) — this sprint conforms exactly to the resolver pattern established by SEC-005 and implemented by SEC-010.
 
 ---
 
 ## Cluster Contract Conformance
 
-SEC-005 (Import skips signature verification, Sanctuary TypeScript) established the verification pattern for the entire signature verification cluster. This sprint implements the identical pattern in the Concordia Python codebase. Conformance point-by-point:
+SEC-005 (Import skips signature verification, Sanctuary TypeScript) established the verification pattern for the entire signature verification cluster. SEC-010 (Session state machine never verifies signatures, Concordia Python) implemented the same pattern for session messages. This sprint closes the cluster by applying the identical pattern to attestation ingestion.
 
-| SEC-005 Cluster Contract Requirement | SEC-010 Implementation |
+| SEC-005 Cluster Contract Requirement | SEC-014 Implementation |
 |---|---|
-| Callback signature: `(identifier: string) => PublicKey \| null` | `public_key_resolver: Callable[[str], Ed25519PublicKey \| None]` — same semantic shape in Python |
-| Verification is **mandatory, not optional** | `public_key_resolver` is a required parameter on `apply_message()` — no default value, no `Optional` type |
-| Null return from resolver → **rejection, not warning** | If resolver returns `None`, raise `InvalidSignatureError` — hard rejection, message not appended to transcript |
-| Response includes structured rejection counts | `InvalidSignatureError` raised with descriptive message identifying the failure mode (unknown identity vs. invalid signature) |
+| Callback signature: `(identifier: string) => PublicKey \| null` | `public_key_resolver: Callable[[str], Ed25519PublicKey \| None]` — identical to SEC-010 |
+| Verification is **mandatory, not optional** | `public_key_resolver` is a required parameter on `ingest()` — no default value, no `Optional` type |
+| Null return from resolver → **rejection, not warning** | If resolver returns `None`, add to errors and reject — hard failure, not the current warning |
+| Response includes structured rejection counts | `ValidationResult.errors` list contains specific failure messages per party |
 
-The SEC-005 evaluator explicitly noted: "A future implementer working on SEC-010 or SEC-014 can follow this pattern without reading the SEC-005 implementation." This contract follows that pattern exactly.
+The SEC-010 sprint result explicitly noted: "The same pattern — mandatory `public_key_resolver`, null → rejection — should be applied to `AttestationStore.ingest()`." This contract follows that directive exactly.
 
 ---
 
@@ -26,41 +26,40 @@ The SEC-005 evaluator explicitly noted: "A future implementer working on SEC-010
 
 ### a) Root cause — not the symptom
 
-The `apply_message()` method in `session.py:115-155` validates state transitions and tracks behavioral signals, but never calls `verify_signature()` from `signing.py`. The root cause is identical to SEC-005: the session module has no concept of identity resolution. It receives messages with a `from.agent_id` field and a `signature` field but has no mechanism to resolve the agent_id to a public key for verification. The `verify_signature()` function exists and is correctly implemented (`signing.py:95-108`) but is dead code — never called from any session lifecycle path.
+The `AttestationStore.ingest()` method in `store.py:163-175` accepts an optional `public_keys` parameter defaulting to `None`. The `_validate()` method (store.py:277-362) checks for signatures but when `public_keys` is `None`, it only emits a warning (store.py:332-338) and proceeds to accept the attestation. The only production caller — `tool_ingest_attestation()` at mcp_server.py:787 — calls `ingest(attestation)` without passing any public keys.
+
+The root cause is identical to SEC-005 and SEC-010: verification machinery exists (`verify_signature()` is called when keys are provided, store.py:339-356) but is gated behind an optional parameter, making the secure path opt-in rather than mandatory.
 
 ### b) Smallest change that closes the vulnerability
 
-Add a mandatory `public_key_resolver` callback parameter to `Session.apply_message()`:
+Replace the optional `public_keys: dict[str, Any] | None = None` parameter on both `ingest()` and `_validate()` with a mandatory `public_key_resolver: Callable[[str], Ed25519PublicKey | None]`:
 
 ```python
-def apply_message(
+def ingest(
     self,
-    message: dict[str, Any],
+    attestation: dict[str, Any],
     public_key_resolver: Callable[[str], Ed25519PublicKey | None],
-) -> SessionState:
+) -> tuple[bool, ValidationResult]:
 ```
 
-Before any state transition or transcript append:
-1. Extract `agent_id` from `message["from"]["agent_id"]`
-2. Extract `signature` from `message["signature"]`
-3. Call `public_key_resolver(agent_id)`. If it returns `None`, raise `InvalidSignatureError` (unknown identity — hard rejection per cluster contract).
-4. Call `verify_signature(message, signature, public_key)`. If it returns `False`, raise `InvalidSignatureError` (invalid signature — hard rejection).
-5. Only if both checks pass: proceed with transition validation, transcript append, and behavioral tracking.
+In `_validate()`, replace the "warn-if-no-keys" block (store.py:329-338) with mandatory verification:
+1. For each party with a signature, call `public_key_resolver(agent_id)`.
+2. If resolver returns `None` → add error (not warning), reject attestation.
+3. If `verify_signature()` returns `False` → add error, reject attestation.
+4. No fallback path. No "skip verification" code path.
 
-Add a new `InvalidSignatureError` exception class in `session.py` alongside `InvalidTransitionError`.
-
-Update `Agent._send()` to pass a resolver callback when calling `apply_message()`. The `Agent` class already has access to both parties' key pairs (its own and the counterparty's via the session's `parties` mapping), so the resolver wiring is straightforward.
+In `tool_ingest_attestation()`, wire a resolver that looks up public keys from the session store (`_store`) using the attestation's `session_id` to find the `SessionContext` and extract the parties' public keys.
 
 ### c) Interactions with other findings
 
 - **SEC-005** (closed, PASS): Established the cluster pattern. This sprint conforms to it.
-- **SEC-014** (attestation signature verification optional): Third in cluster. Will follow the same mandatory resolver pattern on `AttestationStore.ingest()`.
-- **SEC-007** (Concordia zero caller authentication, closed): The auth layer added by SEC-007 is orthogonal — it authenticates the MCP *caller*, while SEC-010 verifies the cryptographic *message signature*. Both are required: SEC-007 prevents impersonation at the transport layer, SEC-010 prevents forged messages at the protocol layer.
+- **SEC-010** (closed, PASS): Second in cluster. Implemented the same pattern on `Session.apply_message()`. This sprint mirrors SEC-010's approach for `AttestationStore.ingest()`.
+- **SEC-007** (closed, PASS): The auth layer added by SEC-007 authenticates the MCP caller. SEC-014 verifies the cryptographic signatures within the attestation data itself. Both are required: SEC-007 prevents impersonation at the transport layer, SEC-014 ensures attestation content integrity at the data layer.
 
 ### d) New risk introduced
 
-- All callers of `apply_message()` must now provide a `public_key_resolver`. The only production caller is `Agent._send()` (agent.py:298). Tests that call `apply_message()` directly must also provide a resolver. This is the **correct** behavior — the cluster contract mandates that verification cannot be bypassed.
-- Messages with missing `signature` or `from` fields will now raise `InvalidSignatureError` instead of `KeyError`. This is a strictness improvement, not a regression.
+- All callers of `ingest()` must now provide a `public_key_resolver`. Existing tests that call `ingest()` without one will fail at the type level. This is the correct behavior per the cluster contract — verification cannot be bypassed.
+- Attestations from sessions not in the session store (e.g., from external sources or after server restart) will be rejected because the resolver cannot find their keys. This is the correct fail-closed behavior. A future enhancement could allow callers to explicitly provide keys, but the default must be mandatory verification.
 
 ---
 
@@ -68,57 +67,56 @@ Update `Agent._send()` to pass a resolver callback when calling `apply_message()
 
 ### Files to modify
 
-1. **`concordia/session.py`** — `apply_message()` method (lines 115-155)
-   - Add `public_key_resolver` required parameter
-   - Add `InvalidSignatureError` exception class
-   - Add signature verification block before state transition
-   - Add import for `verify_signature` from `.signing`
-   - Add import for `Ed25519PublicKey` from `cryptography`
-   - Add import for `Callable` from `typing`
+1. **`concordia/reputation/store.py`** — `ingest()` and `_validate()` methods
+   - Change `public_keys: dict[str, Any] | None = None` to `public_key_resolver: Callable[[str], Ed25519PublicKey | None]` (mandatory, no default)
+   - In `_validate()`: remove the "warn and skip" code path. Always call resolver for each party, reject on `None`.
+   - Add imports for `Callable` from `typing` and `Ed25519PublicKey` from `cryptography`
 
-2. **`concordia/agent.py`** — `_send()` method (lines 276-299)
-   - Wire `public_key_resolver` callback using `self.key_pair.public_key` and counterparty keys
-   - The Agent has access to its own key pair; for the resolver, it needs to map agent_ids to public keys from the session's party list
+2. **`concordia/mcp_server.py`** — `tool_ingest_attestation()` (line 787)
+   - Build a resolver function that looks up public keys from the session store using `attestation["session_id"]`
+   - Pass the resolver to `_attestation_store.ingest(attestation, public_key_resolver=resolver)`
 
-3. **`concordia/__init__.py`** — Export `InvalidSignatureError`
+3. **`tests/test_attestation_signature_verification.py`** — New regression test file
 
 ### Behavior before
 
-`apply_message()` accepts any message dict, validates only the state transition, appends to transcript, and tracks behavior. Messages with invalid, absent, or forged signatures are accepted and become permanent parts of the hash-chained transcript.
+`ingest()` accepts an optional `public_keys` dict. When called from `tool_ingest_attestation()`, no keys are passed. The `_validate()` method emits a warning ("Signature verification will be skipped") and accepts the attestation. Any well-formed attestation with syntactically valid base64 strings in signature fields is accepted and scored regardless of cryptographic validity.
 
 ### Behavior after
 
-`apply_message()` requires a `public_key_resolver` callback. Before any state transition:
-- If `message["signature"]` is missing or empty: raises `InvalidSignatureError`
-- If `public_key_resolver(agent_id)` returns `None`: raises `InvalidSignatureError` (unknown identity)
-- If `verify_signature()` returns `False`: raises `InvalidSignatureError` (invalid signature)
-- Session state is unchanged on any rejection — no transcript append, no behavioral tracking
+`ingest()` requires a mandatory `public_key_resolver` callback. For every party in the attestation:
+- If `public_key_resolver(agent_id)` returns `None`: validation fails with error (unknown identity — hard rejection)
+- If `verify_signature()` returns `False`: validation fails with error (invalid signature — hard rejection)
+- No "skip verification" code path exists
+- Attestations with unverifiable signatures are rejected, not stored, not scored
 
 ### Regression tests
 
-New file: `tests/test_session_signature_verification.py`
+New file: `tests/test_attestation_signature_verification.py`
 
 Tests:
-1. **Valid signed message accepted** — create a session with properly signed messages, verify state transitions work as before.
-2. **Forged signature rejected** — create a valid message, tamper with the signature, verify `InvalidSignatureError` raised and session state unchanged.
-3. **Missing signature rejected** — create a message with no `signature` field, verify rejection.
-4. **Unknown agent_id rejected** — create a message with a valid signature but an agent_id the resolver doesn't recognize, verify rejection.
-5. **Resolver returning None rejected** — verify that a resolver that returns `None` causes rejection, matching cluster contract.
-6. **Wrong key rejected** — sign a message with key A but have the resolver return key B's public key, verify rejection.
-7. **State unchanged on rejection** — verify that after any rejection, session state, transcript length, and round count are all unchanged.
+1. **Valid signed attestation accepted** — create an attestation with real Ed25519 signatures, provide a resolver that returns correct public keys, verify acceptance.
+2. **Forged signature rejected** — create a valid attestation, tamper with one signature, verify rejection with error message identifying the party.
+3. **Unknown agent_id rejected** — provide a resolver that returns `None` for one party's agent_id, verify rejection.
+4. **Resolver returning None for all parties rejected** — resolver always returns `None`, verify all parties flagged.
+5. **Wrong key rejected** — sign with key A, resolver returns key B's public key, verify rejection.
+6. **Store unchanged on rejection** — verify that after rejection, store count is unchanged, no indexes updated.
+7. **No fallback to warning** — verify that the old "signatures present but public_keys not provided" warning path no longer exists.
+8. **MCP tool wires resolver correctly** — verify that `tool_ingest_attestation` passes a functioning resolver to `ingest()`.
 
 ### Prompt injection
 
-`apply_message()` processes message dicts that contain user-controlled content (body, reasoning fields). These fields are stored in the transcript and used for behavioral tracking but never reach any model prompt. No prompt injection surface.
+`ingest()` processes attestation dicts containing party behavioral data, transaction categories, and metadata. These fields are stored but never reach any model prompt. No prompt injection surface.
 
 ### Definition of done (evaluator criteria)
 
-1. `apply_message()` has a **mandatory** `public_key_resolver` parameter (not optional, no default).
-2. Messages with invalid signatures raise `InvalidSignatureError` — session state unchanged.
-3. Messages with unknown agent_ids (resolver returns `None`) raise `InvalidSignatureError`.
-4. Messages with missing signatures raise `InvalidSignatureError`.
-5. The resolver follows the SEC-005 cluster contract: `Callable[[str], PublicKey | None]`, mandatory, null → rejection.
-6. All 7 regression tests pass.
-7. Full test suite count >= 459 (no decrease from baseline).
-8. `Agent._send()` correctly wires the resolver.
-9. The fix does not couple `Session` to any specific key storage — the resolver is a pure callback.
+1. `ingest()` has a **mandatory** `public_key_resolver` parameter (not optional, no default).
+2. `_validate()` has a **mandatory** `public_key_resolver` parameter (not optional, no default).
+3. Attestations with invalid signatures are rejected with errors — not warnings, not accepted.
+4. Attestations with unknown agent_ids (resolver returns `None`) are rejected with errors.
+5. The old "Signature verification will be skipped" warning code path is deleted — no fallback.
+6. The resolver follows the SEC-005 cluster contract: `Callable[[str], Ed25519PublicKey | None]`, mandatory, null → rejection.
+7. `tool_ingest_attestation` in mcp_server.py wires a resolver that resolves keys from the session store.
+8. All regression tests pass.
+9. Full test suite count >= 469 (no decrease from baseline).
+10. The fix conforms point-by-point to the SEC-005 cluster contract and the SEC-010 implementation pattern.
