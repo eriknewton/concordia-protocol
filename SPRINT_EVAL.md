@@ -397,3 +397,201 @@ For comparison, `InvalidTransitionError` already reveals that state transition v
 The fix correctly addresses the SEC-010 root cause. Signature verification is mandatory on every code path through `apply_message()` — there is no bypass. The implementation conforms point-for-point to the SEC-005 cluster contract (required resolver, null = rejection, zero coupling to key storage). Forged messages are intercepted before any transcript append or state transition, preserving hash chain integrity. The regression tests cover all four required scenarios plus three additional edge cases. The commit scope is clean (exactly 6 files). The `InvalidSignatureError` export introduces no security risk.
 
 No conditions. No follow-up required for this finding.
+
+---
+
+# SPRINT_EVAL.md — SEC-014: Independent QA Evaluation
+
+**Date:** 2026-03-28
+**Evaluator posture:** Skeptical QA — did not write this code, does not trust self-assessment.
+**Finding:** SEC-014 — Concordia Attestation Signature Verification Is Optional
+**Branch:** `security-review`
+
+---
+
+## 1. ROOT CAUSE
+
+**Question:** The finding is that attestation signature verification was optional — a `None` default on `public_keys` silently skipped verification. Does the fix eliminate every optional or fallback path?
+
+**Verdict: PASS.**
+
+I read `AttestationStore.ingest()` (store.py:165-246) and `_validate()` (store.py:280-372) directly. The diff between `e60b711~1` and `e60b711` confirms:
+
+**Deleted:** The entire "warn and skip" block (old lines 332-338) is gone. This was the code that emitted `"Signatures are present but public_keys not provided. Signature verification will be skipped."` and accepted the attestation anyway. It is not commented out, not behind a flag — it is deleted from the file.
+
+**Deleted:** The old `public_keys: dict[str, Any] | None = None` optional parameter on both `ingest()` and `_validate()`. Replaced with `public_key_resolver: Callable[[str], Ed25519PublicKey | None]` — no default value.
+
+**Deleted:** The conditional `elif public_keys:` branch that only verified signatures when the optional dict was provided. Replaced with unconditional verification: every party's signature is verified on every call.
+
+I confirmed with `grep -rn "public_keys" concordia/reputation/store.py concordia/mcp_server.py` — zero hits. The old parameter name is gone entirely.
+
+I confirmed with `grep -rn "Signature verification will be skipped" concordia/` — zero hits. The warning string is gone from the entire codebase.
+
+The new verification logic (store.py:337-366) is unconditional:
+1. For each party with a signature, call `public_key_resolver(agent_id)`.
+2. If resolver returns `None` → `errors.append(...)` — hard rejection.
+3. If `verify_signature()` returns `False` → `errors.append(...)` — hard rejection.
+4. If verification raises exception → `errors.append(...)` — hard rejection.
+5. No else, no fallback, no skip.
+
+**Conclusion:** Every optional and fallback path is eliminated. Verification is unconditional.
+
+---
+
+## 2. CLUSTER CONTRACT CONFORMANCE
+
+**Question:** Does SEC-014 conform to the established pattern from SEC-005 and SEC-010?
+
+**Verdict: PASS.**
+
+### 2a. `public_key_resolver` is a required parameter with no default value
+
+At `store.py:168`:
+```python
+public_key_resolver: Callable[[str], Ed25519PublicKey | None],
+```
+At `store.py:283`:
+```python
+public_key_resolver: Callable[[str], Ed25519PublicKey | None],
+```
+
+No default value on either method. Calling `ingest(att)` without a resolver raises `TypeError`. This is confirmed by `test_ingest_requires_resolver_argument` (test_attestation_signature_verification.py:222-226), which asserts `pytest.raises(TypeError)`.
+
+### 2b. Resolver returning `None` raises a hard error, not a warning
+
+At `store.py:349-353`:
+```python
+if public_key is None:
+    errors.append(
+        f"Unknown agent identity '{agent_id}' — "
+        "resolver returned None, signature cannot be verified"
+    )
+```
+
+This is a hard error added to the errors list. When any error is present, `_validate()` returns `ValidationResult(valid=False, ...)` at line 368-372. Back in `ingest()`, line 184 returns `(False, validation)` — the attestation is rejected, never stored.
+
+For comparison: SEC-010 uses `raise InvalidSignatureError(...)` — same effect (rejection), different mechanism (exception vs error accumulation). Both are contextually appropriate: SEC-010 validates a single message and fails immediately; SEC-014 validates multiple parties and accumulates all errors for diagnostic completeness. The net result is identical: unknown identities cause rejection.
+
+### 2c. `AttestationStore` has zero coupling to any specific key store
+
+I verified `store.py` imports:
+- `from ..signing import KeyPair, verify_signature` — cryptographic primitives only
+- `from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey` — type hint only
+- `from typing import Any, Callable` — type hints only
+
+No import of `AuthTokenStore`, session store, agent registry, or any storage module. The `public_key_resolver` callback is the sole key access mechanism, injected by the caller.
+
+In `mcp_server.py`, the resolver (`_resolve_attestation_key`, lines 795-802) looks up keys from the session store's `SessionContext`. This wiring is in the MCP layer, not in `AttestationStore` — the store itself remains completely agnostic about where keys come from.
+
+**Conclusion:** All three cluster contract requirements are met.
+
+---
+
+## 3. REPUTATION INTEGRITY
+
+**Question:** Does the fix intercept forged attestations before they reach the scoring path — before any reputation update occurs?
+
+**Verdict: PASS.**
+
+I traced the execution path in `ingest()`:
+
+1. **Line 183:** `validation = self._validate(attestation, public_key_resolver)` — signature verification happens here.
+2. **Line 184-185:** If `not validation.valid`, return `(False, validation)` immediately.
+3. **Lines 190-209:** Deduplication and capacity checks — only reachable if validation passed.
+4. **Lines 211-217:** Sybil detection — only reachable if validation passed.
+5. **Lines 219-244:** Store the attestation (update indexes) — only reachable if validation passed.
+
+An attestation with a forged or unverifiable signature fails at step 1-2. It never reaches:
+- The `_by_id` dict (primary storage, line 233)
+- The `_by_agent` index (agent lookup, line 237)
+- The `_counterparties` index (Sybil data, line 241)
+- The Sybil detection engine (line 213)
+
+The scoring engine (`concordia/reputation/scorer.py`) reads from `AttestationStore.get_by_agent()` — which queries `_by_id` via `_by_agent`. Since forged attestations never enter `_by_id`, they cannot influence scores.
+
+Confirmed by `test_store_unchanged_on_rejection` (test_attestation_signature_verification.py:185-202): after ingesting one valid attestation and then attempting a forged one, `store.count() == 1`, `store.agent_count("agent_alpha") == 1`, `store.agent_count("agent_beta") == 1`. The forged attestation left no trace.
+
+**Conclusion:** Forged attestations are rejected before any storage or scoring path. Reputation manipulation via fake signatures is no longer possible.
+
+---
+
+## 4. EXISTING TEST UPDATES
+
+**Question:** Were existing tests updated to use properly-signed attestations, or were they deleted/skipped to make the suite pass?
+
+**Verdict: PASS.**
+
+I ran `git diff e60b711~1..e60b711 -- tests/test_reputation.py | grep "^-.*def test_"` — zero output. No test functions were deleted from `test_reputation.py`.
+
+I ran `git diff e60b711~1..e60b711 -- tests/test_security.py | grep "^-.*def test_"` — zero output. No test functions were deleted from `test_security.py`.
+
+I checked for `@pytest.mark.skip`, `@pytest.mark.xfail`, and `skip()` calls across all test files — none found (the only `skip` references are in `test_sanctuary_bridge.py` for the unrelated `BridgeResult.skipped_reason` field and in the SEC-014 regression test that verifies the old skip-warning path is gone).
+
+The diff for `test_reputation.py` shows the `_make_attestation()` helper was rewritten to produce properly-signed attestations using real Ed25519 key pairs via a `_KEY_REGISTRY` and `_get_key()` helper. A `_test_resolver()` function was added. All `store.ingest(att)` calls were updated to `store.ingest(att, _test_resolver)`. The test functions themselves — their names, their assertions, their coverage — are preserved.
+
+The diff for `test_security.py` shows helpers `_sec_get_key()`, `_sec_resolver()`, `_sec_null_resolver()`, and `_make_signed_att()` were added. Existing tests were updated to pass resolvers. No test logic was removed.
+
+Full suite independently executed:
+
+```
+479 passed in 0.50s
+```
+
+Baseline: 469. New count: 479 (+10 regression tests). No regressions, no skips, no failures.
+
+**Conclusion:** All existing tests were updated, not deleted or skipped. The suite passes at 479/479.
+
+---
+
+## 5. SCOPE
+
+**Question:** Does commit `e60b711` touch only the expected files?
+
+**Verdict: PASS.**
+
+`git show --stat e60b711` confirms 7 files:
+
+| File | Change |
+|---|---|
+| `SPRINT_CONTRACT.md` | 124 ++/-- |
+| `SPRINT_RESULT.md` | 85 ++/-- |
+| `concordia/mcp_server.py` | 21 ++/- |
+| `concordia/reputation/store.py` | 80 ++/-- |
+| `tests/test_attestation_signature_verification.py` | 263 +++ (new file) |
+| `tests/test_reputation.py` | 213 ++/-- |
+| `tests/test_security.py` | 142 ++/-- |
+
+7 files changed, 662 insertions, 266 deletions.
+
+Expected files: `store.py` (core fix), `mcp_server.py` (resolver wiring), new regression test file, updated existing test files, sprint contract, sprint result. All present. No unexpected files. No scope creep.
+
+---
+
+## 6. CLUSTER CLOSURE
+
+**Question:** Across SEC-005, SEC-010, and SEC-014, is the resolver pattern consistent?
+
+**Verdict: PASS.**
+
+| Requirement | SEC-005 (Sanctuary TS) | SEC-010 (session.py) | SEC-014 (store.py) |
+|---|---|---|---|
+| Parameter name | `public_key_resolver` | `public_key_resolver` | `public_key_resolver` |
+| Callback signature | `(id) => Key \| null` | `Callable[[str], Ed25519PublicKey \| None]` | `Callable[[str], Ed25519PublicKey \| None]` |
+| Mandatory (no default) | Yes (by contract) | Yes — no default | Yes — no default |
+| Null → rejection | Yes (by contract) | `raise InvalidSignatureError` | `errors.append` + reject |
+| Invalid sig → rejection | Yes | `raise InvalidSignatureError` | `errors.append` + reject |
+| Key store coupling | Zero | Zero | Zero |
+
+The error reporting mechanism differs between SEC-010 (exceptions) and SEC-014 (error accumulation), but this is contextually appropriate: SEC-010 validates a single message and fails fast; SEC-014 validates multiple parties and collects all errors. The net effect — rejection, no state change, no fallback — is identical in both.
+
+The SEC-005 SPRINT_EVAL.md established the three requirements (mandatory resolver, null = rejection, zero coupling). SEC-010's evaluation confirmed conformance. SEC-014 meets all three requirements identically.
+
+**Conclusion:** The signature verification cluster is consistent across all three implementations. No inconsistencies found. The cluster is closed.
+
+---
+
+## GRADE: PASS
+
+The fix correctly addresses the SEC-014 root cause. The old "warn and skip" path is fully deleted — not commented out, not behind a flag. The `public_key_resolver` is mandatory on both `ingest()` and `_validate()` with no default value. Resolver returning `None` produces a hard rejection. Forged attestations are intercepted before any storage or scoring path, eliminating the reputation manipulation attack. All existing tests were updated (none deleted or skipped). The suite passes at 479/479. The commit touches exactly 7 expected files with no scope creep. The resolver pattern is consistent across all three cluster findings (SEC-005, SEC-010, SEC-014).
+
+No conditions. No follow-up required. This closes the signature verification cluster.
