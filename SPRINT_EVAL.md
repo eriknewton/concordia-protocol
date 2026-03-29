@@ -949,3 +949,56 @@ Regression tests for `handshake_respond`, `handshake_complete`, `reputation_quer
 ### Overall Grade: **PASS**
 
 All three conditions resolved. SEC-ADDENDUM upgraded from CONDITIONAL PASS to unconditional PASS.
+
+---
+
+# SPRINT_EVAL — SEC-022: Add Python Dependency Lockfile
+
+**Date:** 2026-03-28
+**Evaluator posture:** Lightweight QA — verify lockfile exists, versions pinned, no critical CVEs, tests pass.
+**Finding:** SEC-022 — Concordia Has No Lockfile: All Dependencies Are Unpinned
+**Branch:** `security-review`
+
+---
+
+## 1. LOCKFILE EXISTS AND PINS ALL PRODUCTION DEPENDENCIES
+
+**Verdict: PASS.**
+
+`requirements.lock` contains 38 pinned dependencies (every line uses `==` exact pinning). All three production dependencies declared in `pyproject.toml` (`cryptography>=42.0`, `jsonschema>=4.20`, `mcp>=1.0`) are present with pinned versions: `cryptography==46.0.6`, `jsonschema==4.26.0`, `mcp==1.26.0`. Transitive dependencies (e.g. `pydantic==2.12.5`, `starlette==1.0.0`, `cffi==2.0.0`) are also fully pinned.
+
+---
+
+## 2. CRYPTOGRAPHY VERSION — NO CRITICAL CVEs
+
+**Verdict: PASS.**
+
+`cryptography==46.0.6` is pinned in the lockfile. The sprint result reports that pip-audit found **zero known CVEs** against this version. This is consistent with 46.0.6 being the latest release in the 46.x series at time of audit.
+
+---
+
+## 3. PIP-AUDIT NON-BLOCKING FINDINGS
+
+**Verdict: PASS — correctly characterized as non-blocking.**
+
+Two pip-audit findings were reported:
+
+1. **`setuptools==59.6.0`** — system-level package, not present in `requirements.lock`, not a project dependency. This is the OS-packaged setuptools in the base Python installation and is outside the project's dependency graph.
+
+2. **`pygments==2.19.2` (CVE-2026-4539)** — present in the lockfile but is a dev/test dependency only (used by pytest). No fix version is available. Since this affects only the development toolchain and has no fix yet, it is correctly classified as non-blocking for production deployment.
+
+Neither finding affects the pinned production dependency set.
+
+---
+
+## 4. TEST SUITE
+
+**Verdict: PASS.**
+
+**518 passed, 0 failed** in 0.54s. Matches the expected count of 518.
+
+---
+
+## Overall Grade: **PASS**
+
+SEC-022 is resolved. The lockfile pins all production and transitive dependencies, cryptography has no known CVEs, pip-audit findings are correctly characterized as non-blocking, and the full test suite passes.
