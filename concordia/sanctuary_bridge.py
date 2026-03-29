@@ -109,8 +109,10 @@ def build_commitment_payload(
     if transcript_hash:
         agreement["transcript_hash"] = transcript_hash
 
-    # Canonical JSON for deterministic commitment value
-    value = json.dumps(agreement, sort_keys=True, separators=(",", ":"))
+    # Canonical JSON for deterministic commitment value.
+    # Uses canonical_json (not json.dumps) to ensure byte-identical output
+    # with TypeScript's stableStringify for cross-repo verification (SEC-003).
+    value = canonical_json(agreement).decode("utf-8")
 
     return {
         "tool": "sanctuary/proof_commitment",

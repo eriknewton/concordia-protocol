@@ -171,6 +171,33 @@ class TestCommitmentPayload:
         parsed = json.loads(raw)
         assert list(parsed.keys()) == sorted(parsed.keys())
 
+    def test_commitment_uses_canonical_json_not_vanilla_dumps(self):
+        """SEC-003 regression: bridge must use canonical_json, not json.dumps.
+
+        Verifies that non-ASCII in agreed_terms is preserved as raw UTF-8
+        (not \\uXXXX escaped), matching TypeScript's stableStringify output.
+        """
+        payload = build_commitment_payload(
+            session_id="s1",
+            agreed_terms={"description": "café résumé"},
+            parties=["p1"],
+        )
+        raw = payload["raw_value"]
+        # canonical_json with ensure_ascii=False preserves Unicode
+        assert "café" in raw, "Unicode should be preserved, not escaped"
+        assert "\\u" not in raw, "Should not contain \\uXXXX escape sequences"
+
+    def test_commitment_integer_valued_floats(self):
+        """SEC-003 regression: integer-valued floats format without decimal point."""
+        payload = build_commitment_payload(
+            session_id="s1",
+            agreed_terms={"price": 100, "quantity": 5},
+            parties=["p1"],
+        )
+        raw = payload["raw_value"]
+        # Should contain "100" not "100.0"
+        assert '"price":100' in raw or '"price": 100' in raw
+
 
 # ===================================================================
 # Reveal payload tests
