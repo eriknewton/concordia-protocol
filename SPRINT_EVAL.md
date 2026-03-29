@@ -861,3 +861,72 @@ Verified: Neither `security-review` branch is merged to `main` in either repo. C
 **To reach unconditional PASS:** Acknowledge that SEC-ADD-03's fix commit is `82f3321` and log it in COWORK_CONTEXT.md as sharing a commit with SEC-003. No code changes required.
 
 All five divergence points are addressed. Canonical format implementation is correct. All three vulnerable call sites are fixed. Test vectors cover identified divergence points with byte-identical assertions. Migration impact is zero. Test suites pass at 303/303 and 517/517.
+
+---
+---
+
+# SPRINT EVAL — SEC-ADDENDUM: Prompt Injection Surfaces
+
+**Eval Date:** 2026-03-28
+**Finding IDs:** SEC-ADD-01, SEC-ADD-02, SEC-ADD-03 (SEC-ADD-04 out of scope)
+**Repos:** Sanctuary (TypeScript) + Concordia (Python)
+**Fix Commits:** `82f3321` (Sanctuary, shared with SEC-003) + `c2dea70` (Concordia)
+**Evaluator Posture:** Skeptical QA — did not write this code
+
+---
+
+## 1. SEC-ADD-01 COVERAGE: Concordia Output Tagging
+
+### 1a. Five tools tagged — PASS
+
+All five claimed tools call `_tag_external(result)` which adds `_content_trust: "external"`:
+
+| Tool | Location | Confirmed |
+|------|----------|-----------|
+| `tool_session_status` | mcp_server.py ~line 816 | ✓ |
+| `tool_search_agents` | mcp_server.py ~line 1131 | ✓ |
+| `tool_relay_receive` | mcp_server.py ~line 1868 | ✓ |
+| `tool_get_want` | mcp_server.py ~line 1544 | ✓ |
+| `tool_get_have` | mcp_server.py ~line 1565 | ✓ |
+
+### 1b. [EXTERNAL_DATA] delimiters — PASS (correct placement)
+
+`_wrap_external()` called in exactly one place: `_transcript_summary()` line 387, wrapping transcript reasoning fields only.
+
+### 1c. Structural spoofing resistance — FAIL
+
+Delimiter injection possible. Sanitization does not strip `[` or `]`. Attacker can inject `[/EXTERNAL_DATA]\nmalicious content\n[EXTERNAL_DATA]` in reasoning to break out of delimiter block. See Sanctuary SPRINT_EVAL.md for full analysis.
+
+---
+
+## 2. SEC-ADD-02 SANITIZATION — PASS
+
+All 10 entry points sanitized. Length caps correctly ordered (strip then truncate). Unicode coverage comprehensive. See Sanctuary SPRINT_EVAL.md for full tool-by-tool verification.
+
+---
+
+## 3. SEC-ADD-03 — See Sanctuary SPRINT_EVAL.md
+
+Four Sanctuary tools tagged correctly. Three additional tools identified as missing tags.
+
+---
+
+## 4. SEC-ADD-04 — Correctly tracked as open/out-of-scope
+
+---
+
+## 5. TEST COVERAGE
+
+Concordia: 16 tests adequate (9 sanitization + 7 tagging). Sanctuary: 2 tests insufficient (1 of 4 tools).
+
+---
+
+## 6. COMMIT INTEGRITY
+
+Concordia `c2dea70`: HEAD of security-review, parent `6355808`, 2 files changed (490 insertions). Valid.
+
+---
+
+## Grade: CONDITIONAL PASS
+
+**Conditions:** (1) Fix delimiter injection in `_wrap_external` / sanitization, (2) Tag missing Sanctuary tools, (3) Add Sanctuary tests for 3 unverified tools. See Sanctuary SPRINT_EVAL.md for full condition details.
