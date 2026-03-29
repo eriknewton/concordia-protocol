@@ -930,3 +930,22 @@ Concordia `c2dea70`: HEAD of security-review, parent `6355808`, 2 files changed 
 ## Grade: CONDITIONAL PASS
 
 **Conditions:** (1) Fix delimiter injection in `_wrap_external` / sanitization, (2) Tag missing Sanctuary tools, (3) Add Sanctuary tests for 3 unverified tools. See Sanctuary SPRINT_EVAL.md for full condition details.
+
+---
+
+## SEC-ADDENDUM Follow-Up: Condition Resolution
+
+**Re-check Date:** 2026-03-28
+
+### CONDITION 1 — Delimiter injection: **PASS**
+`_sanitize_string()` (line 128) strips literal `[EXTERNAL_DATA]` and `[/EXTERNAL_DATA]` before wrapping. Regression test `test_delimiter_injection_stripped_before_wrapping` confirms breakout impossible. Suite: **518/518 passed**.
+
+### CONDITION 2 — Missing Sanctuary tags: **PASS**
+All four tools tagged (`handshake_status`, `federation_peers`, `federation_trust_evaluate`, `reputation_query_weighted`). One regression test per tool. `reputation_query_weighted` reviewed — returns counterparty attestation data, correctly tagged.
+
+### CONDITION 3 — Sanctuary test coverage: **PASS**
+Regression tests for `handshake_respond`, `handshake_complete`, `reputation_query` all assert `_content_trust === "external"`. Suite: **310/310 passed**.
+
+### Overall Grade: **PASS**
+
+All three conditions resolved. SEC-ADDENDUM upgraded from CONDITIONAL PASS to unconditional PASS.
