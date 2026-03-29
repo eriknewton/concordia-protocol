@@ -122,8 +122,10 @@ _CONTROL_CHAR_RE = re.compile(
 
 
 def _sanitize_string(value: str, max_length: int) -> str:
-    """Strip dangerous Unicode control characters and enforce length cap."""
+    """Strip dangerous Unicode control characters, delimiter spoofing patterns, and enforce length cap."""
     cleaned = _CONTROL_CHAR_RE.sub("", value)
+    # SEC-ADD-01c: Prevent delimiter injection by stripping literal delimiter strings
+    cleaned = cleaned.replace("[EXTERNAL_DATA]", "").replace("[/EXTERNAL_DATA]", "")
     if len(cleaned) > max_length:
         return cleaned[:max_length] + " [TRUNCATED]"
     return cleaned
