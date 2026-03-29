@@ -31,6 +31,7 @@ from concordia.want_registry import (
     _haversine_km,
     _condition_rank,
 )
+from concordia.mcp_server import _auth
 
 
 # ===================================================================
@@ -512,17 +513,28 @@ class TestWantRegistryMcpTools:
         _want_registry._matches.clear()
         _want_registry._agent_wants.clear()
         _want_registry._agent_haves.clear()
+        _auth._agent_tokens.clear()
+        _auth._session_tokens.clear()
+        _auth._token_to_agent.clear()
         yield
 
     def _parse(self, result_str: str) -> dict:
         return json.loads(result_str)
 
+    def _register_agent(self, agent_id: str) -> str:
+        """Register an agent and return the auth_token."""
+        from concordia.mcp_server import tool_register_agent
+        result = self._parse(tool_register_agent(agent_id=agent_id))
+        return result["auth_token"]
+
     def test_post_want(self):
         from concordia.mcp_server import tool_post_want
+        token = self._register_agent("buyer_01")
         result = self._parse(tool_post_want(
             agent_id="buyer_01",
             category="electronics.cameras",
             terms={"price": {"max": 2500, "currency": "USD"}},
+            auth_token=token,
         ))
         assert result["want"]["type"] == "concordia.want"
         assert result["want"]["agent_id"] == "buyer_01"
@@ -530,25 +542,31 @@ class TestWantRegistryMcpTools:
 
     def test_post_have(self):
         from concordia.mcp_server import tool_post_have
+        token = self._register_agent("seller_01")
         result = self._parse(tool_post_have(
             agent_id="seller_01",
             category="electronics.cameras",
             terms={"price": {"min": 1800, "currency": "USD"}},
+            auth_token=token,
         ))
         assert result["have"]["type"] == "concordia.have"
         assert result["match_count"] == 0
 
     def test_post_want_then_have_matches(self):
         from concordia.mcp_server import tool_post_want, tool_post_have
+        buyer_token = self._register_agent("buyer_01")
+        seller_token = self._register_agent("seller_01")
         tool_post_want(
             agent_id="buyer_01",
             category="electronics.cameras",
             terms={"price": {"max": 2500, "currency": "USD"}},
+            auth_token=buyer_token,
         )
         result = self._parse(tool_post_have(
             agent_id="seller_01",
             category="electronics.cameras",
             terms={"price": {"min": 1800, "currency": "USD"}},
+            auth_token=seller_token,
         ))
         assert result["match_count"] == 1
         match = result["immediate_matches"][0]
@@ -557,8 +575,10 @@ class TestWantRegistryMcpTools:
 
     def test_get_want(self):
         from concordia.mcp_server import tool_post_want, tool_get_want
+        token = self._register_agent("buyer")
         posted = self._parse(tool_post_want(
             agent_id="buyer", category="electronics", terms={},
+            auth_token=token,
         ))
         want_id = posted["want"]["id"]
         result = self._parse(tool_get_want(want_id=want_id))
@@ -572,8 +592,10 @@ class TestWantRegistryMcpTools:
 
     def test_get_have(self):
         from concordia.mcp_server import tool_post_have, tool_get_have
+        token = self._register_agent("seller")
         posted = self._parse(tool_post_have(
             agent_id="seller", category="electronics", terms={},
+            auth_token=token,
         ))
         have_id = posted["have"]["id"]
         result = self._parse(tool_get_have(have_id=have_id))
@@ -581,45 +603,65 @@ class TestWantRegistryMcpTools:
 
     def test_withdraw_want(self):
         from concordia.mcp_server import tool_post_want, tool_withdraw_want
+        token = self._register_agent("buyer")
         posted = self._parse(tool_post_want(
             agent_id="buyer", category="electronics", terms={},
+            auth_token=token,
         ))
-        result = self._parse(tool_withdraw_want(want_id=posted["want"]["id"]))
+        result = self._parse(tool_withdraw_want(
+            want_id=posted["want"]["id"],
+            agent_id="buyer",
+            auth_token=token,
+        ))
         assert result["withdrawn"] is True
 
     def test_withdraw_have(self):
         from concordia.mcp_server import tool_post_have, tool_withdraw_have
+        token = self._register_agent("seller")
         posted = self._parse(tool_post_have(
             agent_id="seller", category="electronics", terms={},
+            auth_token=token,
         ))
-        result = self._parse(tool_withdraw_have(have_id=posted["have"]["id"]))
+        result = self._parse(tool_withdraw_have(
+            have_id=posted["have"]["id"],
+            agent_id="seller",
+            auth_token=token,
+        ))
         assert result["withdrawn"] is True
 
     def test_find_matches(self):
         from concordia.mcp_server import tool_post_want, tool_post_have, tool_find_matches
-        tool_post_want(agent_id="buyer", category="electronics", terms={"price": {"max": 2000}})
-        tool_post_have(agent_id="seller", category="electronics", terms={"price": {"min": 1000}})
+        buyer_token = self._register_agent("buyer")
+        seller_token = self._register_agent("seller")
+        tool_post_want(agent_id="buyer", category="electronics", terms={"price": {"max": 2000}}, auth_token=buyer_token)
+        tool_post_have(agent_id="seller", category="electronics", terms={"price": {"min": 1000}}, auth_token=seller_token)
         result = self._parse(tool_find_matches(agent_id="buyer"))
         assert result["count"] == 1
 
     def test_search_wants(self):
         from concordia.mcp_server import tool_post_want, tool_search_wants
-        tool_post_want(agent_id="b1", category="electronics.cameras", terms={})
-        tool_post_want(agent_id="b2", category="furniture", terms={})
+        b1_token = self._register_agent("b1")
+        b2_token = self._register_agent("b2")
+        tool_post_want(agent_id="b1", category="electronics.cameras", terms={}, auth_token=b1_token)
+        tool_post_want(agent_id="b2", category="furniture", terms={}, auth_token=b2_token)
         result = self._parse(tool_search_wants(category="electronics"))
         assert result["count"] == 1
 
     def test_search_haves(self):
         from concordia.mcp_server import tool_post_have, tool_search_haves
-        tool_post_have(agent_id="s1", category="electronics.cameras", terms={})
-        tool_post_have(agent_id="s2", category="furniture", terms={})
+        s1_token = self._register_agent("s1")
+        s2_token = self._register_agent("s2")
+        tool_post_have(agent_id="s1", category="electronics.cameras", terms={}, auth_token=s1_token)
+        tool_post_have(agent_id="s2", category="furniture", terms={}, auth_token=s2_token)
         result = self._parse(tool_search_haves(category="electronics"))
         assert result["count"] == 1
 
     def test_registry_stats(self):
         from concordia.mcp_server import tool_post_want, tool_post_have, tool_want_registry_stats
-        tool_post_want(agent_id="buyer", category="electronics", terms={"price": {"max": 2000}})
-        tool_post_have(agent_id="seller", category="electronics", terms={"price": {"min": 1000}})
+        buyer_token = self._register_agent("buyer")
+        seller_token = self._register_agent("seller")
+        tool_post_want(agent_id="buyer", category="electronics", terms={"price": {"max": 2000}}, auth_token=buyer_token)
+        tool_post_have(agent_id="seller", category="electronics", terms={"price": {"min": 1000}}, auth_token=seller_token)
         result = self._parse(tool_want_registry_stats())
         assert result["active_wants"] == 1
         assert result["active_haves"] == 1
@@ -631,6 +673,12 @@ class TestWantRegistryMcpTools:
         """End-to-end: post Want → post Have → match → open negotiation."""
         from concordia.mcp_server import handle_tool_call
 
+        # Register agents
+        buyer_reg = handle_tool_call("concordia_register_agent", {"agent_id": "buyer_agent"})
+        buyer_token = buyer_reg["auth_token"]
+        seller_reg = handle_tool_call("concordia_register_agent", {"agent_id": "seller_agent"})
+        seller_token = seller_reg["auth_token"]
+
         # Buyer posts a Want
         want_result = handle_tool_call("concordia_post_want", {
             "agent_id": "buyer_agent",
@@ -641,6 +689,7 @@ class TestWantRegistryMcpTools:
                 "condition": {"min": "good", "enum": ["new", "like_new", "good", "fair", "poor"]},
             },
             "location": {"within_km": 50, "of": {"lat": 37.7749, "lng": -122.4194}},
+            "auth_token": buyer_token,
         })
         assert want_result["match_count"] == 0
         want_id = want_result["want"]["id"]
@@ -655,6 +704,7 @@ class TestWantRegistryMcpTools:
                 "condition": {"value": "like_new"},
             },
             "location": {"coordinates": {"lat": 37.7849, "lng": -122.4094}},
+            "auth_token": seller_token,
         })
         assert have_result["match_count"] == 1
         match = have_result["immediate_matches"][0]
@@ -678,16 +728,21 @@ class TestWantRegistryMcpTools:
             },
         })
         assert "session_id" in session
+        session_id = session["session_id"]
+        initiator_token = session["initiator_token"]
+        responder_token = session["responder_token"]
 
         # Make offer and accept
         handle_tool_call("concordia_propose", {
-            "session_id": session["session_id"],
+            "session_id": session_id,
             "role": "initiator",
+            "auth_token": initiator_token,
             "terms": {"price": {"value": 2000}, "condition": {"value": "like_new"}},
         })
         result = handle_tool_call("concordia_accept", {
-            "session_id": session["session_id"],
+            "session_id": session_id,
             "role": "responder",
+            "auth_token": responder_token,
         })
         assert result["state"] == "agreed"
 
@@ -700,5 +755,7 @@ class TestWantRegistryMcpTools:
         # Withdraw the Want (deal done)
         withdrawn = handle_tool_call("concordia_withdraw_want", {
             "want_id": want_id,
+            "agent_id": "buyer_agent",
+            "auth_token": buyer_token,
         })
         assert withdrawn["withdrawn"] is True

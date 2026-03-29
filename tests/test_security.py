@@ -15,7 +15,9 @@ from __future__ import annotations
 import math
 import pytest
 
-from concordia.signing import canonical_json
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+from concordia.signing import KeyPair, canonical_json, sign_message
 from concordia.reputation import AttestationStore
 from concordia.registry import AgentRegistry
 from concordia.relay import NegotiationRelay
@@ -28,6 +30,70 @@ from concordia.sanctuary_bridge import (
     SanctuaryBridgeConfig,
 )
 from concordia.mcp_server import SessionStore
+
+
+# ---------------------------------------------------------------------------
+# Helpers for signature verification in security tests
+# ---------------------------------------------------------------------------
+
+_SEC_KEY_REGISTRY: dict[str, KeyPair] = {}
+
+
+def _sec_get_key(agent_id: str) -> KeyPair:
+    """Return a stable KeyPair for *agent_id*, creating one if needed."""
+    if agent_id not in _SEC_KEY_REGISTRY:
+        _SEC_KEY_REGISTRY[agent_id] = KeyPair.generate()
+    return _SEC_KEY_REGISTRY[agent_id]
+
+
+def _sec_resolver(agent_id: str) -> Ed25519PublicKey | None:
+    """Public-key resolver backed by the security test key registry."""
+    kp = _SEC_KEY_REGISTRY.get(agent_id)
+    return kp.public_key if kp else None
+
+
+def _sec_null_resolver(agent_id: str) -> Ed25519PublicKey | None:
+    """Resolver that always returns None — rejects all identities."""
+    return None
+
+
+def _make_signed_att(
+    att_id: str,
+    session_id: str,
+    agent_a: str,
+    agent_b: str,
+    **kwargs,
+) -> dict:
+    """Create a properly-signed attestation for security tests."""
+    party_a = {
+        "agent_id": agent_a,
+        "role": "initiator",
+        "behavior": {"concession_magnitude": 0.1},
+    }
+    party_a["signature"] = sign_message(party_a, _sec_get_key(agent_a))
+
+    party_b = {
+        "agent_id": agent_b,
+        "role": "responder",
+        "behavior": {"concession_magnitude": 0.2},
+    }
+    party_b["signature"] = sign_message(party_b, _sec_get_key(agent_b))
+
+    att = {
+        "concordia_attestation": "1.0.0",
+        "attestation_id": att_id,
+        "session_id": session_id,
+        "timestamp": "2026-01-01T00:00:00Z",
+        "outcome": {
+            "status": kwargs.get("status", "agreed"),
+            "rounds": kwargs.get("rounds", 1),
+            "duration_seconds": kwargs.get("duration_seconds", 10.0),
+        },
+        "parties": [party_a, party_b],
+        "meta": {"category": "test"},
+        "transcript_hash": kwargs.get("transcript_hash", "sha256:abc"),
+    }
+    return att
 
 
 # ===================================================================
@@ -113,7 +179,7 @@ class TestSignatureVerification:
             "transcript_hash": "sha256:abc123",
         }
 
-        accepted, result = store.ingest(attestation)
+        accepted, result = store.ingest(attestation, _sec_null_resolver)
         assert not accepted
         assert any("signature must not be empty" in err for err in result.errors)
 
@@ -149,7 +215,7 @@ class TestSignatureVerification:
             "transcript_hash": "sha256:def456",
         }
 
-        accepted, result = store.ingest(attestation)
+        accepted, result = store.ingest(attestation, _sec_null_resolver)
         assert not accepted
         assert any("signature must not be empty" in err for err in result.errors)
 
@@ -170,65 +236,23 @@ class TestAttestationStoreLimits:
         try:
             # Ingest 3 attestations successfully
             for i in range(3):
-                att = {
-                    "concordia_attestation": "1.0.0",
-                    "attestation_id": f"att_{i}",
-                    "session_id": f"sess_{i}",
-                    "timestamp": "2026-01-01T00:00:00Z",
-                    "outcome": {
-                        "status": "agreed",
-                        "rounds": 1,
-                        "duration_seconds": 10.0,
-                    },
-                    "parties": [
-                        {
-                            "agent_id": f"agent_a_{i}",
-                            "role": "initiator",
-                            "behavior": {"concession_magnitude": 0.1},
-                            "signature": "sig_a",
-                        },
-                        {
-                            "agent_id": f"agent_b_{i}",
-                            "role": "responder",
-                            "behavior": {"concession_magnitude": 0.2},
-                            "signature": "sig_b",
-                        },
-                    ],
-                    "meta": {"category": "test"},
-                    "transcript_hash": "sha256:abc",
-                }
-                accepted, result = store.ingest(att)
+                att = _make_signed_att(
+                    att_id=f"att_{i}",
+                    session_id=f"sess_{i}",
+                    agent_a=f"agent_a_{i}",
+                    agent_b=f"agent_b_{i}",
+                )
+                accepted, result = store.ingest(att, _sec_resolver)
                 assert accepted
 
             # 4th should be rejected
-            att_4 = {
-                "concordia_attestation": "1.0.0",
-                "attestation_id": "att_4",
-                "session_id": "sess_4",
-                "timestamp": "2026-01-01T00:00:00Z",
-                "outcome": {
-                    "status": "agreed",
-                    "rounds": 1,
-                    "duration_seconds": 10.0,
-                },
-                "parties": [
-                    {
-                        "agent_id": "agent_a_4",
-                        "role": "initiator",
-                        "behavior": {"concession_magnitude": 0.1},
-                        "signature": "sig_a",
-                    },
-                    {
-                        "agent_id": "agent_b_4",
-                        "role": "responder",
-                        "behavior": {"concession_magnitude": 0.2},
-                        "signature": "sig_b",
-                    },
-                ],
-                "meta": {"category": "test"},
-                "transcript_hash": "sha256:def",
-            }
-            accepted, result = store.ingest(att_4)
+            att_4 = _make_signed_att(
+                att_id="att_4",
+                session_id="sess_4",
+                agent_a="agent_a_4",
+                agent_b="agent_b_4",
+            )
+            accepted, result = store.ingest(att_4, _sec_resolver)
             assert not accepted
             assert any("capacity reached" in err for err in result.errors)
         finally:

@@ -17,6 +17,8 @@ from typing import Any
 
 import pytest
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
 from concordia.reputation.store import (
     AttestationStore,
     StoredAttestation,
@@ -35,12 +37,30 @@ from concordia.reputation.query import (
     ReputationQueryHandler,
     validate_query,
 )
-from concordia.signing import KeyPair
+from concordia.signing import KeyPair, sign_message
 
 
 # ---------------------------------------------------------------------------
 # Test helpers
 # ---------------------------------------------------------------------------
+
+# Shared key registry: agent_id → KeyPair.  Lazily populated so every
+# agent_id used in tests gets a stable key pair.
+_KEY_REGISTRY: dict[str, KeyPair] = {}
+
+
+def _get_key(agent_id: str) -> KeyPair:
+    """Return a stable KeyPair for *agent_id*, creating one if needed."""
+    if agent_id not in _KEY_REGISTRY:
+        _KEY_REGISTRY[agent_id] = KeyPair.generate()
+    return _KEY_REGISTRY[agent_id]
+
+
+def _test_resolver(agent_id: str) -> Ed25519PublicKey | None:
+    """Public-key resolver backed by the shared test key registry."""
+    kp = _KEY_REGISTRY.get(agent_id)
+    return kp.public_key if kp else None
+
 
 def _make_attestation(
     agent_a: str = "agent_a",
@@ -61,10 +81,38 @@ def _make_attestation(
     session_id: str | None = None,
     timestamp: str | None = None,
 ) -> dict[str, Any]:
-    """Create a valid attestation dict for testing."""
+    """Create a valid, properly-signed attestation dict for testing.
+
+    Each party's ``signature`` field is a real Ed25519 signature computed
+    over the party record (excluding the signature itself), matching the
+    verification logic in ``AttestationStore._validate()``.
+    """
     att_id = att_id or f"att_{uuid.uuid4().hex[:12]}"
     session_id = session_id or f"sess_{uuid.uuid4().hex[:12]}"
     timestamp = timestamp or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Build party records without signatures first, then sign
+    party_a_record: dict[str, Any] = {
+        "agent_id": agent_a,
+        "role": "seller",
+        "behavior": {
+            "concession_magnitude": concession_a,
+            "offers_made": offers_a,
+            "reasoning_provided": reasoning_a,
+        },
+    }
+    party_a_record["signature"] = sign_message(party_a_record, _get_key(agent_a))
+
+    party_b_record: dict[str, Any] = {
+        "agent_id": agent_b,
+        "role": "buyer",
+        "behavior": {
+            "concession_magnitude": concession_b,
+            "offers_made": offers_b,
+            "reasoning_provided": reasoning_b,
+        },
+    }
+    party_b_record["signature"] = sign_message(party_b_record, _get_key(agent_b))
 
     att: dict[str, Any] = {
         "concordia_attestation": "1.0",
@@ -76,28 +124,7 @@ def _make_attestation(
             "rounds": rounds,
             "duration_seconds": duration_seconds,
         },
-        "parties": [
-            {
-                "agent_id": agent_a,
-                "role": "seller",
-                "behavior": {
-                    "concession_magnitude": concession_a,
-                    "offers_made": offers_a,
-                    "reasoning_provided": reasoning_a,
-                },
-                "signature": "sig_placeholder_a",
-            },
-            {
-                "agent_id": agent_b,
-                "role": "buyer",
-                "behavior": {
-                    "concession_magnitude": concession_b,
-                    "offers_made": offers_b,
-                    "reasoning_provided": reasoning_b,
-                },
-                "signature": "sig_placeholder_b",
-            },
-        ],
+        "parties": [party_a_record, party_b_record],
         "meta": {
             "category": category,
             "value_range": value_range,
@@ -116,7 +143,7 @@ def _ingest_n(store: AttestationStore, n: int, **kwargs: Any) -> list[dict[str, 
     attestations = []
     for _ in range(n):
         att = _make_attestation(**kwargs)
-        accepted, _ = store.ingest(att)
+        accepted, _ = store.ingest(att, _test_resolver)
         assert accepted, f"Failed to ingest: {att['attestation_id']}"
         attestations.append(att)
     return attestations
@@ -132,7 +159,7 @@ class TestAttestationStoreValidation:
     def test_valid_attestation_accepted(self):
         store = AttestationStore()
         att = _make_attestation()
-        accepted, result = store.ingest(att)
+        accepted, result = store.ingest(att, _test_resolver)
         assert accepted is True
         assert result.valid is True
         assert result.errors == []
@@ -141,14 +168,14 @@ class TestAttestationStoreValidation:
         store = AttestationStore()
         att = _make_attestation()
         del att["outcome"]
-        accepted, result = store.ingest(att)
+        accepted, result = store.ingest(att, _test_resolver)
         assert accepted is False
         assert any("outcome" in e for e in result.errors)
 
     def test_missing_multiple_fields(self):
         store = AttestationStore()
         att = {"concordia_attestation": "1.0"}
-        accepted, result = store.ingest(att)
+        accepted, result = store.ingest(att, _test_resolver)
         assert accepted is False
         assert len(result.errors) >= 5  # many fields missing
 
@@ -156,7 +183,7 @@ class TestAttestationStoreValidation:
         store = AttestationStore()
         att = _make_attestation()
         att["outcome"]["status"] = "invalid_status"
-        accepted, result = store.ingest(att)
+        accepted, result = store.ingest(att, _test_resolver)
         assert accepted is False
         assert any("status" in e for e in result.errors)
 
@@ -164,7 +191,7 @@ class TestAttestationStoreValidation:
         store = AttestationStore()
         att = _make_attestation()
         del att["outcome"]["rounds"]
-        accepted, result = store.ingest(att)
+        accepted, result = store.ingest(att, _test_resolver)
         assert accepted is False
         assert any("rounds" in e for e in result.errors)
 
@@ -172,7 +199,7 @@ class TestAttestationStoreValidation:
         store = AttestationStore()
         att = _make_attestation()
         att["parties"] = [att["parties"][0]]  # only one party
-        accepted, result = store.ingest(att)
+        accepted, result = store.ingest(att, _test_resolver)
         assert accepted is False
         assert any("2 parties" in e for e in result.errors)
 
@@ -180,7 +207,7 @@ class TestAttestationStoreValidation:
         store = AttestationStore()
         att = _make_attestation()
         del att["parties"][0]["signature"]
-        accepted, result = store.ingest(att)
+        accepted, result = store.ingest(att, _test_resolver)
         assert accepted is False
         assert any("signature" in e for e in result.errors)
 
@@ -188,7 +215,7 @@ class TestAttestationStoreValidation:
         store = AttestationStore()
         att = _make_attestation()
         att["transcript_hash"] = "md5:notvalid"
-        accepted, result = store.ingest(att)
+        accepted, result = store.ingest(att, _test_resolver)
         assert accepted is False
         assert any("sha256:" in e for e in result.errors)
 
@@ -196,7 +223,7 @@ class TestAttestationStoreValidation:
         store = AttestationStore()
         for status in ["agreed", "rejected", "expired", "withdrawn"]:
             att = _make_attestation(status=status, fulfillment_status=None)
-            accepted, result = store.ingest(att)
+            accepted, result = store.ingest(att, _test_resolver)
             assert accepted is True, f"Status '{status}' should be valid"
 
 
@@ -206,20 +233,20 @@ class TestAttestationStoreDedup:
     def test_duplicate_attestation_id_rejected(self):
         store = AttestationStore()
         att = _make_attestation(att_id="att_123")
-        store.ingest(att)
+        store.ingest(att, _test_resolver)
 
         att2 = _make_attestation(att_id="att_123", session_id="sess_different")
-        accepted, result = store.ingest(att2)
+        accepted, result = store.ingest(att2, _test_resolver)
         assert accepted is False
         assert any("Duplicate attestation_id" in e for e in result.errors)
 
     def test_duplicate_session_id_rejected(self):
         store = AttestationStore()
         att = _make_attestation(session_id="sess_456")
-        store.ingest(att)
+        store.ingest(att, _test_resolver)
 
         att2 = _make_attestation(att_id="att_different", session_id="sess_456")
-        accepted, result = store.ingest(att2)
+        accepted, result = store.ingest(att2, _test_resolver)
         assert accepted is False
         assert any("Duplicate session_id" in e for e in result.errors)
 
@@ -227,7 +254,7 @@ class TestAttestationStoreDedup:
         store = AttestationStore()
         for i in range(5):
             att = _make_attestation()
-            accepted, _ = store.ingest(att)
+            accepted, _ = store.ingest(att, _test_resolver)
             assert accepted is True
         assert store.count() == 5
 
@@ -238,7 +265,7 @@ class TestAttestationStoreIndexing:
     def test_get_by_id(self):
         store = AttestationStore()
         att = _make_attestation(att_id="att_lookup")
-        store.ingest(att)
+        store.ingest(att, _test_resolver)
         record = store.get("att_lookup")
         assert record is not None
         assert record.attestation_id == "att_lookup"
@@ -246,7 +273,7 @@ class TestAttestationStoreIndexing:
     def test_get_by_session(self):
         store = AttestationStore()
         att = _make_attestation(session_id="sess_lookup")
-        store.ingest(att)
+        store.ingest(att, _test_resolver)
         record = store.get_by_session("sess_lookup")
         assert record is not None
         assert record.session_id == "sess_lookup"
@@ -291,7 +318,7 @@ class TestSybilDetection:
     def test_self_dealing_detected(self):
         store = AttestationStore()
         att = _make_attestation(agent_a="same_agent", agent_b="same_agent")
-        accepted, result = store.ingest(att)
+        accepted, result = store.ingest(att, _test_resolver)
         assert accepted is True  # accepted but flagged
         assert any("Sybil" in w for w in result.warnings)
         record = store.get(att["attestation_id"])
@@ -301,7 +328,7 @@ class TestSybilDetection:
     def test_suspiciously_fast_detected(self):
         store = AttestationStore()
         att = _make_attestation(duration_seconds=2)
-        accepted, result = store.ingest(att)
+        accepted, result = store.ingest(att, _test_resolver)
         assert accepted is True
         record = store.get(att["attestation_id"])
         assert record.sybil_signals.suspiciously_fast is True
@@ -310,7 +337,7 @@ class TestSybilDetection:
     def test_symmetric_concessions_detected(self):
         store = AttestationStore()
         att = _make_attestation(concession_a=0.25, concession_b=0.25)
-        accepted, result = store.ingest(att)
+        accepted, result = store.ingest(att, _test_resolver)
         assert accepted is True
         record = store.get(att["attestation_id"])
         assert record.sybil_signals.symmetric_concessions is True
@@ -322,7 +349,7 @@ class TestSybilDetection:
             duration_seconds=120,
             concession_a=0.2, concession_b=0.15,
         )
-        accepted, result = store.ingest(att)
+        accepted, result = store.ingest(att, _test_resolver)
         assert accepted is True
         record = store.get(att["attestation_id"])
         assert record.sybil_signals.flagged is False
@@ -408,7 +435,7 @@ class TestReputationScorer:
         # Add 10 more with different counterparties
         for i in range(10):
             att = _make_attestation(agent_a="alice", agent_b=f"cp_{i}")
-            store.ingest(att)
+            store.ingest(att, _test_resolver)
         score_high_div = scorer.score("alice")
 
         assert score_high_div.confidence > score_low_div.confidence
@@ -740,8 +767,8 @@ class TestReputationQueryHandler:
             agent_a="s", agent_b="b",
             timestamp="2026-03-20T00:00:00Z",
         )
-        store.ingest(att1)
-        store.ingest(att2)
+        store.ingest(att1, _test_resolver)
+        store.ingest(att2, _test_resolver)
 
         scorer = ReputationScorer(store)
         handler = ReputationQueryHandler(store=store, scorer=scorer)
@@ -779,40 +806,129 @@ class TestReputationMcpTools:
 
     @pytest.fixture(autouse=True)
     def reset_stores(self):
-        """Reset both stores between tests."""
+        """Reset both stores and auth tokens between tests."""
         from concordia.mcp_server import (
-            _store, _attestation_store, _scorer, _query_handler,
+            _store, _attestation_store, _scorer, _query_handler, _auth,
         )
         _store._sessions.clear()
         _attestation_store._by_id.clear()
         _attestation_store._by_session.clear()
         _attestation_store._by_agent.clear()
         _attestation_store._counterparties.clear()
+        _auth._agent_tokens.clear()
+        _auth._session_tokens.clear()
+        _auth._token_to_agent.clear()
         yield
 
     def _parse(self, result_str: str) -> dict:
         return json.loads(result_str)
 
+    def _create_session_and_receipt(self, agent_a: str, agent_b: str):
+        """Create a session via the MCP server's session store and generate
+        a properly-signed attestation (receipt) for it.
+
+        Returns (session_id, attestation_dict).
+        """
+        from concordia.mcp_server import _store, tool_session_receipt, _auth
+        from concordia.types import AgentIdentity, MessageType
+        from concordia.message import build_envelope
+
+        terms = {"price": {"type": "numeric", "value": 100}}
+        ctx = _store.create(agent_a, agent_b, terms)
+        session_id = ctx.session.session_id
+
+        def _resolver(aid: str):
+            if aid == agent_a:
+                return ctx.initiator_key.public_key
+            if aid == agent_b:
+                return ctx.responder_key.public_key
+            return None
+
+        # Send an offer from initiator
+        offer_msg = build_envelope(
+            message_type=MessageType.OFFER,
+            session_id=session_id,
+            sender=AgentIdentity(agent_id=agent_a),
+            body={"terms": terms},
+            key_pair=ctx.initiator_key,
+            prev_hash=ctx.session.prev_hash,
+            recipients=[AgentIdentity(agent_id=agent_b)],
+        )
+        ctx.session.apply_message(offer_msg, _resolver)
+
+        # Accept from responder
+        accept_msg = build_envelope(
+            message_type=MessageType.ACCEPT,
+            session_id=session_id,
+            sender=AgentIdentity(agent_id=agent_b),
+            body={},
+            key_pair=ctx.responder_key,
+            prev_hash=ctx.session.prev_hash,
+            recipients=[AgentIdentity(agent_id=agent_a)],
+        )
+        ctx.session.apply_message(accept_msg, _resolver)
+
+        # Generate receipt (attestation) — properly signed by both parties
+        init_token, _ = _auth.register_session_tokens(
+            session_id, agent_a, agent_b,
+        )
+        receipt_result = json.loads(tool_session_receipt(
+            session_id=session_id, auth_token=init_token,
+        ))
+        return session_id, receipt_result["receipt"]
+
     def test_ingest_valid_attestation(self):
-        from concordia.mcp_server import tool_ingest_attestation
-        att = _make_attestation()
-        result = self._parse(tool_ingest_attestation(att))
+        from concordia.mcp_server import tool_register_agent, tool_ingest_attestation
+        # Register an agent first to get auth_token
+        reg_result = self._parse(tool_register_agent(agent_id="ingest_agent"))
+        agent_id = "ingest_agent"
+        auth_token = reg_result["auth_token"]
+
+        # Create a real session and get a properly-signed receipt
+        _, att = self._create_session_and_receipt("ingest_agent", "buyer_z")
+        result = self._parse(tool_ingest_attestation(
+            agent_id=agent_id,
+            auth_token=auth_token,
+            attestation=att,
+        ))
         assert result["accepted"] is True
         assert result["store_count"] == 1
 
     def test_ingest_invalid_attestation(self):
-        from concordia.mcp_server import tool_ingest_attestation
-        result = self._parse(tool_ingest_attestation({"bad": "data"}))
+        from concordia.mcp_server import tool_register_agent, tool_ingest_attestation
+        # Register an agent first to get auth_token
+        reg_result = self._parse(tool_register_agent(agent_id="ingest_agent2"))
+        agent_id = "ingest_agent2"
+        auth_token = reg_result["auth_token"]
+
+        result = self._parse(tool_ingest_attestation(
+            agent_id=agent_id,
+            auth_token=auth_token,
+            attestation={"bad": "data"},
+        ))
         assert result["accepted"] is False
         assert len(result["errors"]) > 0
 
     def test_ingest_duplicate_rejected(self):
-        from concordia.mcp_server import tool_ingest_attestation
-        att = _make_attestation(att_id="dup_test")
-        tool_ingest_attestation(att)
+        from concordia.mcp_server import tool_register_agent, tool_ingest_attestation
+        # Register an agent first to get auth_token
+        reg_result = self._parse(tool_register_agent(agent_id="ingest_agent3"))
+        agent_id = "ingest_agent3"
+        auth_token = reg_result["auth_token"]
 
-        att2 = _make_attestation(att_id="dup_test", session_id="sess_new")
-        result = self._parse(tool_ingest_attestation(att2))
+        _, att = self._create_session_and_receipt("ingest_agent3", "buyer_dup")
+        tool_ingest_attestation(
+            agent_id=agent_id,
+            auth_token=auth_token,
+            attestation=att,
+        )
+
+        # Try to ingest same attestation again (same att_id)
+        result = self._parse(tool_ingest_attestation(
+            agent_id=agent_id,
+            auth_token=auth_token,
+            attestation=att,
+        ))
         assert result["accepted"] is False
 
     def test_reputation_query_no_data(self):
@@ -826,10 +942,21 @@ class TestReputationMcpTools:
         assert "no_data" in result["flags"]
 
     def test_reputation_query_with_data(self):
-        from concordia.mcp_server import tool_ingest_attestation, tool_reputation_query
+        from concordia.mcp_server import (
+            tool_register_agent, tool_ingest_attestation, tool_reputation_query,
+        )
+        # Register agent first to get auth_token
+        reg_result = self._parse(tool_register_agent(agent_id="seller_1"))
+        agent_id = "seller_1"
+        auth_token = reg_result["auth_token"]
+
         for _ in range(5):
-            att = _make_attestation(agent_a="seller_1", agent_b="buyer_1")
-            tool_ingest_attestation(att)
+            _, att = self._create_session_and_receipt("seller_1", "buyer_1")
+            tool_ingest_attestation(
+                agent_id=agent_id,
+                auth_token=auth_token,
+                attestation=att,
+            )
 
         result = self._parse(tool_reputation_query(
             subject_agent_id="seller_1",
@@ -840,15 +967,28 @@ class TestReputationMcpTools:
         assert result["summary"]["total_negotiations"] == 5
 
     def test_reputation_query_with_context(self):
-        from concordia.mcp_server import tool_ingest_attestation, tool_reputation_query
+        from concordia.mcp_server import (
+            tool_register_agent, tool_ingest_attestation, tool_reputation_query,
+        )
+        # Register agent first to get auth_token
+        reg_result = self._parse(tool_register_agent(agent_id="s"))
+        agent_id = "s"
+        auth_token = reg_result["auth_token"]
+
         for _ in range(5):
-            tool_ingest_attestation(_make_attestation(
-                agent_a="s", agent_b="b", category="electronics",
-            ))
+            _, att = self._create_session_and_receipt("s", "b")
+            tool_ingest_attestation(
+                agent_id=agent_id,
+                auth_token=auth_token,
+                attestation=att,
+            )
         for _ in range(3):
-            tool_ingest_attestation(_make_attestation(
-                agent_a="s", agent_b="b", category="furniture",
-            ))
+            _, att = self._create_session_and_receipt("s", "b")
+            tool_ingest_attestation(
+                agent_id=agent_id,
+                auth_token=auth_token,
+                attestation=att,
+            )
 
         result = self._parse(tool_reputation_query(
             subject_agent_id="s",
@@ -863,11 +1003,21 @@ class TestReputationMcpTools:
         assert result["score"] is None
 
     def test_reputation_score_with_data(self):
-        from concordia.mcp_server import tool_ingest_attestation, tool_reputation_score
+        from concordia.mcp_server import (
+            tool_register_agent, tool_ingest_attestation, tool_reputation_score,
+        )
+        # Register agent first to get auth_token
+        reg_result = self._parse(tool_register_agent(agent_id="scored_agent"))
+        agent_id = "scored_agent"
+        auth_token = reg_result["auth_token"]
+
         for _ in range(10):
-            tool_ingest_attestation(_make_attestation(
-                agent_a="scored_agent", agent_b="counterparty",
-            ))
+            _, att = self._create_session_and_receipt("scored_agent", "counterparty")
+            tool_ingest_attestation(
+                agent_id=agent_id,
+                auth_token=auth_token,
+                attestation=att,
+            )
 
         result = self._parse(tool_reputation_score(agent_id="scored_agent"))
         assert result["score"] is not None
@@ -875,12 +1025,22 @@ class TestReputationMcpTools:
         assert "components" in result["score"]
 
     def test_handle_tool_call_reputation(self):
-        from concordia.mcp_server import handle_tool_call, tool_ingest_attestation
+        from concordia.mcp_server import (
+            handle_tool_call, tool_register_agent, tool_ingest_attestation,
+        )
+        # Register agent first to get auth_token
+        reg_result = self._parse(tool_register_agent(agent_id="htc_seller"))
+        agent_id = "htc_seller"
+        auth_token = reg_result["auth_token"]
+
         # Ingest some data first
         for _ in range(5):
-            tool_ingest_attestation(_make_attestation(
-                agent_a="htc_seller", agent_b="htc_buyer",
-            ))
+            _, att = self._create_session_and_receipt("htc_seller", "htc_buyer")
+            tool_ingest_attestation(
+                agent_id=agent_id,
+                auth_token=auth_token,
+                attestation=att,
+            )
 
         # Test via handle_tool_call
         result = handle_tool_call("concordia_reputation_score", {
@@ -890,11 +1050,21 @@ class TestReputationMcpTools:
         assert result["score"] is not None
 
     def test_handle_tool_call_query(self):
-        from concordia.mcp_server import handle_tool_call, tool_ingest_attestation
+        from concordia.mcp_server import (
+            handle_tool_call, tool_register_agent, tool_ingest_attestation,
+        )
+        # Register agent first to get auth_token
+        reg_result = self._parse(tool_register_agent(agent_id="q_seller"))
+        agent_id = "q_seller"
+        auth_token = reg_result["auth_token"]
+
         for _ in range(5):
-            tool_ingest_attestation(_make_attestation(
-                agent_a="q_seller", agent_b="q_buyer",
-            ))
+            _, att = self._create_session_and_receipt("q_seller", "q_buyer")
+            tool_ingest_attestation(
+                agent_id=agent_id,
+                auth_token=auth_token,
+                attestation=att,
+            )
 
         result = handle_tool_call("concordia_reputation_query", {
             "subject_agent_id": "q_seller",
@@ -907,6 +1077,17 @@ class TestReputationMcpTools:
         """End-to-end: open session, negotiate, generate receipt, ingest, score."""
         from concordia.mcp_server import handle_tool_call
 
+        # Register both agents first to get auth_tokens
+        seller_reg = handle_tool_call("concordia_register_agent", {
+            "agent_id": "seller_e2e",
+        })
+        seller_token = seller_reg["auth_token"]
+
+        buyer_reg = handle_tool_call("concordia_register_agent", {
+            "agent_id": "buyer_e2e",
+        })
+        buyer_token = buyer_reg["auth_token"]
+
         # Open a session
         open_result = handle_tool_call("concordia_open_session", {
             "initiator_id": "seller_e2e",
@@ -916,11 +1097,14 @@ class TestReputationMcpTools:
             },
         })
         session_id = open_result["session_id"]
+        initiator_token = open_result["initiator_token"]
+        responder_token = open_result["responder_token"]
 
         # Propose
         handle_tool_call("concordia_propose", {
             "session_id": session_id,
             "role": "initiator",
+            "auth_token": initiator_token,
             "terms": {"price": {"value": 1000}},
             "reasoning": "Starting high",
         })
@@ -929,6 +1113,7 @@ class TestReputationMcpTools:
         handle_tool_call("concordia_counter", {
             "session_id": session_id,
             "role": "responder",
+            "auth_token": responder_token,
             "terms": {"price": {"value": 850}},
             "reasoning": "Meeting in the middle",
         })
@@ -937,12 +1122,14 @@ class TestReputationMcpTools:
         handle_tool_call("concordia_accept", {
             "session_id": session_id,
             "role": "initiator",
+            "auth_token": initiator_token,
             "reasoning": "Deal accepted",
         })
 
         # Generate receipt
         receipt_result = handle_tool_call("concordia_session_receipt", {
             "session_id": session_id,
+            "auth_token": initiator_token,
             "category": "electronics",
             "value_range": "500-1500_USD",
         })
@@ -951,6 +1138,8 @@ class TestReputationMcpTools:
 
         # Ingest
         ingest_result = handle_tool_call("concordia_ingest_attestation", {
+            "agent_id": "seller_e2e",
+            "auth_token": seller_token,
             "attestation": attestation,
         })
         assert ingest_result["accepted"] is True

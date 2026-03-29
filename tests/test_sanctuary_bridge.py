@@ -171,6 +171,33 @@ class TestCommitmentPayload:
         parsed = json.loads(raw)
         assert list(parsed.keys()) == sorted(parsed.keys())
 
+    def test_commitment_uses_canonical_json_not_vanilla_dumps(self):
+        """SEC-003 regression: bridge must use canonical_json, not json.dumps.
+
+        Verifies that non-ASCII in agreed_terms is preserved as raw UTF-8
+        (not \\uXXXX escaped), matching TypeScript's stableStringify output.
+        """
+        payload = build_commitment_payload(
+            session_id="s1",
+            agreed_terms={"description": "café résumé"},
+            parties=["p1"],
+        )
+        raw = payload["raw_value"]
+        # canonical_json with ensure_ascii=False preserves Unicode
+        assert "café" in raw, "Unicode should be preserved, not escaped"
+        assert "\\u" not in raw, "Should not contain \\uXXXX escape sequences"
+
+    def test_commitment_integer_valued_floats(self):
+        """SEC-003 regression: integer-valued floats format without decimal point."""
+        payload = build_commitment_payload(
+            session_id="s1",
+            agreed_terms={"price": 100, "quantity": 5},
+            parties=["p1"],
+        )
+        raw = payload["raw_value"]
+        # Should contain "100" not "100.0"
+        assert '"price":100' in raw or '"price": 100' in raw
+
 
 # ===================================================================
 # Reveal payload tests
@@ -368,7 +395,7 @@ class TestSanctuaryBridgeMcpTools:
 
     @pytest.fixture(autouse=True)
     def reset_bridge(self):
-        from concordia.mcp_server import _bridge_config, _store, _registry
+        from concordia.mcp_server import _bridge_config, _store, _registry, _auth
         _bridge_config.enabled = False
         _bridge_config.identity_map.clear()
         _bridge_config.did_map.clear()
@@ -377,6 +404,9 @@ class TestSanctuaryBridgeMcpTools:
         _bridge_config.reputation_on_receipt = True
         _store._sessions.clear()
         _registry._agents.clear()
+        _auth._agent_tokens.clear()
+        _auth._session_tokens.clear()
+        _auth._token_to_agent.clear()
         yield
 
     def _parse(self, result_str: str) -> dict:
@@ -464,8 +494,10 @@ class TestSanctuaryBridgeMcpTools:
             terms={"price": {"type": "numeric"}},
         ))
         sid = session["session_id"]
-        tool_propose(session_id=sid, role="initiator", terms={"price": {"value": 100}})
-        tool_accept(session_id=sid, role="responder")
+        initiator_token = session["initiator_token"]
+        responder_token = session["responder_token"]
+        tool_propose(session_id=sid, auth_token=initiator_token, role="initiator", terms={"price": {"value": 100}})
+        tool_accept(session_id=sid, auth_token=responder_token, role="responder")
 
         result = self._parse(tool_sanctuary_bridge_commit(session_id=sid))
         assert result["sanctuary_enabled"] is True
@@ -517,14 +549,18 @@ class TestSanctuaryBridgeMcpTools:
             "terms": {"price": {"type": "numeric", "label": "Price"}},
         })
         sid = session["session_id"]
+        initiator_token = session["initiator_token"]
+        responder_token = session["responder_token"]
 
         handle_tool_call("concordia_propose", {
             "session_id": sid,
+            "auth_token": initiator_token,
             "role": "initiator",
             "terms": {"price": {"value": 1000}},
         })
         handle_tool_call("concordia_accept", {
             "session_id": sid,
+            "auth_token": responder_token,
             "role": "responder",
         })
 
@@ -538,7 +574,7 @@ class TestSanctuaryBridgeMcpTools:
         # Generate receipt, then bridge to Sanctuary reputation
         receipt = handle_tool_call("concordia_session_receipt", {
             "session_id": sid,
-            "category": "electronics",
+            "auth_token": initiator_token,
         })
         assert "receipt" in receipt
 

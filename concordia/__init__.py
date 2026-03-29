@@ -24,7 +24,7 @@ from .schema_validator import (
     validate_attestation,
     validate_message,
 )
-from .session import InvalidTransitionError, Session
+from .session import InvalidSignatureError, InvalidTransitionError, Session
 from .signing import KeyPair, sign_message, verify_signature
 from .types import (
     AgentIdentity,
@@ -47,6 +47,7 @@ __all__ = [
     "Agent",
     # Session
     "Session",
+    "InvalidSignatureError",
     "InvalidTransitionError",
     # Offers
     "BasicOffer",

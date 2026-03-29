@@ -461,48 +461,74 @@ class TestRelayMcpTools:
 
     @pytest.fixture(autouse=True)
     def reset_relay(self):
-        from concordia.mcp_server import _relay
+        from concordia.mcp_server import _relay, _auth
         _relay._sessions.clear()
         _relay._archives.clear()
         _relay._mailboxes.clear()
         _relay._concordia_index.clear()
+        _auth._agent_tokens.clear()
+        _auth._session_tokens.clear()
+        _auth._token_to_agent.clear()
         yield
 
     def _parse(self, result_str: str) -> dict:
         return json.loads(result_str)
 
     def test_relay_create(self):
-        from concordia.mcp_server import tool_relay_create
+        from concordia.mcp_server import tool_relay_create, tool_register_agent
+        # Register initiator to get auth_token
+        reg_result = self._parse(tool_register_agent(agent_id="seller_01"))
+        auth_token = reg_result["auth_token"]
+
         result = self._parse(tool_relay_create(
             initiator_id="seller_01",
+            auth_token=auth_token,
             responder_id="buyer_42",
         ))
         assert result["session"]["state"] == "active"
         assert result["session"]["initiator"]["agent_id"] == "seller_01"
 
     def test_relay_create_pending(self):
-        from concordia.mcp_server import tool_relay_create
-        result = self._parse(tool_relay_create(initiator_id="seller_01"))
+        from concordia.mcp_server import tool_relay_create, tool_register_agent
+        # Register initiator to get auth_token
+        reg_result = self._parse(tool_register_agent(agent_id="seller_01"))
+        auth_token = reg_result["auth_token"]
+
+        result = self._parse(tool_relay_create(initiator_id="seller_01", auth_token=auth_token))
         assert result["session"]["state"] == "pending"
 
     def test_relay_join(self):
-        from concordia.mcp_server import tool_relay_create, tool_relay_join
-        created = self._parse(tool_relay_create(initiator_id="seller_01"))
+        from concordia.mcp_server import tool_relay_create, tool_relay_join, tool_register_agent
+        # Register both agents
+        reg_seller = self._parse(tool_register_agent(agent_id="seller_01"))
+        seller_token = reg_seller["auth_token"]
+        reg_buyer = self._parse(tool_register_agent(agent_id="buyer_42"))
+        buyer_token = reg_buyer["auth_token"]
+
+        created = self._parse(tool_relay_create(initiator_id="seller_01", auth_token=seller_token))
         rid = created["session"]["relay_session_id"]
 
-        result = self._parse(tool_relay_join(relay_session_id=rid, agent_id="buyer_42"))
+        result = self._parse(tool_relay_join(relay_session_id=rid, agent_id="buyer_42", auth_token=buyer_token))
         assert result["joined"] is True
         assert result["session"]["state"] == "active"
 
     def test_relay_join_not_found(self):
-        from concordia.mcp_server import tool_relay_join
-        result = self._parse(tool_relay_join(relay_session_id="fake", agent_id="b"))
+        from concordia.mcp_server import tool_relay_join, tool_register_agent
+        # Register agent to get auth_token
+        reg_result = self._parse(tool_register_agent(agent_id="b"))
+        auth_token = reg_result["auth_token"]
+
+        result = self._parse(tool_relay_join(relay_session_id="fake", agent_id="b", auth_token=auth_token))
         assert "error" in result
 
     def test_relay_send(self):
-        from concordia.mcp_server import tool_relay_create, tool_relay_send
+        from concordia.mcp_server import tool_relay_create, tool_relay_send, tool_register_agent
+        # Register agents
+        reg_a = self._parse(tool_register_agent(agent_id="a"))
+        token_a = reg_a["auth_token"]
+
         created = self._parse(tool_relay_create(
-            initiator_id="a", responder_id="b",
+            initiator_id="a", auth_token=token_a, responder_id="b",
         ))
         rid = created["session"]["relay_session_id"]
 
@@ -511,25 +537,36 @@ class TestRelayMcpTools:
             from_agent="a",
             message_type="negotiate.offer",
             payload={"price": 1000},
+            auth_token=token_a,
         ))
         assert result["sent"] is True
         assert result["message"]["from_agent"] == "a"
 
     def test_relay_receive(self):
-        from concordia.mcp_server import tool_relay_create, tool_relay_send, tool_relay_receive
-        created = self._parse(tool_relay_create(initiator_id="a", responder_id="b"))
+        from concordia.mcp_server import tool_relay_create, tool_relay_send, tool_relay_receive, tool_register_agent
+        # Register agents
+        reg_a = self._parse(tool_register_agent(agent_id="a"))
+        token_a = reg_a["auth_token"]
+        reg_b = self._parse(tool_register_agent(agent_id="b"))
+        token_b = reg_b["auth_token"]
+
+        created = self._parse(tool_relay_create(initiator_id="a", auth_token=token_a, responder_id="b"))
         rid = created["session"]["relay_session_id"]
 
-        tool_relay_send(relay_session_id=rid, from_agent="a",
+        tool_relay_send(relay_session_id=rid, from_agent="a", auth_token=token_a,
                         message_type="offer", payload={"price": 1000})
 
-        result = self._parse(tool_relay_receive(agent_id="b"))
+        result = self._parse(tool_relay_receive(agent_id="b", auth_token=token_b))
         assert result["count"] == 1
         assert result["payloads"][0] == {"price": 1000}
 
     def test_relay_status(self):
-        from concordia.mcp_server import tool_relay_create, tool_relay_status
-        created = self._parse(tool_relay_create(initiator_id="a", responder_id="b"))
+        from concordia.mcp_server import tool_relay_create, tool_relay_status, tool_register_agent
+        # Register agents
+        reg_a = self._parse(tool_register_agent(agent_id="a"))
+        token_a = reg_a["auth_token"]
+
+        created = self._parse(tool_relay_create(initiator_id="a", auth_token=token_a, responder_id="b"))
         rid = created["session"]["relay_session_id"]
 
         result = self._parse(tool_relay_status(relay_session_id=rid))
@@ -541,38 +578,56 @@ class TestRelayMcpTools:
         assert "error" in result
 
     def test_relay_conclude(self):
-        from concordia.mcp_server import tool_relay_create, tool_relay_conclude
-        created = self._parse(tool_relay_create(initiator_id="a", responder_id="b"))
+        from concordia.mcp_server import tool_relay_create, tool_relay_conclude, tool_register_agent
+        # Register agents
+        reg_a = self._parse(tool_register_agent(agent_id="a"))
+        token_a = reg_a["auth_token"]
+
+        created = self._parse(tool_relay_create(initiator_id="a", auth_token=token_a, responder_id="b"))
         rid = created["session"]["relay_session_id"]
 
-        result = self._parse(tool_relay_conclude(relay_session_id=rid, reason="agreed"))
+        result = self._parse(tool_relay_conclude(relay_session_id=rid, agent_id="a", auth_token=token_a, reason="agreed"))
         assert result["concluded"] is True
         assert result["session"]["state"] == "concluded"
 
     def test_relay_transcript(self):
-        from concordia.mcp_server import tool_relay_create, tool_relay_send, tool_relay_transcript
-        created = self._parse(tool_relay_create(initiator_id="a", responder_id="b"))
+        from concordia.mcp_server import tool_relay_create, tool_relay_send, tool_relay_transcript, tool_register_agent
+        # Register agents
+        reg_a = self._parse(tool_register_agent(agent_id="a"))
+        token_a = reg_a["auth_token"]
+        reg_b = self._parse(tool_register_agent(agent_id="b"))
+        token_b = reg_b["auth_token"]
+
+        created = self._parse(tool_relay_create(initiator_id="a", auth_token=token_a, responder_id="b"))
         rid = created["session"]["relay_session_id"]
 
-        tool_relay_send(relay_session_id=rid, from_agent="a", message_type="offer", payload={"x": 1})
-        tool_relay_send(relay_session_id=rid, from_agent="b", message_type="counter", payload={"x": 2})
+        tool_relay_send(relay_session_id=rid, from_agent="a", auth_token=token_a, message_type="offer", payload={"x": 1})
+        tool_relay_send(relay_session_id=rid, from_agent="b", auth_token=token_b, message_type="counter", payload={"x": 2})
 
-        result = self._parse(tool_relay_transcript(relay_session_id=rid))
+        result = self._parse(tool_relay_transcript(relay_session_id=rid, agent_id="a", auth_token=token_a))
         assert result["count"] == 2
 
     def test_relay_archive(self):
-        from concordia.mcp_server import tool_relay_create, tool_relay_conclude, tool_relay_archive
-        created = self._parse(tool_relay_create(initiator_id="a", responder_id="b"))
+        from concordia.mcp_server import tool_relay_create, tool_relay_conclude, tool_relay_archive, tool_register_agent
+        # Register agents
+        reg_a = self._parse(tool_register_agent(agent_id="a"))
+        token_a = reg_a["auth_token"]
+
+        created = self._parse(tool_relay_create(initiator_id="a", auth_token=token_a, responder_id="b"))
         rid = created["session"]["relay_session_id"]
-        tool_relay_conclude(relay_session_id=rid)
+        tool_relay_conclude(relay_session_id=rid, agent_id="a", auth_token=token_a)
 
         result = self._parse(tool_relay_archive(relay_session_id=rid, retention_days=90))
         assert result["archived"] is True
         assert result["archive"]["retention_days"] == 90
 
     def test_relay_archive_active_fails(self):
-        from concordia.mcp_server import tool_relay_create, tool_relay_archive
-        created = self._parse(tool_relay_create(initiator_id="a", responder_id="b"))
+        from concordia.mcp_server import tool_relay_create, tool_relay_archive, tool_register_agent
+        # Register agents
+        reg_a = self._parse(tool_register_agent(agent_id="a"))
+        token_a = reg_a["auth_token"]
+
+        created = self._parse(tool_relay_create(initiator_id="a", auth_token=token_a, responder_id="b"))
         rid = created["session"]["relay_session_id"]
         result = self._parse(tool_relay_archive(relay_session_id=rid))
         assert "error" in result
@@ -580,24 +635,32 @@ class TestRelayMcpTools:
     def test_relay_list_archives(self):
         from concordia.mcp_server import (
             tool_relay_create, tool_relay_conclude,
-            tool_relay_archive, tool_relay_list_archives,
+            tool_relay_archive, tool_relay_list_archives, tool_register_agent,
         )
         for i in range(3):
+            # Register agents for this iteration
+            reg_a = self._parse(tool_register_agent(agent_id=f"a{i}"))
+            token_a = reg_a["auth_token"]
+
             created = self._parse(tool_relay_create(
-                initiator_id=f"a{i}", responder_id=f"b{i}",
+                initiator_id=f"a{i}", auth_token=token_a, responder_id=f"b{i}",
             ))
             rid = created["session"]["relay_session_id"]
-            tool_relay_conclude(relay_session_id=rid)
+            tool_relay_conclude(relay_session_id=rid, agent_id=f"a{i}", auth_token=token_a)
             tool_relay_archive(relay_session_id=rid)
 
         result = self._parse(tool_relay_list_archives())
         assert result["count"] == 3
 
     def test_relay_stats(self):
-        from concordia.mcp_server import tool_relay_create, tool_relay_send, tool_relay_stats
-        created = self._parse(tool_relay_create(initiator_id="a", responder_id="b"))
+        from concordia.mcp_server import tool_relay_create, tool_relay_send, tool_relay_stats, tool_register_agent
+        # Register agents
+        reg_a = self._parse(tool_register_agent(agent_id="a"))
+        token_a = reg_a["auth_token"]
+
+        created = self._parse(tool_relay_create(initiator_id="a", auth_token=token_a, responder_id="b"))
         rid = created["session"]["relay_session_id"]
-        tool_relay_send(relay_session_id=rid, from_agent="a", message_type="offer", payload={})
+        tool_relay_send(relay_session_id=rid, from_agent="a", auth_token=token_a, message_type="offer", payload={})
 
         result = self._parse(tool_relay_stats())
         assert result["total_sessions"] == 1
@@ -609,9 +672,21 @@ class TestRelayMcpTools:
         """End-to-end: create → join → exchange → conclude → archive."""
         from concordia.mcp_server import handle_tool_call
 
+        # Register agents first
+        seller_reg = handle_tool_call("concordia_register_agent", {
+            "agent_id": "seller_agent",
+        })
+        seller_token = seller_reg["auth_token"]
+
+        buyer_reg = handle_tool_call("concordia_register_agent", {
+            "agent_id": "buyer_agent",
+        })
+        buyer_token = buyer_reg["auth_token"]
+
         # Create relay session (pending)
         created = handle_tool_call("concordia_relay_create", {
             "initiator_id": "seller_agent",
+            "auth_token": seller_token,
         })
         rid = created["session"]["relay_session_id"]
         assert created["session"]["state"] == "pending"
@@ -620,6 +695,7 @@ class TestRelayMcpTools:
         joined = handle_tool_call("concordia_relay_join", {
             "relay_session_id": rid,
             "agent_id": "buyer_agent",
+            "auth_token": buyer_token,
         })
         assert joined["joined"] is True
         assert joined["session"]["state"] == "active"
@@ -630,24 +706,28 @@ class TestRelayMcpTools:
             "from_agent": "seller_agent",
             "message_type": "negotiate.offer",
             "payload": {"price": 2000, "condition": "like_new"},
+            "auth_token": seller_token,
         })
         handle_tool_call("concordia_relay_send", {
             "relay_session_id": rid,
             "from_agent": "buyer_agent",
             "message_type": "negotiate.counter",
             "payload": {"price": 1500, "condition": "like_new"},
+            "auth_token": buyer_token,
         })
         handle_tool_call("concordia_relay_send", {
             "relay_session_id": rid,
             "from_agent": "seller_agent",
             "message_type": "negotiate.counter",
             "payload": {"price": 1750, "condition": "like_new"},
+            "auth_token": seller_token,
         })
 
         # Buyer receives messages
         buyer_msgs = handle_tool_call("concordia_relay_receive", {
             "agent_id": "buyer_agent",
             "relay_session_id": rid,
+            "auth_token": buyer_token,
         })
         assert buyer_msgs["count"] == 2  # offer + counter from seller
 
@@ -655,12 +735,15 @@ class TestRelayMcpTools:
         seller_msgs = handle_tool_call("concordia_relay_receive", {
             "agent_id": "seller_agent",
             "relay_session_id": rid,
+            "auth_token": seller_token,
         })
         assert seller_msgs["count"] == 1  # counter from buyer
 
         # Check transcript
         transcript = handle_tool_call("concordia_relay_transcript", {
             "relay_session_id": rid,
+            "agent_id": "seller_agent",
+            "auth_token": seller_token,
         })
         assert transcript["count"] == 3
 
@@ -675,6 +758,8 @@ class TestRelayMcpTools:
         # Conclude
         concluded = handle_tool_call("concordia_relay_conclude", {
             "relay_session_id": rid,
+            "agent_id": "seller_agent",
+            "auth_token": seller_token,
             "reason": "agreed",
         })
         assert concluded["concluded"] is True

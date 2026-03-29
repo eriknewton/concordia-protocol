@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from .message import GENESIS_HASH, build_envelope, compute_hash
-from .signing import KeyPair
+from .signing import KeyPair, verify_signature
 from .types import (
     AgentIdentity,
     BehaviorRecord,
@@ -27,6 +29,10 @@ from .types import (
 
 class InvalidTransitionError(Exception):
     """Raised when a message would cause an illegal state transition."""
+
+
+class InvalidSignatureError(Exception):
+    """Raised when a message has an invalid, missing, or unverifiable signature."""
 
 
 # §5.2 — Transition table encoded as {(from_state, message_type): to_state}.
@@ -81,6 +87,9 @@ class Session:
         self._behaviors: dict[str, BehaviorRecord] = {}
         self._last_offers: dict[str, dict[str, Any]] = {}
 
+        # Public key registry for signature verification (SEC-010)
+        self._party_keys: dict[str, Ed25519PublicKey] = {}
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -106,23 +115,79 @@ class Session:
             SessionState.EXPIRED,
         )
 
-    def add_party(self, agent_id: str, role: PartyRole) -> None:
-        """Register a party in this session."""
+    def add_party(
+        self,
+        agent_id: str,
+        role: PartyRole,
+        public_key: Ed25519PublicKey | None = None,
+    ) -> None:
+        """Register a party in this session.
+
+        Args:
+            agent_id: The agent's unique identifier.
+            role: The party's role (initiator or responder).
+            public_key: The agent's Ed25519 public key for signature
+                verification.  When provided, the key is stored in
+                ``_party_keys`` so the resolver callback can look it up.
+        """
         self.parties[agent_id] = role
         if agent_id not in self._behaviors:
             self._behaviors[agent_id] = BehaviorRecord()
+        if public_key is not None:
+            self._party_keys[agent_id] = public_key
 
-    def apply_message(self, message: dict[str, Any]) -> SessionState:
+    def apply_message(
+        self,
+        message: dict[str, Any],
+        public_key_resolver: Callable[[str], Ed25519PublicKey | None],
+    ) -> SessionState:
         """Apply a message to the session, advancing state if needed.
 
-        Validates the transition, appends to the transcript, updates
-        behavioral tracking, and returns the new state.
+        Verifies the message signature, validates the transition, appends
+        to the transcript, updates behavioral tracking, and returns the
+        new state.
 
-        Raises ``InvalidTransitionError`` if the message type is not
-        valid for the current state.
+        Args:
+            message: The signed message envelope dict.
+            public_key_resolver: Mandatory callback that maps an agent_id
+                to its Ed25519 public key, or returns ``None`` if the
+                identity is unknown.  Follows the SEC-005 cluster contract:
+                mandatory parameter, null return = rejection.
+
+        Raises:
+            InvalidSignatureError: If the signature is missing, the
+                agent identity cannot be resolved, or the signature
+                is cryptographically invalid.
+            InvalidTransitionError: If the message type is not valid
+                for the current state.
         """
+        # --- Signature verification (SEC-010 fix) ---
+        agent_id = message.get("from", {}).get("agent_id")
+        if not agent_id:
+            raise InvalidSignatureError(
+                "Message missing 'from.agent_id' — cannot verify identity"
+            )
+
+        signature = message.get("signature")
+        if not signature:
+            raise InvalidSignatureError(
+                "Message missing 'signature' — unsigned messages are rejected"
+            )
+
+        public_key = public_key_resolver(agent_id)
+        if public_key is None:
+            raise InvalidSignatureError(
+                f"Unknown agent identity '{agent_id}' — resolver returned None"
+            )
+
+        if not verify_signature(message, signature, public_key):
+            raise InvalidSignatureError(
+                f"Invalid signature for agent '{agent_id}' — "
+                "message content does not match signature"
+            )
+
+        # --- State transition validation ---
         msg_type = MessageType(message["type"])
-        agent_id = message["from"]["agent_id"]
 
         # Look up transition
         key = (self.state, msg_type)

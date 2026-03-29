@@ -67,6 +67,140 @@ class TestSignAndVerify:
         assert canonical_json(d1) == canonical_json(d2)
 
 
+class TestCrossLanguageCanonicalJSON:
+    """Cross-language canonical JSON vectors (SEC-003).
+
+    These vectors MUST produce byte-identical output in both Python
+    (canonical_json / _stable_stringify) and TypeScript (stableStringify).
+    The expected values here are the shared contract between both repos.
+    """
+
+    def test_sorts_keys_alphabetically(self):
+        from concordia.signing import canonical_json
+        assert canonical_json({"z": 1, "a": 2, "m": 3}) == b'{"a":2,"m":3,"z":1}'
+
+    def test_sorts_nested_keys_recursively(self):
+        from concordia.signing import canonical_json
+        assert canonical_json({"b": {"d": 1, "c": 2}, "a": 3}) == b'{"a":3,"b":{"c":2,"d":1}}'
+
+    def test_compact_separators(self):
+        from concordia.signing import canonical_json
+        assert canonical_json({"a": [1, 2, 3]}) == b'{"a":[1,2,3]}'
+
+    def test_integer_numbers_no_decimal(self):
+        from concordia.signing import canonical_json
+        assert canonical_json({"v": 1}) == b'{"v":1}'
+        assert canonical_json({"v": 42}) == b'{"v":42}'
+        assert canonical_json({"v": 0}) == b'{"v":0}'
+        assert canonical_json({"v": -7}) == b'{"v":-7}'
+
+    def test_integer_valued_floats_no_decimal(self):
+        """Python 1.0 must serialize as '1' to match V8's JSON.stringify."""
+        from concordia.signing import _stable_stringify
+        assert _stable_stringify({"v": 1.0}) == '{"v":1}'
+        assert _stable_stringify({"v": 42.0}) == '{"v":42}'
+        assert _stable_stringify({"v": -7.0}) == '{"v":-7}'
+
+    def test_boolean_and_null(self):
+        from concordia.signing import canonical_json
+        assert canonical_json({"a": True, "b": False, "c": None}) == b'{"a":true,"b":false,"c":null}'
+
+    def test_empty_structures(self):
+        from concordia.signing import canonical_json
+        assert canonical_json({}) == b'{}'
+        assert canonical_json({"a": []}) == b'{"a":[]}'
+        assert canonical_json({"a": {}}) == b'{"a":{}}'
+
+    def test_string_escaping_control_chars(self):
+        from concordia.signing import canonical_json
+        assert canonical_json({"a": "line1\nline2"}) == b'{"a":"line1\\nline2"}'
+        assert canonical_json({"a": 'quote"here'}) == b'{"a":"quote\\"here"}'
+        assert canonical_json({"a": "back\\slash"}) == b'{"a":"back\\\\slash"}'
+
+    def test_preserves_non_ascii_unicode(self):
+        """Non-ASCII must NOT be escaped — raw UTF-8 to match V8."""
+        from concordia.signing import canonical_json
+        assert canonical_json({"a": "café"}) == '{"a":"café"}'.encode("utf-8")
+        assert canonical_json({"a": "你好"}) == '{"a":"你好"}'.encode("utf-8")
+        assert canonical_json({"emoji": "☺"}) == '{"emoji":"☺"}'.encode("utf-8")
+
+    def test_deeply_nested(self):
+        from concordia.signing import canonical_json
+        assert canonical_json({"a": {"b": {"c": {"d": 1}}}}) == b'{"a":{"b":{"c":{"d":1}}}}'
+
+    def test_arrays_mixed_types(self):
+        from concordia.signing import canonical_json
+        assert canonical_json({"a": [1, "two", True, None, {"k": "v"}]}) == \
+            b'{"a":[1,"two",true,null,{"k":"v"}]}'
+
+    def test_rejects_negative_zero(self):
+        import pytest
+        from concordia.signing import canonical_json
+        with pytest.raises(ValueError, match="negative zero"):
+            canonical_json({"v": -0.0})
+
+    def test_rejects_nan(self):
+        import math
+        import pytest
+        from concordia.signing import canonical_json
+        with pytest.raises(ValueError, match="special float"):
+            canonical_json({"v": float("nan")})
+
+    def test_rejects_infinity(self):
+        import pytest
+        from concordia.signing import canonical_json
+        with pytest.raises(ValueError, match="special float"):
+            canonical_json({"v": float("inf")})
+        with pytest.raises(ValueError, match="special float"):
+            canonical_json({"v": float("-inf")})
+
+    def test_shared_cross_language_vectors(self):
+        """Exact byte-level vectors matching TypeScript test suite."""
+        from concordia.signing import canonical_json
+
+        vectors = [
+            ({"a": 1}, b'{"a":1}'),
+            ({"b": "hello", "a": "world"}, b'{"a":"world","b":"hello"}'),
+            ({"x": [1, 2, 3]}, b'{"x":[1,2,3]}'),
+            ({"n": None}, b'{"n":null}'),
+            ({"t": True, "f": False}, b'{"f":false,"t":true}'),
+            ({"nested": {"z": 1, "a": 2}}, b'{"nested":{"a":2,"z":1}}'),
+            ({"s": "café"}, '{"s":"café"}'.encode("utf-8")),
+            ({"s": "你好世界"}, '{"s":"你好世界"}'.encode("utf-8")),
+            ({"s": "line\nnew"}, b'{"s":"line\\nnew"}'),
+            ({"empty": {}}, b'{"empty":{}}'),
+            ({"arr": []}, b'{"arr":[]}'),
+            ({"v": -42}, b'{"v":-42}'),
+            ({"v": 0}, b'{"v":0}'),
+            ({"mix": [None, True, "a", 1, {"k": "v"}]}, b'{"mix":[null,true,"a",1,{"k":"v"}]}'),
+        ]
+        for data, expected in vectors:
+            assert canonical_json(data) == expected, f"Failed for input: {data}"
+
+    def test_ecmascript_number_formatting(self):
+        """Verify number formatting matches V8's JSON.stringify output."""
+        from concordia.signing import _format_number_ecmascript
+
+        # Integer-valued floats → no decimal point
+        assert _format_number_ecmascript(1.0) == "1"
+        assert _format_number_ecmascript(42.0) == "42"
+        assert _format_number_ecmascript(0.0) == "0"
+        assert _format_number_ecmascript(-7.0) == "-7"
+
+        # Regular integers
+        assert _format_number_ecmascript(1) == "1"
+        assert _format_number_ecmascript(42) == "42"
+        assert _format_number_ecmascript(-100) == "-100"
+
+        # Non-integer floats
+        assert _format_number_ecmascript(1.5) == "1.5"
+        assert _format_number_ecmascript(0.1) == "0.1"
+        assert _format_number_ecmascript(-0.5) == "-0.5"
+
+        # Small decimals — V8 uses decimal notation down to 5e-7
+        assert _format_number_ecmascript(0.000005) == "0.000005"
+
+
 class TestHashChain:
     """Test transcript hash chain integrity (§9.3)."""
 
