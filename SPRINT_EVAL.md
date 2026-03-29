@@ -595,3 +595,149 @@ The SEC-005 SPRINT_EVAL.md established the three requirements (mandatory resolve
 The fix correctly addresses the SEC-014 root cause. The old "warn and skip" path is fully deleted — not commented out, not behind a flag. The `public_key_resolver` is mandatory on both `ingest()` and `_validate()` with no default value. Resolver returning `None` produces a hard rejection. Forged attestations are intercepted before any storage or scoring path, eliminating the reputation manipulation attack. All existing tests were updated (none deleted or skipped). The suite passes at 479/479. The commit touches exactly 7 expected files with no scope creep. The resolver pattern is consistent across all three cluster findings (SEC-005, SEC-010, SEC-014).
 
 No conditions. No follow-up required. This closes the signature verification cluster.
+
+---
+---
+
+# SPRINT_EVAL.md — HP-16+HP-17: Independent QA Evaluation
+
+**Date:** 2026-03-28
+**Evaluator posture:** Skeptical QA — did not write this code, does not trust self-assessment.
+**Findings:** HP-16 (relay_transcript unauthenticated access), HP-17 (relay_conclude unauthenticated access)
+**Branch:** `security-review`
+**Fix commit:** `828979b`
+
+---
+
+## 1. ROOT CAUSE
+
+**Verdict: CONFIRMED — identical pattern.**
+
+The SEC-007 fix (commits `1ca20f3` + `0db7992`) established the auth pattern for identity-dependent tools:
+
+```python
+auth_token: Annotated[str, "Agent-scoped auth token (returned by concordia_register_agent)"]
+...
+if not _auth.validate_agent_token(agent_id, auth_token):
+    return _auth_error(agent_id)
+```
+
+Compared side-by-side with the HP-16/HP-17 fix in `tool_relay_conclude` (lines 1744–1745) and `tool_relay_transcript` (lines 1771–1772):
+
+- Parameter type: `Annotated[str, "Agent-scoped auth token (returned by concordia_register_agent)"]` — **identical** to `tool_relay_create` (line 1579), `tool_relay_send` (line 1651), `tool_relay_join` (line 1619), `tool_relay_receive` (line 1690).
+- Gate call: `_auth.validate_agent_token(agent_id, auth_token)` — **identical** function, identical argument order.
+- Error return: `_auth_error(agent_id)` — **identical** helper, identical argument.
+
+The pattern is not "similar" — it is character-for-character identical to the pattern used by the other 14 agent-level auth gates in `mcp_server.py`. The only variation across all 16 gates is the name of the first argument (`initiator_id`, `from_agent`, `responder_agent_id`, or `agent_id`), which is correct since different tools use different parameter names for the identity anchor.
+
+---
+
+## 2. GATE PLACEMENT
+
+**Verdict: CONFIRMED — no bypass path.**
+
+**`tool_relay_conclude`** (lines 1737–1753):
+- Line 1744: `if not _auth.validate_agent_token(agent_id, auth_token):` — first executable statement after function signature and docstring.
+- Line 1745: `return _auth_error(agent_id)` — immediate return on failure.
+- Line 1746: `session = _relay.conclude_session(...)` — business logic is unreachable without passing the gate.
+- No `try/except` wrapping the gate. No conditional branches before the gate. No early returns before the gate.
+
+**`tool_relay_transcript`** (lines 1764–1780):
+- Line 1771: `if not _auth.validate_agent_token(agent_id, auth_token):` — first executable statement.
+- Line 1772: `return _auth_error(agent_id)` — immediate return on failure.
+- Line 1773: `transcript = _relay.get_transcript(...)` — business logic unreachable without valid token.
+- Same structure: no bypass path exists.
+
+Both tools follow the identical gate-before-logic pattern used by all other authenticated relay tools (`relay_create`, `relay_join`, `relay_send`, `relay_receive`).
+
+---
+
+## 3. EXISTING TEST UPDATES
+
+**Verdict: CONFIRMED — 5 tests updated, none deleted, none skipped, tokens are genuine.**
+
+The diff for `tests/test_relay.py` shows exactly 5 call sites updated:
+
+1. `test_relay_conclude` (line 589): Added `agent_id="a", auth_token=token_a`
+2. `test_relay_transcript` (line 607): Added `agent_id="a", auth_token=token_a`
+3. `test_relay_archive` (line 618): Added `agent_id="a", auth_token=token_a` to the `tool_relay_conclude` call within the test
+4. `test_relay_list_archives` (line 649): Added `agent_id=f"a{i}", auth_token=token_a` to the `tool_relay_conclude` call within the loop
+5. `test_full_relay_lifecycle` (lines 744–745, 760–761): Added `agent_id="seller_agent", auth_token=seller_token` to both transcript and conclude calls
+
+**No tests were deleted.** `git diff` shows zero lines matching `^-.*def test_`.
+**No tests were marked skip.** Zero lines matching `pytest.mark.skip` in the diff.
+**Tokens are genuine.** Every `token_a`, `token_b`, and `seller_token` is obtained via `reg_*["auth_token"]` — the return value of `tool_register_agent()`. No hardcoded token strings appear in the updated tests.
+
+---
+
+## 4. REGRESSION TESTS
+
+**Verdict: CONFIRMED — 4 new tests, correct coverage for both findings.**
+
+Located in `tests/test_authentication.py`, 92 new lines added:
+
+**HP-16 — `TestRelayTranscriptAuth`:**
+- `test_relay_transcript_rejects_invalid_auth`: Creates relay session, sends a message, attempts transcript retrieval with `auth_token="bad_token"`. Asserts `"Authentication required"` in error. ✓
+- `test_relay_transcript_accepts_valid_auth`: Creates relay, sends two messages from two authenticated agents, retrieves transcript with valid token. Asserts `count == 2` and no error. ✓
+
+**HP-17 — `TestRelayConcludeAuth`:**
+- `test_relay_conclude_rejects_invalid_auth`: Creates relay session, attempts conclusion with `auth_token="bad_token"`. Asserts `"Authentication required"` in error. ✓
+- `test_relay_conclude_accepts_valid_auth`: Creates relay, concludes with valid token. Asserts `concluded is True` and session state is `"concluded"`. ✓
+
+Each finding has both a rejection test and an acceptance test. Tests use genuine tokens from `tool_register_agent()`.
+
+---
+
+## 5. TEST SUITE
+
+**Verdict: CONFIRMED — 483/483 pass.**
+
+```
+483 passed in 0.57s
+```
+
+Baseline was 479. The +4 matches the 4 new regression tests. No regressions.
+
+---
+
+## 6. SCOPE
+
+**Verdict: CONFIRMED — 3 code files modified.**
+
+`git show --stat 828979b` shows 5 files total, but the 3 code files are:
+
+- `concordia/mcp_server.py` — 9 insertions, 2 deletions (+7 net)
+- `tests/test_authentication.py` — 92 insertions
+- `tests/test_relay.py` — 12 insertions, 5 deletions (+7 net)
+
+The other 2 files (`SPRINT_CONTRACT.md`, `SPRINT_RESULT.md`) are sprint management documentation, not production or test code. The sprint contract specifies "Only `concordia/mcp_server.py`, `tests/test_relay.py`, and `tests/test_authentication.py` are modified" — this is met for code files. The documentation file changes are expected artifacts of the sprint process and are not a scope violation.
+
+---
+
+## 7. CONSISTENCY AUDIT
+
+**Verdict: CONFIRMED for the sprint scope — 16 agent-level auth gates now cover all identity-dependent relay operations that were in scope. Additional gaps noted for future hardening.**
+
+There are now **16** calls to `_auth.validate_agent_token()` in `mcp_server.py`, plus **7** session-level auth checks (`validate_session_token` / `get_any_session_role`), totaling **23 authenticated tools** out of **45 total tools**.
+
+The **relay tool family** (10 tools):
+- **6 with agent auth**: `relay_create`, `relay_join`, `relay_send`, `relay_receive`, `relay_conclude` ✓, `relay_transcript` ✓
+- **1 stats-only (no auth needed)**: `relay_stats` — returns aggregate counts, no identity data
+- **3 without auth**: `relay_status`, `relay_archive`, `relay_list_archives`
+
+The Sprint Result correctly identifies the 3 remaining relay gaps as lower-severity and out of scope for this sprint. I concur with that assessment:
+- `relay_status` is query-only but reveals participant IDs — medium severity
+- `relay_archive` is mutating (freezes a concluded session) — medium-high severity
+- `relay_list_archives` accepts an optional `agent_id` filter without validation — medium severity
+
+The Sprint Result also does **not** mention 3 additional gaps in the Sanctuary Bridge tools (`sanctuary_bridge_configure`, `sanctuary_bridge_commit`, `sanctuary_bridge_attest`). These are separate from the relay family and were not part of the SEC-007 auth sweep, so they are not a regression — but they should be logged for a future hardening pass.
+
+**For the purposes of this evaluation**: HP-16 and HP-17 asked specifically to close the two relay tools that were missed in SEC-007. Both are now gated. The sprint did not introduce any new gaps and correctly identified adjacent gaps for future work.
+
+---
+
+## GRADE: PASS
+
+Both `tool_relay_transcript` and `tool_relay_conclude` now enforce `_auth.validate_agent_token()` using the identical pattern established by SEC-007 across 14 other tools. The gate is placed before all business logic with no bypass path. Five existing tests were updated with genuine auth tokens (none deleted, none skipped). Four new regression tests cover both rejection and acceptance for both findings. The test suite passes at 483/483 (+4 from baseline 479). Code changes are confined to the 3 expected files. The relay tool family has 3 remaining lower-severity auth gaps (`relay_status`, `relay_archive`, `relay_list_archives`) and 3 bridge tool gaps noted for future hardening — none of which were in scope for this sprint.
+
+No conditions. No follow-up required for HP-16 or HP-17.
