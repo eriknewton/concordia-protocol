@@ -586,7 +586,7 @@ class TestRelayMcpTools:
         created = self._parse(tool_relay_create(initiator_id="a", auth_token=token_a, responder_id="b"))
         rid = created["session"]["relay_session_id"]
 
-        result = self._parse(tool_relay_conclude(relay_session_id=rid, reason="agreed"))
+        result = self._parse(tool_relay_conclude(relay_session_id=rid, agent_id="a", auth_token=token_a, reason="agreed"))
         assert result["concluded"] is True
         assert result["session"]["state"] == "concluded"
 
@@ -604,7 +604,7 @@ class TestRelayMcpTools:
         tool_relay_send(relay_session_id=rid, from_agent="a", auth_token=token_a, message_type="offer", payload={"x": 1})
         tool_relay_send(relay_session_id=rid, from_agent="b", auth_token=token_b, message_type="counter", payload={"x": 2})
 
-        result = self._parse(tool_relay_transcript(relay_session_id=rid))
+        result = self._parse(tool_relay_transcript(relay_session_id=rid, agent_id="a", auth_token=token_a))
         assert result["count"] == 2
 
     def test_relay_archive(self):
@@ -615,7 +615,7 @@ class TestRelayMcpTools:
 
         created = self._parse(tool_relay_create(initiator_id="a", auth_token=token_a, responder_id="b"))
         rid = created["session"]["relay_session_id"]
-        tool_relay_conclude(relay_session_id=rid)
+        tool_relay_conclude(relay_session_id=rid, agent_id="a", auth_token=token_a)
 
         result = self._parse(tool_relay_archive(relay_session_id=rid, retention_days=90))
         assert result["archived"] is True
@@ -646,7 +646,7 @@ class TestRelayMcpTools:
                 initiator_id=f"a{i}", auth_token=token_a, responder_id=f"b{i}",
             ))
             rid = created["session"]["relay_session_id"]
-            tool_relay_conclude(relay_session_id=rid)
+            tool_relay_conclude(relay_session_id=rid, agent_id=f"a{i}", auth_token=token_a)
             tool_relay_archive(relay_session_id=rid)
 
         result = self._parse(tool_relay_list_archives())
@@ -742,6 +742,8 @@ class TestRelayMcpTools:
         # Check transcript
         transcript = handle_tool_call("concordia_relay_transcript", {
             "relay_session_id": rid,
+            "agent_id": "seller_agent",
+            "auth_token": seller_token,
         })
         assert transcript["count"] == 3
 
@@ -756,6 +758,8 @@ class TestRelayMcpTools:
         # Conclude
         concluded = handle_tool_call("concordia_relay_conclude", {
             "relay_session_id": rid,
+            "agent_id": "seller_agent",
+            "auth_token": seller_token,
             "reason": "agreed",
         })
         assert concluded["concluded"] is True

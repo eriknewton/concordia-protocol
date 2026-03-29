@@ -1,24 +1,13 @@
-# SPRINT CONTRACT — SEC-014: Attestation Signature Verification Is Optional
+# SPRINT CONTRACT — HP-16 + HP-17 (Paired)
 
-**Sprint Date:** 2026-03-28
-**Finding:** SEC-014 (High)
+**Finding IDs:** HP-16, HP-17
+**Titles:**
+- HP-16: `concordia_relay_transcript` exposes full session transcripts to unauthenticated callers
+- HP-17: `concordia_relay_conclude` allows unauthenticated callers to terminate any relay session
+
+**Date:** 2026-03-28
 **Branch:** `security-review`
-**Cluster:** Third and final of three (SEC-005, SEC-010, SEC-014) — this sprint conforms exactly to the resolver pattern established by SEC-005 and implemented by SEC-010.
-
----
-
-## Cluster Contract Conformance
-
-SEC-005 (Import skips signature verification, Sanctuary TypeScript) established the verification pattern for the entire signature verification cluster. SEC-010 (Session state machine never verifies signatures, Concordia Python) implemented the same pattern for session messages. This sprint closes the cluster by applying the identical pattern to attestation ingestion.
-
-| SEC-005 Cluster Contract Requirement | SEC-014 Implementation |
-|---|---|
-| Callback signature: `(identifier: string) => PublicKey \| null` | `public_key_resolver: Callable[[str], Ed25519PublicKey \| None]` — identical to SEC-010 |
-| Verification is **mandatory, not optional** | `public_key_resolver` is a required parameter on `ingest()` — no default value, no `Optional` type |
-| Null return from resolver → **rejection, not warning** | If resolver returns `None`, add to errors and reject — hard failure, not the current warning |
-| Response includes structured rejection counts | `ValidationResult.errors` list contains specific failure messages per party |
-
-The SEC-010 sprint result explicitly noted: "The same pattern — mandatory `public_key_resolver`, null → rejection — should be applied to `AttestationStore.ingest()`." This contract follows that directive exactly.
+**Baseline test count:** 479
 
 ---
 
@@ -26,40 +15,27 @@ The SEC-010 sprint result explicitly noted: "The same pattern — mandatory `pub
 
 ### a) Root cause — not the symptom
 
-The `AttestationStore.ingest()` method in `store.py:163-175` accepts an optional `public_keys` parameter defaulting to `None`. The `_validate()` method (store.py:277-362) checks for signatures but when `public_keys` is `None`, it only emits a warning (store.py:332-338) and proceeds to accept the attestation. The only production caller — `tool_ingest_attestation()` at mcp_server.py:787 — calls `ingest(attestation)` without passing any public keys.
-
-The root cause is identical to SEC-005 and SEC-010: verification machinery exists (`verify_signature()` is called when keys are provided, store.py:339-356) but is gated behind an optional parameter, making the secure path opt-in rather than mandatory.
+Both `tool_relay_transcript` and `tool_relay_conclude` in `concordia/mcp_server.py` were implemented without the `auth_token` parameter and the corresponding `_auth.validate_agent_token()` gate that was added to the other 24 identity-dependent tools during the SEC-007 fix (commit `1ca20f3` + `0db7992`). The root cause is identical for both: these two tools were missed during the SEC-007 auth sweep. Every other relay tool (`relay_create`, `relay_join`, `relay_send`, `relay_receive`) already has auth gating — these two are the remaining gaps.
 
 ### b) Smallest change that closes the vulnerability
 
-Replace the optional `public_keys: dict[str, Any] | None = None` parameter on both `ingest()` and `_validate()` with a mandatory `public_key_resolver: Callable[[str], Ed25519PublicKey | None]`:
+Add an `agent_id` parameter and an `auth_token` parameter (agent-scoped, Annotated type matching the existing pattern) to both tool functions, and gate each on `_auth.validate_agent_token()` before any business logic executes.
 
-```python
-def ingest(
-    self,
-    attestation: dict[str, Any],
-    public_key_resolver: Callable[[str], Ed25519PublicKey | None],
-) -> tuple[bool, ValidationResult]:
-```
+For `tool_relay_transcript`: the `agent_id` parameter already exists but is optional and unverified. Make it required and validate the caller's identity via auth token before passing `agent_id` through to the relay's `get_transcript()` which already does participant-checking.
 
-In `_validate()`, replace the "warn-if-no-keys" block (store.py:329-338) with mandatory verification:
-1. For each party with a signature, call `public_key_resolver(agent_id)`.
-2. If resolver returns `None` → add error (not warning), reject attestation.
-3. If `verify_signature()` returns `False` → add error, reject attestation.
-4. No fallback path. No "skip verification" code path.
-
-In `tool_ingest_attestation()`, wire a resolver that looks up public keys from the session store (`_store`) using the attestation's `session_id` to find the `SessionContext` and extract the parties' public keys.
+For `tool_relay_conclude`: add a new required `agent_id` parameter as the identity anchor for auth validation. After authentication, the relay layer's `conclude_session()` handles the business logic.
 
 ### c) Interactions with other findings
 
-- **SEC-005** (closed, PASS): Established the cluster pattern. This sprint conforms to it.
-- **SEC-010** (closed, PASS): Second in cluster. Implemented the same pattern on `Session.apply_message()`. This sprint mirrors SEC-010's approach for `AttestationStore.ingest()`.
-- **SEC-007** (closed, PASS): The auth layer added by SEC-007 authenticates the MCP caller. SEC-014 verifies the cryptographic signatures within the attestation data itself. Both are required: SEC-007 prevents impersonation at the transport layer, SEC-014 ensures attestation content integrity at the data layer.
+- **SEC-007** (zero caller authentication, closed PASS): HP-16 and HP-17 are residual gaps from the SEC-007 fix. This sprint closes both.
+- **SEC-009** (relay message interception, closed as collateral from SEC-007): HP-16 is a related but distinct gap — transcript access vs. individual message interception.
+- No other finding interactions.
 
 ### d) New risk introduced
 
-- All callers of `ingest()` must now provide a `public_key_resolver`. Existing tests that call `ingest()` without one will fail at the type level. This is the correct behavior per the cluster contract — verification cannot be bypassed.
-- Attestations from sessions not in the session store (e.g., from external sources or after server restart) will be rejected because the resolver cannot find their keys. This is the correct fail-closed behavior. A future enhancement could allow callers to explicitly provide keys, but the default must be mandatory verification.
+Minimal. The change follows the exact same auth pattern used by the other 24 identity-dependent tools. The only behavioral change is that callers who previously called these tools without tokens will now receive authentication errors. This is the intended security improvement.
+
+Existing tests in `test_relay.py` that call `tool_relay_conclude` and `tool_relay_transcript` without auth tokens will need updating to supply valid tokens.
 
 ---
 
@@ -67,56 +43,52 @@ In `tool_ingest_attestation()`, wire a resolver that looks up public keys from t
 
 ### Files to modify
 
-1. **`concordia/reputation/store.py`** — `ingest()` and `_validate()` methods
-   - Change `public_keys: dict[str, Any] | None = None` to `public_key_resolver: Callable[[str], Ed25519PublicKey | None]` (mandatory, no default)
-   - In `_validate()`: remove the "warn and skip" code path. Always call resolver for each party, reject on `None`.
-   - Add imports for `Callable` from `typing` and `Ed25519PublicKey` from `cryptography`
+1. **`concordia/mcp_server.py`**
+   - `tool_relay_conclude` (lines ~1737-1749): add `agent_id` + `auth_token` parameters, add `_auth.validate_agent_token()` gate
+   - `tool_relay_transcript` (lines ~1760-1773): make `agent_id` required, add `auth_token` parameter, add `_auth.validate_agent_token()` gate
 
-2. **`concordia/mcp_server.py`** — `tool_ingest_attestation()` (line 787)
-   - Build a resolver function that looks up public keys from the session store using `attestation["session_id"]`
-   - Pass the resolver to `_attestation_store.ingest(attestation, public_key_resolver=resolver)`
+2. **`tests/test_relay.py`**
+   - Update `test_relay_conclude` to supply valid `agent_id` + `auth_token`
+   - Update `test_relay_transcript` to supply valid `agent_id` + `auth_token`
+   - Update `test_relay_archive` and `test_relay_archive_active_fails` which call `tool_relay_conclude` without auth
+   - Update `test_relay_list_archives` and `test_full_relay_lifecycle` if they call the affected tools
 
-3. **`tests/test_attestation_signature_verification.py`** — New regression test file
+3. **`tests/test_authentication.py`**
+   - Add `TestRelayTranscriptAuth` and `TestRelayConcludeAuth` regression test classes
 
 ### Behavior before
 
-`ingest()` accepts an optional `public_keys` dict. When called from `tool_ingest_attestation()`, no keys are passed. The `_validate()` method emits a warning ("Signature verification will be skipped") and accepts the attestation. Any well-formed attestation with syntactically valid base64 strings in signature fields is accepted and scored regardless of cryptographic validity.
+- `tool_relay_conclude(relay_session_id, reason)` — no `agent_id` or `auth_token`. Any caller can conclude any relay session.
+- `tool_relay_transcript(relay_session_id, agent_id=None, limit=None)` — `agent_id` is optional and unverified. Any caller reads any session transcript by omitting `agent_id`.
 
 ### Behavior after
 
-`ingest()` requires a mandatory `public_key_resolver` callback. For every party in the attestation:
-- If `public_key_resolver(agent_id)` returns `None`: validation fails with error (unknown identity — hard rejection)
-- If `verify_signature()` returns `False`: validation fails with error (invalid signature — hard rejection)
-- No "skip verification" code path exists
-- Attestations with unverifiable signatures are rejected, not stored, not scored
+- `tool_relay_conclude(relay_session_id, agent_id, auth_token, reason)` — requires `agent_id` + `auth_token`. Token validated via `_auth.validate_agent_token()`. Only authenticated participants can conclude sessions.
+- `tool_relay_transcript(relay_session_id, agent_id, auth_token, limit=None)` — `agent_id` is required. Token validated via `_auth.validate_agent_token()`. Only authenticated participants can read transcripts.
 
 ### Regression tests
 
-New file: `tests/test_attestation_signature_verification.py`
+**Tests to write in `tests/test_authentication.py`:**
 
-Tests:
-1. **Valid signed attestation accepted** — create an attestation with real Ed25519 signatures, provide a resolver that returns correct public keys, verify acceptance.
-2. **Forged signature rejected** — create a valid attestation, tamper with one signature, verify rejection with error message identifying the party.
-3. **Unknown agent_id rejected** — provide a resolver that returns `None` for one party's agent_id, verify rejection.
-4. **Resolver returning None for all parties rejected** — resolver always returns `None`, verify all parties flagged.
-5. **Wrong key rejected** — sign with key A, resolver returns key B's public key, verify rejection.
-6. **Store unchanged on rejection** — verify that after rejection, store count is unchanged, no indexes updated.
-7. **No fallback to warning** — verify that the old "signatures present but public_keys not provided" warning path no longer exists.
-8. **MCP tool wires resolver correctly** — verify that `tool_ingest_attestation` passes a functioning resolver to `ingest()`.
+1. `test_relay_transcript_rejects_invalid_auth` — call `tool_relay_transcript` with a valid relay session and agent_id but wrong auth_token. Assert error contains "Authentication required".
+2. `test_relay_transcript_accepts_valid_auth` — register agents, create relay, send a message, call `tool_relay_transcript` with a valid participant token. Assert transcript returned with count > 0.
+3. `test_relay_conclude_rejects_invalid_auth` — call `tool_relay_conclude` with a valid relay session and agent_id but wrong auth_token. Assert error contains "Authentication required".
+4. `test_relay_conclude_accepts_valid_auth` — register agents, create relay, call `tool_relay_conclude` with valid participant token. Assert concluded is True.
 
 ### Prompt injection
 
-`ingest()` processes attestation dicts containing party behavioral data, transaction categories, and metadata. These fields are stored but never reach any model prompt. No prompt injection surface.
+These tools do not accept free-text that reaches a model prompt. The `reason` parameter in `tool_relay_conclude` is stored in relay session metadata but never reaches any LLM. No prompt injection surface.
 
-### Definition of done (evaluator criteria)
+---
 
-1. `ingest()` has a **mandatory** `public_key_resolver` parameter (not optional, no default).
-2. `_validate()` has a **mandatory** `public_key_resolver` parameter (not optional, no default).
-3. Attestations with invalid signatures are rejected with errors — not warnings, not accepted.
-4. Attestations with unknown agent_ids (resolver returns `None`) are rejected with errors.
-5. The old "Signature verification will be skipped" warning code path is deleted — no fallback.
-6. The resolver follows the SEC-005 cluster contract: `Callable[[str], Ed25519PublicKey | None]`, mandatory, null → rejection.
-7. `tool_ingest_attestation` in mcp_server.py wires a resolver that resolves keys from the session store.
-8. All regression tests pass.
-9. Full test suite count >= 469 (no decrease from baseline).
-10. The fix conforms point-by-point to the SEC-005 cluster contract and the SEC-010 implementation pattern.
+## Definition of Done
+
+The evaluator will grade PASS if:
+
+1. Both `tool_relay_transcript` and `tool_relay_conclude` require `agent_id` + `auth_token` parameters
+2. Both tools validate the token via `_auth.validate_agent_token()` before any business logic
+3. Both tools return the standard `_auth_error()` response on validation failure
+4. Existing tests in `test_relay.py` pass (updated to supply auth tokens)
+5. New regression tests in `test_authentication.py` verify rejection of invalid tokens for both tools
+6. Full test suite count ≥ 479 (no regressions, new tests added)
+7. Only `concordia/mcp_server.py`, `tests/test_relay.py`, and `tests/test_authentication.py` are modified

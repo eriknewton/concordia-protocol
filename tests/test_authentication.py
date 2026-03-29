@@ -41,6 +41,9 @@ from concordia.mcp_server import (
     tool_withdraw_want,
     tool_relay_create,
     tool_relay_receive,
+    tool_relay_send,
+    tool_relay_conclude,
+    tool_relay_transcript,
 )
 
 
@@ -338,3 +341,92 @@ class TestWantAuth:
         from concordia.mcp_server import tool_get_want
         get_result = _parse(tool_get_want(want_id=want_id))
         assert get_result["found"] is True
+
+
+# ---- Test 11: relay_transcript rejects invalid auth (HP-16) ----
+
+class TestRelayTranscriptAuth:
+    def test_relay_transcript_rejects_invalid_auth(self):
+        """HP-16: concordia_relay_transcript must reject unauthenticated callers."""
+        reg_a = _parse(tool_register_agent(agent_id="agent_a"))
+        token_a = reg_a["auth_token"]
+        # Create a relay session
+        created = _parse(tool_relay_create(
+            initiator_id="agent_a", auth_token=token_a, responder_id="agent_b",
+        ))
+        rid = created["session"]["relay_session_id"]
+        # Send a message so there's a transcript
+        tool_relay_send(
+            relay_session_id=rid, from_agent="agent_a",
+            auth_token=token_a, message_type="offer", payload={"x": 1},
+        )
+        # Attempt to read transcript with an invalid token
+        result = _parse(tool_relay_transcript(
+            relay_session_id=rid, agent_id="agent_a", auth_token="bad_token",
+        ))
+        assert "error" in result
+        assert "Authentication required" in result["error"]
+
+    def test_relay_transcript_accepts_valid_auth(self):
+        """HP-16: concordia_relay_transcript accepts valid participant token."""
+        reg_a = _parse(tool_register_agent(agent_id="agent_a"))
+        reg_b = _parse(tool_register_agent(agent_id="agent_b"))
+        token_a = reg_a["auth_token"]
+        token_b = reg_b["auth_token"]
+        # Create relay and send messages
+        created = _parse(tool_relay_create(
+            initiator_id="agent_a", auth_token=token_a, responder_id="agent_b",
+        ))
+        rid = created["session"]["relay_session_id"]
+        tool_relay_send(
+            relay_session_id=rid, from_agent="agent_a",
+            auth_token=token_a, message_type="offer", payload={"x": 1},
+        )
+        tool_relay_send(
+            relay_session_id=rid, from_agent="agent_b",
+            auth_token=token_b, message_type="counter", payload={"x": 2},
+        )
+        # Read transcript with valid token
+        result = _parse(tool_relay_transcript(
+            relay_session_id=rid, agent_id="agent_a", auth_token=token_a,
+        ))
+        assert "error" not in result
+        assert result["count"] == 2
+
+
+# ---- Test 12: relay_conclude rejects invalid auth (HP-17) ----
+
+class TestRelayConcludeAuth:
+    def test_relay_conclude_rejects_invalid_auth(self):
+        """HP-17: concordia_relay_conclude must reject unauthenticated callers."""
+        reg_a = _parse(tool_register_agent(agent_id="agent_a"))
+        token_a = reg_a["auth_token"]
+        # Create a relay session
+        created = _parse(tool_relay_create(
+            initiator_id="agent_a", auth_token=token_a, responder_id="agent_b",
+        ))
+        rid = created["session"]["relay_session_id"]
+        # Attempt to conclude with an invalid token
+        result = _parse(tool_relay_conclude(
+            relay_session_id=rid, agent_id="agent_a", auth_token="bad_token",
+        ))
+        assert "error" in result
+        assert "Authentication required" in result["error"]
+
+    def test_relay_conclude_accepts_valid_auth(self):
+        """HP-17: concordia_relay_conclude accepts valid participant token."""
+        reg_a = _parse(tool_register_agent(agent_id="agent_a"))
+        token_a = reg_a["auth_token"]
+        # Create a relay session
+        created = _parse(tool_relay_create(
+            initiator_id="agent_a", auth_token=token_a, responder_id="agent_b",
+        ))
+        rid = created["session"]["relay_session_id"]
+        # Conclude with valid token
+        result = _parse(tool_relay_conclude(
+            relay_session_id=rid, agent_id="agent_a", auth_token=token_a,
+            reason="agreed",
+        ))
+        assert "error" not in result
+        assert result["concluded"] is True
+        assert result["session"]["state"] == "concluded"

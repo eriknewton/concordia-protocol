@@ -1736,9 +1736,13 @@ def tool_relay_status(
 )
 def tool_relay_conclude(
     relay_session_id: Annotated[str, "The relay session to conclude"],
+    agent_id: Annotated[str, "The requesting agent's ID (must be a participant)"],
+    auth_token: Annotated[str, "Agent-scoped auth token (returned by concordia_register_agent)"],
     reason: Annotated[str, "Reason for conclusion (e.g. 'agreed', 'rejected', 'manual')"] = "manual",
 ) -> str:
     """Conclude a relay session."""
+    if not _auth.validate_agent_token(agent_id, auth_token):
+        return _auth_error(agent_id)
     session = _relay.conclude_session(relay_session_id, reason)
     if session is None:
         return json.dumps({"error": f"Relay session '{relay_session_id}' not found."})
@@ -1759,10 +1763,13 @@ def tool_relay_conclude(
 )
 def tool_relay_transcript(
     relay_session_id: Annotated[str, "The relay session ID"],
-    agent_id: Annotated[str | None, "Optional: the requesting agent's ID (for access control)"] = None,
+    agent_id: Annotated[str, "The requesting agent's ID (must be a participant)"],
+    auth_token: Annotated[str, "Agent-scoped auth token (returned by concordia_register_agent)"],
     limit: Annotated[int | None, "Limit to last N messages (default: all)"] = None,
 ) -> str:
     """Get relay transcript."""
+    if not _auth.validate_agent_token(agent_id, auth_token):
+        return _auth_error(agent_id)
     transcript = _relay.get_transcript(relay_session_id, requesting_agent=agent_id, limit=limit)
     if transcript is None:
         return json.dumps({"error": f"Relay session '{relay_session_id}' not found or access denied."})
