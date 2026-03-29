@@ -102,6 +102,117 @@ from .types import (
     TimingConfig,
 )
 
+import re
+
+# ---------------------------------------------------------------------------
+# SEC-ADD-02: Input sanitization constants and utilities
+# ---------------------------------------------------------------------------
+
+MAX_REASONING_LENGTH = 2000
+MAX_TERM_STRING_LENGTH = 10000
+MAX_DESCRIPTION_LENGTH = 5000
+MAX_METADATA_STRING_LENGTH = 5000
+MAX_RELAY_PAYLOAD_STRING_LENGTH = 10000
+
+# Unicode control characters to strip (preserving \n \r \t)
+_CONTROL_CHAR_RE = re.compile(
+    r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f"
+    r"\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2069\ufeff]"
+)
+
+
+def _sanitize_string(value: str, max_length: int) -> str:
+    """Strip dangerous Unicode control characters and enforce length cap."""
+    cleaned = _CONTROL_CHAR_RE.sub("", value)
+    if len(cleaned) > max_length:
+        return cleaned[:max_length] + " [TRUNCATED]"
+    return cleaned
+
+
+def _sanitize_reasoning(reasoning: str | None) -> str | None:
+    """Sanitize a reasoning field (SEC-ADD-02)."""
+    if reasoning is None:
+        return None
+    return _sanitize_string(reasoning, MAX_REASONING_LENGTH)
+
+
+def _sanitize_terms(terms: dict) -> dict:
+    """Recursively sanitize string values in a terms dict (SEC-ADD-02)."""
+    sanitized: dict = {}
+    for k, v in terms.items():
+        k = _sanitize_string(str(k), MAX_TERM_STRING_LENGTH)
+        if isinstance(v, str):
+            sanitized[k] = _sanitize_string(v, MAX_TERM_STRING_LENGTH)
+        elif isinstance(v, dict):
+            sanitized[k] = _sanitize_terms(v)
+        elif isinstance(v, list):
+            sanitized[k] = [
+                _sanitize_string(item, MAX_TERM_STRING_LENGTH) if isinstance(item, str)
+                else _sanitize_terms(item) if isinstance(item, dict)
+                else item
+                for item in v
+            ]
+        else:
+            sanitized[k] = v
+    return sanitized
+
+
+def _sanitize_description(desc: str | None) -> str | None:
+    """Sanitize a description field (SEC-ADD-02)."""
+    if desc is None:
+        return None
+    return _sanitize_string(desc, MAX_DESCRIPTION_LENGTH)
+
+
+def _sanitize_metadata(metadata: dict | None) -> dict | None:
+    """Sanitize string values in a metadata dict (SEC-ADD-02)."""
+    if metadata is None:
+        return None
+    sanitized: dict = {}
+    for k, v in metadata.items():
+        if isinstance(v, str):
+            sanitized[k] = _sanitize_string(v, MAX_METADATA_STRING_LENGTH)
+        elif isinstance(v, dict):
+            sanitized[k] = _sanitize_metadata(v)
+        else:
+            sanitized[k] = v
+    return sanitized
+
+
+def _sanitize_payload(payload: dict) -> dict:
+    """Sanitize string values in a relay payload dict (SEC-ADD-02)."""
+    sanitized: dict = {}
+    for k, v in payload.items():
+        if isinstance(v, str):
+            sanitized[k] = _sanitize_string(v, MAX_RELAY_PAYLOAD_STRING_LENGTH)
+        elif isinstance(v, dict):
+            sanitized[k] = _sanitize_payload(v)
+        elif isinstance(v, list):
+            sanitized[k] = [
+                _sanitize_string(item, MAX_RELAY_PAYLOAD_STRING_LENGTH) if isinstance(item, str)
+                else _sanitize_payload(item) if isinstance(item, dict)
+                else item
+                for item in v
+            ]
+        else:
+            sanitized[k] = v
+    return sanitized
+
+
+# ---------------------------------------------------------------------------
+# SEC-ADD-01: Output tagging — mark counterparty-controlled data
+# ---------------------------------------------------------------------------
+
+def _tag_external(response: dict) -> dict:
+    """Add _content_trust: 'external' metadata to a response dict (SEC-ADD-01)."""
+    response["_content_trust"] = "external"
+    return response
+
+
+def _wrap_external(value: str) -> str:
+    """Wrap a counterparty-controlled string with delimiters (SEC-ADD-01)."""
+    return f"[EXTERNAL_DATA]{value}[/EXTERNAL_DATA]"
+
 
 # ---------------------------------------------------------------------------
 # MCP Server instance
@@ -272,7 +383,8 @@ def _transcript_summary(transcript: list[dict[str, Any]], limit: int = 10) -> li
             "timestamp": msg.get("timestamp", ""),
         }
         if msg.get("reasoning"):
-            entry["reasoning"] = msg["reasoning"]
+            # SEC-ADD-01: Wrap counterparty-controlled reasoning with delimiters
+            entry["reasoning"] = _wrap_external(str(msg["reasoning"]))
         body = msg.get("body", {})
         if "terms" in body:
             entry["terms_snapshot"] = {
@@ -309,6 +421,11 @@ def tool_open_session(
     metadata: Annotated[dict | None, "Optional metadata to attach to the session (not part of the protocol)"] = None,
 ) -> str:
     """Open a new Concordia negotiation session."""
+    # SEC-ADD-02: Sanitize counterparty-controlled inputs
+    terms = _sanitize_terms(terms)
+    reasoning = _sanitize_reasoning(reasoning)
+    metadata = _sanitize_metadata(metadata)
+
     timing = TimingConfig(
         session_ttl=session_ttl,
         offer_ttl=offer_ttl,
@@ -386,6 +503,10 @@ def tool_propose(
     reasoning: Annotated[str | None, "Natural-language reasoning explaining the offer"] = None,
 ) -> str:
     """Send an initial offer into an active session."""
+    # SEC-ADD-02: Sanitize counterparty-controlled inputs
+    terms = _sanitize_terms(terms)
+    reasoning = _sanitize_reasoning(reasoning)
+
     if not _auth.validate_session_token(session_id, role, auth_token):
         return _auth_error(f"session={session_id}, role={role}")
     ctx = _store.get(session_id)
@@ -439,6 +560,10 @@ def tool_counter(
     reasoning: Annotated[str | None, "Natural-language reasoning explaining the counter-offer"] = None,
 ) -> str:
     """Send a counter-offer in response to the other party's offer."""
+    # SEC-ADD-02: Sanitize counterparty-controlled inputs
+    terms = _sanitize_terms(terms)
+    reasoning = _sanitize_reasoning(reasoning)
+
     if not _auth.validate_session_token(session_id, role, auth_token):
         return _auth_error(f"session={session_id}, role={role}")
     ctx = _store.get(session_id)
@@ -489,6 +614,9 @@ def tool_accept(
     reasoning: Annotated[str | None, "Natural-language reasoning for accepting"] = None,
 ) -> str:
     """Accept the current offer, moving the session to AGREED."""
+    # SEC-ADD-02: Sanitize counterparty-controlled inputs
+    reasoning = _sanitize_reasoning(reasoning)
+
     if not _auth.validate_session_token(session_id, role, auth_token):
         return _auth_error(f"session={session_id}, role={role}")
     ctx = _store.get(session_id)
@@ -537,6 +665,10 @@ def tool_reject(
     reasoning: Annotated[str | None, "Natural-language reasoning for rejection"] = None,
 ) -> str:
     """Reject the negotiation, moving the session to REJECTED."""
+    # SEC-ADD-02: Sanitize counterparty-controlled inputs
+    reasoning = _sanitize_reasoning(reasoning)
+    reason = _sanitize_reasoning(reason)
+
     if not _auth.validate_session_token(session_id, role, auth_token):
         return _auth_error(f"session={session_id}, role={role}")
     ctx = _store.get(session_id)
@@ -584,6 +716,9 @@ def tool_commit(
     reasoning: Annotated[str | None, "Natural-language reasoning for the commitment"] = None,
 ) -> str:
     """Finalize an agreed deal with a cryptographic commitment."""
+    # SEC-ADD-02: Sanitize counterparty-controlled inputs
+    reasoning = _sanitize_reasoning(reasoning)
+
     if not _auth.validate_session_token(session_id, role, auth_token):
         return _auth_error(f"session={session_id}, role={role}")
     ctx = _store.get(session_id)
@@ -676,6 +811,9 @@ def tool_session_status(
 
     if ctx.metadata:
         result["metadata"] = ctx.metadata
+
+    # SEC-ADD-01: Tag response as containing counterparty-controlled data
+    _tag_external(result)
 
     return json.dumps(result, indent=2, default=str)
 
@@ -928,6 +1066,9 @@ def tool_register_agent(
     description: Annotated[str | None, "Optional human-readable description of the agent"] = None,
 ) -> str:
     """Register an agent in the discovery registry."""
+    # SEC-ADD-02: Sanitize counterparty-controlled inputs
+    description = _sanitize_description(description)
+
     agent = _registry.register(
         agent_id=agent_id,
         roles=roles,
@@ -986,6 +1127,8 @@ def tool_search_agents(
             }.items() if v is not None
         },
     }
+    # SEC-ADD-01: Tag response as containing counterparty-controlled agent data
+    _tag_external(result)
     return json.dumps(result, indent=2, default=str)
 
 
@@ -1297,6 +1440,10 @@ def tool_post_want(
     metadata: Annotated[dict | None, "Optional metadata"] = None,
 ) -> str:
     """Post a Want and get immediate matches."""
+    # SEC-ADD-02: Sanitize counterparty-controlled inputs
+    terms = _sanitize_terms(terms)
+    metadata = _sanitize_metadata(metadata)
+
     if not _auth.validate_agent_token(agent_id, auth_token):
         return _auth_error(agent_id)
     try:
@@ -1347,6 +1494,10 @@ def tool_post_have(
     metadata: Annotated[dict | None, "Optional metadata"] = None,
 ) -> str:
     """Post a Have and get immediate matches."""
+    # SEC-ADD-02: Sanitize counterparty-controlled inputs
+    terms = _sanitize_terms(terms)
+    metadata = _sanitize_metadata(metadata)
+
     if not _auth.validate_agent_token(agent_id, auth_token):
         return _auth_error(agent_id)
     try:
@@ -1388,7 +1539,10 @@ def tool_get_want(
     want = _want_registry.get_want(want_id)
     if want is None:
         return json.dumps({"found": False, "want_id": want_id})
-    return json.dumps({"found": True, "want": want.to_dict()}, indent=2, default=str)
+    # SEC-ADD-01: Tag response as containing counterparty-controlled want data
+    result = {"found": True, "want": want.to_dict()}
+    _tag_external(result)
+    return json.dumps(result, indent=2, default=str)
 
 
 # ---------------------------------------------------------------------------
@@ -1406,7 +1560,10 @@ def tool_get_have(
     have = _want_registry.get_have(have_id)
     if have is None:
         return json.dumps({"found": False, "have_id": have_id})
-    return json.dumps({"found": True, "have": have.to_dict()}, indent=2, default=str)
+    # SEC-ADD-01: Tag response as containing counterparty-controlled have data
+    result = {"found": True, "have": have.to_dict()}
+    _tag_external(result)
+    return json.dumps(result, indent=2, default=str)
 
 
 # ---------------------------------------------------------------------------
@@ -1654,6 +1811,9 @@ def tool_relay_send(
     ttl: Annotated[int, "Message TTL in seconds (default: 3600)"] = 3600,
 ) -> str:
     """Send a message through the relay."""
+    # SEC-ADD-02: Sanitize counterparty-controlled payload
+    payload = _sanitize_payload(payload)
+
     if not _auth.validate_agent_token(from_agent, auth_token):
         return _auth_error(from_agent)
     try:
@@ -1699,11 +1859,14 @@ def tool_relay_receive(
         relay_session_id=relay_session_id,
         limit=limit,
     )
-    return json.dumps({
+    result = {
         "messages": [m.to_dict() for m in messages],
         "count": len(messages),
         "payloads": [m.payload for m in messages],
-    }, indent=2, default=str)
+    }
+    # SEC-ADD-01: Tag response as containing counterparty-controlled relay data
+    _tag_external(result)
+    return json.dumps(result, indent=2, default=str)
 
 
 # ---------------------------------------------------------------------------
