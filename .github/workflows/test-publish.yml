@@ -1,0 +1,22 @@
+name: Publish to TestPyPI
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  test-publish:
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write  # Trusted publisher (OIDC)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build
+      - run: python -m build
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/

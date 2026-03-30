@@ -25,6 +25,7 @@ from .schema_validator import (
     validate_message,
 )
 from .session import InvalidSignatureError, InvalidTransitionError, Session
+from .receipt_bundle import BundleSummary, ReceiptBundle, verify_bundle, screen_bundle
 from .signing import KeyPair, sign_message, verify_signature
 from .types import (
     AgentIdentity,
@@ -68,6 +69,11 @@ __all__ = [
     "verify_signature",
     # Attestation
     "generate_attestation",
+    # Receipt Bundles
+    "ReceiptBundle",
+    "BundleSummary",
+    "verify_bundle",
+    "screen_bundle",
     # Discovery
     "Want",
     "Have",

@@ -41,8 +41,14 @@ Repository = "https://github.com/eriknewton/concordia-protocol"
 Documentation = "https://github.com/eriknewton/concordia-protocol/blob/main/SPEC.md"
 Issues = "https://github.com/eriknewton/concordia-protocol/issues"
 
+[project.scripts]
+concordia-mcp-server = "concordia.__main__:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["concordia"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: end-to-end multi-agent integration tests",
+]

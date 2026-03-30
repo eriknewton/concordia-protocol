@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "concordia": {
+      "command": "python",
+      "args": ["-m", "concordia"],
+      "env": {}
+    }
+  }
+}

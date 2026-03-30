@@ -78,6 +78,13 @@ from .agent import Agent
 from .attestation import generate_attestation
 from .auth import AuthTokenStore
 from .degradation import InteractionManager, PeerProtocolStatus
+from .receipt_bundle import (
+    BundleStore,
+    ReceiptBundle,
+    verify_bundle,
+    screen_bundle,
+    check_freshness,
+)
 from .sanctuary_bridge import (
     SanctuaryBridgeConfig,
     BridgeResult,
@@ -93,6 +100,7 @@ from .relay import NegotiationRelay
 from .reputation import AttestationStore, ReputationScorer, ReputationQueryHandler
 from .want_registry import WantRegistry
 from .session import InvalidTransitionError, Session
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from .signing import KeyPair
 from .types import (
     AgentIdentity,
@@ -331,6 +339,9 @@ _store = SessionStore()
 # Global auth token store — validates caller identity on every tool call
 _auth = AuthTokenStore()
 
+# Global key registry — maps agent_id to Ed25519PublicKey for bundle verification
+_key_registry: dict[str, Ed25519PublicKey] = {}
+
 
 def _auth_error(identity: str) -> str:
     """Return a JSON error for failed authentication.
@@ -449,6 +460,10 @@ def tool_open_session(
             "message": f"Failed to open session: {e}",
         }
         return json.dumps(error_result, indent=2)
+
+    # Register public keys for bundle verification
+    _key_registry[initiator_id] = ctx.initiator_key.public_key
+    _key_registry[responder_id] = ctx.responder_key.public_key
 
     # Issue session-scoped auth tokens for both roles
     init_token, resp_token = _auth.register_session_tokens(
@@ -2165,6 +2180,297 @@ def tool_sanctuary_bridge_status() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Receipt bundle store
+# ---------------------------------------------------------------------------
+
+_bundle_store = BundleStore()
+
+
+# ---------------------------------------------------------------------------
+# Tool: create_receipt_bundle
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_create_receipt_bundle",
+    description=(
+        "Create a portable receipt bundle from completed session attestations. "
+        "The bundle is signed by the agent and can be shared with counterparties "
+        "as proof of negotiation history. Counterparties verify it offline."
+    ),
+)
+def tool_create_receipt_bundle(
+    agent_id: Annotated[str, "The agent creating the bundle"],
+    auth_token: Annotated[str, "Agent-scoped auth token for the agent"],
+    filter_category: Annotated[str | None, "Only include attestations in this category"] = None,
+    filter_counterparty: Annotated[str | None, "Only include attestations with this counterparty"] = None,
+    filter_after: Annotated[str | None, "Only include attestations after this ISO timestamp"] = None,
+    filter_before: Annotated[str | None, "Only include attestations before this ISO timestamp"] = None,
+) -> str:
+    """Create a receipt bundle from the agent's attestations."""
+    if not _auth.validate_agent_token(agent_id, auth_token):
+        return _auth_error(agent_id)
+
+    # Get all attestations for this agent
+    stored = _attestation_store.get_by_agent(agent_id)
+    if not stored:
+        return json.dumps({"error": f"No attestations found for agent '{agent_id}'"})
+
+    attestations = [s.attestation for s in stored]
+
+    # Apply filters
+    if filter_category:
+        attestations = [
+            a for a in attestations
+            if a.get("meta", {}).get("category") == filter_category
+        ]
+    if filter_counterparty:
+        attestations = [
+            a for a in attestations
+            if any(
+                p.get("agent_id") == filter_counterparty
+                for p in a.get("parties", [])
+            )
+        ]
+    if filter_after:
+        attestations = [
+            a for a in attestations
+            if a.get("timestamp", "") >= filter_after
+        ]
+    if filter_before:
+        attestations = [
+            a for a in attestations
+            if a.get("timestamp", "") <= filter_before
+        ]
+
+    if not attestations:
+        return json.dumps({"error": "No attestations match the specified filters"})
+
+    # Look up the agent's key pair from any session context
+    key_pair = _find_agent_key_pair(agent_id)
+    if key_pair is None:
+        return json.dumps({"error": f"No key pair found for agent '{agent_id}'"})
+
+    try:
+        bundle = ReceiptBundle.create(agent_id, attestations, key_pair)
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
+
+    _bundle_store.store(bundle)
+
+    # Update key registry with the key used to sign the bundle
+    _key_registry[agent_id] = key_pair.public_key
+
+    result = bundle.to_dict()
+    result["message"] = f"Receipt bundle created with {len(attestations)} attestation(s)"
+    return json.dumps(result, indent=2, default=str)
+
+
+def _find_agent_key_pair(agent_id: str) -> KeyPair | None:
+    """Find an agent's key pair from any session context."""
+    for ctx in _store._sessions.values():
+        if ctx.initiator.agent_id == agent_id:
+            return ctx.initiator_key
+        if ctx.responder.agent_id == agent_id:
+            return ctx.responder_key
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Tool: verify_receipt_bundle
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_verify_receipt_bundle",
+    description=(
+        "Verify a receipt bundle received from a counterparty. Checks the "
+        "bundle signature, each attestation's party signatures, summary accuracy, "
+        "deduplication, and Sybil screening. Works offline — no reputation service needed."
+    ),
+)
+def tool_verify_receipt_bundle(
+    bundle: Annotated[dict, "The receipt bundle to verify (full JSON dict)"],
+    max_age_hours: Annotated[float, "Maximum bundle age in hours before flagging as stale (default: 720 = 30 days)"] = 720,
+) -> str:
+    """Verify a received receipt bundle."""
+    # Build a resolver that looks up keys from session contexts first
+    # (per-attestation), then falls back to the global key registry
+    def resolve_key(aid: str) -> Ed25519PublicKey | None:
+        # Check global registry first (covers the bundle signer)
+        key = _key_registry.get(aid)
+        if key is not None:
+            return key
+        # Fall back to searching all session contexts
+        for ctx in _store._sessions.values():
+            if aid == ctx.initiator.agent_id:
+                return ctx.initiator_key.public_key
+            if aid == ctx.responder.agent_id:
+                return ctx.responder_key.public_key
+        return None
+
+    # For multi-session bundles, we need per-attestation key resolution.
+    # Build a mapping from session_id to session context keys.
+    _session_keys: dict[str, dict[str, Ed25519PublicKey]] = {}
+    for ctx in _store._sessions.values():
+        _session_keys[ctx.session.session_id] = {
+            ctx.initiator.agent_id: ctx.initiator_key.public_key,
+            ctx.responder.agent_id: ctx.responder_key.public_key,
+        }
+
+    # Override the verify_bundle to use session-aware resolution
+    from concordia.receipt_bundle import (
+        _compute_summary,
+        BundleSummary,
+        BundleVerificationResult,
+        screen_bundle as _screen_bundle,
+    )
+
+    def _verify_with_sessions(bdict: dict) -> BundleVerificationResult:
+        """Verify using session-scoped keys for attestation signatures."""
+        errors: list[str] = []
+        warnings: list[str] = []
+
+        for f in ("bundle_id", "agent_id", "created_at", "attestations", "summary", "agent_signature"):
+            if f not in bdict:
+                errors.append(f"Missing required field: '{f}'")
+        if errors:
+            return BundleVerificationResult(valid=False, errors=errors)
+
+        agent_id = bdict["agent_id"]
+        attestations = bdict["attestations"]
+        signature = bdict["agent_signature"]
+
+        # Verify bundle signature with the agent's current key
+        agent_key = resolve_key(agent_id)
+        if agent_key is None:
+            errors.append(f"Cannot resolve public key for bundle agent '{agent_id}'")
+        else:
+            from concordia.signing import verify_signature as _vsig
+            signable = {
+                k: v for k, v in bdict.items()
+                if k not in ("agent_signature", "concordia_receipt_bundle")
+            }
+            if not _vsig(signable, signature, agent_key):
+                errors.append("Bundle signature verification failed")
+
+        # Check agent in every attestation
+        for i, att in enumerate(attestations):
+            parties = att.get("parties", [])
+            party_ids = [p.get("agent_id", "") for p in parties]
+            if agent_id not in party_ids:
+                errors.append(f"Agent '{agent_id}' not a party in attestation {i}")
+
+        # Verify attestation signatures using session-scoped keys
+        for i, att in enumerate(attestations):
+            sess_id = att.get("session_id", "")
+            sess_keys = _session_keys.get(sess_id, {})
+            for j, party in enumerate(att.get("parties", [])):
+                pid = party.get("agent_id", "")
+                sig = party.get("signature", "")
+                if not sig:
+                    errors.append(f"Attestation {i}, party {j} ('{pid}'): empty signature")
+                    continue
+                # Try session-scoped key first, then global
+                party_key = sess_keys.get(pid) or resolve_key(pid)
+                if party_key is None:
+                    warnings.append(f"Attestation {i}, party {j} ('{pid}'): cannot resolve key")
+                    continue
+                from concordia.signing import verify_signature as _vsig
+                signable_party = {k: v for k, v in party.items() if k != "signature"}
+                if not _vsig(signable_party, sig, party_key):
+                    errors.append(f"Attestation {i}, party {j} ('{pid}'): invalid signature")
+
+        # Dedup
+        att_ids = [a.get("attestation_id", "") for a in attestations]
+        session_ids = [a.get("session_id", "") for a in attestations]
+        if len(set(att_ids)) != len(att_ids):
+            errors.append("Duplicate attestation_ids in bundle")
+        if len(set(session_ids)) != len(session_ids):
+            errors.append("Duplicate session_ids in bundle")
+
+        # Summary accuracy
+        summary_accurate = True
+        if attestations:
+            recomputed = _compute_summary(agent_id, attestations)
+            claimed = BundleSummary.from_dict(bdict["summary"])
+            mismatches = []
+            if claimed.total_negotiations != recomputed.total_negotiations:
+                mismatches.append(f"total_negotiations")
+            if claimed.agreements != recomputed.agreements:
+                mismatches.append(f"agreements")
+            if abs(claimed.agreement_rate - recomputed.agreement_rate) > 0.001:
+                mismatches.append(f"agreement_rate")
+            if claimed.unique_counterparties != recomputed.unique_counterparties:
+                mismatches.append(f"unique_counterparties")
+            if mismatches:
+                summary_accurate = False
+                for m in mismatches:
+                    errors.append(f"Summary mismatch: {m}")
+
+        sybil_flags = _screen_bundle(bdict)
+        if sybil_flags.get("flagged"):
+            for flag, val in sybil_flags.items():
+                if flag != "flagged" and val:
+                    warnings.append(f"Sybil signal: {flag}")
+
+        return BundleVerificationResult(
+            valid=len(errors) == 0, errors=errors, warnings=warnings,
+            summary_accurate=summary_accurate, sybil_flags=sybil_flags,
+        )
+
+    result = _verify_with_sessions(bundle)
+    is_fresh, freshness_msg = check_freshness(bundle, max_age_hours)
+
+    if not is_fresh:
+        result.warnings.append(freshness_msg)
+
+    return json.dumps({
+        "valid": result.valid,
+        "errors": result.errors,
+        "warnings": result.warnings,
+        "summary_accurate": result.summary_accurate,
+        "sybil_flags": result.sybil_flags,
+        "freshness": {"fresh": is_fresh, "message": freshness_msg},
+        "attestation_count": len(bundle.get("attestations", [])),
+        "agent_id": bundle.get("agent_id", ""),
+    }, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tool: list_receipt_bundles
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_list_receipt_bundles",
+    description=(
+        "List receipt bundles the agent has created in this session."
+    ),
+)
+def tool_list_receipt_bundles(
+    agent_id: Annotated[str, "The agent whose bundles to list"],
+    auth_token: Annotated[str, "Agent-scoped auth token for the agent"],
+) -> str:
+    """List receipt bundles created by the agent."""
+    if not _auth.validate_agent_token(agent_id, auth_token):
+        return _auth_error(agent_id)
+
+    bundles = _bundle_store.list_by_agent(agent_id)
+    summaries = []
+    for b in bundles:
+        summaries.append({
+            "bundle_id": b["bundle_id"],
+            "created_at": b["created_at"],
+            "attestation_count": len(b.get("attestations", [])),
+            "summary": b.get("summary", {}),
+        })
+
+    return json.dumps({
+        "agent_id": agent_id,
+        "bundle_count": len(summaries),
+        "bundles": summaries,
+    }, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
 # Programmatic access — for direct Python usage and testing
 # ---------------------------------------------------------------------------
 
@@ -2225,6 +2531,9 @@ def handle_tool_call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         "concordia_sanctuary_bridge_commit": tool_sanctuary_bridge_commit,
         "concordia_sanctuary_bridge_attest": tool_sanctuary_bridge_attest,
         "concordia_sanctuary_bridge_status": tool_sanctuary_bridge_status,
+        "concordia_create_receipt_bundle": tool_create_receipt_bundle,
+        "concordia_verify_receipt_bundle": tool_verify_receipt_bundle,
+        "concordia_list_receipt_bundles": tool_list_receipt_bundles,
     }
     handler = handlers.get(name)
     if handler is None:
