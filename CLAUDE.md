@@ -2,11 +2,15 @@
 
 This file is a briefing for every Claude Code session that touches these codebases. Read it before making any changes.
 
+### Attribution Rule (MANDATORY)
+
+**No public-facing document, README, blog post, plugin manifest, package metadata, or software artifact may reference or attribute CIMC as author or creator of Sanctuary or Concordia.** Erik Newton is the sole author. CIMC may be mentioned in internal/biographical context only.
+
 ---
 
 ## WHAT THESE TOOLS ARE
 
-**Sanctuary** is a TypeScript MCP server (~10,400 lines, 40 tools) that gives AI agents four layers of cryptographic sovereignty — without requiring changes to the host agent harness. It ships as an npm package (`@sanctuary-framework/mcp-server`), Docker image, and Claude Code plugin. Version 0.3.0.
+**Sanctuary** is a TypeScript MCP server (~11,000 lines, 46 tools) that gives AI agents four layers of cryptographic sovereignty — without requiring changes to the host agent harness. It ships as an npm package (`@sanctuary-framework/mcp-server`), Docker image, and Claude Code plugin. Version 0.3.1.
 
 What it concretely does:
 
@@ -15,9 +19,9 @@ What it concretely does:
 - **L3 — Selective Disclosure.** SHA-256 commitments with random blinding factors, Pedersen commitments on Ristretto255, Schnorr proofs, and bit-decomposition range proofs — allowing an agent to prove claims about its data without revealing the underlying values.
 - **L4 — Verifiable Reputation.** Signed attestations in EAS-compatible format, stored encrypted under L1. Sovereignty-gated tiers weight attestations from verified-sovereign agents higher. Escrow mechanism for trust bootstrapping. Reputation bundles are exportable and portable across instances.
 
-Additional subsystems: Sovereignty Health Report (SHR) generation and verification; sovereignty handshake protocol (nonce challenge-response + SHR exchange between two agents); federation registry for MCP-to-MCP peer discovery; and the Concordia bridge module.
+Additional subsystems: Sovereignty Health Report (SHR) generation and verification; sovereignty handshake protocol (nonce challenge-response + SHR exchange between two agents); federation registry for MCP-to-MCP peer discovery; Concordia bridge module; and the sovereignty audit tool (environment fingerprinting, OpenClaw-aware gap analysis, scored posture assessment with prioritized recommendations).
 
-**Concordia** is a Python SDK and MCP server (~5,000 lines, 50+ tools exposed via FastMCP) implementing a structured multi-attribute negotiation protocol for autonomous agents. Version 0.1.0-draft.
+**Concordia** is a Python SDK and MCP server (~5,000 lines, 48 tools exposed via FastMCP) implementing a structured multi-attribute negotiation protocol for autonomous agents. Version 0.1.0.
 
 What it concretely does:
 
@@ -202,4 +206,4 @@ These are testable assertions. Each should be verifiable by inspection or automa
 
 ## REVIEW CONTEXT
 
-This codebase is currently under a structured security and sovereignty review. Review artifacts (REVIEW_MAP.md, SECURITY_AUDIT.md, BUG_REPORT.md, REMEDIATION_PLAN.md, SPRINT_CONTRACT.md, SPRINT_RESULT.md, SPRINT_EVAL.md) will appear in the working directory as the review progresses. During the review period: do not refactor code outside of explicit sprint sessions, do not add new dependencies without noting them in REVIEW_MAP.md, and do not mark any finding as resolved without a corresponding SPRINT_EVAL.md showing PASS status.
+The structured security review completed 2026-03-28 with all Critical and High findings resolved. Both repos merged security-review branches and published. Concordia v0.1.0 published to PyPI (2026-03-30). Sanctuary v0.3.1 published to npm (2026-03-30). Review artifacts (REVIEW_MAP.md, SECURITY_AUDIT.md, BUG_REPORT.md, REMEDIATION_PLAN.md, SPRINT_CONTRACT.md, SPRINT_RESULT.md, SPRINT_EVAL.md) are in both working directories.

@@ -17,7 +17,7 @@ Install this plugin in Cowork or Claude Code. The plugin starts the Concordia MC
 
 ## Tools provided
 
-45 MCP tools across 7 categories: Negotiation (8), Reputation (3), Discovery (5), Want Registry (10), Relay (10), Adoption (5), Sanctuary Bridge (4). See the skill documentation for the complete list.
+48 MCP tools across 8 categories: Negotiation (8), Reputation (3), Discovery (5), Want Registry (10), Relay (10), Adoption (5), Sanctuary Bridge (4), Receipt Bundles (3). See the skill documentation for the complete list.
 
 ## License
 

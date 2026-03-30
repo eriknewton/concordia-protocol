@@ -1,6 +1,6 @@
 """Tests for the Concordia MCP Server (§10.2).
 
-Covers all 45 MCP tools, session lifecycle flows, error handling,
+Covers all 48 MCP tools, session lifecycle flows, error handling,
 tool dispatch, receipt generation, and SDK integration.
 """
 
