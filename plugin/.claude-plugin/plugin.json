@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Structured negotiation protocol for autonomous agents. Gives your agent binding commitments, multi-attribute offers, session receipts, portable reputation, and discovery — as MCP tools.",
   "author": {
-    "name": "CIMC.ai",
+    "name": "Erik Newton",
     "homepage": "https://github.com/eriknewton/concordia-protocol"
   },
   "license": "Apache-2.0",
