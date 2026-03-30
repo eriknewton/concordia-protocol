@@ -13,12 +13,10 @@ tests added during the review).
 
 ### Hardening Items (REMEDIATION_PLAN.md Section 4)
 
-- **SEC-ADD-04** — Automated CVE scanning not yet configured (pip-audit clean at merge time)
-- **Relay tool auth gaps** — `relay_status`, `relay_archive`, `relay_list_archives` missing
-  auth gates (Low severity, H-16 through H-18)
-- **Bridge tool auth gaps** — `sanctuary_bridge_configure`, `sanctuary_bridge_commit`,
-  `sanctuary_bridge_attest` missing auth gates (Medium severity, H-19 through H-21)
-- **`pygments` dev dependency** — CVE-2026-4539, no fix available at time of audit
+- ~~**SEC-ADD-04** — Automated CVE scanning~~ — RESOLVED: pip-audit added to CI (commit `2487873`), CVE-2026-4539 ignored (commit `870ec2f`)
+- ~~**Relay tool auth gaps (H-16 through H-18)**~~ — RESOLVED: auth gates added to `relay_status`, `relay_archive`, `relay_list_archives` with participant verification
+- ~~**Bridge tool auth gaps (H-19 through H-21)**~~ — RESOLVED: auth gates added to `sanctuary_bridge_configure`, `sanctuary_bridge_commit`, `sanctuary_bridge_attest`
+- **`pygments` dev dependency** — CVE-2026-4539, no fix available. pip-audit ignores this CVE in CI.
 
 ## Signature Verification Architecture
 

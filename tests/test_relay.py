@@ -569,12 +569,14 @@ class TestRelayMcpTools:
         created = self._parse(tool_relay_create(initiator_id="a", auth_token=token_a, responder_id="b"))
         rid = created["session"]["relay_session_id"]
 
-        result = self._parse(tool_relay_status(relay_session_id=rid))
+        result = self._parse(tool_relay_status(relay_session_id=rid, agent_id="a", auth_token=token_a))
         assert result["session"]["state"] == "active"
 
     def test_relay_status_not_found(self):
-        from concordia.mcp_server import tool_relay_status
-        result = self._parse(tool_relay_status(relay_session_id="fake"))
+        from concordia.mcp_server import tool_relay_status, tool_register_agent
+        reg = self._parse(tool_register_agent(agent_id="statusnf"))
+        token = reg["auth_token"]
+        result = self._parse(tool_relay_status(relay_session_id="fake", agent_id="statusnf", auth_token=token))
         assert "error" in result
 
     def test_relay_conclude(self):
@@ -617,7 +619,7 @@ class TestRelayMcpTools:
         rid = created["session"]["relay_session_id"]
         tool_relay_conclude(relay_session_id=rid, agent_id="a", auth_token=token_a)
 
-        result = self._parse(tool_relay_archive(relay_session_id=rid, retention_days=90))
+        result = self._parse(tool_relay_archive(relay_session_id=rid, agent_id="a", auth_token=token_a, retention_days=90))
         assert result["archived"] is True
         assert result["archive"]["retention_days"] == 90
 
@@ -629,7 +631,7 @@ class TestRelayMcpTools:
 
         created = self._parse(tool_relay_create(initiator_id="a", auth_token=token_a, responder_id="b"))
         rid = created["session"]["relay_session_id"]
-        result = self._parse(tool_relay_archive(relay_session_id=rid))
+        result = self._parse(tool_relay_archive(relay_session_id=rid, agent_id="a", auth_token=token_a))
         assert "error" in result
 
     def test_relay_list_archives(self):
@@ -637,20 +639,63 @@ class TestRelayMcpTools:
             tool_relay_create, tool_relay_conclude,
             tool_relay_archive, tool_relay_list_archives, tool_register_agent,
         )
-        for i in range(3):
-            # Register agents for this iteration
-            reg_a = self._parse(tool_register_agent(agent_id=f"a{i}"))
-            token_a = reg_a["auth_token"]
+        # Register a single agent that participates in all 3 sessions
+        reg_a = self._parse(tool_register_agent(agent_id="la_agent"))
+        token_a = reg_a["auth_token"]
 
+        for i in range(3):
             created = self._parse(tool_relay_create(
-                initiator_id=f"a{i}", auth_token=token_a, responder_id=f"b{i}",
+                initiator_id="la_agent", auth_token=token_a, responder_id=f"la_b{i}",
             ))
             rid = created["session"]["relay_session_id"]
-            tool_relay_conclude(relay_session_id=rid, agent_id=f"a{i}", auth_token=token_a)
-            tool_relay_archive(relay_session_id=rid)
+            tool_relay_conclude(relay_session_id=rid, agent_id="la_agent", auth_token=token_a)
+            tool_relay_archive(relay_session_id=rid, agent_id="la_agent", auth_token=token_a)
 
-        result = self._parse(tool_relay_list_archives())
+        # Agent sees archives for sessions they participated in
+        result = self._parse(tool_relay_list_archives(agent_id="la_agent", auth_token=token_a))
         assert result["count"] == 3
+
+    # -- Auth rejection tests (H-16, H-17, H-18) --
+
+    def test_relay_status_rejects_bad_token(self):
+        """H-16: relay_status rejects unauthenticated callers."""
+        from concordia.mcp_server import tool_relay_create, tool_relay_status, tool_register_agent
+        reg = self._parse(tool_register_agent(agent_id="auth_s"))
+        token = reg["auth_token"]
+        created = self._parse(tool_relay_create(initiator_id="auth_s", auth_token=token, responder_id="auth_s2"))
+        rid = created["session"]["relay_session_id"]
+        result = self._parse(tool_relay_status(relay_session_id=rid, agent_id="auth_s", auth_token="bad_token"))
+        assert "error" in result
+
+    def test_relay_status_rejects_non_participant(self):
+        """H-16: relay_status rejects non-participants."""
+        from concordia.mcp_server import tool_relay_create, tool_relay_status, tool_register_agent
+        reg_a = self._parse(tool_register_agent(agent_id="rs_p1"))
+        token_a = reg_a["auth_token"]
+        reg_c = self._parse(tool_register_agent(agent_id="rs_outsider"))
+        token_c = reg_c["auth_token"]
+        created = self._parse(tool_relay_create(initiator_id="rs_p1", auth_token=token_a, responder_id="rs_p2"))
+        rid = created["session"]["relay_session_id"]
+        result = self._parse(tool_relay_status(relay_session_id=rid, agent_id="rs_outsider", auth_token=token_c))
+        assert "error" in result
+
+    def test_relay_archive_rejects_bad_token(self):
+        """H-17: relay_archive rejects unauthenticated callers."""
+        from concordia.mcp_server import tool_relay_create, tool_relay_conclude, tool_relay_archive, tool_register_agent
+        reg = self._parse(tool_register_agent(agent_id="ra_auth"))
+        token = reg["auth_token"]
+        created = self._parse(tool_relay_create(initiator_id="ra_auth", auth_token=token, responder_id="ra_b"))
+        rid = created["session"]["relay_session_id"]
+        tool_relay_conclude(relay_session_id=rid, agent_id="ra_auth", auth_token=token)
+        result = self._parse(tool_relay_archive(relay_session_id=rid, agent_id="ra_auth", auth_token="bad"))
+        assert "error" in result
+
+    def test_relay_list_archives_rejects_bad_token(self):
+        """H-18: relay_list_archives rejects unauthenticated callers."""
+        from concordia.mcp_server import tool_relay_list_archives, tool_register_agent
+        self._parse(tool_register_agent(agent_id="rla_auth"))
+        result = self._parse(tool_relay_list_archives(agent_id="rla_auth", auth_token="bad"))
+        assert "error" in result
 
     def test_relay_stats(self):
         from concordia.mcp_server import tool_relay_create, tool_relay_send, tool_relay_stats, tool_register_agent
@@ -750,6 +795,8 @@ class TestRelayMcpTools:
         # Check status
         status = handle_tool_call("concordia_relay_status", {
             "relay_session_id": rid,
+            "agent_id": "seller_agent",
+            "auth_token": seller_token,
         })
         assert status["session"]["message_count"] == 3
         assert status["session"]["initiator"]["messages_sent"] == 2
@@ -767,6 +814,8 @@ class TestRelayMcpTools:
         # Archive
         archived = handle_tool_call("concordia_relay_archive", {
             "relay_session_id": rid,
+            "agent_id": "seller_agent",
+            "auth_token": seller_token,
             "retention_days": 180,
         })
         assert archived["archived"] is True
@@ -776,6 +825,7 @@ class TestRelayMcpTools:
         # List archives
         archives = handle_tool_call("concordia_relay_list_archives", {
             "agent_id": "seller_agent",
+            "auth_token": seller_token,
         })
         assert archives["count"] == 1
 

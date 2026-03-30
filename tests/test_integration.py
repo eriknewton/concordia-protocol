@@ -267,11 +267,16 @@ class TestRelayNegotiation:
         # Archive
         archive = handle_tool_call("concordia_relay_archive", {
             "relay_session_id": relay_id,
+            "agent_id": "relay_a",
+            "auth_token": a.auth_token,
         })
         assert archive["archived"]
 
-        # List archives
-        archives = handle_tool_call("concordia_relay_list_archives", {})
+        # List archives (scoped to authenticated agent)
+        archives = handle_tool_call("concordia_relay_list_archives", {
+            "agent_id": "relay_a",
+            "auth_token": a.auth_token,
+        })
         assert archives["count"] >= 1
 
     def test_relay_stats(self, make_agent):
@@ -432,8 +437,10 @@ class TestSanctuaryBridge:
         a = make_agent("bridge_seller")
         b = make_agent("bridge_buyer")
 
-        # Configure bridge
+        # Configure bridge (agent-scoped auth)
         config = handle_tool_call("concordia_sanctuary_bridge_configure", {
+            "agent_id": "bridge_seller",
+            "auth_token": a.auth_token,
             "enabled": True,
             "identity_mappings": [
                 {"agent_id": "bridge_seller", "sanctuary_id": "sanc_seller", "did": "did:sanc:seller"},
@@ -445,15 +452,18 @@ class TestSanctuaryBridge:
         # Negotiate to agreement
         ctx = run_negotiation(a, b)
 
-        # Generate commitment
+        # Generate commitment (session-scoped auth)
         commit = handle_tool_call("concordia_sanctuary_bridge_commit", {
             "session_id": ctx["session_id"],
+            "auth_token": ctx["init_token"],
         })
         assert "error" not in commit
         assert commit["sanctuary_enabled"]
 
-        # Generate attestation
+        # Generate attestation (agent-scoped auth, caller must be a party)
         attest = handle_tool_call("concordia_sanctuary_bridge_attest", {
+            "agent_id": "bridge_seller",
+            "auth_token": a.auth_token,
             "attestation": ctx["attestation"],
         })
         assert "error" not in attest

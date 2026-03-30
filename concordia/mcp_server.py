@@ -1894,11 +1894,18 @@ def tool_relay_receive(
 )
 def tool_relay_status(
     relay_session_id: Annotated[str, "The relay session ID"],
+    agent_id: Annotated[str, "The requesting agent's ID (must be a participant)"],
+    auth_token: Annotated[str, "Agent-scoped auth token (returned by concordia_register_agent)"],
 ) -> str:
     """Get relay session status."""
+    if not _auth.validate_agent_token(agent_id, auth_token):
+        return _auth_error(agent_id)
     session = _relay.get_session(relay_session_id)
     if session is None:
         return json.dumps({"error": f"Relay session '{relay_session_id}' not found."})
+    # Verify caller is a participant
+    if _relay._get_participant(session, agent_id) is None:
+        return json.dumps({"error": f"Agent '{agent_id}' is not a participant in this relay session."})
     return json.dumps({
         "session": session.to_dict(),
     }, indent=2, default=str)
@@ -1971,9 +1978,17 @@ def tool_relay_transcript(
 )
 def tool_relay_archive(
     relay_session_id: Annotated[str, "The concluded relay session to archive"],
+    agent_id: Annotated[str, "The requesting agent's ID (must be a participant)"],
+    auth_token: Annotated[str, "Agent-scoped auth token (returned by concordia_register_agent)"],
     retention_days: Annotated[int, "How long to retain the archive in days (default: 365)"] = 365,
 ) -> str:
     """Archive a relay session."""
+    if not _auth.validate_agent_token(agent_id, auth_token):
+        return _auth_error(agent_id)
+    # Verify caller is a participant before allowing archive
+    session = _relay.get_session(relay_session_id)
+    if session is not None and _relay._get_participant(session, agent_id) is None:
+        return json.dumps({"error": f"Agent '{agent_id}' is not a participant in this relay session."})
     try:
         archive = _relay.archive_session(relay_session_id, retention_days)
         if archive is None:
@@ -1996,10 +2011,14 @@ def tool_relay_archive(
     description="List transcript archives, optionally filtered by participant agent.",
 )
 def tool_relay_list_archives(
-    agent_id: Annotated[str | None, "Filter by participant agent ID"] = None,
+    agent_id: Annotated[str, "The requesting agent's ID — results scoped to sessions this agent participated in"],
+    auth_token: Annotated[str, "Agent-scoped auth token (returned by concordia_register_agent)"],
     limit: Annotated[int, "Max results (default: 20)"] = 20,
 ) -> str:
-    """List transcript archives."""
+    """List transcript archives scoped to the authenticated agent's sessions."""
+    if not _auth.validate_agent_token(agent_id, auth_token):
+        return _auth_error(agent_id)
+    # Always scope to sessions the authenticated agent participated in
     archives = _relay.list_archives(agent_id=agent_id, limit=limit)
     return json.dumps({
         "archives": [a.to_dict() for a in archives],
@@ -2041,6 +2060,8 @@ _bridge_config = SanctuaryBridgeConfig(enabled=False)
     ),
 )
 def tool_sanctuary_bridge_configure(
+    agent_id: Annotated[str, "The requesting agent's ID"],
+    auth_token: Annotated[str, "Agent-scoped auth token (returned by concordia_register_agent)"],
     enabled: Annotated[bool, "Enable or disable the Sanctuary bridge"],
     identity_mappings: Annotated[list[dict] | None, "List of {agent_id, sanctuary_id, did} mappings"] = None,
     default_context: Annotated[str | None, "Default reputation context (default: 'concordia_negotiation')"] = None,
@@ -2048,6 +2069,8 @@ def tool_sanctuary_bridge_configure(
     reputation_on_receipt: Annotated[bool, "Auto-generate reputation payloads on receipt (default: true)"] = True,
 ) -> str:
     """Configure the Sanctuary bridge."""
+    if not _auth.validate_agent_token(agent_id, auth_token):
+        return _auth_error(agent_id)
     _bridge_config.enabled = enabled
     _bridge_config.commitment_on_agree = commitment_on_agree
     _bridge_config.reputation_on_receipt = reputation_on_receipt
@@ -2087,8 +2110,12 @@ def tool_sanctuary_bridge_configure(
 )
 def tool_sanctuary_bridge_commit(
     session_id: Annotated[str, "The Concordia session that reached agreement"],
+    auth_token: Annotated[str, "Session-scoped auth token (initiator or responder token from concordia_open_session)"],
 ) -> str:
     """Generate a Sanctuary commitment payload for a Concordia agreement."""
+    if _auth.get_any_session_role(session_id, auth_token) is None:
+        return json.dumps({"error": "Authentication required: invalid or missing session auth_token."})
+
     if not _bridge_config.enabled:
         return json.dumps({
             "error": "Sanctuary bridge is not enabled. Use concordia_sanctuary_bridge_configure first.",
@@ -2137,9 +2164,17 @@ def tool_sanctuary_bridge_commit(
     ),
 )
 def tool_sanctuary_bridge_attest(
+    agent_id: Annotated[str, "The requesting agent's ID (must be the attestation issuer or subject)"],
+    auth_token: Annotated[str, "Agent-scoped auth token (returned by concordia_register_agent)"],
     attestation: Annotated[dict, "The Concordia attestation dict"],
 ) -> str:
     """Generate Sanctuary reputation payloads from a Concordia attestation."""
+    if not _auth.validate_agent_token(agent_id, auth_token):
+        return _auth_error(agent_id)
+    # Verify the caller is a party in the attestation
+    party_ids = [p.get("agent_id", "") for p in attestation.get("parties", [])]
+    if agent_id not in party_ids:
+        return json.dumps({"error": f"Agent '{agent_id}' is not a party in this attestation."})
     if not _bridge_config.enabled:
         return json.dumps({
             "error": "Sanctuary bridge is not enabled. Use concordia_sanctuary_bridge_configure first.",

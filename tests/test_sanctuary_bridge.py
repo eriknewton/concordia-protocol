@@ -419,8 +419,12 @@ class TestSanctuaryBridgeMcpTools:
         assert result["identity_count"] == 0
 
     def test_bridge_configure(self):
-        from concordia.mcp_server import tool_sanctuary_bridge_configure
+        from concordia.mcp_server import tool_sanctuary_bridge_configure, tool_register_agent
+        reg = self._parse(tool_register_agent(agent_id="bridge_cfg_agent"))
+        token = reg["auth_token"]
         result = self._parse(tool_sanctuary_bridge_configure(
+            agent_id="bridge_cfg_agent",
+            auth_token=token,
             enabled=True,
             identity_mappings=[
                 {"agent_id": "seller_01", "sanctuary_id": "sanc_s", "did": "did:sanctuary:s"},
@@ -436,8 +440,13 @@ class TestSanctuaryBridgeMcpTools:
         from concordia.mcp_server import (
             tool_sanctuary_bridge_configure,
             tool_sanctuary_bridge_status,
+            tool_register_agent,
         )
+        reg = self._parse(tool_register_agent(agent_id="bsac_agent"))
+        token = reg["auth_token"]
         tool_sanctuary_bridge_configure(
+            agent_id="bsac_agent",
+            auth_token=token,
             enabled=True,
             identity_mappings=[
                 {"agent_id": "a1", "sanctuary_id": "s1", "did": "did:sanctuary:1"},
@@ -451,8 +460,15 @@ class TestSanctuaryBridgeMcpTools:
         assert result["identity_mappings"]["a1"]["did"] == "did:sanctuary:1"
 
     def test_bridge_commit_requires_enabled(self):
-        from concordia.mcp_server import tool_sanctuary_bridge_commit
-        result = self._parse(tool_sanctuary_bridge_commit(session_id="fake"))
+        from concordia.mcp_server import tool_sanctuary_bridge_commit, tool_open_session
+        # Need a valid session token to pass auth — create a throwaway session
+        session = self._parse(tool_open_session(
+            initiator_id="bcre_seller", responder_id="bcre_buyer",
+            terms={"x": {"type": "numeric"}},
+        ))
+        result = self._parse(tool_sanctuary_bridge_commit(
+            session_id="fake", auth_token=session["initiator_token"],
+        ))
         assert "error" in result
 
     def test_bridge_commit_requires_agreed_session(self):
@@ -460,8 +476,11 @@ class TestSanctuaryBridgeMcpTools:
             tool_sanctuary_bridge_configure,
             tool_sanctuary_bridge_commit,
             tool_open_session,
+            tool_register_agent,
         )
-        tool_sanctuary_bridge_configure(enabled=True)
+        reg = self._parse(tool_register_agent(agent_id="bcras_agent"))
+        token = reg["auth_token"]
+        tool_sanctuary_bridge_configure(agent_id="bcras_agent", auth_token=token, enabled=True)
         # Create an active (not agreed) session
         session = self._parse(tool_open_session(
             initiator_id="seller_01",
@@ -470,6 +489,7 @@ class TestSanctuaryBridgeMcpTools:
         ))
         result = self._parse(tool_sanctuary_bridge_commit(
             session_id=session["session_id"],
+            auth_token=session["initiator_token"],
         ))
         assert "error" in result
         assert "agreed" in result["error"].lower()
@@ -481,8 +501,13 @@ class TestSanctuaryBridgeMcpTools:
             tool_open_session,
             tool_propose,
             tool_accept,
+            tool_register_agent,
         )
+        reg = self._parse(tool_register_agent(agent_id="bcoas_agent"))
+        agent_token = reg["auth_token"]
         tool_sanctuary_bridge_configure(
+            agent_id="bcoas_agent",
+            auth_token=agent_token,
             enabled=True,
             identity_mappings=[
                 {"agent_id": "seller_01", "sanctuary_id": "sanc_s"},
@@ -499,22 +524,73 @@ class TestSanctuaryBridgeMcpTools:
         tool_propose(session_id=sid, auth_token=initiator_token, role="initiator", terms={"price": {"value": 100}})
         tool_accept(session_id=sid, auth_token=responder_token, role="responder")
 
-        result = self._parse(tool_sanctuary_bridge_commit(session_id=sid))
+        result = self._parse(tool_sanctuary_bridge_commit(session_id=sid, auth_token=initiator_token))
         assert result["sanctuary_enabled"] is True
         assert result["commitment_payload"] is not None
         assert result["commitment_payload"]["tool"] == "sanctuary/proof_commitment"
 
+    # -- Auth rejection tests (H-19, H-20, H-21) --
+
+    def test_bridge_configure_rejects_bad_token(self):
+        """H-19: bridge_configure rejects unauthenticated callers."""
+        from concordia.mcp_server import tool_sanctuary_bridge_configure, tool_register_agent
+        self._parse(tool_register_agent(agent_id="bcfg_bad"))
+        result = self._parse(tool_sanctuary_bridge_configure(
+            agent_id="bcfg_bad", auth_token="wrong_token", enabled=True,
+        ))
+        assert "error" in result
+
+    def test_bridge_commit_rejects_bad_session_token(self):
+        """H-20: bridge_commit rejects callers without a valid session token."""
+        from concordia.mcp_server import tool_sanctuary_bridge_commit
+        result = self._parse(tool_sanctuary_bridge_commit(
+            session_id="fake_session", auth_token="wrong_token",
+        ))
+        assert "error" in result
+
+    def test_bridge_attest_rejects_bad_token(self):
+        """H-21: bridge_attest rejects unauthenticated callers."""
+        from concordia.mcp_server import tool_sanctuary_bridge_attest, tool_register_agent
+        self._parse(tool_register_agent(agent_id="ba_bad"))
+        result = self._parse(tool_sanctuary_bridge_attest(
+            agent_id="ba_bad", auth_token="wrong_token",
+            attestation={"parties": [{"agent_id": "ba_bad"}]},
+        ))
+        assert "error" in result
+
+    def test_bridge_attest_rejects_non_party(self):
+        """H-21: bridge_attest rejects callers not in the attestation."""
+        from concordia.mcp_server import tool_sanctuary_bridge_attest, tool_register_agent
+        reg = self._parse(tool_register_agent(agent_id="ba_outsider"))
+        token = reg["auth_token"]
+        result = self._parse(tool_sanctuary_bridge_attest(
+            agent_id="ba_outsider", auth_token=token,
+            attestation={"parties": [{"agent_id": "someone_else"}]},
+        ))
+        assert "error" in result
+        assert "not a party" in result["error"]
+
     def test_bridge_attest_requires_enabled(self):
-        from concordia.mcp_server import tool_sanctuary_bridge_attest
-        result = self._parse(tool_sanctuary_bridge_attest(attestation={}))
+        from concordia.mcp_server import tool_sanctuary_bridge_attest, tool_register_agent
+        reg = self._parse(tool_register_agent(agent_id="bare_agent"))
+        token = reg["auth_token"]
+        result = self._parse(tool_sanctuary_bridge_attest(
+            agent_id="bare_agent", auth_token=token,
+            attestation={"issuer": "bare_agent"},
+        ))
         assert "error" in result
 
     def test_bridge_attest_with_mapped_parties(self):
         from concordia.mcp_server import (
             tool_sanctuary_bridge_configure,
             tool_sanctuary_bridge_attest,
+            tool_register_agent,
         )
+        reg = self._parse(tool_register_agent(agent_id="seller_01"))
+        seller_token = reg["auth_token"]
         tool_sanctuary_bridge_configure(
+            agent_id="seller_01",
+            auth_token=seller_token,
             enabled=True,
             identity_mappings=[
                 {"agent_id": "seller_01", "sanctuary_id": "sanc_s", "did": "did:s:1"},
@@ -522,7 +598,10 @@ class TestSanctuaryBridgeMcpTools:
             ],
         )
         attestation = _make_attestation()
-        result = self._parse(tool_sanctuary_bridge_attest(attestation=attestation))
+        result = self._parse(tool_sanctuary_bridge_attest(
+            agent_id="seller_01", auth_token=seller_token,
+            attestation=attestation,
+        ))
         assert result["sanctuary_enabled"] is True
         assert result["reputation_payload_count"] == 2
 
@@ -532,8 +611,14 @@ class TestSanctuaryBridgeMcpTools:
         """End-to-end: configure → negotiate → commit → attest."""
         from concordia.mcp_server import handle_tool_call
 
+        # Register an agent for bridge configuration
+        reg = handle_tool_call("concordia_register_agent", {"agent_id": "bridge_lc_agent"})
+        agent_token = reg["auth_token"]
+
         # Configure bridge
         config_result = handle_tool_call("concordia_sanctuary_bridge_configure", {
+            "agent_id": "bridge_lc_agent",
+            "auth_token": agent_token,
             "enabled": True,
             "identity_mappings": [
                 {"agent_id": "seller_01", "sanctuary_id": "sanc_s", "did": "did:s:1"},
@@ -567,6 +652,7 @@ class TestSanctuaryBridgeMcpTools:
         # Generate Sanctuary commitment
         commit_result = handle_tool_call("concordia_sanctuary_bridge_commit", {
             "session_id": sid,
+            "auth_token": initiator_token,
         })
         assert commit_result["sanctuary_enabled"] is True
         assert commit_result["commitment_payload"]["tool"] == "sanctuary/proof_commitment"
@@ -578,7 +664,13 @@ class TestSanctuaryBridgeMcpTools:
         })
         assert "receipt" in receipt
 
+        # Register seller_01 as agent so we can pass agent-scoped auth for attest
+        seller_reg = handle_tool_call("concordia_register_agent", {"agent_id": "seller_01"})
+        seller_agent_token = seller_reg["auth_token"]
+
         attest_result = handle_tool_call("concordia_sanctuary_bridge_attest", {
+            "agent_id": "seller_01",
+            "auth_token": seller_agent_token,
             "attestation": receipt["receipt"],
         })
         assert attest_result["sanctuary_enabled"] is True
