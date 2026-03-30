@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "concordia": {
-      "command": "python",
-      "args": ["-m", "concordia"],
+      "command": "concordia-mcp-server",
+      "args": ["--transport", "stdio"],
       "env": {}
     }
   }
