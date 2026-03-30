@@ -25,7 +25,8 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Audit dependencies for CVEs
-        run: pip install pip-audit && pip-audit --requirement requirements.lock
+        # CVE-2026-4539 (pygments 2.19.2): no fix version available — see KNOWN_ISSUES.md
+        run: pip install pip-audit && pip-audit --requirement requirements.lock --ignore-vuln CVE-2026-4539
 
       - name: Run tests
         run: pytest -v
