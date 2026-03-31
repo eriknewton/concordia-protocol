@@ -115,14 +115,52 @@ Both agents sign. The agreement passes to ACP/AP2 for payment.
 
 ## Installation
 
+The recommended install for most users is [pipx](https://pipx.pypa.io/), which manages an isolated virtualenv automatically:
+
 ```bash
-pip install concordia-protocol
+pipx install concordia-protocol
 ```
 
-Or install from source:
+Or install with pip in a virtualenv (required on macOS with Homebrew Python):
 
 ```bash
-git clone https://github.com/concordia-protocol/concordia-protocol.git
+python3 -m venv .venv && .venv/bin/pip install concordia-protocol
+```
+
+Verify the install:
+
+```bash
+concordia-mcp-server --version   # pipx
+# or
+.venv/bin/python -m concordia --version
+```
+
+> **Note:** Concordia requires Python 3.10+. macOS ships Python 3.9 via Xcode CommandLineTools — install a newer version with `brew install python@3.12` before proceeding.
+
+### MCP Configuration
+
+**Claude Code:**
+
+```bash
+claude mcp add concordia -- concordia-mcp-server
+```
+
+**OpenClaw:**
+
+```bash
+openclaw mcp set concordia '{"command":"concordia-mcp-server"}'
+```
+
+If you installed in a virtualenv instead of pipx, point to the venv Python:
+
+```bash
+openclaw mcp set concordia '{"command":"/path/to/.venv/bin/python3","args":["-m","concordia"]}'
+```
+
+### Install from source
+
+```bash
+git clone https://github.com/eriknewton/concordia-protocol.git
 cd concordia-protocol
 pip install -e ".[dev]"
 ```

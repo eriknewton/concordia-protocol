@@ -3,6 +3,7 @@
 Usage:
     python -m concordia                     # stdio transport (default)
     python -m concordia --transport sse     # SSE transport
+    python -m concordia --version           # print version and exit
     python -m concordia --help              # show help
     concordia-mcp-server                    # via pip install entry point
 """
@@ -13,6 +14,15 @@ from .mcp_server import mcp
 
 
 def main() -> None:
+    if "--version" in sys.argv or "-V" in sys.argv:
+        from importlib.metadata import version as pkg_version
+        try:
+            v = pkg_version("concordia-protocol")
+        except Exception:
+            v = "0.1.0"
+        print(f"concordia-protocol {v}")
+        return
+
     if "--help" in sys.argv or "-h" in sys.argv:
         print(
             "Concordia MCP Server — structured negotiation protocol for autonomous agents\n"
