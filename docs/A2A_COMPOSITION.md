@@ -205,5 +205,5 @@ Concordia is the open answer. It composes with A2A today, requires no changes to
 - Concordia Protocol: `pip install concordia-protocol` (v0.1.0, 587 tests, 48 MCP tools)
 - GitHub: [github.com/eriknewton/concordia-protocol](https://github.com/eriknewton/concordia-protocol)
 - Full spec: [SPEC.md](https://github.com/eriknewton/concordia-protocol/blob/main/SPEC.md)
-- Sanctuary Framework (optional trust layer): `npx @sanctuary-framework/mcp-server` (v0.3.1, 46 MCP tools)
+- Sanctuary Framework (optional trust layer): `npx @sanctuary-framework/mcp-server` (v0.4.2, 54 MCP tools)
 - Erik Newton: [eriknewton.com](https://eriknewton.com)
