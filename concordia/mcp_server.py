@@ -343,14 +343,28 @@ _auth = AuthTokenStore()
 _key_registry: dict[str, Ed25519PublicKey] = {}
 
 
-def _auth_error(identity: str) -> str:
+def _auth_error(identity: str, *, context: str = "") -> str:
     """Return a JSON error for failed authentication.
 
     The error deliberately does NOT include the token value or reveal
     whether the identity exists — only that authentication failed.
+    It does include remediation guidance so operators can self-serve.
+
+    Args:
+        identity: The identity that failed authentication
+        context: Optional context string (e.g., 'bridge_configure') to add
+                 parenthetical context to the error message
     """
+    hint = (
+        "To obtain an auth_token, call concordia_register_agent with your agent_id first. "
+        "The returned token is required for all agent-scoped operations including bridge configuration."
+    )
+    msg = f"Authentication required: invalid or missing auth_token for '{identity}'."
+    if context:
+        msg += f" (context: {context})"
     return json.dumps({
-        "error": f"Authentication required: invalid or missing auth_token for '{identity}'."
+        "error": msg,
+        "hint": hint,
     })
 
 
@@ -523,7 +537,7 @@ def tool_propose(
     reasoning = _sanitize_reasoning(reasoning)
 
     if not _auth.validate_session_token(session_id, role, auth_token):
-        return _auth_error(f"session={session_id}, role={role}")
+        return _auth_error(f"session={session_id}, role={role}", context="concordia_propose")
     ctx = _store.get(session_id)
     if ctx is None:
         return json.dumps({"error": f"Session '{session_id}' not found."})
@@ -580,7 +594,7 @@ def tool_counter(
     reasoning = _sanitize_reasoning(reasoning)
 
     if not _auth.validate_session_token(session_id, role, auth_token):
-        return _auth_error(f"session={session_id}, role={role}")
+        return _auth_error(f"session={session_id}, role={role}", context="concordia_counter")
     ctx = _store.get(session_id)
     if ctx is None:
         return json.dumps({"error": f"Session '{session_id}' not found."})
@@ -633,7 +647,7 @@ def tool_accept(
     reasoning = _sanitize_reasoning(reasoning)
 
     if not _auth.validate_session_token(session_id, role, auth_token):
-        return _auth_error(f"session={session_id}, role={role}")
+        return _auth_error(f"session={session_id}, role={role}", context="concordia_accept")
     ctx = _store.get(session_id)
     if ctx is None:
         return json.dumps({"error": f"Session '{session_id}' not found."})
@@ -685,7 +699,7 @@ def tool_reject(
     reason = _sanitize_reasoning(reason)
 
     if not _auth.validate_session_token(session_id, role, auth_token):
-        return _auth_error(f"session={session_id}, role={role}")
+        return _auth_error(f"session={session_id}, role={role}", context="concordia_reject")
     ctx = _store.get(session_id)
     if ctx is None:
         return json.dumps({"error": f"Session '{session_id}' not found."})
@@ -735,7 +749,7 @@ def tool_commit(
     reasoning = _sanitize_reasoning(reasoning)
 
     if not _auth.validate_session_token(session_id, role, auth_token):
-        return _auth_error(f"session={session_id}, role={role}")
+        return _auth_error(f"session={session_id}, role={role}", context="concordia_commit")
     ctx = _store.get(session_id)
     if ctx is None:
         return json.dumps({"error": f"Session '{session_id}' not found."})
@@ -783,7 +797,7 @@ def tool_session_status(
 ) -> str:
     """Get the current status of a negotiation session."""
     if _auth.get_any_session_role(session_id, auth_token) is None:
-        return _auth_error(f"session={session_id}")
+        return _auth_error(f"session={session_id}", context="concordia_session_status")
     ctx = _store.get(session_id)
     if ctx is None:
         return json.dumps({"error": f"Session '{session_id}' not found."})
@@ -854,7 +868,7 @@ def tool_session_receipt(
 ) -> str:
     """Generate a cryptographic receipt for a concluded session."""
     if _auth.get_any_session_role(session_id, auth_token) is None:
-        return _auth_error(f"session={session_id}")
+        return _auth_error(f"session={session_id}", context="concordia_session_receipt")
     ctx = _store.get(session_id)
     if ctx is None:
         return json.dumps({"error": f"Session '{session_id}' not found."})
@@ -935,7 +949,7 @@ def tool_ingest_attestation(
 ) -> str:
     """Ingest a signed attestation into the reputation store."""
     if not _auth.validate_agent_token(agent_id, auth_token):
-        return _auth_error(agent_id)
+        return _auth_error(agent_id, context="concordia_ingest_attestation")
     try:
         # Build public key resolver from session store (SEC-014 fix).
         # The attestation's session_id maps to a SessionContext which holds
@@ -1224,7 +1238,7 @@ def tool_deregister_agent(
 ) -> str:
     """Remove an agent from the registry."""
     if not _auth.validate_agent_token(agent_id, auth_token):
-        return _auth_error(agent_id)
+        return _auth_error(agent_id, context="concordia_deregister_agent")
     removed = _registry.deregister(agent_id)
     _auth.revoke_agent_token(agent_id)
     return json.dumps({
@@ -1263,7 +1277,7 @@ def tool_propose_protocol(
 ) -> str:
     """Propose Concordia to a non-Concordia peer."""
     if not _auth.validate_agent_token(agent_id, auth_token):
-        return _auth_error(agent_id)
+        return _auth_error(agent_id, context="concordia_propose_protocol")
     proposal = _interaction_mgr.propose_protocol(agent_id, peer_id)
     result = {
         "proposal": proposal.to_dict(),
@@ -1297,7 +1311,7 @@ def tool_respond_to_proposal(
 ) -> str:
     """Respond to a protocol proposal."""
     if not _auth.validate_agent_token(responder_agent_id, auth_token):
-        return _auth_error(responder_agent_id)
+        return _auth_error(responder_agent_id, context="concordia_respond_to_proposal")
     response, mode = _interaction_mgr.handle_response(
         proposal_id=proposal_id,
         accepted=accepted,
@@ -1343,7 +1357,7 @@ def tool_start_degraded(
 ) -> str:
     """Start tracking a degraded interaction."""
     if not _auth.validate_agent_token(agent_id, auth_token):
-        return _auth_error(agent_id)
+        return _auth_error(agent_id, context="concordia_start_degraded")
     status_map = {
         "unknown": PeerProtocolStatus.UNKNOWN,
         "declined": PeerProtocolStatus.DECLINED,
@@ -1387,7 +1401,7 @@ def tool_degraded_message(
 ) -> str:
     """Record a message in a degraded interaction."""
     if not _auth.validate_agent_token(from_agent, auth_token):
-        return _auth_error(from_agent)
+        return _auth_error(from_agent, context="concordia_degraded_message")
     msg = _interaction_mgr.add_message(interaction_id, from_agent, content)
     if msg is None:
         return json.dumps({"error": f"Interaction '{interaction_id}' not found."})
@@ -1460,7 +1474,7 @@ def tool_post_want(
     metadata = _sanitize_metadata(metadata)
 
     if not _auth.validate_agent_token(agent_id, auth_token):
-        return _auth_error(agent_id)
+        return _auth_error(agent_id, context="concordia_post_want")
     try:
         want, matches = _want_registry.post_want(
             agent_id=agent_id,
@@ -1514,7 +1528,7 @@ def tool_post_have(
     metadata = _sanitize_metadata(metadata)
 
     if not _auth.validate_agent_token(agent_id, auth_token):
-        return _auth_error(agent_id)
+        return _auth_error(agent_id, context="concordia_post_have")
     try:
         have, matches = _want_registry.post_have(
             agent_id=agent_id,
@@ -1596,7 +1610,7 @@ def tool_withdraw_want(
 ) -> str:
     """Withdraw a Want."""
     if not _auth.validate_agent_token(agent_id, auth_token):
-        return _auth_error(agent_id)
+        return _auth_error(agent_id, context="concordia_withdraw_want")
     # Verify ownership before withdrawing
     want = _want_registry.get_want(want_id)
     if want is not None and want.agent_id != agent_id:
@@ -1624,7 +1638,7 @@ def tool_withdraw_have(
 ) -> str:
     """Withdraw a Have."""
     if not _auth.validate_agent_token(agent_id, auth_token):
-        return _auth_error(agent_id)
+        return _auth_error(agent_id, context="concordia_withdraw_have")
     # Verify ownership before withdrawing
     have = _want_registry.get_have(have_id)
     if have is not None and have.agent_id != agent_id:
@@ -1757,7 +1771,7 @@ def tool_relay_create(
 ) -> str:
     """Create a relay session."""
     if not _auth.validate_agent_token(initiator_id, auth_token):
-        return _auth_error(initiator_id)
+        return _auth_error(initiator_id, context="concordia_relay_create")
     try:
         session = _relay.create_session(
             initiator_id=initiator_id,
@@ -1794,7 +1808,7 @@ def tool_relay_join(
 ) -> str:
     """Join a relay session as the responder."""
     if not _auth.validate_agent_token(agent_id, auth_token):
-        return _auth_error(agent_id)
+        return _auth_error(agent_id, context="concordia_relay_join")
     session = _relay.join_session(relay_session_id, agent_id, endpoint)
     if session is None:
         return json.dumps({"error": f"Cannot join relay session '{relay_session_id}'. Not found or not pending."})
@@ -1830,7 +1844,7 @@ def tool_relay_send(
     payload = _sanitize_payload(payload)
 
     if not _auth.validate_agent_token(from_agent, auth_token):
-        return _auth_error(from_agent)
+        return _auth_error(from_agent, context="concordia_relay_send")
     try:
         msg = _relay.send_message(
             relay_session_id=relay_session_id,
@@ -1868,7 +1882,7 @@ def tool_relay_receive(
 ) -> str:
     """Receive pending messages from the relay."""
     if not _auth.validate_agent_token(agent_id, auth_token):
-        return _auth_error(agent_id)
+        return _auth_error(agent_id, context="concordia_relay_receive")
     messages = _relay.receive_messages(
         agent_id=agent_id,
         relay_session_id=relay_session_id,
@@ -1899,7 +1913,7 @@ def tool_relay_status(
 ) -> str:
     """Get relay session status."""
     if not _auth.validate_agent_token(agent_id, auth_token):
-        return _auth_error(agent_id)
+        return _auth_error(agent_id, context="concordia_relay_status")
     session = _relay.get_session(relay_session_id)
     if session is None:
         return json.dumps({"error": f"Relay session '{relay_session_id}' not found."})
@@ -1927,7 +1941,7 @@ def tool_relay_conclude(
 ) -> str:
     """Conclude a relay session."""
     if not _auth.validate_agent_token(agent_id, auth_token):
-        return _auth_error(agent_id)
+        return _auth_error(agent_id, context="concordia_relay_conclude")
     session = _relay.conclude_session(relay_session_id, reason)
     if session is None:
         return json.dumps({"error": f"Relay session '{relay_session_id}' not found."})
@@ -1954,7 +1968,7 @@ def tool_relay_transcript(
 ) -> str:
     """Get relay transcript."""
     if not _auth.validate_agent_token(agent_id, auth_token):
-        return _auth_error(agent_id)
+        return _auth_error(agent_id, context="concordia_relay_transcript")
     transcript = _relay.get_transcript(relay_session_id, requesting_agent=agent_id, limit=limit)
     if transcript is None:
         return json.dumps({"error": f"Relay session '{relay_session_id}' not found or access denied."})
@@ -1984,7 +1998,7 @@ def tool_relay_archive(
 ) -> str:
     """Archive a relay session."""
     if not _auth.validate_agent_token(agent_id, auth_token):
-        return _auth_error(agent_id)
+        return _auth_error(agent_id, context="concordia_relay_archive")
     # Verify caller is a participant before allowing archive
     session = _relay.get_session(relay_session_id)
     if session is not None and _relay._get_participant(session, agent_id) is None:
@@ -2017,7 +2031,7 @@ def tool_relay_list_archives(
 ) -> str:
     """List transcript archives scoped to the authenticated agent's sessions."""
     if not _auth.validate_agent_token(agent_id, auth_token):
-        return _auth_error(agent_id)
+        return _auth_error(agent_id, context="concordia_relay_list_archives")
     # Always scope to sessions the authenticated agent participated in
     archives = _relay.list_archives(agent_id=agent_id, limit=limit)
     return json.dumps({
@@ -2070,7 +2084,7 @@ def tool_sanctuary_bridge_configure(
 ) -> str:
     """Configure the Sanctuary bridge."""
     if not _auth.validate_agent_token(agent_id, auth_token):
-        return _auth_error(agent_id)
+        return _auth_error(agent_id, context="concordia_sanctuary_bridge_configure")
     _bridge_config.enabled = enabled
     _bridge_config.commitment_on_agree = commitment_on_agree
     _bridge_config.reputation_on_receipt = reputation_on_receipt
@@ -2118,7 +2132,7 @@ def tool_sanctuary_bridge_commit(
 
     if not _bridge_config.enabled:
         return json.dumps({
-            "error": "Sanctuary bridge is not enabled. Use concordia_sanctuary_bridge_configure first.",
+            "error": "Sanctuary bridge is not enabled. To enable: (1) register your agent with concordia_register_agent, (2) call concordia_sanctuary_bridge_configure with enabled=true and your Sanctuary identity mappings ({agent_id, sanctuary_id, did}).",
         })
 
     ctx = _store.get(session_id)
@@ -2170,14 +2184,14 @@ def tool_sanctuary_bridge_attest(
 ) -> str:
     """Generate Sanctuary reputation payloads from a Concordia attestation."""
     if not _auth.validate_agent_token(agent_id, auth_token):
-        return _auth_error(agent_id)
+        return _auth_error(agent_id, context="concordia_sanctuary_bridge_attest")
     # Verify the caller is a party in the attestation
     party_ids = [p.get("agent_id", "") for p in attestation.get("parties", [])]
     if agent_id not in party_ids:
         return json.dumps({"error": f"Agent '{agent_id}' is not a party in this attestation."})
     if not _bridge_config.enabled:
         return json.dumps({
-            "error": "Sanctuary bridge is not enabled. Use concordia_sanctuary_bridge_configure first.",
+            "error": "Sanctuary bridge is not enabled. To enable: (1) register your agent with concordia_register_agent, (2) call concordia_sanctuary_bridge_configure with enabled=true and your Sanctuary identity mappings ({agent_id, sanctuary_id, did}).",
         })
 
     result = bridge_on_attestation(attestation, _bridge_config)
@@ -2243,7 +2257,7 @@ def tool_create_receipt_bundle(
 ) -> str:
     """Create a receipt bundle from the agent's attestations."""
     if not _auth.validate_agent_token(agent_id, auth_token):
-        return _auth_error(agent_id)
+        return _auth_error(agent_id, context="concordia_sanctuary_bridge_status")
 
     # Get all attestations for this agent
     stored = _attestation_store.get_by_agent(agent_id)
@@ -2486,7 +2500,7 @@ def tool_list_receipt_bundles(
 ) -> str:
     """List receipt bundles created by the agent."""
     if not _auth.validate_agent_token(agent_id, auth_token):
-        return _auth_error(agent_id)
+        return _auth_error(agent_id, context="concordia_list_receipt_bundles")
 
     bundles = _bundle_store.list_by_agent(agent_id)
     summaries = []
