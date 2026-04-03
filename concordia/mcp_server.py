@@ -77,6 +77,11 @@ from mcp.server.fastmcp import FastMCP
 from .agent import Agent
 from .attestation import generate_attestation
 from .auth import AuthTokenStore
+from .competence_proof import (
+    CompetenceProof,
+    CompetenceVerificationResult,
+    verify_competence_proof,
+)
 from .degradation import InteractionManager, PeerProtocolStatus
 from .receipt_bundle import (
     BundleStore,
@@ -912,6 +917,173 @@ def tool_session_receipt(
         return json.dumps(result, indent=2, default=str)
     except (ValueError, RuntimeError) as e:
         return json.dumps({"error": str(e)})
+
+
+# ---------------------------------------------------------------------------
+# Tool: competence_proof
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_competence_proof",
+    description=(
+        "Generate a privacy-preserving competence proof. Proves negotiation "
+        "competence (agreement rate, fulfillment, etc.) without revealing "
+        "individual counterparties, deal terms, or session details. "
+        "Uses Merkle tree commitments to allow optional spot-checking of "
+        "attestations via selective reveals."
+    ),
+)
+def tool_competence_proof(
+    agent_id: Annotated[str, "The agent generating the proof"],
+    auth_token: Annotated[str, "Agent-scoped auth token"],
+    reveal_count: Annotated[int, "Number of random attestations to reveal with Merkle proofs (0 = no reveals)"] = 0,
+) -> str:
+    """Generate a privacy-preserving competence proof.
+
+    Requires the agent to have ingested at least one attestation into the
+    reputation store.
+    """
+    if not _auth.validate_agent_token(agent_id, auth_token):
+        return _auth_error(agent_id, context="concordia_competence_proof")
+
+    try:
+        # Collect all attestations where this agent is a party
+        attestations: list[dict[str, Any]] = []
+        for att_id, att_dict in _attestation_store._attestations.items():
+            parties = att_dict.get("parties", [])
+            party_ids = [p.get("agent_id", "") for p in parties]
+            if agent_id in party_ids:
+                attestations.append(att_dict)
+
+        if not attestations:
+            return json.dumps({
+                "error": f"Agent '{agent_id}' has no attestations in the store. "
+                         f"Generate session receipts and ingest them first.",
+                "competence_proof": None,
+            })
+
+        # Determine which attestation IDs to reveal
+        reveal_ids: list[str] = []
+        if reveal_count > 0:
+            import random
+            att_ids = [att.get("attestation_id", "") for att in attestations]
+            reveal_count = min(reveal_count, len(att_ids))
+            reveal_ids = random.sample(att_ids, reveal_count)
+
+        # Generate the proof
+        # Use a deterministic key for the agent (in real deployment, retrieve from
+        # agent's key store via resolver)
+        agent_key = KeyPair.generate()  # Placeholder; real system would resolve
+
+        proof = CompetenceProof.create(
+            agent_id=agent_id,
+            attestations=attestations,
+            key_pair=agent_key,
+            reveal_ids=reveal_ids,
+        )
+
+        result = {
+            "proof_id": proof.proof_id,
+            "agent_id": proof.agent_id,
+            "created_at": proof.created_at,
+            "proof": proof.to_dict(),
+            "summary": {
+                "total_negotiations": proof.claims["total_negotiations"],
+                "agreement_rate": proof.claims["agreement_rate"],
+                "fulfillment_rate": proof.claims["fulfillment_rate"],
+                "unique_counterparties": proof.claims["unique_counterparties"],
+                "revealed_count": len(proof.revealed_attestations),
+            },
+            "message": f"Competence proof generated with {proof.attestation_count} attestations.",
+        }
+        return json.dumps(result, indent=2, default=str)
+    except Exception as e:
+        return json.dumps({"error": f"Proof generation failed: {e}"})
+
+
+# ---------------------------------------------------------------------------
+# Tool: verify_competence_proof
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_verify_competence_proof",
+    description=(
+        "Verify a competence proof received from a counterparty. "
+        "Checks signature validity, Merkle root consistency, and any revealed "
+        "attestation inclusion proofs. Works offline."
+    ),
+)
+def tool_verify_competence_proof(
+    proof: Annotated[dict, "The competence proof dict to verify"],
+    max_age_hours: Annotated[float, "Maximum proof age in hours (default: 720 = 30 days)"] = 720,
+) -> str:
+    """Verify a competence proof received from a counterparty.
+
+    Checks:
+      1. Signature validity
+      2. Merkle root consistency
+      3. Any revealed attestation Merkle proofs
+      4. Freshness (proof not older than max_age_hours)
+    """
+    try:
+        # Build a resolver that uses the attestation store's session contexts
+        def _proof_resolver(agent_id: str) -> Ed25519PublicKey | None:
+            # Try to find a key from any attestation mentioning this agent
+            for att_id, att_dict in _attestation_store._attestations.items():
+                parties = att_dict.get("parties", [])
+                for party in parties:
+                    if party.get("agent_id", "") == agent_id:
+                        # Try to get key from session context
+                        session_id = att_dict.get("session_id", "")
+                        ctx = _store.get(session_id) if session_id else None
+                        if ctx:
+                            if agent_id == ctx.initiator.agent_id:
+                                return ctx.initiator_key.public_key
+                            if agent_id == ctx.responder.agent_id:
+                                return ctx.responder_key.public_key
+            return None
+
+        # Verify the proof
+        result = verify_competence_proof(proof, _proof_resolver)
+
+        # Check freshness
+        from datetime import datetime, timezone
+        created_at_str = proof.get("created_at", "")
+        if created_at_str:
+            try:
+                created_at = datetime.strptime(
+                    created_at_str, "%Y-%m-%dT%H:%M:%SZ"
+                ).replace(tzinfo=timezone.utc)
+                now = datetime.now(timezone.utc)
+                age_hours = (now - created_at).total_seconds() / 3600
+                if age_hours > max_age_hours:
+                    result.warnings.append(
+                        f"Proof is {age_hours:.1f} hours old (threshold: {max_age_hours}h)"
+                    )
+            except ValueError:
+                result.warnings.append(f"Invalid created_at format: {created_at_str}")
+
+        response = {
+            "valid": result.valid,
+            "proof_id": proof.get("proof_id", ""),
+            "agent_id": proof.get("agent_id", ""),
+            "errors": result.errors,
+            "warnings": result.warnings,
+            "merkle_proofs_valid": result.merkle_proofs_valid,
+            "summary": {
+                "total_negotiations": proof.get("claims", {}).get("total_negotiations", 0),
+                "agreement_rate": proof.get("claims", {}).get("agreement_rate", 0),
+                "revealed_count": len(proof.get("revealed_attestations", [])),
+            },
+        }
+        if result.valid:
+            response["message"] = "Competence proof verified successfully."
+        else:
+            response["message"] = "Competence proof verification failed."
+
+        return json.dumps(response, indent=2, default=str)
+    except Exception as e:
+        return json.dumps({"error": f"Verification failed: {e}", "valid": False})
 
 
 # ---------------------------------------------------------------------------
@@ -2543,6 +2715,8 @@ def handle_tool_call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         "concordia_commit": tool_commit,
         "concordia_session_status": tool_session_status,
         "concordia_session_receipt": tool_session_receipt,
+        "concordia_competence_proof": tool_competence_proof,
+        "concordia_verify_competence_proof": tool_verify_competence_proof,
         "concordia_ingest_attestation": tool_ingest_attestation,
         "concordia_reputation_query": tool_reputation_query,
         "concordia_reputation_score": tool_reputation_score,
