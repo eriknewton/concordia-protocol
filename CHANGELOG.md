@@ -7,6 +7,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-04-04 — Security remediation pass
+
+### Security
+
+- **DELTA-09 — session_public_view defaults to PRIVATE.** Sessions
+  now carry a `public: bool = False` flag; session_public_view
+  redacts counterparty `agent_id`s to role-only stubs unless the
+  session has been explicitly marked public.
+- **DELTA-10 — responder UI (respond.html) HTTPS enforcement.** The
+  static responder UI refuses to submit to an `http://` API base
+  unless the page origin is localhost or `?dev=1` is passed, enforces
+  same-origin lock between page and API base, and shows a persistent
+  red warning banner on plaintext HTTP.
+- **DELTA-18 — JWK shape validation in respond.html.** Private-key
+  import now checks `kty==="OKP"`, `crv==="Ed25519"`, and that both
+  `d` and `x` are non-empty strings before calling
+  `crypto.subtle.importKey`.
+- **DELTA-20 — canonicalization test vectors.** New pytest module
+  asserts Python `canonical_json` and the JS `canonicalJson` embedded
+  in respond.html produce byte-identical output across 20 shared
+  vectors (unicode, floats, nested objects, arrays, null, key
+  ordering, escapes). 40 assertions total.
+
 ## [0.2.0] - 2026-04-04
 
 ### Added (Phase E: zero-friction improvements)
