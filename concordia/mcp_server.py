@@ -885,13 +885,25 @@ def tool_session_public_view(
         except Exception:
             hash_chain.append("")
 
+    # DELTA-09: redact counterparty agent_ids unless the session has
+    # been explicitly marked public. Default is private.
+    is_public = getattr(session, "public", False)
+    if is_public:
+        parties = [
+            {"agent_id": ctx.initiator.agent_id, "role": "initiator"},
+            {"agent_id": ctx.responder.agent_id, "role": "responder"},
+        ]
+    else:
+        parties = [
+            {"role": "initiator", "trust_tier": "unknown"},
+            {"role": "responder", "trust_tier": "unknown"},
+        ]
+
     result: dict[str, Any] = {
         "session_id": session_id,
         "state": session.state.value,
-        "parties": [
-            {"agent_id": ctx.initiator.agent_id, "role": "initiator"},
-            {"agent_id": ctx.responder.agent_id, "role": "responder"},
-        ],
+        "parties": parties,
+        "is_public": is_public,
         "message_count": len(session.transcript),
         "transcript_hash_chain": hash_chain,
         "created_at": ctx.created_at,

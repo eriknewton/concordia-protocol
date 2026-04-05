@@ -159,7 +159,10 @@
   </style>
 </head>
 <body>
-  <div class="shell">
+  <div id="http-warning" style="display:none;background:rgba(224,108,117,0.15);color:#e06c75;padding:12px 20px;border-bottom:2px solid #e06c75;font-weight:600;text-align:center;">
+    ⚠ You are connected over plaintext HTTP. Do not enter production keys.
+  </div>
+<div class="shell">
     <header>
       <h1>Concordia — Respond to Offer</h1>
       <div class="subtitle">responder interface · local signing via WebCrypto</div>
@@ -283,6 +286,51 @@
       return;
     }
 
+    // DELTA-10: reject non-HTTPS API bases unless the page itself is
+    // served from localhost (dev) or ?dev=1 is passed explicitly. This
+    // prevents a MITM from rewriting the API base to an attacker host
+    // when this page is loaded over an untrusted connection.
+    const devFlag = new URLSearchParams(location.search).get("dev") === "1";
+    const pageHostIsLocal =
+      location.hostname === "localhost" || location.hostname === "127.0.0.1";
+    const base = state.apiBase;
+    let parsedBase;
+    try { parsedBase = new URL(base); } catch {
+      setStatus("auth-status", "Invalid API base URL.", "err");
+      show("auth-status");
+      return;
+    }
+    const baseIsHttp = parsedBase.protocol === "http:";
+    const baseHostIsLocal =
+      parsedBase.hostname === "localhost" || parsedBase.hostname === "127.0.0.1";
+    if (baseIsHttp && !devFlag && !baseHostIsLocal && !pageHostIsLocal) {
+      setStatus(
+        "auth-status",
+        "Refusing to submit over plaintext HTTP. Use an https:// API base, or " +
+          "append ?dev=1 to the URL if you are testing locally.",
+        "err",
+      );
+      show("auth-status");
+      return;
+    }
+    // Same-origin lock: if the page is served from a real origin, the
+    // API base must share that origin to prevent a hostile page from
+    // proxying credentials through a third-party host.
+    if (!pageHostIsLocal && location.origin !== parsedBase.origin) {
+      setStatus(
+        "auth-status",
+        "API base must match the page origin (" + location.origin + ").",
+        "err",
+      );
+      show("auth-status");
+      return;
+    }
+    if (baseIsHttp) {
+      // Show a persistent warning banner for dev / localhost flows.
+      const banner = document.getElementById("http-warning");
+      if (banner) banner.style.display = "block";
+    }
+
     setStatus("auth-status", "Loading offer…", "info");
     show("auth-status");
 
@@ -377,6 +425,24 @@
     try {
       const text = await file.text();
       const jwk = JSON.parse(text);
+      // DELTA-18: validate JWK shape before importKey to reject
+      // malformed / wrong-curve keys with a clear error, rather than
+      // relying on WebCrypto to throw opaque DOMExceptions.
+      if (!jwk || typeof jwk !== "object") {
+        throw new Error("key file is not a JWK object");
+      }
+      if (jwk.kty !== "OKP") {
+        throw new Error("JWK kty must be 'OKP' (got: " + jwk.kty + ")");
+      }
+      if (jwk.crv !== "Ed25519") {
+        throw new Error("JWK crv must be 'Ed25519' (got: " + jwk.crv + ")");
+      }
+      if (typeof jwk.d !== "string" || jwk.d.length === 0) {
+        throw new Error("JWK d (private scalar) must be a non-empty string");
+      }
+      if (typeof jwk.x !== "string" || jwk.x.length === 0) {
+        throw new Error("JWK x (public key) must be a non-empty string");
+      }
       const priv = await crypto.subtle.importKey(
         "jwk", jwk, { name: "Ed25519" }, true, ["sign"],
       );

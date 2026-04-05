@@ -78,6 +78,10 @@ class Session:
         self.transcript: list[dict[str, Any]] = []
         self.parties: dict[str, PartyRole] = {}
         self.created_at: datetime = datetime.now(timezone.utc)
+        # DELTA-09: sessions are private by default; must be opted into
+        # public disclosure via Session.mark_public() before
+        # session_public_view will reveal even the agent_ids.
+        self.public: bool = False
         self.concluded_at: datetime | None = None
         self.round_count: int = 0
         self.reactivatable: bool = False
