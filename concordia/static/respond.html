@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Concordia — Respond to Offer</title>
+  <style>
+    :root {
+      --bg: #0a1628;
+      --bg-raised: #0f1f3a;
+      --bg-sunken: #061020;
+      --border: #1a2d4d;
+      --border-strong: #2a4570;
+      --text: #e6eefc;
+      --text-dim: #8ca3c7;
+      --text-faint: #5a7299;
+      --accent: #6ea8ff;
+      --accent-warm: #d4a866;
+      --danger: #e06c75;
+      --success: #7ec489;
+      --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Inter", sans-serif;
+      font-size: 15px;
+      line-height: 1.55;
+    }
+    body {
+      min-height: 100vh;
+      padding: 48px 24px;
+      display: flex;
+      justify-content: center;
+    }
+    .shell {
+      width: 100%;
+      max-width: 760px;
+    }
+    header {
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 20px;
+      margin-bottom: 32px;
+    }
+    h1 {
+      font-size: 22px;
+      font-weight: 500;
+      letter-spacing: -0.01em;
+      margin: 0 0 4px 0;
+    }
+    .subtitle {
+      color: var(--text-dim);
+      font-size: 13px;
+      font-family: var(--mono);
+    }
+    section {
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+    h2 {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-dim);
+      margin: 0 0 16px 0;
+    }
+    label {
+      display: block;
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    input, textarea, select, button {
+      font-family: inherit;
+      font-size: 14px;
+    }
+    input[type="text"], input[type="password"], textarea, select {
+      width: 100%;
+      background: var(--bg-sunken);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 10px 12px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 13px;
+    }
+    input:focus, textarea:focus, select:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    textarea { resize: vertical; min-height: 80px; font-family: -apple-system, sans-serif; }
+    .row { margin-bottom: 14px; }
+    .row:last-child { margin-bottom: 0; }
+    .grid {
+      display: grid;
+      grid-template-columns: 140px 1fr;
+      gap: 10px 16px;
+      font-family: var(--mono);
+      font-size: 13px;
+    }
+    .grid dt { color: var(--text-faint); }
+    .grid dd { margin: 0; color: var(--text); word-break: break-all; }
+    .btn-row { display: flex; gap: 10px; margin-top: 6px; }
+    button {
+      background: transparent;
+      border: 1px solid var(--border-strong);
+      color: var(--text);
+      padding: 10px 18px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: border-color 120ms, background 120ms;
+    }
+    button:hover:not(:disabled) { border-color: var(--accent); }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    button.primary { border-color: var(--accent); color: var(--accent); }
+    button.accept { border-color: var(--success); color: var(--success); }
+    button.reject { border-color: var(--danger); color: var(--danger); }
+    .status {
+      font-family: var(--mono);
+      font-size: 12px;
+      padding: 10px 12px;
+      border-radius: 4px;
+      margin-top: 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .status.ok { background: rgba(126, 196, 137, 0.08); color: var(--success); border: 1px solid rgba(126, 196, 137, 0.3); }
+    .status.err { background: rgba(224, 108, 117, 0.08); color: var(--danger); border: 1px solid rgba(224, 108, 117, 0.3); }
+    .status.info { background: rgba(110, 168, 255, 0.08); color: var(--accent); border: 1px solid rgba(110, 168, 255, 0.3); }
+    .hidden { display: none; }
+    .terms {
+      background: var(--bg-sunken);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 14px;
+      font-family: var(--mono);
+      font-size: 12px;
+      white-space: pre;
+      overflow-x: auto;
+      color: var(--text-dim);
+    }
+    footer {
+      text-align: center;
+      color: var(--text-faint);
+      font-size: 11px;
+      font-family: var(--mono);
+      margin-top: 32px;
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <h1>Concordia — Respond to Offer</h1>
+      <div class="subtitle">responder interface · local signing via WebCrypto</div>
+    </header>
+
+    <section id="step-auth">
+      <h2>1 · Session credentials</h2>
+      <div class="row">
+        <label for="api-base">Concordia API base URL</label>
+        <input type="text" id="api-base" value="http://localhost:8080" placeholder="http://localhost:8080">
+      </div>
+      <div class="row">
+        <label for="session-id">Session ID</label>
+        <input type="text" id="session-id" placeholder="ses_abc123...">
+      </div>
+      <div class="row">
+        <label for="responder-token">Responder session token</label>
+        <input type="password" id="responder-token" placeholder="64-char hex token from concordia_open_session">
+      </div>
+      <div class="btn-row">
+        <button class="primary" id="btn-load">Load offer</button>
+      </div>
+      <div id="auth-status" class="status hidden"></div>
+    </section>
+
+    <section id="step-offer" class="hidden">
+      <h2>2 · Offer details</h2>
+      <dl class="grid" id="offer-grid"></dl>
+      <div class="row" style="margin-top: 18px;">
+        <label>Terms</label>
+        <pre class="terms" id="offer-terms"></pre>
+      </div>
+    </section>
+
+    <section id="step-key" class="hidden">
+      <h2>3 · Signing key</h2>
+      <div class="row">
+        <label>Ed25519 signing key</label>
+        <div class="btn-row">
+          <button id="btn-gen-key">Generate ephemeral key</button>
+          <button id="btn-load-key">Load key from file</button>
+          <input type="file" id="key-file" class="hidden" accept=".json,.jwk,.key">
+        </div>
+      </div>
+      <div id="key-status" class="status hidden"></div>
+    </section>
+
+    <section id="step-respond" class="hidden">
+      <h2>4 · Your response</h2>
+      <div class="row">
+        <label for="response-type">Response type</label>
+        <select id="response-type">
+          <option value="accept">Accept — agree to these terms</option>
+          <option value="counter">Counter — propose different terms</option>
+          <option value="reject">Reject — end the negotiation</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="response-reasoning">Reasoning (optional)</label>
+        <textarea id="response-reasoning" placeholder="Why you are accepting, countering, or rejecting"></textarea>
+      </div>
+      <div class="row hidden" id="counter-terms-row">
+        <label for="counter-terms">Counter terms (JSON)</label>
+        <textarea id="counter-terms" placeholder='{"price": {"value": 750}}'></textarea>
+      </div>
+      <div class="btn-row">
+        <button class="primary" id="btn-sign-submit">Sign & submit</button>
+      </div>
+      <div id="submit-status" class="status hidden"></div>
+    </section>
+
+    <footer>
+      Concordia Protocol · responder UI · open source (Apache-2.0)
+    </footer>
+  </div>
+
+  <script>
+  "use strict";
+
+  // -------------------------------------------------------------------
+  // State
+  // -------------------------------------------------------------------
+  const state = {
+    apiBase: "",
+    sessionId: "",
+    token: "",
+    offer: null,
+    keyPair: null,        // { privateKey, publicKey } CryptoKey pair
+    publicKeyRaw: null,   // Uint8Array raw bytes for identification
+  };
+
+  // -------------------------------------------------------------------
+  // Helpers
+  // -------------------------------------------------------------------
+  const $ = (id) => document.getElementById(id);
+  const show = (id) => $(id).classList.remove("hidden");
+  const hide = (id) => $(id).classList.add("hidden");
+  const setStatus = (id, msg, kind) => {
+    const el = $(id);
+    el.textContent = msg;
+    el.className = "status " + (kind || "info");
+  };
+
+  function b64(bytes) {
+    let bin = "";
+    bytes.forEach((b) => (bin += String.fromCharCode(b)));
+    return btoa(bin);
+  }
+
+  // -------------------------------------------------------------------
+  // Step 1 — Load offer
+  // -------------------------------------------------------------------
+  $("btn-load").addEventListener("click", async () => {
+    state.apiBase = $("api-base").value.trim().replace(/\/+$/, "");
+    state.sessionId = $("session-id").value.trim();
+    state.token = $("responder-token").value.trim();
+
+    if (!state.sessionId || !state.token) {
+      setStatus("auth-status", "Session ID and token are required.", "err");
+      show("auth-status");
+      return;
+    }
+
+    setStatus("auth-status", "Loading offer…", "info");
+    show("auth-status");
+
+    try {
+      // Public view is unauthenticated; it gives us the offer metadata.
+      // The actual offer content lives in the authenticated status endpoint.
+      const url = state.apiBase + "/sessions/" + encodeURIComponent(state.sessionId) + "/public";
+      const res = await fetch(url, { method: "GET" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      state.offer = data;
+      renderOffer(data);
+      setStatus("auth-status", "Offer loaded. Review details below.", "ok");
+      show("step-offer");
+      show("step-key");
+      show("step-respond");
+    } catch (err) {
+      setStatus("auth-status", "Failed to load offer: " + err.message, "err");
+    }
+  });
+
+  function renderOffer(data) {
+    const grid = $("offer-grid");
+    grid.innerHTML = "";
+    const rows = [
+      ["Session", data.session_id || ""],
+      ["State", data.state || ""],
+      ["Messages", String(data.message_count ?? "0")],
+      ["Created", data.created_at || ""],
+    ];
+    if (Array.isArray(data.parties)) {
+      const parties = data.parties
+        .map((p) => (p.role || "") + ": " + (p.agent_id || ""))
+        .join("\n");
+      rows.push(["Parties", parties]);
+    }
+    for (const [k, v] of rows) {
+      const dt = document.createElement("dt");
+      dt.textContent = k;
+      const dd = document.createElement("dd");
+      dd.textContent = v;
+      grid.appendChild(dt);
+      grid.appendChild(dd);
+    }
+    $("offer-terms").textContent = JSON.stringify(
+      data.transcript_hash_chain || [], null, 2,
+    );
+  }
+
+  // -------------------------------------------------------------------
+  // Step 2 — Response type toggle
+  // -------------------------------------------------------------------
+  $("response-type").addEventListener("change", (e) => {
+    if (e.target.value === "counter") show("counter-terms-row");
+    else hide("counter-terms-row");
+  });
+
+  // -------------------------------------------------------------------
+  // Step 3 — Key management (WebCrypto Ed25519)
+  // -------------------------------------------------------------------
+  $("btn-gen-key").addEventListener("click", async () => {
+    try {
+      const kp = await crypto.subtle.generateKey(
+        { name: "Ed25519" }, true, ["sign", "verify"],
+      );
+      state.keyPair = kp;
+      const raw = new Uint8Array(
+        await crypto.subtle.exportKey("raw", kp.publicKey),
+      );
+      state.publicKeyRaw = raw;
+      setStatus(
+        "key-status",
+        "Ephemeral key generated.\nPublic key (base64): " + b64(raw),
+        "ok",
+      );
+      show("key-status");
+    } catch (err) {
+      setStatus(
+        "key-status",
+        "WebCrypto Ed25519 not available in this browser: " + err.message,
+        "err",
+      );
+      show("key-status");
+    }
+  });
+
+  $("btn-load-key").addEventListener("click", () => $("key-file").click());
+  $("key-file").addEventListener("change", async (ev) => {
+    const file = ev.target.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const jwk = JSON.parse(text);
+      const priv = await crypto.subtle.importKey(
+        "jwk", jwk, { name: "Ed25519" }, true, ["sign"],
+      );
+      // Derive public key from JWK x component
+      const pubJwk = { kty: jwk.kty, crv: jwk.crv, x: jwk.x };
+      const pub = await crypto.subtle.importKey(
+        "jwk", pubJwk, { name: "Ed25519" }, true, ["verify"],
+      );
+      state.keyPair = { privateKey: priv, publicKey: pub };
+      const raw = new Uint8Array(await crypto.subtle.exportKey("raw", pub));
+      state.publicKeyRaw = raw;
+      setStatus(
+        "key-status",
+        "Key loaded from file.\nPublic key (base64): " + b64(raw),
+        "ok",
+      );
+      show("key-status");
+    } catch (err) {
+      setStatus("key-status", "Failed to load key: " + err.message, "err");
+      show("key-status");
+    }
+  });
+
+  // -------------------------------------------------------------------
+  // Step 4 — Sign & submit
+  // -------------------------------------------------------------------
+  $("btn-sign-submit").addEventListener("click", async () => {
+    if (!state.keyPair) {
+      setStatus("submit-status", "No signing key. Generate or load one first.", "err");
+      show("submit-status");
+      return;
+    }
+
+    const type = $("response-type").value;
+    const reasoning = $("response-reasoning").value.trim();
+
+    let counterTerms = null;
+    if (type === "counter") {
+      try { counterTerms = JSON.parse($("counter-terms").value); }
+      catch (e) {
+        setStatus("submit-status", "Counter terms must be valid JSON: " + e.message, "err");
+        show("submit-status");
+        return;
+      }
+    }
+
+    // Build canonical payload (sorted-keys JSON).
+    const payload = {
+      session_id: state.sessionId,
+      type: type,
+      reasoning: reasoning || null,
+      terms: counterTerms,
+      timestamp: new Date().toISOString(),
+    };
+    const canonical = canonicalJson(payload);
+
+    let signatureB64;
+    try {
+      const sig = await crypto.subtle.sign(
+        { name: "Ed25519" },
+        state.keyPair.privateKey,
+        new TextEncoder().encode(canonical),
+      );
+      signatureB64 = b64(new Uint8Array(sig));
+    } catch (err) {
+      setStatus("submit-status", "Signing failed: " + err.message, "err");
+      show("submit-status");
+      return;
+    }
+
+    // POST to the Concordia responder endpoint. The server wires this to
+    // concordia_accept / concordia_counter / concordia_reject based on type.
+    const body = {
+      session_id: state.sessionId,
+      auth_token: state.token,
+      role: "responder",
+      response_type: type,
+      reasoning: reasoning || null,
+      terms: counterTerms,
+      signature: signatureB64,
+      public_key: state.publicKeyRaw ? b64(state.publicKeyRaw) : null,
+      signed_payload: canonical,
+    };
+
+    setStatus("submit-status", "Submitting signed response…", "info");
+    show("submit-status");
+
+    try {
+      const res = await fetch(
+        state.apiBase + "/sessions/" + encodeURIComponent(state.sessionId) + "/respond",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
+      const result = await res.json();
+      if (!res.ok || result.error) {
+        throw new Error(result.error || "HTTP " + res.status);
+      }
+      setStatus(
+        "submit-status",
+        "Response submitted.\n" + JSON.stringify(result, null, 2),
+        "ok",
+      );
+    } catch (err) {
+      setStatus(
+        "submit-status",
+        "Submission failed: " + err.message + "\n\n" +
+        "Note: Concordia currently runs as a stdio MCP server. " +
+        "Until an HTTP bridge is wired up, the signed payload above " +
+        "can be forwarded through an MCP client.",
+        "err",
+      );
+    }
+  });
+
+  // Canonical JSON: sorted keys, no whitespace. Matches the Python
+  // canonical_json used server-side for signature verification.
+  function canonicalJson(value) {
+    if (value === null || typeof value !== "object") return JSON.stringify(value);
+    if (Array.isArray(value)) {
+      return "[" + value.map(canonicalJson).join(",") + "]";
+    }
+    const keys = Object.keys(value).sort();
+    return "{" + keys.map(
+      (k) => JSON.stringify(k) + ":" + canonicalJson(value[k]),
+    ).join(",") + "}";
+  }
+  </script>
+</body>
+</html>

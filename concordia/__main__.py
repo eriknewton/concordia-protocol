@@ -34,7 +34,7 @@ def main() -> None:
             "  python -m concordia --transport sse    Run on SSE transport (HTTP)\n"
             "\n"
             "48 MCP tools across 8 categories:\n"
-            "  Negotiation (8)       open, propose, counter, accept, reject, commit, status, receipt\n"
+            "  Negotiation (9)       open, propose, counter, accept, reject, commit, status, public_view, receipt\n"
             "  Reputation (3)        ingest attestation, query, score\n"
             "  Discovery (5)         register, search, agent card, preferred badge, deregister\n"
             "  Want Registry (10)    post/get/withdraw wants & haves, find matches, search, stats\n"

@@ -853,6 +853,57 @@ def tool_session_status(
 
 
 # ---------------------------------------------------------------------------
+# Tool: session_public_view
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_session_public_view",
+    description=(
+        "Read-only public view of a session. Returns non-sensitive metadata "
+        "(session_id, state, parties, message_count) plus the transcript "
+        "hash chain — no private payloads, no behavioral analytics, no "
+        "auth token required. Useful for third-party observers, auditors, "
+        "or web UIs that need to confirm session existence and integrity."
+    ),
+)
+def tool_session_public_view(
+    session_id: Annotated[str, "The session to query"],
+) -> str:
+    """Return a public, read-only view of a session."""
+    ctx = _store.get(session_id)
+    if ctx is None:
+        return json.dumps({"error": f"Session '{session_id}' not found."})
+
+    session = ctx.session
+
+    # Hash chain: list of per-message SHA-256 hashes (no payload content)
+    from .message import compute_hash
+    hash_chain: list[str] = []
+    for msg in session.transcript:
+        try:
+            hash_chain.append(compute_hash(msg))
+        except Exception:
+            hash_chain.append("")
+
+    result: dict[str, Any] = {
+        "session_id": session_id,
+        "state": session.state.value,
+        "parties": [
+            {"agent_id": ctx.initiator.agent_id, "role": "initiator"},
+            {"agent_id": ctx.responder.agent_id, "role": "responder"},
+        ],
+        "message_count": len(session.transcript),
+        "transcript_hash_chain": hash_chain,
+        "created_at": ctx.created_at,
+        "is_terminal": session.is_terminal,
+    }
+    if session.concluded_at:
+        result["concluded_at"] = session.concluded_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    return json.dumps(result, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
 # Tool: session_receipt
 # ---------------------------------------------------------------------------
 
@@ -2714,6 +2765,7 @@ def handle_tool_call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         "concordia_reject": tool_reject,
         "concordia_commit": tool_commit,
         "concordia_session_status": tool_session_status,
+        "concordia_session_public_view": tool_session_public_view,
         "concordia_session_receipt": tool_session_receipt,
         "concordia_competence_proof": tool_competence_proof,
         "concordia_verify_competence_proof": tool_verify_competence_proof,

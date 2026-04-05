@@ -2,6 +2,16 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
+
+# Isolate persisted session tokens in a per-test-run temp file so that
+# running the suite never touches ~/.concordia/sessions.json on dev machines.
+os.environ.setdefault(
+    "CONCORDIA_SESSION_STORE",
+    os.path.join(tempfile.gettempdir(), "concordia-test-sessions.json"),
+)
+
 from dataclasses import dataclass, field
 from typing import Any
 

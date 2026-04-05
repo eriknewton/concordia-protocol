@@ -121,7 +121,53 @@ def generate_attestation(
         "fulfillment": None,
     }
 
+    # Attach a plaintext 4-line summary for quick human/agent inspection.
+    attestation["summary"] = generate_receipt_summary(attestation)
+
     return attestation
+
+
+def generate_receipt_summary(receipt: dict[str, Any]) -> str:
+    """Generate a 4-line plaintext summary of a session receipt/attestation.
+
+    Format:
+        Parties: <party_a_did_short>, <party_b_did_short>
+        Topic: <topic or N/A>
+        Outcome: <AGREED/REJECTED/EXPIRED>
+        Transcript hash: <first 16 chars of hash>
+
+    Args:
+        receipt: A full attestation dict (as produced by generate_attestation).
+
+    Returns:
+        A four-line plaintext string (newline-separated).
+    """
+    def _short(did: str) -> str:
+        if not did:
+            return "unknown"
+        # Keep last 12 chars for short display (or whole string if shorter).
+        return did if len(did) <= 16 else f"...{did[-12:]}"
+
+    parties = receipt.get("parties", []) or []
+    party_ids = [p.get("agent_id", "") for p in parties]
+    while len(party_ids) < 2:
+        party_ids.append("")
+    parties_line = f"Parties: {_short(party_ids[0])}, {_short(party_ids[1])}"
+
+    meta = receipt.get("meta", {}) or {}
+    topic = meta.get("category") or meta.get("topic") or "N/A"
+    topic_line = f"Topic: {topic}"
+
+    outcome = receipt.get("outcome", {}) or {}
+    status = outcome.get("status", "")
+    outcome_line = f"Outcome: {str(status).upper() if status else 'UNKNOWN'}"
+
+    transcript_hash = receipt.get("transcript_hash", "") or ""
+    # Strip sha256: prefix if present, take first 16 chars of the hex digest.
+    digest = transcript_hash.split(":", 1)[1] if ":" in transcript_hash else transcript_hash
+    hash_line = f"Transcript hash: {digest[:16]}"
+
+    return "\n".join([parties_line, topic_line, outcome_line, hash_line])
 
 
 def _compute_transcript_hash(transcript: list[dict[str, Any]]) -> str:
