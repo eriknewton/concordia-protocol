@@ -60,6 +60,9 @@ Tools — Adoption (Viral Strategy §16, §17):
     concordia_degraded_message    — Record a round in a degraded interaction
     concordia_efficiency_report   — Compare degraded interaction to Concordia equivalent
 
+Tools — Verascore Integration:
+    concordia_verascore_report    — Report a concluded negotiation to Verascore for reputation scoring
+
 Usage:
     python -m concordia                     # stdio transport (default)
     python -m concordia --transport sse     # SSE transport (HTTP)
@@ -68,6 +71,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Annotated, Any
@@ -90,6 +94,7 @@ from .receipt_bundle import (
     screen_bundle,
     check_freshness,
 )
+from .verascore import VerascoreClient, compute_negotiation_competence
 from .sanctuary_bridge import (
     SanctuaryBridgeConfig,
     BridgeResult,
@@ -2755,6 +2760,148 @@ def tool_list_receipt_bundles(
 
 
 # ---------------------------------------------------------------------------
+# Tool: verascore_report
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_verascore_report",
+    description=(
+        "Report a completed negotiation to Verascore for reputation scoring. "
+        "Extracts behavioral metadata from the session receipt (never raw deal terms) "
+        "and posts it signed with the agent's Ed25519 key. "
+        "Requires VERASCORE_ENABLED=true environment variable."
+    ),
+)
+def tool_verascore_report(
+    session_id: Annotated[str, "The concluded session to report"],
+    agent_id: Annotated[str, "The agent reporting (must be a party in the session)"],
+    auth_token: Annotated[str, "Agent-scoped auth token (returned by concordia_register_agent)"],
+    fulfillment_status: Annotated[str, "Fulfillment status: 'fulfilled', 'disputed', or 'pending'"] = "pending",
+    verascore_url: Annotated[str, "Verascore API base URL"] = "https://verascore.ai",
+) -> str:
+    """Report a concluded negotiation to Verascore for portable reputation."""
+    # Gate: require explicit opt-in (CLAUDE.md hard constraint #1)
+    if os.environ.get("VERASCORE_ENABLED", "false").lower() != "true":
+        return json.dumps({
+            "error": "Verascore reporting is not enabled.",
+            "hint": (
+                "Set the VERASCORE_ENABLED=true environment variable to enable "
+                "Verascore reputation reporting. This ensures no external data "
+                "is transmitted without explicit user intent."
+            ),
+        })
+
+    # Auth check
+    if not _auth.validate_agent_token(agent_id, auth_token):
+        return _auth_error(agent_id, context="concordia_verascore_report")
+
+    # Validate fulfillment_status
+    valid_statuses = ("fulfilled", "disputed", "pending")
+    if fulfillment_status not in valid_statuses:
+        return json.dumps({
+            "error": f"Invalid fulfillment_status '{fulfillment_status}'. "
+                     f"Must be one of: {', '.join(valid_statuses)}.",
+        })
+
+    # Look up session
+    ctx = _store.get(session_id)
+    if ctx is None:
+        return json.dumps({"error": f"Session '{session_id}' not found."})
+
+    session = ctx.session
+
+    # Session must be finalized
+    if not session.is_terminal:
+        return json.dumps({
+            "error": (
+                f"Session is in state '{session.state.value}'. "
+                "Session must be finalized before reporting to Verascore "
+                "(agreed, rejected, or expired)."
+            ),
+        })
+
+    # Identify agent's role and key pair
+    if agent_id == ctx.initiator.agent_id:
+        agent_key = ctx.initiator_key
+        counterparty_id = ctx.responder.agent_id
+    elif agent_id == ctx.responder.agent_id:
+        agent_key = ctx.responder_key
+        counterparty_id = ctx.initiator.agent_id
+    else:
+        return json.dumps({
+            "error": f"Agent '{agent_id}' is not a party in session '{session_id}'.",
+        })
+
+    # Extract behavioral metadata — NEVER raw deal terms (CLAUDE.md rule #8)
+    outcome = session.state.value  # agreed, rejected, expired
+    rounds = session.round_count
+    duration = session.duration_seconds()
+    terms_count = len(session.terms) if session.terms else 0
+    behavior = session.get_behavior(agent_id)
+    concessions_made = behavior.concessions
+
+    competence = compute_negotiation_competence(
+        outcome=outcome,
+        fulfillment_status=fulfillment_status,
+        rounds=rounds,
+        concessions_made=concessions_made,
+    )
+
+    # Build a DID-style identifier from the counterparty's public key
+    # Use a placeholder DID format based on agent_id
+    agent_did = f"did:concordia:{agent_id}"
+    counterparty_did = f"did:concordia:{counterparty_id}"
+
+    session_data = {
+        "session_id": session_id,
+        "counterparty_did": counterparty_did,
+        "outcome": outcome,
+        "rounds": rounds,
+        "duration_seconds": duration,
+        "terms_count": terms_count,
+        "concessions_made": concessions_made,
+        "fulfillment_status": fulfillment_status,
+        "negotiation_competence": competence,
+    }
+
+    # Sign and POST to Verascore
+    client = VerascoreClient(base_url=verascore_url)
+    try:
+        result = client.report_concordia_receipt(
+            session_data=session_data,
+            key_pair=agent_key,
+            agent_did=agent_did,
+        )
+    except ValueError as e:
+        return json.dumps({
+            "error": f"Signing failed: {e}",
+        })
+
+    # Check for API error
+    if "error" in result:
+        return json.dumps({
+            "error": result["error"],
+            "detail": result.get("detail", ""),
+            "status_code": result.get("status_code"),
+        }, indent=2, default=str)
+
+    return json.dumps({
+        "reported": True,
+        "session_id": session_id,
+        "agent_did": agent_did,
+        "outcome": outcome,
+        "negotiation_competence": competence,
+        "verascore_profile": f"{verascore_url}/agent/{agent_did}",
+        "verascore_response": result,
+        "message": (
+            f"Negotiation receipt reported to Verascore. "
+            f"Competence score: {competence}/100. "
+            f"View profile at {verascore_url}/agent/{agent_did}"
+        ),
+    }, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
 # Programmatic access — for direct Python usage and testing
 # ---------------------------------------------------------------------------
 
@@ -2821,6 +2968,7 @@ def handle_tool_call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         "concordia_create_receipt_bundle": tool_create_receipt_bundle,
         "concordia_verify_receipt_bundle": tool_verify_receipt_bundle,
         "concordia_list_receipt_bundles": tool_list_receipt_bundles,
+        "concordia_verascore_report": tool_verascore_report,
     }
     handler = handlers.get(name)
     if handler is None:
