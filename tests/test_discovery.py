@@ -717,3 +717,543 @@ class TestDiscoveryMcpTools:
         agents = [a for a in search["agents"] if a["agent_id"] == "concordia_seller"]
         assert len(agents) == 1
         assert agents[0]["agent_id"] == "concordia_seller"
+
+
+# ===================================================================
+# Agent Capability Profile Tests (Phase 1)
+# ===================================================================
+
+class TestAgentCapabilityProfile:
+    """Tests for the new discovery profile schema."""
+
+    def test_profile_creation_minimal(self):
+        from concordia.agent_profile import AgentCapabilityProfile
+
+        profile = AgentCapabilityProfile(
+            agent_id="agent_123",
+            name="Test Agent",
+            description="A test agent",
+        )
+        assert profile.agent_id == "agent_123"
+        assert profile.name == "Test Agent"
+        assert profile.type == "concordia.agent_profile"
+        assert profile.version == "1.0"
+
+    def test_profile_to_dict(self):
+        from concordia.agent_profile import AgentCapabilityProfile, Capabilities
+
+        profile = AgentCapabilityProfile(
+            agent_id="agent_123",
+            name="Test Agent",
+            description="Test",
+            capabilities=Capabilities(
+                categories=["infrastructure.compute"],
+                offer_types=["basic", "conditional"],
+            ),
+        )
+        d = profile.to_dict()
+        assert d["agent_id"] == "agent_123"
+        assert d["type"] == "concordia.agent_profile"
+        assert d["capabilities"]["categories"] == ["infrastructure.compute"]
+        assert d["capabilities"]["offer_types"] == ["basic", "conditional"]
+
+    def test_profile_canonical_json(self):
+        from concordia.agent_profile import AgentCapabilityProfile
+
+        profile = AgentCapabilityProfile(
+            agent_id="agent_123",
+            name="Test",
+            description="Test",
+        )
+        canonical = profile.to_canonical_json_bytes()
+        assert isinstance(canonical, bytes)
+        assert b"agent_123" in canonical
+        assert b"concordia.agent_profile" in canonical
+        # Signature field should not be in canonical form
+        assert b"signature" not in canonical
+
+    def test_profile_from_dict(self):
+        from concordia.agent_profile import AgentCapabilityProfile
+
+        data = {
+            "type": "concordia.agent_profile",
+            "version": "1.0",
+            "agent_id": "agent_xyz",
+            "name": "XYZ Agent",
+            "description": "Test agent",
+            "capabilities": {
+                "categories": ["electronics"],
+                "offer_types": ["basic"],
+            },
+            "signature": "test_sig",
+        }
+        profile = AgentCapabilityProfile.from_dict(data)
+        assert profile.agent_id == "agent_xyz"
+        assert profile.name == "XYZ Agent"
+        assert profile.signature == "test_sig"
+        assert profile.capabilities.categories == ["electronics"]
+
+    def test_profile_with_trust_signals(self):
+        from concordia.agent_profile import (
+            AgentCapabilityProfile,
+            TrustSignals,
+            Sovereignty,
+        )
+
+        profile = AgentCapabilityProfile(
+            agent_id="agent_123",
+            name="Agent",
+            description="Test",
+            trust_signals=TrustSignals(
+                verascore_did="did:key:z6Mk...",
+                verascore_tier="verified-sovereign",
+                verascore_composite=92,
+                concordia_sessions_completed=42,
+                sovereignty=Sovereignty(L1="Full", L2="Full", L3="Full", L4="Full"),
+            ),
+        )
+        d = profile.to_dict()
+        assert d["trust_signals"]["verascore_composite"] == 92
+        assert d["trust_signals"]["concordia_sessions_completed"] == 42
+        assert d["trust_signals"]["sovereignty"]["L1"] == "Full"
+
+    def test_profile_with_endpoints(self):
+        from concordia.agent_profile import AgentCapabilityProfile, Endpoints
+
+        profile = AgentCapabilityProfile(
+            agent_id="agent_123",
+            name="Agent",
+            description="Test",
+            endpoints=Endpoints(
+                negotiate="https://agent.example.com/negotiate",
+                a2a_card="https://agent.example.com/.well-known/agent.json",
+            ),
+        )
+        d = profile.to_dict()
+        assert d["endpoints"]["negotiate"] == "https://agent.example.com/negotiate"
+
+
+# ===================================================================
+# Agent Profile Store Tests
+# ===================================================================
+
+class TestAgentProfileStore:
+    """Tests for in-memory profile storage and search."""
+
+    def test_store_publish_and_get(self):
+        from concordia.agent_profile import AgentCapabilityProfile, AgentProfileStore
+
+        store = AgentProfileStore()
+        profile = AgentCapabilityProfile(
+            agent_id="agent_1",
+            name="Agent 1",
+            description="Test",
+        )
+        stored = store.publish(profile, verify_signature=False)
+        assert stored.agent_id == "agent_1"
+
+        retrieved = store.get("agent_1")
+        assert retrieved is not None
+        assert retrieved.agent_id == "agent_1"
+
+    def test_store_get_missing(self):
+        from concordia.agent_profile import AgentProfileStore
+
+        store = AgentProfileStore()
+        assert store.get("nonexistent") is None
+
+    def test_store_delete(self):
+        from concordia.agent_profile import AgentCapabilityProfile, AgentProfileStore
+
+        store = AgentProfileStore()
+        profile = AgentCapabilityProfile(
+            agent_id="agent_1",
+            name="Agent",
+            description="Test",
+        )
+        store.publish(profile, verify_signature=False)
+        assert store.get("agent_1") is not None
+
+        deleted = store.delete("agent_1")
+        assert deleted is True
+        assert store.get("agent_1") is None
+
+    def test_store_delete_missing(self):
+        from concordia.agent_profile import AgentProfileStore
+
+        store = AgentProfileStore()
+        assert store.delete("nonexistent") is False
+
+    def test_store_list_all(self):
+        from concordia.agent_profile import AgentCapabilityProfile, AgentProfileStore
+
+        store = AgentProfileStore()
+        for i in range(3):
+            profile = AgentCapabilityProfile(
+                agent_id=f"agent_{i}",
+                name=f"Agent {i}",
+                description="Test",
+            )
+            store.publish(profile, verify_signature=False)
+
+        all_profiles = store.list_all()
+        assert len(all_profiles) == 3
+        ids = {p.agent_id for p in all_profiles}
+        assert ids == {"agent_0", "agent_1", "agent_2"}
+
+    def test_store_count(self):
+        from concordia.agent_profile import AgentCapabilityProfile, AgentProfileStore
+
+        store = AgentProfileStore()
+        assert store.count() == 0
+
+        for i in range(5):
+            profile = AgentCapabilityProfile(
+                agent_id=f"agent_{i}",
+                name=f"Agent {i}",
+                description="Test",
+            )
+            store.publish(profile, verify_signature=False)
+
+        assert store.count() == 5
+
+    def test_store_search_by_category(self):
+        from concordia.agent_profile import (
+            AgentCapabilityProfile,
+            AgentProfileStore,
+            Capabilities,
+        )
+
+        store = AgentProfileStore()
+        for i, cats in enumerate(
+            [["infrastructure.compute"], ["electronics"], ["infrastructure.compute"]]
+        ):
+            profile = AgentCapabilityProfile(
+                agent_id=f"agent_{i}",
+                name=f"Agent {i}",
+                description="Test",
+                capabilities=Capabilities(categories=cats),
+            )
+            store.publish(profile, verify_signature=False)
+
+        results = store.search(categories=["infrastructure.compute"])
+        assert len(results) == 2
+        agent_ids = {p[0].agent_id for p in results}
+        assert agent_ids == {"agent_0", "agent_2"}
+
+    def test_store_search_by_verascore_min(self):
+        from concordia.agent_profile import (
+            AgentCapabilityProfile,
+            AgentProfileStore,
+            TrustSignals,
+        )
+
+        store = AgentProfileStore()
+        for i, score in enumerate([50, 75, 90]):
+            profile = AgentCapabilityProfile(
+                agent_id=f"agent_{i}",
+                name=f"Agent {i}",
+                description="Test",
+                trust_signals=TrustSignals(verascore_composite=score),
+            )
+            store.publish(profile, verify_signature=False)
+
+        results = store.search(min_verascore=75)
+        assert len(results) == 2
+        agent_ids = {p[0].agent_id for p in results}
+        assert agent_ids == {"agent_1", "agent_2"}
+
+    def test_store_search_by_offer_types_required(self):
+        from concordia.agent_profile import (
+            AgentCapabilityProfile,
+            AgentProfileStore,
+            Capabilities,
+        )
+
+        store = AgentProfileStore()
+        for i, types in enumerate(
+            [
+                ["basic"],
+                ["basic", "conditional"],
+                ["basic", "conditional", "bundle"],
+            ]
+        ):
+            profile = AgentCapabilityProfile(
+                agent_id=f"agent_{i}",
+                name=f"Agent {i}",
+                description="Test",
+                capabilities=Capabilities(offer_types=types),
+            )
+            store.publish(profile, verify_signature=False)
+
+        # Require both basic and conditional
+        results = store.search(offer_types_required=["basic", "conditional"])
+        assert len(results) == 2
+        agent_ids = {p[0].agent_id for p in results}
+        assert agent_ids == {"agent_1", "agent_2"}
+
+    def test_store_search_by_jurisdiction(self):
+        from concordia.agent_profile import (
+            AgentCapabilityProfile,
+            AgentProfileStore,
+            Location,
+        )
+
+        store = AgentProfileStore()
+        for i, juris in enumerate([["US-CA"], ["EU"], ["US-CA", "EU"]]):
+            profile = AgentCapabilityProfile(
+                agent_id=f"agent_{i}",
+                name=f"Agent {i}",
+                description="Test",
+                location=Location(jurisdictions=juris),
+            )
+            store.publish(profile, verify_signature=False)
+
+        results = store.search(jurisdictions=["EU"])
+        assert len(results) == 2
+        agent_ids = {p[0].agent_id for p in results}
+        assert agent_ids == {"agent_1", "agent_2"}
+
+    def test_store_search_by_concordia_preferred(self):
+        from concordia.agent_profile import (
+            AgentCapabilityProfile,
+            AgentProfileStore,
+            TrustSignals,
+        )
+
+        store = AgentProfileStore()
+        for i, pref in enumerate([True, False, True]):
+            profile = AgentCapabilityProfile(
+                agent_id=f"agent_{i}",
+                name=f"Agent {i}",
+                description="Test",
+                trust_signals=TrustSignals(concordia_preferred=pref),
+            )
+            store.publish(profile, verify_signature=False)
+
+        results = store.search(concordia_preferred=True)
+        assert len(results) == 2
+        agent_ids = {p[0].agent_id for p in results}
+        assert agent_ids == {"agent_0", "agent_2"}
+
+    def test_store_search_combined_filters(self):
+        from concordia.agent_profile import (
+            AgentCapabilityProfile,
+            AgentProfileStore,
+            Capabilities,
+            TrustSignals,
+        )
+
+        store = AgentProfileStore()
+        # Agent 0: electronics, score 50
+        profile0 = AgentCapabilityProfile(
+            agent_id="agent_0",
+            name="Agent 0",
+            description="Test",
+            capabilities=Capabilities(categories=["electronics"]),
+            trust_signals=TrustSignals(verascore_composite=50),
+        )
+        store.publish(profile0, verify_signature=False)
+
+        # Agent 1: electronics, score 85
+        profile1 = AgentCapabilityProfile(
+            agent_id="agent_1",
+            name="Agent 1",
+            description="Test",
+            capabilities=Capabilities(categories=["electronics"]),
+            trust_signals=TrustSignals(verascore_composite=85),
+        )
+        store.publish(profile1, verify_signature=False)
+
+        # Agent 2: infrastructure, score 90
+        profile2 = AgentCapabilityProfile(
+            agent_id="agent_2",
+            name="Agent 2",
+            description="Test",
+            capabilities=Capabilities(categories=["infrastructure.compute"]),
+            trust_signals=TrustSignals(verascore_composite=90),
+        )
+        store.publish(profile2, verify_signature=False)
+
+        # Filter: electronics category AND min_verascore 75
+        results = store.search(
+            categories=["electronics"],
+            min_verascore=75,
+        )
+        assert len(results) == 1
+        assert results[0][0].agent_id == "agent_1"
+
+    def test_store_search_sorting_by_verascore(self):
+        from concordia.agent_profile import (
+            AgentCapabilityProfile,
+            AgentProfileStore,
+            TrustSignals,
+        )
+
+        store = AgentProfileStore()
+        for i, score in enumerate([60, 90, 75]):
+            profile = AgentCapabilityProfile(
+                agent_id=f"agent_{i}",
+                name=f"Agent {i}",
+                description="Test",
+                trust_signals=TrustSignals(verascore_composite=score),
+            )
+            store.publish(profile, verify_signature=False)
+
+        results = store.search(sort_by="verascore_composite")
+        # Should be sorted by score descending: 90, 75, 60
+        assert results[0][0].agent_id == "agent_1"  # 90
+        assert results[1][0].agent_id == "agent_2"  # 75
+        assert results[2][0].agent_id == "agent_0"  # 60
+
+    def test_store_search_sorting_by_agreement_rate(self):
+        from concordia.agent_profile import (
+            AgentCapabilityProfile,
+            AgentProfileStore,
+            NegotiationProfile,
+        )
+
+        store = AgentProfileStore()
+        for i, rate in enumerate([0.6, 0.95, 0.75]):
+            profile = AgentCapabilityProfile(
+                agent_id=f"agent_{i}",
+                name=f"Agent {i}",
+                description="Test",
+                negotiation_profile=NegotiationProfile(agreement_rate=rate),
+            )
+            store.publish(profile, verify_signature=False)
+
+        results = store.search(sort_by="agreement_rate")
+        # Should be sorted by agreement_rate descending: 0.95, 0.75, 0.6
+        assert results[0][0].agent_id == "agent_1"
+        assert results[1][0].agent_id == "agent_2"
+        assert results[2][0].agent_id == "agent_0"
+
+    def test_store_search_limit(self):
+        from concordia.agent_profile import AgentCapabilityProfile, AgentProfileStore
+
+        store = AgentProfileStore()
+        for i in range(10):
+            profile = AgentCapabilityProfile(
+                agent_id=f"agent_{i}",
+                name=f"Agent {i}",
+                description="Test",
+            )
+            store.publish(profile, verify_signature=False)
+
+        results = store.search(limit=3)
+        assert len(results) == 3
+
+    def test_store_search_no_matches(self):
+        from concordia.agent_profile import (
+            AgentCapabilityProfile,
+            AgentProfileStore,
+            Capabilities,
+        )
+
+        store = AgentProfileStore()
+        profile = AgentCapabilityProfile(
+            agent_id="agent_1",
+            name="Agent 1",
+            description="Test",
+            capabilities=Capabilities(categories=["electronics"]),
+        )
+        store.publish(profile, verify_signature=False)
+
+        results = store.search(categories=["furniture"])
+        assert len(results) == 0
+
+    def test_store_capacity_limit(self):
+        from concordia.agent_profile import AgentCapabilityProfile, AgentProfileStore
+
+        store = AgentProfileStore()
+        # Fill up to capacity
+        for i in range(store.MAX_PROFILES):
+            profile = AgentCapabilityProfile(
+                agent_id=f"agent_{i}",
+                name=f"Agent {i}",
+                description="Test",
+            )
+            store.publish(profile, verify_signature=False)
+
+        # Try to add one more
+        overflow = AgentCapabilityProfile(
+            agent_id="overflow",
+            name="Overflow",
+            description="Should fail",
+        )
+        with pytest.raises(RuntimeError):
+            store.publish(overflow, verify_signature=False)
+
+    def test_store_update_existing(self):
+        from concordia.agent_profile import AgentCapabilityProfile, AgentProfileStore
+
+        store = AgentProfileStore()
+        profile = AgentCapabilityProfile(
+            agent_id="agent_1",
+            name="Agent 1",
+            description="Original",
+        )
+        store.publish(profile, verify_signature=False)
+
+        # Update with new description
+        updated = AgentCapabilityProfile(
+            agent_id="agent_1",
+            name="Agent 1",
+            description="Updated",
+        )
+        store.publish(updated, verify_signature=False)
+
+        retrieved = store.get("agent_1")
+        assert retrieved.description == "Updated"
+        assert store.count() == 1  # Still only one agent
+
+    def test_store_stats(self):
+        from concordia.agent_profile import (
+            AgentCapabilityProfile,
+            AgentProfileStore,
+            Capabilities,
+            TrustSignals,
+        )
+
+        store = AgentProfileStore()
+        for i, score in enumerate([60, 80, 100]):
+            profile = AgentCapabilityProfile(
+                agent_id=f"agent_{i}",
+                name=f"Agent {i}",
+                description="Test",
+                capabilities=Capabilities(
+                    categories=["electronics", "infrastructure.compute"]
+                ),
+                trust_signals=TrustSignals(verascore_composite=score),
+            )
+            store.publish(profile, verify_signature=False)
+
+        stats = store.get_stats()
+        assert stats["total_profiles"] == 3
+        assert stats["average_verascore"] == 80.0
+        assert stats["total_categories"] == 2  # electronics, infrastructure.compute
+        assert stats["concordia_preferred_count"] == 3
+
+    def test_store_match_score_with_categories(self):
+        """Verify match_score computation for category overlap."""
+        from concordia.agent_profile import (
+            AgentCapabilityProfile,
+            AgentProfileStore,
+            Capabilities,
+        )
+
+        store = AgentProfileStore()
+        profile = AgentCapabilityProfile(
+            agent_id="agent_1",
+            name="Agent",
+            description="Test",
+            capabilities=Capabilities(categories=["electronics", "furniture"]),
+        )
+        store.publish(profile, verify_signature=False)
+
+        # Search for electronics only — should have partial overlap
+        results = store.search(categories=["electronics"])
+        assert len(results) == 1
+        match_score = results[0][1]
+        assert 0.5 <= match_score <= 1.0  # Between baseline and full
