@@ -79,6 +79,8 @@ from typing import Annotated, Any
 from mcp.server.fastmcp import FastMCP
 
 from .agent import Agent
+from .agent_profile import AgentProfileStore
+from .agent_profile.tools import register_discovery_tools
 from .attestation import generate_attestation
 from .auth import AuthTokenStore
 from .competence_proof import (
@@ -1679,10 +1681,21 @@ def tool_efficiency_report(
 
 
 # ---------------------------------------------------------------------------
+# Agent Profile Store — agent discovery with capability profiles (§11 Phase 2)
+# ---------------------------------------------------------------------------
+
+_profile_store = AgentProfileStore()
+
+
+# ---------------------------------------------------------------------------
 # Want Registry — demand-side discovery (§7)
 # ---------------------------------------------------------------------------
 
 _want_registry = WantRegistry()
+
+# Register agent discovery tools (agent_profile_publish, agent_profile_get,
+# agent_discovery_search, agent_discovery_recommend) — Phase 2 agent discovery.
+_discovery_tools = register_discovery_tools(mcp, _profile_store, _want_registry)
 
 
 # ---------------------------------------------------------------------------
@@ -2969,6 +2982,11 @@ def handle_tool_call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         "concordia_verify_receipt_bundle": tool_verify_receipt_bundle,
         "concordia_list_receipt_bundles": tool_list_receipt_bundles,
         "concordia_verascore_report": tool_verascore_report,
+        # Discovery tools (Phase 2)
+        "agent_profile_publish": _discovery_tools.get("agent_profile_publish"),
+        "agent_profile_get": _discovery_tools.get("agent_profile_get"),
+        "agent_discovery_search": _discovery_tools.get("agent_discovery_search"),
+        "agent_discovery_recommend": _discovery_tools.get("agent_discovery_recommend"),
     }
     handler = handlers.get(name)
     if handler is None:

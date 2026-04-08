@@ -1257,3 +1257,462 @@ class TestAgentProfileStore:
         assert len(results) == 1
         match_score = results[0][1]
         assert 0.5 <= match_score <= 1.0  # Between baseline and full
+
+
+# ===================================================================
+# MCP Tool Tests — Phase 2 Discovery Tools
+# ===================================================================
+
+class TestAgentProfileMCPTools:
+    """Test the 4 MCP tools for agent discovery."""
+
+    def test_tool_agent_profile_publish_minimal(self):
+        """Test publishing a profile with minimal fields."""
+        from concordia.agent_profile import AgentProfileStore
+        from concordia.agent_profile.tools import register_discovery_tools
+        from unittest.mock import MagicMock
+        import json
+
+        # Create a mock MCP instance
+        mcp_mock = MagicMock()
+        tools_by_name = {}
+
+        def mock_tool(**kwargs):
+            def decorator(func):
+                tools_by_name[kwargs["name"]] = func
+                return func
+            return decorator
+
+        mcp_mock.tool = mock_tool
+
+        profile_store = AgentProfileStore()
+        want_registry_mock = MagicMock()
+
+        tool_functions = register_discovery_tools(mcp_mock, profile_store, want_registry_mock)
+
+        # Get the tool function
+        assert "agent_profile_publish" in tool_functions
+        tool_func = tool_functions["agent_profile_publish"]
+
+        # Call the tool
+        result_str = tool_func(
+            agent_id="agent_1",
+            name="Test Agent",
+        )
+        result = json.loads(result_str)
+
+        assert result["success"] is True
+        assert result["profile"]["agent_id"] == "agent_1"
+        assert result["profile"]["name"] == "Test Agent"
+        assert result["store_count"] == 1
+
+    def test_tool_agent_profile_publish_with_trust_signals(self):
+        """Test publishing a profile with trust signals."""
+        from concordia.agent_profile import AgentProfileStore
+        from concordia.agent_profile.tools import register_discovery_tools
+        from unittest.mock import MagicMock
+        import json
+
+        mcp_mock = MagicMock()
+        tools_by_name = {}
+
+        def mock_tool(**kwargs):
+            def decorator(func):
+                tools_by_name[kwargs["name"]] = func
+                return func
+            return decorator
+
+        mcp_mock.tool = mock_tool
+
+        profile_store = AgentProfileStore()
+        want_registry_mock = MagicMock()
+
+        tool_functions = register_discovery_tools(mcp_mock, profile_store, want_registry_mock)
+
+        tool_func = tool_functions["agent_profile_publish"]
+
+        result_str = tool_func(
+            agent_id="agent_verified",
+            name="Verified Agent",
+            description="A verified agent",
+            verascore_composite=85,
+            verascore_tier="verified-sovereign",
+            concordia_sessions_completed=10,
+            concordia_preferred=True,
+        )
+        result = json.loads(result_str)
+
+        assert result["success"] is True
+        profile = result["profile"]
+        assert profile["trust_signals"]["verascore_composite"] == 85
+        assert profile["trust_signals"]["verascore_tier"] == "verified-sovereign"
+        assert profile["trust_signals"]["concordia_sessions_completed"] == 10
+
+    def test_tool_agent_profile_get_found(self):
+        """Test retrieving an existing profile."""
+        from concordia.agent_profile import AgentProfileStore, AgentCapabilityProfile
+        from concordia.agent_profile.tools import register_discovery_tools
+        from unittest.mock import MagicMock
+        import json
+
+        mcp_mock = MagicMock()
+        tools_by_name = {}
+
+        def mock_tool(**kwargs):
+            def decorator(func):
+                tools_by_name[kwargs["name"]] = func
+                return func
+            return decorator
+
+        mcp_mock.tool = mock_tool
+
+        profile_store = AgentProfileStore()
+        profile = AgentCapabilityProfile(
+            agent_id="agent_stored",
+            name="Stored Agent",
+            description="Test",
+        )
+        profile_store.publish(profile, verify_signature=False)
+
+        want_registry_mock = MagicMock()
+        tool_functions = register_discovery_tools(mcp_mock, profile_store, want_registry_mock)
+
+        tool_func = tool_functions["agent_profile_get"]
+        result_str = tool_func(agent_id="agent_stored")
+        result = json.loads(result_str)
+
+        assert result["found"] is True
+        assert result["profile"]["agent_id"] == "agent_stored"
+        assert result["profile"]["name"] == "Stored Agent"
+
+    def test_tool_agent_profile_get_not_found(self):
+        """Test retrieving a non-existent profile."""
+        from concordia.agent_profile import AgentProfileStore
+        from concordia.agent_profile.tools import register_discovery_tools
+        from unittest.mock import MagicMock
+        import json
+
+        mcp_mock = MagicMock()
+        tools_by_name = {}
+
+        def mock_tool(**kwargs):
+            def decorator(func):
+                tools_by_name[kwargs["name"]] = func
+                return func
+            return decorator
+
+        mcp_mock.tool = mock_tool
+
+        profile_store = AgentProfileStore()
+        want_registry_mock = MagicMock()
+        tool_functions = register_discovery_tools(mcp_mock, profile_store, want_registry_mock)
+
+        tool_func = tool_functions["agent_profile_get"]
+        result_str = tool_func(agent_id="nonexistent")
+        result = json.loads(result_str)
+
+        assert result["found"] is False
+        assert "error" in result
+
+    def test_tool_agent_discovery_search_by_category(self):
+        """Test searching for agents by category."""
+        from concordia.agent_profile import (
+            AgentProfileStore,
+            AgentCapabilityProfile,
+            Capabilities,
+        )
+        from concordia.agent_profile.tools import register_discovery_tools
+        from unittest.mock import MagicMock
+        import json
+
+        mcp_mock = MagicMock()
+        tools_by_name = {}
+
+        def mock_tool(**kwargs):
+            def decorator(func):
+                tools_by_name[kwargs["name"]] = func
+                return func
+            return decorator
+
+        mcp_mock.tool = mock_tool
+
+        profile_store = AgentProfileStore()
+
+        # Add profiles with different categories
+        for i, cat in enumerate(["electronics", "electronics", "furniture"]):
+            profile = AgentCapabilityProfile(
+                agent_id=f"agent_{i}",
+                name=f"Agent {i}",
+                description="Test",
+                capabilities=Capabilities(categories=[cat]),
+            )
+            profile_store.publish(profile, verify_signature=False)
+
+        want_registry_mock = MagicMock()
+        tool_functions = register_discovery_tools(mcp_mock, profile_store, want_registry_mock)
+
+        tool_func = tool_functions["agent_discovery_search"]
+        result_str = tool_func(categories=["electronics"])
+        result = json.loads(result_str)
+
+        assert result["count"] == 2
+        assert all(
+            r["profile"]["agent_id"] in ["agent_0", "agent_1"]
+            for r in result["results"]
+        )
+
+    def test_tool_agent_discovery_search_by_verascore(self):
+        """Test searching for agents by Verascore threshold."""
+        from concordia.agent_profile import (
+            AgentProfileStore,
+            AgentCapabilityProfile,
+            TrustSignals,
+        )
+        from concordia.agent_profile.tools import register_discovery_tools
+        from unittest.mock import MagicMock
+        import json
+
+        mcp_mock = MagicMock()
+        tools_by_name = {}
+
+        def mock_tool(**kwargs):
+            def decorator(func):
+                tools_by_name[kwargs["name"]] = func
+                return func
+            return decorator
+
+        mcp_mock.tool = mock_tool
+
+        profile_store = AgentProfileStore()
+
+        # Add profiles with different scores
+        for i, score in enumerate([40, 75, 90]):
+            profile = AgentCapabilityProfile(
+                agent_id=f"agent_{i}",
+                name=f"Agent {i}",
+                description="Test",
+                trust_signals=TrustSignals(verascore_composite=score),
+            )
+            profile_store.publish(profile, verify_signature=False)
+
+        want_registry_mock = MagicMock()
+        tool_functions = register_discovery_tools(mcp_mock, profile_store, want_registry_mock)
+
+        tool_func = tool_functions["agent_discovery_search"]
+        result_str = tool_func(min_verascore=75)
+        result = json.loads(result_str)
+
+        assert result["count"] == 2
+        assert all(r["profile"]["agent_id"] in ["agent_1", "agent_2"] for r in result["results"])
+
+    def test_tool_agent_discovery_search_combined_filters(self):
+        """Test searching with multiple filters."""
+        from concordia.agent_profile import (
+            AgentProfileStore,
+            AgentCapabilityProfile,
+            Capabilities,
+            TrustSignals,
+            Location,
+        )
+        from concordia.agent_profile.tools import register_discovery_tools
+        from unittest.mock import MagicMock
+        import json
+
+        mcp_mock = MagicMock()
+        tools_by_name = {}
+
+        def mock_tool(**kwargs):
+            def decorator(func):
+                tools_by_name[kwargs["name"]] = func
+                return func
+            return decorator
+
+        mcp_mock.tool = mock_tool
+
+        profile_store = AgentProfileStore()
+
+        # Agent 0: electronics, US-CA, score 60
+        profile0 = AgentCapabilityProfile(
+            agent_id="agent_0",
+            name="Agent 0",
+            description="Test",
+            capabilities=Capabilities(categories=["electronics"]),
+            trust_signals=TrustSignals(verascore_composite=60),
+            location=Location(jurisdictions=["US-CA"]),
+        )
+        profile_store.publish(profile0, verify_signature=False)
+
+        # Agent 1: electronics, EU, score 90
+        profile1 = AgentCapabilityProfile(
+            agent_id="agent_1",
+            name="Agent 1",
+            description="Test",
+            capabilities=Capabilities(categories=["electronics"]),
+            trust_signals=TrustSignals(verascore_composite=90),
+            location=Location(jurisdictions=["EU"]),
+        )
+        profile_store.publish(profile1, verify_signature=False)
+
+        # Agent 2: furniture, US-CA, score 85
+        profile2 = AgentCapabilityProfile(
+            agent_id="agent_2",
+            name="Agent 2",
+            description="Test",
+            capabilities=Capabilities(categories=["furniture"]),
+            trust_signals=TrustSignals(verascore_composite=85),
+            location=Location(jurisdictions=["US-CA"]),
+        )
+        profile_store.publish(profile2, verify_signature=False)
+
+        want_registry_mock = MagicMock()
+        tool_functions = register_discovery_tools(mcp_mock, profile_store, want_registry_mock)
+
+        tool_func = tool_functions["agent_discovery_search"]
+
+        # Search: electronics, min_verascore 75, jurisdiction EU
+        result_str = tool_func(
+            categories=["electronics"],
+            min_verascore=75,
+            jurisdictions=["EU"],
+        )
+        result = json.loads(result_str)
+
+        assert result["count"] == 1
+        assert result["results"][0]["profile"]["agent_id"] == "agent_1"
+
+    def test_tool_agent_discovery_recommend_found(self):
+        """Test recommending agents for a Want."""
+        from concordia.agent_profile import (
+            AgentProfileStore,
+            AgentCapabilityProfile,
+            Capabilities,
+        )
+        from concordia.agent_profile.tools import register_discovery_tools
+        from unittest.mock import MagicMock
+        import json
+
+        mcp_mock = MagicMock()
+        tools_by_name = {}
+
+        def mock_tool(**kwargs):
+            def decorator(func):
+                tools_by_name[kwargs["name"]] = func
+                return func
+            return decorator
+
+        mcp_mock.tool = mock_tool
+
+        profile_store = AgentProfileStore()
+
+        # Add profiles with electronics category
+        for i in range(3):
+            profile = AgentCapabilityProfile(
+                agent_id=f"agent_{i}",
+                name=f"Agent {i}",
+                description="Test",
+                capabilities=Capabilities(categories=["electronics"]),
+            )
+            profile_store.publish(profile, verify_signature=False)
+
+        want_registry_mock = MagicMock()
+        want = {
+            "want_id": "want_1",
+            "category": "electronics",
+            "terms": {},
+        }
+        want_registry_mock.get_want.return_value = want
+
+        tool_functions = register_discovery_tools(mcp_mock, profile_store, want_registry_mock)
+
+        tool_func = tool_functions["agent_discovery_recommend"]
+        result_str = tool_func(want_id="want_1")
+        result = json.loads(result_str)
+
+        assert result["want_id"] == "want_1"
+        assert result["want_category"] == "electronics"
+        assert result["count"] == 3
+        assert all(
+            r["profile"]["agent_id"] in ["agent_0", "agent_1", "agent_2"]
+            for r in result["recommendations"]
+        )
+
+    def test_tool_agent_discovery_recommend_want_not_found(self):
+        """Test recommendation when Want is not found."""
+        from concordia.agent_profile import AgentProfileStore
+        from concordia.agent_profile.tools import register_discovery_tools
+        from unittest.mock import MagicMock
+        import json
+
+        mcp_mock = MagicMock()
+        tools_by_name = {}
+
+        def mock_tool(**kwargs):
+            def decorator(func):
+                tools_by_name[kwargs["name"]] = func
+                return func
+            return decorator
+
+        mcp_mock.tool = mock_tool
+
+        profile_store = AgentProfileStore()
+        want_registry_mock = MagicMock()
+        want_registry_mock.get_want.return_value = None
+
+        tool_functions = register_discovery_tools(mcp_mock, profile_store, want_registry_mock)
+
+        tool_func = tool_functions["agent_discovery_recommend"]
+        result_str = tool_func(want_id="nonexistent")
+        result = json.loads(result_str)
+
+        assert result["found"] is False
+        assert "error" in result
+
+    def test_tool_agent_discovery_recommend_empty_results(self):
+        """Test recommendation with no matching agents."""
+        from concordia.agent_profile import (
+            AgentProfileStore,
+            AgentCapabilityProfile,
+            Capabilities,
+        )
+        from concordia.agent_profile.tools import register_discovery_tools
+        from unittest.mock import MagicMock
+        import json
+
+        mcp_mock = MagicMock()
+        tools_by_name = {}
+
+        def mock_tool(**kwargs):
+            def decorator(func):
+                tools_by_name[kwargs["name"]] = func
+                return func
+            return decorator
+
+        mcp_mock.tool = mock_tool
+
+        profile_store = AgentProfileStore()
+
+        # Add profile with furniture category
+        profile = AgentCapabilityProfile(
+            agent_id="agent_0",
+            name="Agent 0",
+            description="Test",
+            capabilities=Capabilities(categories=["furniture"]),
+        )
+        profile_store.publish(profile, verify_signature=False)
+
+        want_registry_mock = MagicMock()
+        want = {
+            "want_id": "want_1",
+            "category": "electronics",  # Different category
+            "terms": {},
+        }
+        want_registry_mock.get_want.return_value = want
+
+        tool_functions = register_discovery_tools(mcp_mock, profile_store, want_registry_mock)
+
+        tool_func = tool_functions["agent_discovery_recommend"]
+        result_str = tool_func(want_id="want_1")
+        result = json.loads(result_str)
+
+        assert result["want_category"] == "electronics"
+        assert result["count"] == 0

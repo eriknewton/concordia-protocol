@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "concordia-protocol"
-version = "0.2.1"
+version = "0.3.0"
 description = "Reference implementation of the Concordia Protocol — structured negotiation between autonomous agents"
 readme = "README.md"
 requires-python = ">=3.10"
