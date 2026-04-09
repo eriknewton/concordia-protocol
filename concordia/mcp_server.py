@@ -2310,7 +2310,54 @@ def tool_relay_stats() -> str:
 # Sanctuary Bridge — optional Concordia ↔ Sanctuary integration
 # ---------------------------------------------------------------------------
 
-_bridge_config = SanctuaryBridgeConfig(enabled=False)
+def _load_bridge_config() -> SanctuaryBridgeConfig:
+    """Load bridge configuration from ~/.concordia/bridge-config.json if it exists.
+
+    Falls back to disabled config if the file is missing or malformed.
+    The config file is optional — the bridge can also be configured at runtime
+    via the concordia_sanctuary_bridge_configure tool.
+    """
+    import os
+    config_path = os.path.expanduser("~/.concordia/bridge-config.json")
+    if not os.path.exists(config_path):
+        return SanctuaryBridgeConfig(enabled=False)
+
+    try:
+        with open(config_path) as f:
+            raw = json.load(f)
+
+        bridge_section = raw.get("sanctuary_bridge", raw)
+        config = SanctuaryBridgeConfig(
+            enabled=bridge_section.get("enabled", False),
+            default_context=bridge_section.get("default_context", "concordia_negotiation"),
+            commitment_on_agree=bridge_section.get("commitment_on_agree", True),
+            reputation_on_receipt=bridge_section.get("reputation_on_receipt", True),
+        )
+
+        # Load identity mappings
+        for mapping in bridge_section.get("identity_mappings", []):
+            concordia_id = mapping.get("concordia_agent_id", "")
+            sanctuary_id = mapping.get("sanctuary_identity_id", "")
+            sanctuary_did = mapping.get("sanctuary_did")
+            if concordia_id and sanctuary_id:
+                config.map_identity(concordia_id, sanctuary_id, sanctuary_did)
+
+        if config.enabled and config.identity_map:
+            import sys
+            print(
+                f"[bridge] Loaded config from {config_path}: "
+                f"{len(config.identity_map)} identity mapping(s)",
+                file=sys.stderr,
+            )
+
+        return config
+    except Exception as e:
+        import sys
+        print(f"[bridge] Warning: failed to load {config_path}: {e}", file=sys.stderr)
+        return SanctuaryBridgeConfig(enabled=False)
+
+
+_bridge_config = _load_bridge_config()
 
 
 # ---------------------------------------------------------------------------

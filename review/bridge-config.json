@@ -1,0 +1,15 @@
+{
+  "sanctuary_bridge": {
+    "enabled": true,
+    "identity_mappings": [
+      {
+        "concordia_agent_id": "newton-sovereign-agent",
+        "sanctuary_identity_id": "f62efc6fef6f2d5f4b4a988a2749813e",
+        "sanctuary_did": "did:key:z7QFhEcSSqGx-auV5BoEgzCWNybmS9u-aVjAC65BgixgUhA"
+      }
+    ],
+    "default_context": "concordia_negotiation",
+    "commitment_on_agree": true,
+    "reputation_on_receipt": true
+  }
+}
