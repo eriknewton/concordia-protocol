@@ -1,3 +1,5 @@
+<!-- mcp-name: io.github.eriknewton/concordia-protocol -->
+
 # Concordia Protocol
 
 **Structured deals between agents.**
