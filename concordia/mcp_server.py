@@ -990,6 +990,96 @@ def tool_session_receipt(
 
 
 # ---------------------------------------------------------------------------
+# Tool: session_receipt_envelope (trust-evidence-format v1.0.0)
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_session_receipt_envelope",
+    description=(
+        "Export a concluded session as a trust-evidence-format v1.0.0 envelope. "
+        "Produces an interoperable signed envelope compatible with multi-provider "
+        "trust evidence standards (A2A #1734). Supports EdDSA (default) and ES256 "
+        "signing. Only available for sessions in terminal state (agreed/rejected/expired)."
+    ),
+)
+def tool_session_receipt_envelope(
+    session_id: Annotated[str, "The concluded session to generate an envelope for"],
+    auth_token: Annotated[str, "Session-scoped auth token"],
+    provider_did: Annotated[str, "Provider DID for the envelope"] = "did:web:verascore.ai",
+    provider_kid: Annotated[str, "Key identifier for the signing key"] = "verascore-scoring-v1",
+    subject_did: Annotated[str | None, "Subject DID (defaults to session initiator)"] = None,
+    algorithm: Annotated[str, "Signing algorithm: 'EdDSA' (default) or 'ES256'"] = "EdDSA",
+    visibility: Annotated[str, "Envelope visibility: 'public', 'restricted', or 'private'"] = "public",
+    additional_references: Annotated[str | None, "JSON array of additional reference objects [{kind, urn, ...}]"] = None,
+) -> str:
+    """Export a concluded session as a trust-evidence-format v1.0.0 envelope."""
+    from .envelope import build_trust_evidence_envelope
+    from .signing import ES256KeyPair
+
+    if _auth.get_any_session_role(session_id, auth_token) is None:
+        return _auth_error(f"session={session_id}", context="concordia_session_receipt_envelope")
+    ctx = _store.get(session_id)
+    if ctx is None:
+        return json.dumps({"error": f"Session '{session_id}' not found."})
+
+    session = ctx.session
+
+    if not session.is_terminal:
+        return json.dumps({
+            "error": f"Session is in state '{session.state.value}'. "
+                     f"Envelopes can only be generated for concluded sessions "
+                     f"(agreed, rejected, or expired).",
+        })
+
+    try:
+        # Determine resolution mechanism
+        mechanism = ResolutionMechanism.DIRECT
+        if session.state in (SessionState.REJECTED, SessionState.EXPIRED):
+            mechanism = ResolutionMechanism.NONE
+
+        key_pairs = {
+            ctx.initiator.agent_id: ctx.initiator_key,
+            ctx.responder.agent_id: ctx.responder_key,
+        }
+
+        attestation = generate_attestation(
+            session,
+            key_pairs,
+            resolution_mechanism=mechanism,
+        )
+
+        # Select key pair and algorithm for envelope signing
+        if algorithm == "ES256":
+            envelope_key = ES256KeyPair.generate()
+        else:
+            envelope_key = ctx.initiator_key
+
+        # Default subject_did to session initiator
+        resolved_subject = subject_did or ctx.initiator.agent_id
+
+        # Parse additional references if provided
+        extra_refs = None
+        if additional_references:
+            extra_refs = json.loads(additional_references)
+            if not isinstance(extra_refs, list):
+                return json.dumps({"error": "additional_references must be a JSON array"})
+
+        envelope = build_trust_evidence_envelope(
+            attestation=attestation,
+            key_pair=envelope_key,
+            provider_did=provider_did,
+            provider_kid=provider_kid,
+            subject_did=resolved_subject,
+            references=extra_refs,
+            visibility=visibility,
+        )
+
+        return json.dumps(envelope, indent=2, default=str)
+    except (ValueError, RuntimeError, json.JSONDecodeError) as e:
+        return json.dumps({"error": str(e)})
+
+
+# ---------------------------------------------------------------------------
 # Tool: competence_proof
 # ---------------------------------------------------------------------------
 
@@ -2986,6 +3076,7 @@ def handle_tool_call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         "concordia_session_status": tool_session_status,
         "concordia_session_public_view": tool_session_public_view,
         "concordia_session_receipt": tool_session_receipt,
+        "concordia_session_receipt_envelope": tool_session_receipt_envelope,
         "concordia_competence_proof": tool_competence_proof,
         "concordia_verify_competence_proof": tool_verify_competence_proof,
         "concordia_ingest_attestation": tool_ingest_attestation,

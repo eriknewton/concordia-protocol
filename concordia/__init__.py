@@ -26,7 +26,8 @@ from .schema_validator import (
 )
 from .session import InvalidSignatureError, InvalidTransitionError, Session
 from .receipt_bundle import BundleSummary, ReceiptBundle, verify_bundle, screen_bundle
-from .signing import KeyPair, sign_message, verify_signature
+from .signing import KeyPair, ES256KeyPair, sign_message, verify_signature
+from .envelope import build_trust_evidence_envelope, verify_envelope_signature
 from .types import (
     AgentIdentity,
     BehaviorRecord,
@@ -65,8 +66,12 @@ __all__ = [
     "GENESIS_HASH",
     # Signing
     "KeyPair",
+    "ES256KeyPair",
     "sign_message",
     "verify_signature",
+    # Envelope
+    "build_trust_evidence_envelope",
+    "verify_envelope_signature",
     # Attestation
     "generate_attestation",
     # Receipt Bundles

@@ -1,6 +1,6 @@
-"""Tests for Ed25519 message signing and verification (§9.2)."""
+"""Tests for message signing and verification (§9.2)."""
 
-from concordia import KeyPair, sign_message, verify_signature
+from concordia import KeyPair, ES256KeyPair, sign_message, verify_signature
 
 
 class TestKeyPair:
@@ -236,3 +236,92 @@ class TestHashChain:
         buyer.send_offer(offer)
         seller.accept_offer()
         assert validate_chain(session.transcript)
+
+
+class TestES256KeyPair:
+    def test_generate(self):
+        kp = ES256KeyPair.generate()
+        assert kp.private_key is not None
+        assert kp.public_key is not None
+
+    def test_public_key_bytes(self):
+        kp = ES256KeyPair.generate()
+        pub = kp.public_key_bytes()
+        # Uncompressed P-256 point: 1 byte prefix + 32 bytes x + 32 bytes y = 65
+        assert len(pub) == 65
+        assert pub[0] == 0x04  # uncompressed point prefix
+
+    def test_public_key_b64(self):
+        kp = ES256KeyPair.generate()
+        b64 = kp.public_key_b64()
+        assert isinstance(b64, str)
+        assert len(b64) > 0
+
+    def test_different_keys(self):
+        kp1 = ES256KeyPair.generate()
+        kp2 = ES256KeyPair.generate()
+        assert kp1.public_key_bytes() != kp2.public_key_bytes()
+
+
+class TestES256SignAndVerify:
+    def test_sign_and_verify(self):
+        kp = ES256KeyPair.generate()
+        data = {"concordia": "0.1.0", "type": "negotiate.open", "body": {"terms": {}}}
+        sig = sign_message(data, kp, alg="ES256")
+        assert verify_signature(data, sig, kp.public_key, alg="ES256")
+
+    def test_tampered_data_fails(self):
+        kp = ES256KeyPair.generate()
+        data = {"concordia": "0.1.0", "type": "negotiate.open", "body": {"terms": {}}}
+        sig = sign_message(data, kp, alg="ES256")
+        data["type"] = "negotiate.accept"  # tamper
+        assert not verify_signature(data, sig, kp.public_key, alg="ES256")
+
+    def test_wrong_key_fails(self):
+        kp1 = ES256KeyPair.generate()
+        kp2 = ES256KeyPair.generate()
+        data = {"concordia": "0.1.0", "type": "negotiate.offer", "body": {}}
+        sig = sign_message(data, kp1, alg="ES256")
+        assert not verify_signature(data, sig, kp2.public_key, alg="ES256")
+
+    def test_signature_excludes_signature_field(self):
+        kp = ES256KeyPair.generate()
+        data = {
+            "concordia": "0.1.0",
+            "type": "negotiate.open",
+            "body": {},
+            "signature": "old_signature_should_be_ignored",
+        }
+        sig = sign_message(data, kp, alg="ES256")
+        data["signature"] = sig
+        assert verify_signature(data, sig, kp.public_key, alg="ES256")
+
+
+class TestCrossAlgorithmRejection:
+    """ES256 signatures must not verify as EdDSA and vice versa."""
+
+    def test_es256_sig_fails_eddsa_verify(self):
+        es_kp = ES256KeyPair.generate()
+        ed_kp = KeyPair.generate()
+        data = {"msg": "test cross-alg"}
+        sig = sign_message(data, es_kp, alg="ES256")
+        # Try verifying ES256 sig with EdDSA key — must fail
+        assert not verify_signature(data, sig, ed_kp.public_key, alg="EdDSA")
+
+    def test_eddsa_sig_fails_es256_verify(self):
+        ed_kp = KeyPair.generate()
+        es_kp = ES256KeyPair.generate()
+        data = {"msg": "test cross-alg"}
+        sig = sign_message(data, ed_kp, alg="EdDSA")
+        # Try verifying EdDSA sig with ES256 key — must fail
+        assert not verify_signature(data, sig, es_kp.public_key, alg="ES256")
+
+    def test_wrong_key_type_for_sign_raises(self):
+        import pytest
+        ed_kp = KeyPair.generate()
+        es_kp = ES256KeyPair.generate()
+        data = {"msg": "test"}
+        with pytest.raises(TypeError):
+            sign_message(data, ed_kp, alg="ES256")
+        with pytest.raises(TypeError):
+            sign_message(data, es_kp, alg="EdDSA")

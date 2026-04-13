@@ -1,7 +1,8 @@
-"""Ed25519 message signing and verification (§9.2).
+"""Message signing and verification (§9.2).
 
-Every Concordia message is signed with Ed25519. The signature covers the
-canonical JSON serialization of all fields except the signature itself.
+Concordia messages are signed with Ed25519 (default) or ES256 (ECDSA P-256).
+The signature covers the canonical JSON serialization of all fields except
+the signature itself.
 """
 
 from __future__ import annotations
@@ -12,10 +13,18 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
+from cryptography.hazmat.primitives.asymmetric.ec import (
+    ECDSA,
+    SECP256R1,
+    EllipticCurvePrivateKey,
+    EllipticCurvePublicKey,
+    generate_private_key,
+)
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
     Ed25519PublicKey,
 )
+from cryptography.hazmat.primitives.hashes import SHA256
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
     NoEncryption,
@@ -49,6 +58,36 @@ class KeyPair:
         """Return the raw 32-byte private key."""
         return self.private_key.private_bytes(
             Encoding.Raw, PrivateFormat.Raw, NoEncryption()
+        )
+
+
+@dataclass
+class ES256KeyPair:
+    """An ECDSA P-256 key pair for ES256 signing and verification."""
+
+    private_key: EllipticCurvePrivateKey
+    public_key: EllipticCurvePublicKey
+
+    @classmethod
+    def generate(cls) -> ES256KeyPair:
+        """Generate a fresh P-256 key pair."""
+        private = generate_private_key(SECP256R1())
+        return cls(private_key=private, public_key=private.public_key())
+
+    def public_key_bytes(self) -> bytes:
+        """Return the uncompressed public key bytes (X9.62 format)."""
+        return self.public_key.public_bytes(
+            Encoding.X962, PublicFormat.UncompressedPoint
+        )
+
+    def public_key_b64(self) -> str:
+        """Return the public key as a URL-safe base64 string."""
+        return base64.urlsafe_b64encode(self.public_key_bytes()).decode()
+
+    def private_key_bytes(self) -> bytes:
+        """Return the raw DER-encoded private key."""
+        return self.private_key.private_bytes(
+            Encoding.DER, PrivateFormat.PKCS8, NoEncryption()
         )
 
 
@@ -214,21 +253,51 @@ def canonical_json(data: dict[str, Any]) -> bytes:
     return _stable_stringify(data).encode("utf-8")
 
 
-def sign_message(data: dict[str, Any], key_pair: KeyPair) -> str:
-    """Sign a message dict, returning a base64-encoded Ed25519 signature.
+def sign_message(
+    data: dict[str, Any],
+    key_pair: KeyPair | ES256KeyPair,
+    alg: str = "EdDSA",
+) -> str:
+    """Sign a message dict, returning a base64url-encoded signature.
 
     The ``signature`` field, if present, is excluded before signing.
+
+    Args:
+        data: The message dict to sign.
+        key_pair: An Ed25519 KeyPair (for EdDSA) or ES256KeyPair (for ES256).
+        alg: ``"EdDSA"`` (default) or ``"ES256"``.
     """
     signable = {k: v for k, v in data.items() if k != "signature"}
     _check_no_special_floats(signable)
     payload = canonical_json(signable)
-    raw_sig = key_pair.private_key.sign(payload)
+
+    if alg == "ES256":
+        if not isinstance(key_pair, ES256KeyPair):
+            raise TypeError("ES256 requires an ES256KeyPair")
+        raw_sig = key_pair.private_key.sign(payload, ECDSA(SHA256()))
+    elif alg == "EdDSA":
+        if not isinstance(key_pair, KeyPair):
+            raise TypeError("EdDSA requires an Ed25519 KeyPair")
+        raw_sig = key_pair.private_key.sign(payload)
+    else:
+        raise ValueError(f"Unsupported algorithm: {alg}")
+
     return base64.urlsafe_b64encode(raw_sig).decode()
 
 
-def verify_signature(data: dict[str, Any], signature: str,
-                     public_key: Ed25519PublicKey) -> bool:
-    """Verify an Ed25519 signature over a message dict.
+def verify_signature(
+    data: dict[str, Any],
+    signature: str,
+    public_key: Ed25519PublicKey | EllipticCurvePublicKey,
+    alg: str = "EdDSA",
+) -> bool:
+    """Verify a signature over a message dict.
+
+    Args:
+        data: The message dict that was signed.
+        signature: Base64url-encoded signature.
+        public_key: The signer's public key.
+        alg: ``"EdDSA"`` (default) or ``"ES256"``.
 
     Returns True if valid, False if the signature does not match.
     """
@@ -236,7 +305,16 @@ def verify_signature(data: dict[str, Any], signature: str,
     payload = canonical_json(signable)
     raw_sig = base64.urlsafe_b64decode(signature)
     try:
-        public_key.verify(raw_sig, payload)
+        if alg == "ES256":
+            if not isinstance(public_key, EllipticCurvePublicKey):
+                return False
+            public_key.verify(raw_sig, payload, ECDSA(SHA256()))
+        elif alg == "EdDSA":
+            if not isinstance(public_key, Ed25519PublicKey):
+                return False
+            public_key.verify(raw_sig, payload)
+        else:
+            return False
         return True
     except Exception:
         return False
