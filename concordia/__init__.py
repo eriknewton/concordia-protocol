@@ -28,6 +28,16 @@ from .session import InvalidSignatureError, InvalidTransitionError, Session
 from .receipt_bundle import BundleSummary, ReceiptBundle, verify_bundle, screen_bundle
 from .signing import KeyPair, ES256KeyPair, sign_message, verify_signature
 from .envelope import build_trust_evidence_envelope, verify_envelope_signature
+from .mandate import sign_mandate, verify_mandate, validate_constraints
+from .models.mandate import (
+    Mandate,
+    MandateVerificationResult,
+    ValidityWindow,
+    TemporalMode,
+    MandateStatus,
+    DelegationLink,
+    MANDATE_JSON_SCHEMA,
+)
 from .types import (
     AgentIdentity,
     BehaviorRecord,
@@ -89,6 +99,17 @@ __all__ = [
     "validate_attestation",
     "is_valid_message",
     "is_valid_attestation",
+    # Mandate
+    "Mandate",
+    "MandateVerificationResult",
+    "ValidityWindow",
+    "TemporalMode",
+    "MandateStatus",
+    "DelegationLink",
+    "MANDATE_JSON_SCHEMA",
+    "sign_mandate",
+    "verify_mandate",
+    "validate_constraints",
     # Types
     "AgentIdentity",
     "BehaviorRecord",

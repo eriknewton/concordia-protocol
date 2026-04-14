@@ -60,6 +60,9 @@ Tools — Adoption (Viral Strategy §16, §17):
     concordia_degraded_message    — Record a round in a degraded interaction
     concordia_efficiency_report   — Compare degraded interaction to Concordia equivalent
 
+Tools — Mandate Verification (v0.4.0):
+    concordia_verify_mandate      — Verify a signed mandate credential (signature, temporal, constraints, delegation, revocation)
+
 Tools — Verascore Integration:
     concordia_verascore_report    — Report a concluded negotiation to Verascore for reputation scoring
 
@@ -97,6 +100,17 @@ from .receipt_bundle import (
     check_freshness,
 )
 from .verascore import VerascoreClient, compute_negotiation_competence
+from .mandate import (
+    sign_mandate,
+    verify_mandate,
+    validate_constraints,
+)
+from .models.mandate import (
+    Mandate,
+    MandateVerificationResult,
+    ValidityWindow,
+    TemporalMode,
+)
 from .sanctuary_bridge import (
     SanctuaryBridgeConfig,
     BridgeResult,
@@ -3052,6 +3066,89 @@ def tool_verascore_report(
 
 
 # ---------------------------------------------------------------------------
+# Tool: verify_mandate
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_verify_mandate",
+    description=(
+        "Verify a signed mandate credential. Checks issuer signature, "
+        "validity window (three-mode temporal: sequence/windowed/state_bound), "
+        "constraint schema compliance, delegation chain integrity, and "
+        "revocation status. Returns a structured verification result with "
+        "per-check pass/fail and any errors or warnings."
+    ),
+)
+def tool_verify_mandate(
+    mandate: Annotated[dict, "The mandate credential dict to verify"],
+    issuer_public_key_b64: Annotated[str, "Base64url-encoded issuer public key"],
+    algorithm: Annotated[str, "Signing algorithm: 'EdDSA' or 'ES256'"] = "EdDSA",
+    sequence_key: Annotated[str | None, "Sequence key for sequence-mode validity check"] = None,
+    state_active: Annotated[bool | None, "Whether state condition is active (state_bound mode)"] = None,
+    action: Annotated[dict | None, "Optional action dict to validate against constraints"] = None,
+    delegation_keys: Annotated[dict | None, "Map of agent_id -> base64url public key for chain verification"] = None,
+    check_revocation: Annotated[bool, "Whether to check revocation endpoint"] = True,
+) -> str:
+    """Verify a signed mandate credential against all five checks."""
+    import base64
+
+    # Reconstruct issuer public key
+    try:
+        key_bytes = base64.urlsafe_b64decode(issuer_public_key_b64)
+    except Exception as e:
+        return json.dumps({"error": f"Invalid issuer public key encoding: {e}"})
+
+    try:
+        if algorithm == "ES256":
+            from cryptography.hazmat.primitives.asymmetric.ec import (
+                EllipticCurvePublicKey,
+                SECP256R1,
+            )
+            from cryptography.hazmat.primitives.serialization import (
+                load_der_public_key,
+            )
+            # Try X9.62 uncompressed point format first
+            from cryptography.hazmat.primitives.asymmetric.ec import (
+                EllipticCurvePublicNumbers,
+            )
+            from cryptography.hazmat.primitives.asymmetric import ec
+            issuer_pub = ec.EllipticCurvePublicKey.from_encoded_point(SECP256R1(), key_bytes)
+        else:
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+            issuer_pub = Ed25519PublicKey.from_public_bytes(key_bytes)
+    except Exception as e:
+        return json.dumps({"error": f"Failed to load issuer public key: {e}"})
+
+    # Reconstruct delegation public keys if provided
+    deleg_pub_keys: dict[str, Any] = {}
+    if delegation_keys:
+        for agent_id, key_b64 in delegation_keys.items():
+            try:
+                dk_bytes = base64.urlsafe_b64decode(key_b64)
+                if algorithm == "ES256":
+                    from cryptography.hazmat.primitives.asymmetric import ec
+                    deleg_pub_keys[agent_id] = ec.EllipticCurvePublicKey.from_encoded_point(
+                        ec.SECP256R1(), dk_bytes
+                    )
+                else:
+                    deleg_pub_keys[agent_id] = Ed25519PublicKey.from_public_bytes(dk_bytes)
+            except Exception as e:
+                return json.dumps({"error": f"Invalid public key for '{agent_id}': {e}"})
+
+    result = verify_mandate(
+        mandate=mandate,
+        issuer_public_key=issuer_pub,
+        sequence_key=sequence_key,
+        state_active=state_active,
+        action=action,
+        delegation_public_keys=deleg_pub_keys if deleg_pub_keys else None,
+        check_revocation_status=check_revocation,
+    )
+
+    return json.dumps(result.to_dict(), indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
 # Programmatic access — for direct Python usage and testing
 # ---------------------------------------------------------------------------
 
@@ -3120,6 +3217,7 @@ def handle_tool_call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         "concordia_verify_receipt_bundle": tool_verify_receipt_bundle,
         "concordia_list_receipt_bundles": tool_list_receipt_bundles,
         "concordia_verascore_report": tool_verascore_report,
+        "concordia_verify_mandate": tool_verify_mandate,
         # Discovery tools (Phase 2)
         "agent_profile_publish": _discovery_tools.get("agent_profile_publish"),
         "agent_profile_get": _discovery_tools.get("agent_profile_get"),
