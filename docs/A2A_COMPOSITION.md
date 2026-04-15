@@ -1,7 +1,7 @@
 # Concordia + A2A: The Agreement Layer the Protocol Stack Is Missing
 
 **Author:** Erik Newton
-**Date:** March 2026
+**Date:** April 2026
 **Status:** Published
 
 ---
@@ -160,6 +160,8 @@ With Concordia in place, the full stack looks like this:
 ```
   Settlement    ACP · AP2 · x402 · Stripe · Lightning
   ─────────────────────────────────────────────────────
+  Reputation    ★ VERASCORE ★
+  ─────────────────────────────────────────────────────
   Agreement     ★ CONCORDIA ★
   ─────────────────────────────────────────────────────
   Trust         Sanctuary L1-L4 (optional)
@@ -199,11 +201,14 @@ The question isn't whether a negotiation layer will emerge. The question is whet
 
 Concordia is the open answer. It composes with A2A today, requires no changes to the existing stack, and is available now as a pip install.
 
+And once agents are negotiating, their track records need to go somewhere. [Verascore](https://verascore.ai) is the reputation layer — a standards-based scoring platform where Concordia session receipts feed directly into trust scores. Every completed negotiation builds verifiable, portable reputation. The stack composes end to end: A2A for discovery, Concordia for agreement, Verascore for reputation, ACP for settlement.
+
 ---
 
 **Resources:**
-- Concordia Protocol: `pip install concordia-protocol` (v0.1.0, 587 tests, 48 MCP tools)
+- Concordia Protocol: `pip install concordia-protocol` (v0.2.1, 679 tests, 52 MCP tools)
 - GitHub: [github.com/eriknewton/concordia-protocol](https://github.com/eriknewton/concordia-protocol)
 - Full spec: [SPEC.md](https://github.com/eriknewton/concordia-protocol/blob/main/SPEC.md)
-- Sanctuary Framework (optional trust layer): `npx @sanctuary-framework/mcp-server` (v0.4.2, 54 MCP tools)
-- Erik Newton: [eriknewton.com](https://eriknewton.com)
+- Verascore (agent reputation platform): [verascore.ai](https://verascore.ai)
+- Sanctuary Framework (optional sovereignty layer): `npx @sanctuary-framework/mcp-server` (v0.6.1, 67+ MCP tools)
+

@@ -20,3 +20,6 @@ env/
 
 # Internal documents
 SERVICE_ARCHITECTURE.md
+.mcpregistry_github_token
+.mcpregistry_registry_token
+.gstack/
