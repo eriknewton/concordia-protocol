@@ -28,6 +28,7 @@ from .session import InvalidSignatureError, InvalidTransitionError, Session
 from .receipt_bundle import BundleSummary, ReceiptBundle, verify_bundle, screen_bundle
 from .signing import KeyPair, ES256KeyPair, sign_message, verify_signature
 from .envelope import build_trust_evidence_envelope, verify_envelope_signature
+from .verascore import VerascoreClient, make_verascore_auto_hook
 from .mandate import sign_mandate, verify_mandate, validate_constraints
 from .models.mandate import (
     Mandate,
@@ -82,6 +83,9 @@ __all__ = [
     # Envelope
     "build_trust_evidence_envelope",
     "verify_envelope_signature",
+    # Verascore
+    "VerascoreClient",
+    "make_verascore_auto_hook",
     # Attestation
     "generate_attestation",
     "is_valid_now",

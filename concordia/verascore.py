@@ -12,12 +12,23 @@ no external data is transmitted without explicit user intent (CLAUDE.md rule #1)
 from __future__ import annotations
 
 import json
+import logging
+import os
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from .signing import KeyPair, canonical_json
+
+if TYPE_CHECKING:
+    from .session import Session
+
+_logger = logging.getLogger("concordia.verascore")
+
+VERASCORE_ENABLED_ENV = "VERASCORE_ENABLED"
+VERASCORE_ENDPOINT_ENV = "VERASCORE_ENDPOINT"
+DEFAULT_VERASCORE_ENDPOINT = "https://verascore.ai"
 
 
 def compute_negotiation_competence(
@@ -144,3 +155,131 @@ class VerascoreClient:
             return {
                 "error": f"Failed to connect to Verascore: {e.reason}",
             }
+
+
+# ---------------------------------------------------------------------------
+# WP5 v0.4.0 — Post-transition auto-hook
+# ---------------------------------------------------------------------------
+
+def _extract_session_data(session: "Session", agent_id: str) -> dict[str, Any]:
+    """Build the behavioral-signal payload for a concluded session.
+
+    Idempotency key for Verascore-side upsert is ``session_id``
+    (see Verascore ``prisma.concordiaReceipt.upsert({where: {sessionId}})``).
+    Behavioral fields only; no terms or prices, per CLAUDE.md rule #8.
+    """
+    from .types import OutcomeStatus, SessionState  # avoid circular import
+
+    behavior = session.get_behavior(agent_id)
+    counterparty_id = next(
+        (aid for aid in session.parties if aid != agent_id), ""
+    )
+    outcome_map = {
+        SessionState.AGREED: OutcomeStatus.AGREED.value,
+        SessionState.REJECTED: OutcomeStatus.REJECTED.value,
+        SessionState.EXPIRED: OutcomeStatus.EXPIRED.value,
+    }
+    outcome = outcome_map.get(session.state, "unknown")
+    terms_count = len(session.terms) if session.terms else 0
+    rounds = session.round_count
+    fulfillment_status = "pending"
+    competence = compute_negotiation_competence(
+        outcome=outcome,
+        fulfillment_status=fulfillment_status,
+        rounds=rounds,
+        concessions_made=behavior.concessions,
+    )
+    return {
+        "session_id": session.session_id,
+        "counterparty_did": counterparty_id,
+        "outcome": outcome,
+        "rounds": rounds,
+        "duration_seconds": session.duration_seconds(),
+        "terms_count": terms_count,
+        "concessions_made": behavior.concessions,
+        "fulfillment_status": fulfillment_status,
+        "negotiation_competence": competence,
+    }
+
+
+def make_verascore_auto_hook(
+    key_pair: KeyPair,
+    agent_did: str,
+    *,
+    report_on: tuple[str, ...] = ("agreed",),
+    endpoint: str | None = None,
+    client: VerascoreClient | None = None,
+) -> Callable[["Session"], None]:
+    """Return a terminal-state callback that auto-reports to Verascore.
+
+    Designed to be attached to ``Session.on_terminal``. Idempotent on the
+    Verascore side — keyed on ``session_id`` — so duplicate fires (e.g.
+    if both the auto-hook and an explicit call run) update rather than
+    double-count.
+
+    The callback is a no-op unless the ``VERASCORE_ENABLED`` env var is
+    exactly ``"true"`` at call time. Endpoint precedence: explicit
+    ``endpoint`` arg > ``VERASCORE_ENDPOINT`` env var > default
+    ``https://verascore.ai``.
+
+    Args:
+        key_pair: The reporting agent's Ed25519 key pair, used to sign
+            the outbound payload.
+        agent_did: The reporting agent's DID.
+        report_on: Terminal outcomes to report on. Defaults to
+            ``("agreed",)`` — only AGREED sessions generate a report.
+            Can be widened to include ``"rejected"`` / ``"expired"``
+            if the caller wants full lifecycle visibility.
+        endpoint: Optional base URL override. If provided, takes
+            precedence over the ``VERASCORE_ENDPOINT`` env var.
+        client: Optional injected ``VerascoreClient`` (for testing).
+
+    Returns:
+        A ``Callable[[Session], None]`` suitable for ``Session.on_terminal``.
+    """
+    def _hook(session: "Session") -> None:
+        if os.environ.get(VERASCORE_ENABLED_ENV) != "true":
+            return
+        from .types import SessionState
+
+        terminal_str_map = {
+            SessionState.AGREED: "agreed",
+            SessionState.REJECTED: "rejected",
+            SessionState.EXPIRED: "expired",
+        }
+        outcome_str = terminal_str_map.get(session.state)
+        if outcome_str is None or outcome_str not in report_on:
+            return
+        base = (
+            endpoint
+            or os.environ.get(VERASCORE_ENDPOINT_ENV)
+            or DEFAULT_VERASCORE_ENDPOINT
+        )
+        http_client = client or VerascoreClient(base_url=base)
+        session_data = _extract_session_data(session, agent_did)
+        try:
+            result = http_client.report_concordia_receipt(
+                session_data=session_data,
+                key_pair=key_pair,
+                agent_did=agent_did,
+            )
+        except Exception as exc:
+            _logger.warning(
+                "Verascore auto-report raised %s for session %s",
+                type(exc).__name__,
+                session.session_id,
+            )
+            return
+        if isinstance(result, dict) and "error" in result:
+            _logger.warning(
+                "Verascore auto-report failed for session %s: %s",
+                session.session_id,
+                result.get("error"),
+            )
+        else:
+            _logger.info(
+                "Verascore auto-report ok for session %s",
+                session.session_id,
+            )
+
+    return _hook

@@ -71,6 +71,7 @@ class Session:
         self,
         session_id: str | None = None,
         timing: TimingConfig | None = None,
+        on_terminal: Callable[["Session"], None] | None = None,
     ):
         self.session_id: str = session_id or f"ses_{uuid.uuid4().hex[:8]}"
         self.state: SessionState = SessionState.PROPOSED
@@ -86,6 +87,16 @@ class Session:
         self.round_count: int = 0
         self.reactivatable: bool = False
         self._terms: dict[str, dict[str, Any]] | None = None
+
+        # WP5 v0.4.0: optional callback fired when the session reaches a
+        # terminal state (AGREED / REJECTED / EXPIRED). Best-effort — any
+        # exception raised by the callback is swallowed so reputation
+        # reporting never blocks a state transition. Per the §9.6 hard
+        # constraint, reputation reporting is informational; commitment
+        # correctness is independent of the report succeeding. Publicly
+        # assignable so callers can attach it after Session construction.
+        self.on_terminal: Callable[["Session"], None] | None = on_terminal
+        self._terminal_fired: bool = False
 
         # Per-agent tracking for attestation generation
         self._behaviors: dict[str, BehaviorRecord] = {}
@@ -221,7 +232,23 @@ class Session:
         if new_state in (SessionState.AGREED, SessionState.REJECTED) and old_state != new_state:
             self.concluded_at = datetime.now(timezone.utc)
 
+        # WP5 v0.4.0: fire terminal callback (best-effort, idempotent)
+        if new_state in (SessionState.AGREED, SessionState.REJECTED) and old_state != new_state:
+            self._fire_terminal()
+
         return self.state
+
+    def _fire_terminal(self) -> None:
+        """Fire the on_terminal callback once, swallowing any exception."""
+        if self._terminal_fired or self.on_terminal is None:
+            return
+        self._terminal_fired = True
+        try:
+            self.on_terminal(self)
+        except Exception:
+            # Reputation reporting is best-effort. A failure here must
+            # not raise into the caller's transition path.
+            pass
 
     def expire(self) -> None:
         """Expire the session (TTL elapsed). Valid from PROPOSED or ACTIVE."""
@@ -231,6 +258,8 @@ class Session:
             )
         self.state = SessionState.EXPIRED
         self.concluded_at = datetime.now(timezone.utc)
+        # WP5 v0.4.0: fire terminal callback on expiry as well
+        self._fire_terminal()
 
     def make_dormant(self) -> None:
         """Move to DORMANT state (§5.1). Valid from REJECTED or EXPIRED."""
