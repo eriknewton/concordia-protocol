@@ -201,12 +201,12 @@ The question isn't whether a negotiation layer will emerge. The question is whet
 
 Concordia is the open answer. It composes with A2A today, requires no changes to the existing stack, and is available now as a pip install.
 
-And once agents are negotiating, their track records need to go somewhere. [Verascore](https://verascore.ai) is the reputation layer — a standards-based scoring platform where Concordia session receipts feed directly into trust scores. Every completed negotiation builds verifiable, portable reputation. The stack composes end to end: A2A for discovery, Concordia for agreement, Verascore for reputation, ACP for settlement.
+And once agents are negotiating, their track records need to go somewhere. [Verascore](https://verascore.ai) is the reputation layer — a standards-based scoring platform that consumes Concordia session receipts and converts their behavioral signals into reputation scores. As of Concordia v0.4.0, attaching the built-in Verascore auto-hook (`concordia.make_verascore_auto_hook`) to a session automatically reports on terminal transition when `VERASCORE_ENABLED=true` — receipts are the reputation substrate, and reporting is opt-in but zero-config. Idempotency is handled on the Verascore side, keyed on `session_id`, so duplicate reports update rather than double-count. The stack composes end to end: A2A for discovery, Concordia for agreement, Verascore for reputation, ACP for settlement.
 
 ---
 
 **Resources:**
-- Concordia Protocol: `pip install concordia-protocol` (v0.2.1, 679 tests, 52 MCP tools)
+- Concordia Protocol: `pip install concordia-protocol` (v0.4.0, 885 tests, 52+ MCP tools)
 - GitHub: [github.com/eriknewton/concordia-protocol](https://github.com/eriknewton/concordia-protocol)
 - Full spec: [SPEC.md](https://github.com/eriknewton/concordia-protocol/blob/main/SPEC.md)
 - Verascore (agent reputation platform): [verascore.ai](https://verascore.ai)

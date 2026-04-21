@@ -186,6 +186,17 @@
         { "$ref": "#/$defs/fulfillment_attestation" }
       ],
       "description": "Post-settlement fulfillment record. Null until settlement is complete. Updated after delivery/service completion."
+    },
+
+    "references": {
+      "type": "array",
+      "description": "Generalized references to other signed artifacts (receipts or CMPC primitives) that this attestation relates to. Added in v0.4.0 (WP2). Forward-compatible with CMPC v0.5 primitive types.",
+      "items": { "$ref": "#/$defs/reference" }
+    },
+
+    "validity_temporal": {
+      "$ref": "#/$defs/validity_temporal",
+      "description": "Optional temporal validity window for the attestation. Added in v0.4.0 (WP3)."
     }
   },
 
@@ -260,6 +271,65 @@
           "required": ["agent_id", "confirms_fulfillment", "signature"]
         }
       }
+    },
+
+    "reference": {
+      "type": "object",
+      "required": ["type", "id", "relationship"],
+      "description": "A generalized reference to another signed artifact. Added in v0.4.0 (WP2). Shape is forward-compatible with CMPC v0.5 primitive types.",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["receipt", "chain_session", "predicate", "mandate"],
+          "description": "Kind of artifact referenced. v0.4.0 emits only 'receipt'; other values reserved for CMPC v0.5."
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identifier of the referenced artifact. Interpretation depends on type."
+        },
+        "relationship": {
+          "type": "string",
+          "enum": ["supersedes", "extends", "fulfills", "references"],
+          "description": "Semantic relationship to the referenced artifact."
+        }
+      }
+    },
+
+    "validity_temporal": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["mode", "from", "until"],
+          "properties": {
+            "mode": { "const": "absolute" },
+            "from": { "type": "string", "format": "date-time" },
+            "until": { "type": "string", "format": "date-time" }
+          },
+          "description": "Absolute clock-bounded validity. Added in v0.4.0 (WP3)."
+        },
+        {
+          "type": "object",
+          "required": ["mode", "from", "duration_seconds"],
+          "properties": {
+            "mode": { "const": "relative" },
+            "from": { "type": "string", "format": "date-time" },
+            "duration_seconds": { "type": "integer", "minimum": 1 }
+          },
+          "description": "Validity is N seconds after the anchor timestamp. Added in v0.4.0 (WP3)."
+        },
+        {
+          "type": "object",
+          "required": ["mode", "start", "end", "duration_seconds"],
+          "properties": {
+            "mode": { "const": "window" },
+            "start": { "type": "string", "format": "date-time" },
+            "end": { "type": "string", "format": "date-time" },
+            "duration_seconds": { "type": "integer", "minimum": 1 }
+          },
+          "description": "Valid during any N-second window within [start, end]. Added in v0.4.0 (WP3)."
+        }
+      ]
     },
 
     "reputation_query": {
