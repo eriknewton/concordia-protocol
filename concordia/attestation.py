@@ -26,6 +26,40 @@ if TYPE_CHECKING:
 
 ATTESTATION_VERSION = "0.1.0"
 
+# WP2 v0.4.0: generalized references[] shape — forward-compat with CMPC v0.5
+# primitive types (chain_session, predicate, mandate). Only `receipt` is
+# emitted by generate_attestation() today; other `type` values are accepted
+# by the schema and treated as opaque refs until v0.5 adds type-specific
+# resolution.
+REFERENCE_TYPES = ("receipt", "chain_session", "predicate", "mandate")
+REFERENCE_RELATIONSHIPS = ("supersedes", "extends", "fulfills", "references")
+
+
+def _validate_reference(ref: Any, index: int) -> dict[str, Any]:
+    """Validate a single reference dict against the {type, id, relationship} shape."""
+    if not isinstance(ref, dict):
+        raise ValueError(f"references[{index}] must be a dict, got {type(ref).__name__}")
+    missing = [k for k in ("type", "id", "relationship") if k not in ref]
+    if missing:
+        raise ValueError(
+            f"references[{index}] missing required keys: {missing}"
+        )
+    ref_type = ref["type"]
+    ref_id = ref["id"]
+    relationship = ref["relationship"]
+    if ref_type not in REFERENCE_TYPES:
+        raise ValueError(
+            f"references[{index}].type {ref_type!r} not in {REFERENCE_TYPES}"
+        )
+    if not isinstance(ref_id, str) or not ref_id:
+        raise ValueError(f"references[{index}].id must be a non-empty string")
+    if relationship not in REFERENCE_RELATIONSHIPS:
+        raise ValueError(
+            f"references[{index}].relationship {relationship!r} "
+            f"not in {REFERENCE_RELATIONSHIPS}"
+        )
+    return {"type": ref_type, "id": ref_id, "relationship": relationship}
+
 
 def _map_state_to_outcome(state: SessionState) -> OutcomeStatus:
     """Map a terminal session state to an attestation outcome status."""
@@ -44,6 +78,7 @@ def generate_attestation(
     category: str | None = None,
     value_range: str | None = None,
     resolution_mechanism: ResolutionMechanism = ResolutionMechanism.DIRECT,
+    references: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Generate a reputation attestation from a concluded session.
 
@@ -53,6 +88,16 @@ def generate_attestation(
         category: Optional transaction category (e.g. 'electronics.cameras').
         value_range: Optional value bucket (e.g. '1000-5000_USD').
         resolution_mechanism: How agreement was reached.
+        references: Optional list of references to other signed artifacts
+            that this attestation extends, supersedes, fulfills, or
+            references. Each entry must be a dict with keys
+            ``{type, id, relationship}``. ``type`` ∈
+            ``{receipt, chain_session, predicate, mandate}``.
+            ``relationship`` ∈
+            ``{supersedes, extends, fulfills, references}``. The
+            ``chain_session``, ``predicate``, and ``mandate`` types are
+            reserved for CMPC primitives (v0.5) and treated as opaque in
+            v0.4.0. Added in v0.4.0 (WP2).
 
     Returns:
         A dict conforming to the attestation schema (§9.6.2).
@@ -109,6 +154,14 @@ def generate_attestation(
     if value_range:
         meta["value_range"] = value_range
 
+    # WP2 v0.4.0: validate and normalize references[] if supplied
+    if references:
+        normalized_refs = [
+            _validate_reference(ref, i) for i, ref in enumerate(references)
+        ]
+    else:
+        normalized_refs = []
+
     attestation: dict[str, Any] = {
         "concordia_attestation": ATTESTATION_VERSION,
         "attestation_id": f"att_{uuid.uuid4().hex[:8]}",
@@ -119,6 +172,7 @@ def generate_attestation(
         "meta": meta,
         "transcript_hash": transcript_hash,
         "fulfillment": None,
+        "references": normalized_refs,
     }
 
     # Attach a plaintext 4-line summary for quick human/agent inspection.
