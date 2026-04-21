@@ -6,7 +6,7 @@ An open standard for structured negotiation between autonomous agents.
 __version__ = "0.2.1"
 
 from .agent import Agent
-from .attestation import generate_attestation
+from .attestation import generate_attestation, is_valid_now
 from .discovery import Have, Match, Want, find_matches
 from .message import GENESIS_HASH, build_envelope, compute_hash, validate_chain
 from .offer import (
@@ -84,6 +84,7 @@ __all__ = [
     "verify_envelope_signature",
     # Attestation
     "generate_attestation",
+    "is_valid_now",
     # Receipt Bundles
     "ReceiptBundle",
     "BundleSummary",
