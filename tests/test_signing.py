@@ -325,3 +325,41 @@ class TestCrossAlgorithmRejection:
             sign_message(data, ed_kp, alg="ES256")
         with pytest.raises(TypeError):
             sign_message(data, es_kp, alg="EdDSA")
+
+
+class TestResolveAlgorithm:
+    """WP1 v0.4.0: resolve_algorithm() precedence — explicit > env > default."""
+
+    def test_default_is_eddsa(self, monkeypatch):
+        monkeypatch.delenv("CONCORDIA_JWS_ALG", raising=False)
+        from concordia.signing import resolve_algorithm
+        assert resolve_algorithm() == "EdDSA"
+
+    def test_env_var_overrides_default(self, monkeypatch):
+        monkeypatch.setenv("CONCORDIA_JWS_ALG", "ES256")
+        from concordia.signing import resolve_algorithm
+        assert resolve_algorithm() == "ES256"
+
+    def test_explicit_arg_overrides_env_var(self, monkeypatch):
+        monkeypatch.setenv("CONCORDIA_JWS_ALG", "ES256")
+        from concordia.signing import resolve_algorithm
+        assert resolve_algorithm("EdDSA") == "EdDSA"
+
+    def test_empty_env_var_falls_through_to_default(self, monkeypatch):
+        monkeypatch.setenv("CONCORDIA_JWS_ALG", "")
+        from concordia.signing import resolve_algorithm
+        assert resolve_algorithm() == "EdDSA"
+
+    def test_unsupported_algorithm_raises(self, monkeypatch):
+        monkeypatch.delenv("CONCORDIA_JWS_ALG", raising=False)
+        from concordia.signing import resolve_algorithm
+        import pytest
+        with pytest.raises(ValueError):
+            resolve_algorithm("RS256")
+
+    def test_unsupported_env_var_raises(self, monkeypatch):
+        monkeypatch.setenv("CONCORDIA_JWS_ALG", "HS256")
+        from concordia.signing import resolve_algorithm
+        import pytest
+        with pytest.raises(ValueError):
+            resolve_algorithm()

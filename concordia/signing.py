@@ -10,8 +10,31 @@ from __future__ import annotations
 import base64
 import json
 import math
+import os
 from dataclasses import dataclass
 from typing import Any
+
+SUPPORTED_JWS_ALGORITHMS = ("EdDSA", "ES256")
+JWS_ALG_ENV_VAR = "CONCORDIA_JWS_ALG"
+DEFAULT_JWS_ALGORITHM = "EdDSA"
+
+
+def resolve_algorithm(explicit: str | None = None) -> str:
+    """Resolve the JWS signing algorithm following the v0.4.0 precedence rule.
+
+    Precedence: explicit argument > ``CONCORDIA_JWS_ALG`` env var > default
+    (``EdDSA``). Raises ``ValueError`` if the resolved value is not one of
+    the supported algorithms.
+    """
+    candidate = explicit if explicit is not None else os.environ.get(JWS_ALG_ENV_VAR)
+    if candidate is None or candidate == "":
+        candidate = DEFAULT_JWS_ALGORITHM
+    if candidate not in SUPPORTED_JWS_ALGORITHMS:
+        raise ValueError(
+            f"Unsupported JWS algorithm {candidate!r}; "
+            f"supported: {SUPPORTED_JWS_ALGORITHMS}"
+        )
+    return candidate
 
 from cryptography.hazmat.primitives.asymmetric.ec import (
     ECDSA,
