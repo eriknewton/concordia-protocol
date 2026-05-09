@@ -2,11 +2,11 @@
 
 ### An Open Standard for Structured Negotiation Between Autonomous Agents
 
-**Version:** 0.1.0-draft  
-**Status:** Draft  
+**Version:** 0.5.0-draft  
+**Status:** Draft (v0.5 ratification of v0.4.0 references[] shape; see §11.5)  
 **License:** Apache 2.0  
 **Authors:** Erik Newton
-**Date:** March 2026
+**Date:** May 2026
 
 ---
 
@@ -834,6 +834,8 @@ Agents with zero-knowledge proof capabilities can go further: proving aggregate 
 
 The self-custodied path and the service-mediated path (§9.6.7) are complementary. Neither is privileged. Reputation services add value through aggregation, Sybil detection, and scoring — but they are never gatekeepers to participation.
 
+Attestations MAY include a `references[]` field that links them to prior attestations, mandates, or other CMPC primitives. The normative shape and relationship vocabulary are defined in §11.5; verifiers consuming attestation-level references should read §11.5.4 for the layering boundary between content-semantic linkage (here) and envelope-level cryptographic provenance.
+
 #### 9.6.7 Reputation Query Interface
 
 Concordia defines a standard query format for agents to request reputation information about a counterparty *before* entering a negotiation. The protocol specifies the query and response shapes; it does not specify how scores are computed.
@@ -976,6 +978,10 @@ agreement.transcript_hash   →  metadata.negotiation_ref
 
 The Concordia agreement serves as the "intent mandate" in AP2's authorization flow. The agreed terms define the scope and limits of what the payment agent is authorized to do. For x402 micropayments, the agreed price maps directly to the payment amount.
 
+### 10.5 Cross-Protocol References
+
+Concordia artifacts (attestations and envelopes) link to artifacts in other protocols via the `references[]` surface defined in §11.5. URN-shaped identifiers per §11.5.7 enable resolution to A2A messages, AP2 mandates, x402 payment proofs, and ERC-8004 reputation entries without ambiguity. Verifiers consuming cross-protocol references should respect the layering boundary in §11.5.4.
+
 ---
 
 ## 11. Extension Points
@@ -1013,6 +1019,160 @@ Extensions are declared in the `negotiate.open` message and must be accepted by 
 | `concordia.ext.multiparty` | Negotiations with 3+ parties (e.g., supply chain coordination) |
 
 *Note: Reputation attestations are a core protocol feature (§9.6), not an extension. The attestation format is part of every Concordia implementation. Reputation **scoring** is provided by external services that consume attestations.*
+
+### 11.5 Reference Linkages
+
+Concordia supports two distinct `references[]` surfaces, layered for two distinct purposes. v0.5 ratifies the shape introduced in v0.4.0 and documents the layering boundary explicitly so verifiers, downstream consumers, and CMPC primitives that build on this surface have a single normative reference.
+
+#### 11.5.1 Purpose
+
+`references[]` is the standard mechanism by which a Concordia artifact (an attestation or a transport envelope) declares a relationship to other signed artifacts. A reference is not a free-text annotation; it is a structured pointer with a typed relationship. Two distinct surfaces exist because two distinct concerns coexist:
+
+1. The **envelope-level** surface expresses cryptographic provenance and supersession of envelopes (e.g., "this envelope replaces an earlier envelope that carried an older payload version"). Envelope-level references resolve to verification events, not content.
+2. The **attestation-level** surface expresses content-semantic linkage between signed attestation bodies (e.g., "this attestation extends a prior attestation by the same agent in the same negotiation context"). Attestation-level references resolve to content relationships, not verification events.
+
+Both surfaces are forward-compatible with CMPC v0.5 primitive types (chain_session, predicate, mandate). They are distinct from `validity_temporal` (which expresses an artifact's own time bounds) and from envelope-level chain hashes (which express transcript integrity within a single negotiation).
+
+#### 11.5.2 Envelope-level references[]
+
+Envelope-level references appear on transport envelopes (e.g., the trust-evidence-format v1.0.0 envelope produced by Concordia for cross-protocol consumption per #1734). The envelope-level `references[]` field is an array of objects with the shape:
+
+```json
+{
+  "kind": "source_session",
+  "urn": "urn:concordia:session:ses_9d4e8f01",
+  "verified_at": "2026-05-11T12:00:00Z",
+  "verifier_did": "did:web:example.org:agent-42",
+  "hash": "sha256:abc123..."
+}
+```
+
+Required keys on every envelope-level reference: `kind`, `urn`. The pair `verified_at` plus `verifier_did` plus `hash` is expected for verification-grade references but not enforced by the schema, since some reference kinds (e.g., `chain_state`, `mandate_proof`) may not have a verifier. Verifiers consuming envelope-level references SHOULD treat the reference as a verification event: the urn identifies the artifact, and the hash plus signer plus timestamp establishes that the verifier saw the artifact at that point in time.
+
+Envelope-level references are populated automatically where possible. Concordia's trust-evidence-format envelope auto-populates a `source_session` reference from the attestation's session_id and transcript_hash. Implementations MAY append additional references for cross-protocol linkages (A2A messages, AP2 mandates, x402 payment proofs, ERC-8004 reputation entries).
+
+#### 11.5.3 Attestation-level references[]
+
+Attestation-level references appear inside the signed attestation body (the artifact described by §9.6). The attestation-level `references[]` field is an array of objects with the shape:
+
+```json
+{
+  "type": "receipt",
+  "id": "att_123e4567-e89b-12d3-a456-426614174000",
+  "relationship": "extends"
+}
+```
+
+Required keys on every attestation-level reference: `type`, `id`, `relationship`. See §11.5.6 for the normative schema fragment. Attestation-level references express content-semantic linkage: the new attestation builds on, supersedes, fulfills, or merely refers to the artifact named by `id`. Verifiers consuming attestation-level references SHOULD treat the reference as a content-level claim about prior work, not as a verification event.
+
+Attestation-level references are populated by the issuer at attestation generation time. Concordia's `generate_attestation()` accepts an optional `references` parameter; the v0.4.0 implementation emits only `type: "receipt"` references today, but the schema accepts the full v0.5 type vocabulary (receipt, chain_session, predicate, mandate) as opaque references in v0.4.x and as resolved references in v0.5+ implementations.
+
+#### 11.5.4 Layering Boundary
+
+The two surfaces serve different purposes and MUST NOT be conflated:
+
+- **Envelope-level references are cryptographic.** A consumer reading envelope-level references for content semantics has a model error.
+- **Attestation-level references are semantic.** A consumer reading attestation-level references for cryptographic verification has a model error of the same class.
+
+Tooling MAY surface both layers in a unified view (e.g., a "related artifacts" panel that aggregates references from both surfaces). When tooling does this, it MUST preserve the source layer in any verification step: an envelope-level reference verified by hash plus signer plus timestamp is a different verification claim than an attestation-level reference verified by the issuer's signature on the attestation body. A unified UI MAY present both, but the verification logic MUST keep them distinct.
+
+This layering boundary is the canonical reconciliation of the v0.4.0 follow-up (c) layering question. v0.5 ratifies the shipped two-surface design rather than collapsing the two into a single canonical mapping, because the two surfaces resolve to genuinely different verification concerns.
+
+#### 11.5.5 Relationship Vocabulary
+
+The attestation-level reference object's `relationship` field uses a normative four-value vocabulary. Each value carries a normative obligation on verifiers:
+
+| Relationship | Conformance | Meaning | Verifier Obligation |
+|--------------|-------------|---------|---------------------|
+| `supersedes` | MUST | The new artifact replaces the referenced one. | Verifiers SHOULD treat the referenced artifact as deprecated when both exist. Agents SHOULD prefer the superseding artifact for current state. |
+| `extends` | SHOULD | The new artifact builds on the referenced one without replacing it. | Verifiers SHOULD chain the referenced artifact's commitments forward. Both artifacts remain authoritative. |
+| `fulfills` | SHOULD | The new artifact discharges an obligation declared by the referenced one (e.g., a payment fulfilling a mandate, an attestation fulfilling a commitment). | Verifiers SHOULD link payment, performance, or attestation evidence to the original mandate or commitment. |
+| `references` | MAY | Weak generic association. Use ONLY when no stronger relationship applies. | Verifiers MAY ignore. SHOULD warn when this weak relationship is used while a known stronger alternative is available. |
+
+Implementations MUST preserve unknown relationship values as opaque strings (forward-compat for v0.x extension). Implementations SHOULD warn when the weak `references` relationship is used in contexts where one of the three stronger relationships applies more naturally; this prevents semantic drift toward the weakest possible binding.
+
+#### 11.5.6 Reference Object Shape (Normative)
+
+The attestation-level reference object normative JSON Schema fragment:
+
+```json
+{
+  "$id": "urn:concordia:schema:reference:v0.5",
+  "type": "object",
+  "required": ["id", "type", "relationship"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Identifier of the referenced artifact. URN-shaped where possible (see 11.5.7)."
+    },
+    "type": {
+      "type": "string",
+      "enum": ["receipt", "chain_session", "predicate", "mandate"],
+      "description": "Kind of artifact referenced. v0.4.x emits only 'receipt'; v0.5+ may emit the full vocabulary."
+    },
+    "relationship": {
+      "type": "string",
+      "enum": ["supersedes", "extends", "fulfills", "references"],
+      "description": "Semantic relationship per 11.5.5."
+    },
+    "version": {
+      "type": "string",
+      "description": "Optional. Version of the referenced artifact when known."
+    },
+    "signed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Optional. Timestamp of the referenced artifact's signature when known."
+    },
+    "signer_did": {
+      "type": "string",
+      "description": "Optional. DID of the signer of the referenced artifact when known."
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Optional. Forward-compatibility map for v0.x extension keys. Implementations SHOULD preserve unknown keys verbatim across roundtrips."
+    }
+  }
+}
+```
+
+The canonical machine-readable schema lives at `schemas/reference.schema.json` in the Concordia repository.
+
+#### 11.5.7 Cross-Protocol Linkage
+
+Reference identifiers SHOULD be URN-shaped to enable cross-protocol resolution without ambiguity:
+
+| URN Scheme | Use |
+|------------|-----|
+| `urn:concordia:attestation:<id>` | Reference to a Concordia attestation by attestation_id. |
+| `urn:concordia:mandate:<id>` | Reference to a Concordia mandate primitive (concordia.models.mandate). |
+| `urn:concordia:offer:<id>` | Reference to a Concordia offer (§6). |
+| `urn:concordia:session:<id>` | Reference to a Concordia session by session_id. |
+
+For cross-protocol linkages (e.g., to A2A messages, AP2 mandates, x402 payment proofs, ERC-8004 reputation entries), implementations SHOULD use the linked protocol's URN scheme:
+
+| Linked Protocol | URN Scheme Example |
+|-----------------|-------------------|
+| A2A | `urn:a2a:task:<task_id>` |
+| AP2 | `urn:ap2:mandate:<mandate_id>` |
+| x402 | `urn:x402:payment:<tx_hash>` |
+| ERC-8004 | `urn:erc8004:reputation:<entry_id>` |
+
+Non-URN identifiers are accepted by the schema (the `id` field is a free-form non-empty string) but receive no protocol-level resolution support. Implementations MAY emit non-URN identifiers for backward-compatibility with existing artifact id formats; URN-shaping is RECOMMENDED for new emissions.
+
+#### 11.5.8 Conformance
+
+A v0.5-conforming implementation:
+
+- MUST validate `references[]` per the schema fragment in 11.5.6 at attestation generation and at attestation verification.
+- MUST emit clear error text for malformed entries that maps to the specific 11.5.x section that defines the violated invariant (e.g., "references[2].relationship 'foo' not in {supersedes, extends, fulfills, references} per SPEC §11.5.5").
+- MUST preserve unknown relationship values as opaque strings rather than rejecting them, per 11.5.5 forward-compat.
+- MUST preserve unknown reference type values as opaque strings rather than rejecting them, per 11.5.3 forward-compat.
+- MUST preserve unknown keys under `extensions` verbatim across roundtrips.
+- SHOULD warn when the weak `references` relationship is used in contexts where a stronger relationship applies, per 11.5.5.
+- SHOULD use URN-shaped identifiers per 11.5.7.
+- MUST NOT conflate envelope-level references and attestation-level references in any verification step, per 11.5.4.
 
 ---
 
