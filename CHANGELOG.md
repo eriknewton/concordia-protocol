@@ -7,9 +7,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-## [0.5.0] - TBD: references[] ratification + layering boundary
+## [0.5.0] - 2026-05-11: references[] ratification + Python SDK alignment
 
-### Added
+### Spec ratification (Beta-1, PR #6)
 
 - **SPEC §11.5 Reference linkages.** Normative spec for the two-layer
   `references[]` shape shipped in v0.4.0. Layering boundary documented
@@ -35,17 +35,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `signed_at`, `signer_did`, and `extensions` keys are now schema-allowed
   on each attestation-level reference entry. v0.4.x emitters that omit
   these continue to validate cleanly.
-
-### Changed
-
 - `schemas/attestation.schema.json` `$id` bumped to
   `urn:concordia:schema:attestation:v0.5`. Embedded `reference` `$def`
   mirrors `schemas/reference.schema.json`.
 - Root `attestation.schema.json` synced byte-for-byte with
-  `schemas/attestation.schema.json` (the SDK loads `schemas/`; the root
-  copy had drifted from v0.1.0 and is now back in sync).
+  `schemas/attestation.schema.json`.
 - SPEC.md frontmatter bumped to `0.5.0-draft`.
 - §9.6 and §10 cross-link to §11.5 for layered reference semantics.
+
+### Python SDK alignment (Beta-2, this PR)
+
+- `pyproject.toml` version bumped from `0.4.0` to `0.5.0`.
+- `concordia.__version__` bumped from `0.4.0` to `0.5.0`.
+- `concordia.attestation._validate_reference()` error text aligned with
+  SPEC §11.5 section references for operator legibility (citing
+  §11.5.6 for shape and §11.5.5 for relationship vocabulary).
+- `concordia.attestation._validate_reference()` now preserves unknown
+  `type` and `relationship` values as opaque strings per SPEC §11.5.8
+  MUST forward-compat clause. v0.4.x callers passing only canonical
+  values are unchanged. Callers passing extension values previously got
+  `ValueError` and now roundtrip cleanly. This is strictly more
+  permissive; existing tests pass unchanged.
+- Optional reference-object fields (`version`, `signed_at`,
+  `signer_did`, `extensions`) are now passed through `_validate_reference()`
+  on the attestation generation path so callers can roundtrip extension
+  data per SPEC §11.5.6.
+- `concordia.attestation.generate_attestation()` docstring updated to
+  point at SPEC §11.5 with one-line summary of the layering boundary.
+- `concordia.envelope.build_trust_evidence_envelope()` envelope-level
+  reference validation cites SPEC §11.5.2 in its error text and inline
+  comments document the §11.5.4 layering boundary.
 
 ### Closed
 
@@ -55,17 +74,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   document the layering boundary explicitly. Both envelope-level and
   attestation-level surfaces remain; the boundary between them is now
   normative.
+- v0.4.0 follow-up (b) CHANGELOG backfill (this entry consolidates the
+  Beta-1 + Beta-2 surface; Beta-3 PR will add the published-tarball
+  release notes).
 
 ### Notes
 
-This is a spec-ratification release. No Python SDK code changes land in
-this entry. The v0.4.0 implementation generalization is what v0.5
-formalizes; validators continue to accept all v0.4.0-shaped attestations.
-v0.5 is forward-compatible with v0.4.x emitters.
+No breaking API changes. v0.4.0-shaped attestations continue to
+validate cleanly against the v0.5 JSON Schema (forward-compat is
+structural: every v0.4 reference is a valid v0.5 reference; the v0.5
+optional fields are additive and absent on v0.4 emissions).
 
-Beta-2 (separate PR) adds Python SDK normative assertions and
-error-text alignment with §11.5 sections. Beta-3 (separate PR) cuts the
-PyPI v0.5.0 release.
+Beta-3 (separate PR) cuts the PyPI v0.5.0 release with tag and
+GitHub Release.
 
 ## [0.4.0] - 2026-04-20 — CMPC-ready receipt primitives + Verascore auto-hook
 

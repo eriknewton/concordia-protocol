@@ -26,13 +26,15 @@ if TYPE_CHECKING:
 
 ATTESTATION_VERSION = "0.1.0"
 
-# WP2 v0.4.0: generalized references[] shape — forward-compat with CMPC v0.5
-# primitive types (chain_session, predicate, mandate). Only `receipt` is
-# emitted by generate_attestation() today; other `type` values are accepted
-# by the schema and treated as opaque refs until v0.5 adds type-specific
-# resolution.
+# v0.5 SPEC §11.5: generalized attestation-level references[] shape. Per
+# §11.5.6 the four canonical type values are receipt, chain_session,
+# predicate, mandate. Per §11.5.5 the four canonical relationship values
+# are supersedes, extends, fulfills, references. Per §11.5.8 (MUST) unknown
+# values for either field are preserved as opaque strings rather than
+# rejected, for forward-compat with v0.x extensions.
 REFERENCE_TYPES = ("receipt", "chain_session", "predicate", "mandate")
 REFERENCE_RELATIONSHIPS = ("supersedes", "extends", "fulfills", "references")
+WEAK_RELATIONSHIP = "references"
 
 # WP3 v0.4.0: three-mode validity_temporal on attestations. Distinct from the
 # models/mandate.py::ValidityWindow (sequence/windowed/state_bound) which is
@@ -156,29 +158,55 @@ def is_valid_now(
 
 
 def _validate_reference(ref: Any, index: int) -> dict[str, Any]:
-    """Validate a single reference dict against the {type, id, relationship} shape."""
+    """Validate a single attestation-level reference per SPEC §11.5.
+
+    Required keys ``type``, ``id``, ``relationship`` are enforced
+    structurally per §11.5.6. ``type`` and ``relationship`` values outside
+    the canonical vocabularies (§11.5.5, §11.5.6) are preserved as opaque
+    strings per the §11.5.8 MUST forward-compat clause; the schema enum
+    constrains write-side emissions but read-side validators MUST NOT
+    reject unknown values. Optional keys (``version``, ``signed_at``,
+    ``signer_did``, ``extensions``) are passed through unchanged when
+    present so callers can roundtrip extension data per §11.5.6.
+    """
     if not isinstance(ref, dict):
-        raise ValueError(f"references[{index}] must be a dict, got {type(ref).__name__}")
+        raise ValueError(
+            f"references[{index}] must be a dict, got {type(ref).__name__} "
+            f"per SPEC §11.5.6"
+        )
     missing = [k for k in ("type", "id", "relationship") if k not in ref]
     if missing:
         raise ValueError(
-            f"references[{index}] missing required keys: {missing}"
+            f"references[{index}] missing required keys {missing} "
+            f"per SPEC §11.5.6 (id, type, relationship)"
         )
     ref_type = ref["type"]
     ref_id = ref["id"]
     relationship = ref["relationship"]
-    if ref_type not in REFERENCE_TYPES:
+    if not isinstance(ref_type, str) or not ref_type:
         raise ValueError(
-            f"references[{index}].type {ref_type!r} not in {REFERENCE_TYPES}"
+            f"references[{index}].type must be a non-empty string "
+            f"per SPEC §11.5.6"
         )
     if not isinstance(ref_id, str) or not ref_id:
-        raise ValueError(f"references[{index}].id must be a non-empty string")
-    if relationship not in REFERENCE_RELATIONSHIPS:
         raise ValueError(
-            f"references[{index}].relationship {relationship!r} "
-            f"not in {REFERENCE_RELATIONSHIPS}"
+            f"references[{index}].id must be a non-empty string "
+            f"per SPEC §11.5.6"
         )
-    return {"type": ref_type, "id": ref_id, "relationship": relationship}
+    if not isinstance(relationship, str) or not relationship:
+        raise ValueError(
+            f"references[{index}].relationship must be a non-empty string "
+            f"per SPEC §11.5.6"
+        )
+    normalized: dict[str, Any] = {
+        "type": ref_type,
+        "id": ref_id,
+        "relationship": relationship,
+    }
+    for optional_key in ("version", "signed_at", "signer_did", "extensions"):
+        if optional_key in ref:
+            normalized[optional_key] = ref[optional_key]
+    return normalized
 
 
 def _map_state_to_outcome(state: SessionState) -> OutcomeStatus:
@@ -209,16 +237,17 @@ def generate_attestation(
         category: Optional transaction category (e.g. 'electronics.cameras').
         value_range: Optional value bucket (e.g. '1000-5000_USD').
         resolution_mechanism: How agreement was reached.
-        references: Optional list of references to other signed artifacts
-            that this attestation extends, supersedes, fulfills, or
-            references. Each entry must be a dict with keys
-            ``{type, id, relationship}``. ``type`` ∈
-            ``{receipt, chain_session, predicate, mandate}``.
-            ``relationship`` ∈
-            ``{supersedes, extends, fulfills, references}``. The
-            ``chain_session``, ``predicate``, and ``mandate`` types are
-            reserved for CMPC primitives (v0.5) and treated as opaque in
-            v0.4.0. Added in v0.4.0 (WP2).
+        references: Optional list of attestation-level references per
+            SPEC §11.5. Each entry is a dict with required keys
+            ``{type, id, relationship}`` and optional keys
+            ``{version, signed_at, signer_did, extensions}`` per §11.5.6.
+            Canonical ``type`` values: receipt, chain_session, predicate,
+            mandate (§11.5.6). Canonical ``relationship`` values:
+            supersedes, extends, fulfills, references (§11.5.5).
+            Implementations preserve unknown values as opaque strings per
+            §11.5.8 forward-compat. The layering boundary against
+            envelope-level references is documented in §11.5.4. Added in
+            v0.4.0 (WP2); ratified in v0.5 (SPEC §11.5).
         validity_temporal: Optional temporal validity window. Tagged
             union with three modes:
             ``{mode: "absolute", from, until}`` for fixed clock bounds,

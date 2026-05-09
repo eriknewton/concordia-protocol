@@ -1,7 +1,7 @@
-"""Tests for generalized attestation references (WP2, v0.4.0).
+"""Tests for generalized attestation-level references per SPEC §11.5.
 
-Covers the {type, id, relationship} reference shape on Concordia attestations.
-Shape is forward-compatible with CMPC v0.5 primitive types.
+Covers the {type, id, relationship} reference shape on Concordia
+attestations introduced in v0.4.0 (WP2) and ratified by v0.5 (SPEC §11.5).
 """
 
 import pytest
@@ -102,18 +102,39 @@ class TestReferencesCMPCForwardCompat:
 
 
 class TestReferencesValidation:
-    def test_unknown_type_rejected(self, agreed_session):
+    def test_unknown_type_preserved_per_spec_11_5_8(self, agreed_session):
+        """Per SPEC §11.5.8 MUST: unknown type values preserved as opaque strings."""
         session, seller, buyer = agreed_session
-        refs = [{"type": "bogus", "id": "x", "relationship": "references"}]
-        with pytest.raises(ValueError, match="type"):
+        refs = [{"type": "future_primitive", "id": "x",
+                 "relationship": "references"}]
+        att = generate_attestation(
+            session, _key_pairs(seller, buyer), references=refs
+        )
+        assert att["references"][0]["type"] == "future_primitive"
+
+    def test_unknown_relationship_preserved_per_spec_11_5_8(self, agreed_session):
+        """Per SPEC §11.5.8 MUST: unknown relationship values preserved as opaque strings."""
+        session, seller, buyer = agreed_session
+        refs = [{"type": "receipt", "id": "x", "relationship": "cancels"}]
+        att = generate_attestation(
+            session, _key_pairs(seller, buyer), references=refs
+        )
+        assert att["references"][0]["relationship"] == "cancels"
+
+    def test_empty_type_rejected(self, agreed_session):
+        """Per SPEC §11.5.6: type must be a non-empty string."""
+        session, seller, buyer = agreed_session
+        refs = [{"type": "", "id": "x", "relationship": "references"}]
+        with pytest.raises(ValueError, match=r"type.*non-empty.*§11\.5\.6"):
             generate_attestation(
                 session, _key_pairs(seller, buyer), references=refs
             )
 
-    def test_unknown_relationship_rejected(self, agreed_session):
+    def test_empty_relationship_rejected(self, agreed_session):
+        """Per SPEC §11.5.6: relationship must be a non-empty string."""
         session, seller, buyer = agreed_session
-        refs = [{"type": "receipt", "id": "x", "relationship": "cancels"}]
-        with pytest.raises(ValueError, match="relationship"):
+        refs = [{"type": "receipt", "id": "x", "relationship": ""}]
+        with pytest.raises(ValueError, match=r"relationship.*non-empty.*§11\.5\.6"):
             generate_attestation(
                 session, _key_pairs(seller, buyer), references=refs
             )
@@ -143,10 +164,11 @@ class TestReferencesValidation:
             )
 
     def test_reference_index_in_error(self, agreed_session):
+        """Per SPEC §11.5.6: error text identifies the offending entry by index."""
         session, seller, buyer = agreed_session
         refs = [
             {"type": "receipt", "id": "ok", "relationship": "references"},
-            {"type": "receipt", "id": "x", "relationship": "bogus"},
+            {"type": "receipt", "id": "", "relationship": "references"},
         ]
         with pytest.raises(ValueError, match=r"references\[1\]"):
             generate_attestation(
