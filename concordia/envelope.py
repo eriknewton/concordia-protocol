@@ -131,8 +131,12 @@ def build_trust_evidence_envelope(
     session_id = attestation.get("session_id", "")
     transcript_hash = attestation.get("transcript_hash", "")
 
-    # Auto-populate source_session reference per #1734 consensus:
-    # full shape is {kind, urn, verified_at, verifier_did, hash}
+    # Auto-populate source_session envelope-level reference per
+    # SPEC §11.5.2. Required keys: kind, urn. Expected (but not
+    # schema-enforced) verification triple: verified_at, verifier_did,
+    # hash. The §11.5.4 layering boundary keeps these envelope-level
+    # references distinct from attestation-level references in
+    # concordia.attestation; verifiers MUST NOT conflate the two.
     auto_ref = {
         "kind": "source_session",
         "urn": f"urn:concordia:session:{session_id}",
@@ -143,12 +147,15 @@ def build_trust_evidence_envelope(
     all_references = [auto_ref]
     if references:
         for ref in references:
-            # kind and urn are required. verified_at, verifier_did, and hash
-            # are expected per #1734 but not enforced — other reference kinds
-            # (e.g. chain_state, mandate_proof) may not have a verifier.
+            # kind and urn are required per SPEC §11.5.2. The
+            # verification triple (verified_at, verifier_did, hash) is
+            # expected for verification-grade references but not
+            # required, since some reference kinds (e.g. chain_state,
+            # mandate_proof) may not have a verifier.
             if not isinstance(ref, dict) or "kind" not in ref or "urn" not in ref:
                 raise ValueError(
-                    "Each reference must be a dict with at least 'kind' and 'urn'"
+                    "envelope reference missing required keys per SPEC §11.5.2 "
+                    "(kind, urn)"
                 )
             all_references.append(ref)
 
