@@ -129,6 +129,59 @@ PyPI v0.5.0 release.
 - v0.4.0 shipped: 885 tests (+53 across WP1/WP2/WP3/WP5).
 - Zero regressions in pre-v0.4.0 tests.
 
+## [0.3.1] - 2026-04-12: MCP Registry metadata + trust-evidence-format envelope + mandate primitive
+
+### Added
+
+- **MCP Registry metadata.** `server.json` manifest for MCP Registry
+  submission with ownership tag in README. Submission docs and
+  awesome-mcp-servers PR template at `review/`. (`c2d6176`)
+- **Trust-evidence-format v1.0.0 envelope export.** New `concordia.envelope`
+  module producing signed TEF v1.0.0 envelopes with ES256 signing support
+  alongside existing EdDSA. Three MCP tools added:
+  `concordia_export_tef_envelope`, `concordia_verify_tef_envelope`,
+  `concordia_list_tef_envelopes`. 542 envelope tests. (`e7c69de`)
+- **Mandate primitive.** `concordia.mandate` and `concordia.models.mandate`
+  modules implementing the `Mandate` model (schema URN
+  `urn:concordia:schema:mandate:v1`). SD-JWT-adjacent structure with
+  three-mode validity (`sequence`/`windowed`/`state_bound`), delegation
+  chains, revocation endpoints, and constraint patterns
+  (`max_spend`/`allowed_categories`/`geographic_bounds`/`temporal_budget`).
+  Three MCP tools: `concordia_create_mandate`, `concordia_verify_mandate`,
+  `concordia_revoke_mandate`. 1,077 mandate tests. (`4266269`)
+
+### Changed
+
+- Version bumped to `0.3.1`. (`cce3fc6`)
+
+## [0.3.0] - 2026-04-09: Agent discovery + Verascore reporting + bridge auto-load
+
+### Added
+
+- **Agent discovery Phase 1.** `concordia.agent_profile` package with
+  `AgentProfile` model and `ProfileStore` for capability-based search and
+  filtering. 86 discovery tests. (`ae8621b`)
+- **Agent discovery Phase 2.** Four MCP tools: `concordia_register_agent`,
+  `concordia_search_agents`, `concordia_get_agent_profile`,
+  `concordia_update_agent_profile`. Version bump to 0.3.0. (`d83b75b`)
+- **`concordia_verascore_report` tool.** Push negotiation receipts to
+  Verascore with Ed25519-signed payloads. Auth token required,
+  fulfillment_status validated, session must be terminal. (`9eed527`)
+- **Bridge config auto-load.** Sanctuary bridge configuration now
+  auto-loads from `~/.concordia/bridge-config.json` at startup.
+  Manual configuration via `concordia_sanctuary_bridge_configure`
+  still works. (`bbe48b5`)
+
+### Changed
+
+- **CI: production PyPI publish workflow.** OIDC trusted publisher
+  workflow on `v*` tags for automated releases. (`b9b6447`)
+
+### Test baseline
+
+- v0.3.0 shipped: 715+ tests (96 new across agent discovery Phase 1
+  and Phase 2, zero regressions).
+
 ## [0.2.1] - 2026-04-04 — Security remediation pass
 
 ### Security
