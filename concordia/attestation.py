@@ -26,11 +26,9 @@ if TYPE_CHECKING:
 
 ATTESTATION_VERSION = "0.1.0"
 
-# WP2 v0.4.0: generalized references[] shape — forward-compat with CMPC v0.5
-# primitive types (chain_session, predicate, mandate). Only `receipt` is
-# emitted by generate_attestation() today; other `type` values are accepted
-# by the schema and treated as opaque refs until v0.5 adds type-specific
-# resolution.
+# WP2 v0.4.0: generalized references[] shape. Normative spec ratified in v0.5
+# (SPEC §11.5). Primitive types (chain_session, predicate, mandate) accepted
+# by the schema; only `receipt` is emitted by generate_attestation() today.
 REFERENCE_TYPES = ("receipt", "chain_session", "predicate", "mandate")
 REFERENCE_RELATIONSHIPS = ("supersedes", "extends", "fulfills", "references")
 
@@ -156,27 +154,31 @@ def is_valid_now(
 
 
 def _validate_reference(ref: Any, index: int) -> dict[str, Any]:
-    """Validate a single reference dict against the {type, id, relationship} shape."""
+    """Validate a single reference dict per SPEC §11.5.6 required keys and §11.5.5 vocabulary."""
     if not isinstance(ref, dict):
         raise ValueError(f"references[{index}] must be a dict, got {type(ref).__name__}")
     missing = [k for k in ("type", "id", "relationship") if k not in ref]
     if missing:
         raise ValueError(
-            f"references[{index}] missing required keys: {missing}"
+            f"references[{index}] missing required keys (id, type, relationship) "
+            f"per SPEC §11.5.6: {missing}"
         )
     ref_type = ref["type"]
     ref_id = ref["id"]
     relationship = ref["relationship"]
     if ref_type not in REFERENCE_TYPES:
         raise ValueError(
-            f"references[{index}].type {ref_type!r} not in {REFERENCE_TYPES}"
+            f"references[{index}].type {ref_type!r} not in "
+            f"{REFERENCE_TYPES} per SPEC §11.5.6"
         )
     if not isinstance(ref_id, str) or not ref_id:
-        raise ValueError(f"references[{index}].id must be a non-empty string")
+        raise ValueError(
+            f"references[{index}].id must be a non-empty string per SPEC §11.5.6"
+        )
     if relationship not in REFERENCE_RELATIONSHIPS:
         raise ValueError(
-            f"references[{index}].relationship {relationship!r} "
-            f"not in {REFERENCE_RELATIONSHIPS}"
+            f"references[{index}].relationship {relationship!r} not in "
+            f"{{supersedes, extends, fulfills, references}} per SPEC §11.5.5"
         )
     return {"type": ref_type, "id": ref_id, "relationship": relationship}
 
@@ -211,14 +213,12 @@ def generate_attestation(
         resolution_mechanism: How agreement was reached.
         references: Optional list of references to other signed artifacts
             that this attestation extends, supersedes, fulfills, or
-            references. Each entry must be a dict with keys
-            ``{type, id, relationship}``. ``type`` ∈
+            references. Each entry must be a dict with required keys
+            ``{type, id, relationship}`` per SPEC §11.5.6. ``type`` must be in
             ``{receipt, chain_session, predicate, mandate}``.
-            ``relationship`` ∈
-            ``{supersedes, extends, fulfills, references}``. The
-            ``chain_session``, ``predicate``, and ``mandate`` types are
-            reserved for CMPC primitives (v0.5) and treated as opaque in
-            v0.4.0. Added in v0.4.0 (WP2).
+            ``relationship`` must be in
+            ``{supersedes, extends, fulfills, references}`` per SPEC §11.5.5.
+            Added in v0.4.0 (WP2); normative spec ratified in v0.5.
         validity_temporal: Optional temporal validity window. Tagged
             union with three modes:
             ``{mode: "absolute", from, until}`` for fixed clock bounds,

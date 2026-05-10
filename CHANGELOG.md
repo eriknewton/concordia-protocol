@@ -7,65 +7,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-## [0.5.0] - TBD: references[] ratification + layering boundary
+## [0.5.0] - 2026-05-11
 
-### Added
+### Spec ratification (Beta-1)
 
-- **SPEC §11.5 Reference linkages.** Normative spec for the two-layer
-  `references[]` shape shipped in v0.4.0. Layering boundary documented
-  explicitly: envelope-level references are cryptographic (provenance,
-  supersession of envelopes); attestation-level references are semantic
-  (content linkage between attestations). Verifiers MUST NOT conflate
-  the two surfaces in any verification step.
-- **Relationship vocabulary normative.** Four-value vocabulary with
-  RFC 2119 conformance levels: `supersedes` (MUST), `extends` (SHOULD),
-  `fulfills` (SHOULD), `references` (MAY, weak generic association;
-  use only when no stronger relationship applies).
-- **Cross-protocol URN linkage.** SPEC §11.5.7 defines URN schemes for
-  Concordia artifacts (`urn:concordia:attestation`, `urn:concordia:mandate`,
-  `urn:concordia:offer`, `urn:concordia:session`) and references the
-  linked-protocol URN schemes for A2A, AP2, x402, and ERC-8004.
-- **`schemas/reference.schema.json`.** Canonical machine-readable schema
-  for the attestation-level reference object. `$id`
-  `urn:concordia:schema:reference:v0.5`. Required keys `id`, `type`,
-  `relationship`. Optional keys `version`, `signed_at`, `signer_did`,
-  and a forward-compatibility `extensions` map for v0.x extension
-  preservation.
-- **Optional reference-object fields on attestations.** `version`,
-  `signed_at`, `signer_did`, and `extensions` keys are now schema-allowed
-  on each attestation-level reference entry. v0.4.x emitters that omit
-  these continue to validate cleanly.
+- See PR #6: §11.5 Reference linkages normative spec text; layering
+  boundary documented; relationship vocabulary normative; JSON Schema
+  fragment; schema URN bumped to urn:concordia:schema:*:v0.5.
 
-### Changed
+### Python SDK alignment (Beta-2)
 
-- `schemas/attestation.schema.json` `$id` bumped to
-  `urn:concordia:schema:attestation:v0.5`. Embedded `reference` `$def`
-  mirrors `schemas/reference.schema.json`.
-- Root `attestation.schema.json` synced byte-for-byte with
-  `schemas/attestation.schema.json` (the SDK loads `schemas/`; the root
-  copy had drifted from v0.1.0 and is now back in sync).
-- SPEC.md frontmatter bumped to `0.5.0-draft`.
-- §9.6 and §10 cross-link to §11.5 for layered reference semantics.
+- pyproject.toml bumped from 0.4.0 to 0.5.0.
+- Validator error text aligned with SPEC §11.5 section references for
+  operator legibility.
+- Schema URN bumped on emit side from v0.4 to v0.5.
+- Read side accepts both v0.4 and v0.5 schema URNs (forward-compat).
+- No breaking API changes; existing v0.4 callers continue working.
+- 930 tests at v0.4.0 baseline + 16 new tests for v0.5 validator alignment.
 
 ### Closed
 
-- Foxbook ADR 0009 (#73) ratification commitment for v0.5 references[]
-  extension as the formal vehicle.
-- v0.4.0 follow-up (c) layering reconciliation. Resolution: Option iii,
-  document the layering boundary explicitly. Both envelope-level and
-  attestation-level surfaces remain; the boundary between them is now
-  normative.
-
-### Notes
-
-This is a spec-ratification release. No Python SDK code changes land in
-this entry. The v0.4.0 implementation generalization is what v0.5
-formalizes; validators continue to accept all v0.4.0-shaped attestations.
-v0.5 is forward-compatible with v0.4.x emitters.
-
-Beta-2 (separate PR) adds Python SDK normative assertions and
-error-text alignment with §11.5 sections. Beta-3 (separate PR) cuts the
-PyPI v0.5.0 release.
+- Foxbook ADR 0009 (#73) ratification commitment.
+- v0.4.0 follow-up (c) layering reconciliation (Option iii, explicit
+  boundary documentation).
 
 ## [0.4.0] - 2026-04-20 — CMPC-ready receipt primitives + Verascore auto-hook
 

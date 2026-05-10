@@ -148,7 +148,8 @@ def build_trust_evidence_envelope(
             # (e.g. chain_state, mandate_proof) may not have a verifier.
             if not isinstance(ref, dict) or "kind" not in ref or "urn" not in ref:
                 raise ValueError(
-                    "Each reference must be a dict with at least 'kind' and 'urn'"
+                    "Each envelope reference must be a dict with at least "
+                    "'kind' and 'urn' per SPEC §11.5.4"
                 )
             all_references.append(ref)
 
