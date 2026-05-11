@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:concordia:schema:approval_receipt:v0.5",
+  "title": "Concordia Approval Receipt",
+  "description": "Standalone signed artifact emitted when a human-in-the-loop authority approves (or denies) a negotiation event that crossed an approval threshold. Pairs with A2CN Section 14 HITL pause-resume composition (A2A Discussion #1737, Draft A). The receipt is bounded in time (`expires_at`) and links back to the negotiation session and any mandate it discharges via `references[]`. v0.5 ratifies the worked example published in Draft A.",
+
+  "type": "object",
+  "required": [
+    "artifact_type",
+    "id",
+    "issued_at",
+    "approver",
+    "scope",
+    "references",
+    "signature"
+  ],
+
+  "properties": {
+    "artifact_type": {
+      "type": "string",
+      "const": "ApprovalReceipt",
+      "description": "Discriminator. Always the literal string \"ApprovalReceipt\"."
+    },
+
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "URN-shaped identifier per SPEC §11.5.7 (e.g., `urn:concordia:receipt:<hex>`). Free-form non-empty strings accepted for backward-compatibility with v0.5-rc emitters."
+    },
+
+    "issued_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp at which the receipt was signed."
+    },
+
+    "expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp after which the receipt is no longer valid. Consumers MUST reject receipts whose `expires_at` is in the past at the verification moment. Typical horizon: minutes to a few hours for procurement-class approvals."
+    },
+
+    "approver": {
+      "type": "object",
+      "required": ["identity"],
+      "additionalProperties": true,
+      "properties": {
+        "identity": {
+          "type": "string",
+          "minLength": 1,
+          "description": "DID-shaped identity of the approver. Fragment identifiers (e.g., `did:web:acme.example#procurement-lead`) are RECOMMENDED to disambiguate role keys within a single DID."
+        },
+        "role": {
+          "type": "string",
+          "description": "Operator-meaningful role label (e.g., `procurement_authority`, `compliance_officer`). Free-form string for v0.5; future versions may close the enum."
+        }
+      }
+    },
+
+    "scope": {
+      "type": "object",
+      "required": ["decision"],
+      "additionalProperties": true,
+      "properties": {
+        "decision": {
+          "type": "string",
+          "enum": ["approve", "deny"],
+          "description": "Operator's decision. `deny` receipts MUST be honored by counterparties — denial is structurally cryptographically binding the same way an approval is."
+        },
+        "offer_hash": {
+          "type": "string",
+          "description": "Hash of the canonicalized offer the approver evaluated. Format: `sha256:<hex>`. Verifiers SHOULD re-canonicalize the on-the-wire offer at receipt-presentation time and compare."
+        },
+        "amount": {
+          "type": "string",
+          "description": "Approved transaction amount with currency code (e.g., `150000.00 USD`). String-shaped to preserve precision; consumers parse per ISO 4217 currency conventions."
+        },
+        "threshold_crossed": {
+          "type": "string",
+          "description": "Policy-threshold value that triggered the approval requirement, in the same currency unit as `amount`. Surfaced so consumers can audit which policy rule fired."
+        }
+      }
+    },
+
+    "references": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Cross-artifact linkage per SPEC §11.5.5 vocabulary. SHOULD include at least one entry with `relationship: \"approves\"` pointing at the negotiation session, and SHOULD include a `relationship: \"fulfills\"` entry when the approval discharges a pre-existing mandate.",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "relationship"],
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "type": {
+            "type": "string",
+            "description": "Stable values: `negotiation_session`, `mandate`, `attestation`, `receipt`, plus cross-protocol values per SPEC §11.5.7. Implementations MUST preserve unknown values per §11.5.3."
+          },
+          "relationship": {
+            "type": "string",
+            "description": "Relationship per SPEC §11.5.5 vocabulary plus the artifact-specific extensions defined in §9.6.4b (`approves` for negotiation-session linkage)."
+          },
+          "version": { "type": "string" },
+          "signed_at": { "type": "string", "format": "date-time" },
+          "signer_did": { "type": "string" },
+          "extensions": { "type": "object" }
+        }
+      }
+    },
+
+    "signature": {
+      "type": "object",
+      "required": ["alg", "value"],
+      "additionalProperties": true,
+      "properties": {
+        "alg": {
+          "type": "string",
+          "enum": ["Ed25519"],
+          "description": "Signature algorithm. v0.5 ships Ed25519 only."
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Detached signature over the canonicalized JSON of this receipt (canonicalization per SPEC §4.1)."
+        }
+      }
+    }
+  },
+
+  "additionalProperties": true,
+
+  "examples": [
+    {
+      "artifact_type": "ApprovalReceipt",
+      "id": "urn:concordia:receipt:7f2e1a93",
+      "issued_at": "2026-05-10T14:22:08Z",
+      "expires_at": "2026-05-10T15:22:08Z",
+      "approver": {
+        "identity": "did:web:acme.example#procurement-lead",
+        "role": "procurement_authority"
+      },
+      "scope": {
+        "decision": "approve",
+        "offer_hash": "sha256:b4c1...e09f",
+        "amount": "150000.00 USD",
+        "threshold_crossed": "100000.00 USD"
+      },
+      "references": [
+        {
+          "type": "negotiation_session",
+          "id": "a2cn:session:9e4d2c11",
+          "relationship": "approves"
+        },
+        {
+          "type": "mandate",
+          "id": "a2cn:mandate:m-2026-04-19-0007",
+          "relationship": "fulfills"
+        }
+      ],
+      "signature": {
+        "alg": "Ed25519",
+        "value": "..."
+      }
+    }
+  ]
+}
