@@ -27,16 +27,16 @@ def _read_pyproject_version() -> str:
 
 
 class TestPyprojectVersion:
-    def test_pyproject_at_0_5_0(self):
+    def test_pyproject_at_0_5_1(self):
         assert _read_pyproject_version() == "0.5.1"
 
-    def test_module_version_at_0_5_0(self):
+    def test_module_version_at_0_5_1(self):
         assert concordia.__version__ == "0.5.1"
 
     def test_module_and_pyproject_in_lockstep(self):
         assert concordia.__version__ == _read_pyproject_version()
 
-    def test_envelope_session_protocol_version_at_0_5_0(self):
+    def test_envelope_session_protocol_version_at_0_5_1(self):
         """Envelope payload embeds concordia.__version__; verify on the wire."""
         from concordia import (
             Agent,
