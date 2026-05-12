@@ -168,6 +168,11 @@ class Mandate:
     constraints: dict[str, Any] = field(default_factory=dict)
     delegation_chain: list[DelegationLink] = field(default_factory=list)
     revocation_endpoint: str | None = None
+    # WP4: ISO 8601 timestamp set by a resolver when the mandate has been
+    # revoked. The verifier hook surfaces this so the session-policy layer
+    # decides revocation semantics (hard stop / grace / per-offer re-check).
+    # Absent on active mandates; the protocol does not mandate hard-stop.
+    revoked_at: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     signature: str = ""
     algorithm: str = "EdDSA"
@@ -191,6 +196,8 @@ class Mandate:
             d["delegation_chain"] = [link.to_dict() for link in self.delegation_chain]
         if self.revocation_endpoint is not None:
             d["revocation_endpoint"] = self.revocation_endpoint
+        if self.revoked_at is not None:
+            d["revoked_at"] = self.revoked_at
         if self.metadata:
             d["metadata"] = self.metadata
         if self.signature:
@@ -224,6 +231,7 @@ class Mandate:
             constraints=data.get("constraints", {}),
             delegation_chain=chain,
             revocation_endpoint=data.get("revocation_endpoint"),
+            revoked_at=data.get("revoked_at"),
             metadata=data.get("metadata", {}),
             signature=data.get("signature", ""),
             algorithm=data.get("algorithm", "EdDSA"),
@@ -264,7 +272,23 @@ class Mandate:
 
 @dataclass
 class MandateVerificationResult:
-    """Result of mandate verification."""
+    """Result of mandate verification.
+
+    The classical fields (``valid`` / ``mandate_id`` / ``issuer`` /
+    ``subject`` / ``checks`` / ``errors`` / ``warnings``) cover the
+    one-shot verify_mandate path that takes a Mandate object directly.
+
+    The WP4 resolver-based path (verify_mandate_with_resolver) populates
+    the optional fields below:
+
+    - ``mandate``: the resolver-returned object (or None on resolver miss).
+    - ``failure_reason``: single short string summarizing the highest-level
+      failure (e.g. ``"resolver_miss"``, ``"invalid_proof"``).
+    - ``revoked_at``: when the resolver returned a revoked mandate, the
+      ISO 8601 revocation timestamp. The verifier does NOT short-circuit
+      on this; the session-policy layer decides revocation semantics.
+    - ``tier``: trust tier the verifier ran (``"basic"`` / ``"did-vc"``).
+    """
     valid: bool
     mandate_id: str = ""
     issuer: str = ""
@@ -272,9 +296,15 @@ class MandateVerificationResult:
     checks: dict[str, bool] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    # WP4 resolver-based verifier fields (optional; populated only by
+    # verify_mandate_with_resolver).
+    mandate: Mandate | None = None
+    failure_reason: str | None = None
+    revoked_at: str | None = None
+    tier: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "valid": self.valid,
             "mandate_id": self.mandate_id,
             "issuer": self.issuer,
@@ -283,6 +313,15 @@ class MandateVerificationResult:
             "errors": self.errors,
             "warnings": self.warnings,
         }
+        if self.failure_reason is not None:
+            d["failure_reason"] = self.failure_reason
+        if self.revoked_at is not None:
+            d["revoked_at"] = self.revoked_at
+        if self.tier is not None:
+            d["tier"] = self.tier
+        if self.mandate is not None:
+            d["mandate"] = self.mandate.to_dict()
+        return d
 
 
 # ---------------------------------------------------------------------------
@@ -379,6 +418,11 @@ MANDATE_JSON_SCHEMA: dict[str, Any] = {
         "revocation_endpoint": {
             "type": "string",
             "format": "uri",
+        },
+        "revoked_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 revocation timestamp surfaced by a resolver",
         },
         "metadata": {
             "type": "object",
