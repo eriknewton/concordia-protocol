@@ -7,6 +7,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **Standalone Fulfillment Attestation artifact (SPEC §9.6.4a).** New
+  v0.5 artifact type emitted on a discrete delivery boundary (e.g.,
+  A2CN `DELIVERY_ACKNOWLEDGED`). Distinct from the in-line
+  `fulfillment` block on a reputation attestation (§9.6.4) — the
+  standalone shape links back to the agreement attestation via
+  `references[]` with `relationship: "fulfills"` and uses the
+  A2CN-aligned status enum (`fulfilled_clean`,
+  `fulfilled_with_mediation`, `failed`, `disputed_unresolved`).
+  Schema at `schemas/fulfillment_attestation.schema.json` (`$id`
+  `urn:concordia:schema:fulfillment_attestation:v0.5`).
+- **Adds ApprovalReceipt artifact type and example for HITL
+  pause-resume composition with A2CN Section 14 (per A2A Discussion
+  #1737).** Schema at `schemas/approval_receipt.schema.json` (`$id`
+  `urn:concordia:schema:approval_receipt:v0.5`). Spec coverage at
+  SPEC §9.6.4b with the Draft A worked example reproduced verbatim
+  so public-draft readers and the in-tree spec line up. Extends the
+  §11.5.5 relationship vocabulary with `approves` (artifact-specific;
+  preserved by the §11.5.3 forward-compat rule).
+- **`docs/A2CN_FULFILLMENT.md`.** Integrator walkthrough for emitting
+  a Fulfillment Attestation on `DELIVERY_ACKNOWLEDGED`, the canonical
+  mapping between the standalone shape and the §9.6.4 in-line block,
+  and the v0.5 ApprovalReceipt shape with worked JSON examples for
+  each status enum value.
+
+### Changed
+
+- **SPEC §9.6.4 in-line fulfillment block.** Added cross-reference
+  to the new §9.6.4a standalone Fulfillment Attestation shape, with
+  guidance on which pattern to pick. Both shapes coexist; the
+  canonical status-enum mapping is in `docs/A2CN_FULFILLMENT.md`.
+  Producers MUST NOT emit both a standalone artifact and an in-line
+  block for the same logical settlement (double-counting risk for
+  reputation scorers).
+
 ## [0.5.0] - 2026-05-11: references[] ratification + Python SDK alignment
 
 ### Spec ratification (Beta-1, PR #6)

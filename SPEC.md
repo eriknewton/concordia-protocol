@@ -804,6 +804,133 @@ Fulfillment status values:
 | `disputed` | Parties disagree on fulfillment status |
 | `pending` | Settlement in progress, not yet confirmed |
 
+The in-line block is the right shape when settlement and the
+negotiation outcome land on the same record and both parties
+countersign one combined artifact. For settlement protocols that
+fire a discrete delivery-acknowledged event you want to attest at
+that boundary — or where the signing party at delivery is not the
+original negotiation counterparty — Concordia v0.5 ships a
+standalone Fulfillment Attestation artifact (§9.6.4a). Both shapes
+coexist; the canonical mapping between their status enums is in
+`docs/A2CN_FULFILLMENT.md`.
+
+#### 9.6.4a Standalone Fulfillment Attestation (v0.5)
+
+A separate signed artifact emitted on a discrete delivery boundary.
+Designed for composition with A2CN's `DELIVERY_ACKNOWLEDGED` event
+and for settlement flows where delivery is signed by a party other
+than the original negotiation counterparties (delivery agent,
+mediator, etc.).
+
+Schema: `schemas/fulfillment_attestation.schema.json`
+(`$id` `urn:concordia:schema:fulfillment_attestation:v0.5`).
+
+Minimal required fields:
+
+| Field | Purpose |
+|-------|---------|
+| `attestation_type` | Literal `"FulfillmentAttestation"` discriminator |
+| `id` | URN-shaped per §11.5.7 (e.g., `urn:concordia:fulfillment:<uuid>`) |
+| `issued_at` | ISO 8601 signing timestamp |
+| `agreement_attestation_id` | Denormalized pointer to the agreement attestation this fulfillment discharges |
+| `fulfillment.status` | `fulfilled_clean` / `fulfilled_with_mediation` / `failed` / `disputed_unresolved` |
+| `references[]` | At least one entry with `relationship: "fulfills"` pointing at the agreement attestation |
+| `signature` | Ed25519 over the canonicalized JSON |
+
+Optional `meta` fields populate mediator context:
+`mediator_invoked`, `resolution_outcome`, `resolver_did`,
+`resolution_timestamp`, `fulfillment_evidence`.
+
+Status enum mapping to the §9.6.4 in-line block:
+
+| Standalone | In-line |
+|------------|---------|
+| `fulfilled_clean` | `fulfilled` with `mediator_invoked: false` |
+| `fulfilled_with_mediation` | `fulfilled` with `mediator_invoked: true` |
+| `failed` | `unfulfilled` |
+| `disputed_unresolved` | `disputed` |
+
+Producers picking the standalone shape MUST NOT also embed an
+in-line `fulfillment` block on the same logical settlement to avoid
+double-counting in reputation scoring. The standalone artifact is
+authoritative once emitted.
+
+Full integrator walkthrough with worked JSON examples:
+`docs/A2CN_FULFILLMENT.md`.
+
+#### 9.6.4b ApprovalReceipt (v0.5, A2A Discussion #1737)
+
+Standalone signed artifact recording a human-in-the-loop (HITL)
+authority's decision on a negotiation event that crossed a policy
+threshold. Pairs with A2CN Section 14 HITL pause-resume composition.
+
+Schema: `schemas/approval_receipt.schema.json`
+(`$id` `urn:concordia:schema:approval_receipt:v0.5`).
+
+Required fields: `artifact_type` (literal `"ApprovalReceipt"`),
+`id` (URN-shaped per §11.5.7), `issued_at`, `approver` (DID +
+optional role), `scope` (`decision` + `offer_hash` + `amount` +
+`threshold_crossed`), `references[]` (at least one `approves`
+entry for the negotiation session; `fulfills` SHOULD appear when
+a pre-existing mandate is discharged), and `signature` (Ed25519).
+Optional `expires_at` bounds the receipt's validity window.
+
+Worked example (matches the Draft A example reproduced in
+`docs/A2CN_FULFILLMENT.md`):
+
+```json
+{
+  "artifact_type": "ApprovalReceipt",
+  "id": "urn:concordia:receipt:7f2e1a93",
+  "issued_at": "2026-05-10T14:22:08Z",
+  "expires_at": "2026-05-10T15:22:08Z",
+  "approver": {
+    "identity": "did:web:acme.example#procurement-lead",
+    "role": "procurement_authority"
+  },
+  "scope": {
+    "decision": "approve",
+    "offer_hash": "sha256:b4c1...e09f",
+    "amount": "150000.00 USD",
+    "threshold_crossed": "100000.00 USD"
+  },
+  "references": [
+    {
+      "type": "negotiation_session",
+      "id": "a2cn:session:9e4d2c11",
+      "relationship": "approves"
+    },
+    {
+      "type": "mandate",
+      "id": "a2cn:mandate:m-2026-04-19-0007",
+      "relationship": "fulfills"
+    }
+  ],
+  "signature": {
+    "alg": "Ed25519",
+    "value": "..."
+  }
+}
+```
+
+ApprovalReceipt invariants:
+
+- `expires_at` (when present) MUST be honored — verifiers MUST
+  reject expired receipts at verification time.
+- `scope.decision` is `approve` or `deny`. A `deny` receipt is
+  cryptographically binding the same way an `approve` is; the
+  counterparty cannot retry the same offer without crossing the
+  threshold afresh.
+- `scope.offer_hash` is the sha256 of the canonicalized offer the
+  approver evaluated. Re-canonicalize on-the-wire offers at verify
+  time and compare.
+- The `relationship` vocabulary used here extends §11.5.5: in
+  addition to `supersedes`, `extends`, `fulfills`, `references`,
+  ApprovalReceipt entries MAY use `approves` for the negotiation-
+  session linkage. Verifiers MUST preserve `approves` even when
+  not in the §11.5.5 base vocabulary, per the forward-compat rule
+  in §11.5.3.
+
 #### 9.6.5 Attestation Integrity
 
 Attestations inherit the security properties of the transcript:
