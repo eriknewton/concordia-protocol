@@ -97,6 +97,13 @@ class FulfillmentStatus(Enum):
     UNFULFILLED = "unfulfilled"
     DISPUTED = "disputed"
     PENDING = "pending"
+    # v0.4.1: mediated outcome. Emitted when an A2CN DISPUTE_RESOLVED
+    # message (A2CN PR #12, commit 06c33d0) closes the dispute
+    # lifecycle with a neutral resolver's ruling. Verascore's
+    # reputation scorer reads meta.resolution_outcome +
+    # meta.resolver_did to compute the reputation impact of
+    # mediation participation.
+    FULFILLED_WITH_MEDIATION = "fulfilled_with_mediation"
 
 
 class PartyRole(Enum):

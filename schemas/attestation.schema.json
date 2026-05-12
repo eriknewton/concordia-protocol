@@ -208,8 +208,8 @@
       "properties": {
         "status": {
           "type": "string",
-          "enum": ["fulfilled", "partial", "unfulfilled", "disputed", "pending"],
-          "description": "Fulfillment outcome."
+          "enum": ["fulfilled", "partial", "unfulfilled", "disputed", "pending", "fulfilled_with_mediation"],
+          "description": "Fulfillment outcome. v0.4.1 adds 'fulfilled_with_mediation' for outcomes that close via an A2CN DISPUTE_RESOLVED message (A2CN PR #12)."
         },
         "settled_at": {
           "type": "string",
