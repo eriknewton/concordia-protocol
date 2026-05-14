@@ -10,8 +10,6 @@ Usage:
 
 import sys
 
-from .mcp_server import mcp
-
 
 def main() -> None:
     if "--version" in sys.argv or "-V" in sys.argv:
@@ -44,9 +42,19 @@ def main() -> None:
             "  Receipt Bundles (3)   create, verify, list\n"
             "\n"
             "Built on the official Python MCP SDK (mcp package).\n"
-            "Install: pip install concordia-protocol\n"
+            "Install: pip install 'concordia-protocol[server]'\n"
         )
         return
+
+    try:
+        from .mcp_server import mcp
+    except ModuleNotFoundError as exc:
+        if exc.name == "mcp":
+            raise SystemExit(
+                "The Concordia MCP server requires the server extra. "
+                "Install with: pip install 'concordia-protocol[server]'"
+            ) from exc
+        raise
 
     transport = "stdio"
     if "--transport" in sys.argv:

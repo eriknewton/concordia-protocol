@@ -136,19 +136,23 @@ Both agents sign. The agreement passes to a payment protocol (ACP, Stripe, etc.)
 
 ### Using pipx (recommended)
 ```bash
-pipx install concordia-protocol
+pipx install "concordia-protocol[server]"
 ```
 
 ### Using pip
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install concordia-protocol
+.venv/bin/pip install "concordia-protocol[server]"
 ```
 
 **Note:** Concordia requires Python 3.10+. macOS ships Python 3.9 with Xcode — install a newer version first:
 ```bash
 brew install python@3.12
 ```
+
+Library-only consumers can install `concordia-protocol` without the MCP server
+dependencies. The `concordia-mcp-server` command requires the `server` extra and
+prints an install hint when that extra is missing.
 
 ### Verify the install
 ```bash
