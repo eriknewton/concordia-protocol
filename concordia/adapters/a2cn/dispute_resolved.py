@@ -47,10 +47,12 @@ from __future__ import annotations
 
 import copy
 import json
+import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import jsonschema
+from jsonschema import Draft202012Validator, FormatChecker, ValidationError
 
 # Load the schema once at import time. Mirrored from the A2CN upstream
 # repo at A2CN PR #12 (commit 06c33d0). Refreshed by re-running the
@@ -66,6 +68,40 @@ _SCHEMA_PATH = (
 
 with _SCHEMA_PATH.open(encoding="utf-8") as _fp:
     DISPUTE_RESOLVED_SCHEMA: dict[str, Any] = json.load(_fp)
+
+_FORMAT_CHECKER = FormatChecker()
+
+
+@_FORMAT_CHECKER.checks("uuid")
+def _is_uuid(instance: Any) -> bool:
+    if not isinstance(instance, str):
+        return True
+    try:
+        uuid.UUID(instance)
+    except ValueError:
+        return False
+    return True
+
+
+@_FORMAT_CHECKER.checks("date-time")
+def _is_date_time(instance: Any) -> bool:
+    if not isinstance(instance, str):
+        return True
+    if "T" not in instance:
+        return False
+    try:
+        parsed = datetime.fromisoformat(
+            instance[:-1] + "+00:00" if instance.endswith("Z") else instance
+        )
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None
+
+
+_DISPUTE_RESOLVED_VALIDATOR = Draft202012Validator(
+    DISPUTE_RESOLVED_SCHEMA,
+    format_checker=_FORMAT_CHECKER,
+)
 
 VALID_RESOLUTION_OUTCOMES: tuple[str, ...] = (
     "buyer_prevails",
@@ -87,6 +123,14 @@ class DisputeResolvedSchemaError(ValueError):
         self.path = path
 
 
+class DisputeResolvedApplicationError(ValueError):
+    """Raised when a valid DISPUTE_RESOLVED cannot apply to an attestation."""
+
+    def __init__(self, reason: str, message: str):
+        super().__init__(message)
+        self.reason = reason
+
+
 def parse_dispute_resolved(message: Any) -> dict[str, Any]:
     """Validate + return a normalized DISPUTE_RESOLVED message dict.
 
@@ -103,8 +147,8 @@ def parse_dispute_resolved(message: Any) -> dict[str, Any]:
             f"{type(message).__name__}",
         )
     try:
-        jsonschema.validate(message, DISPUTE_RESOLVED_SCHEMA)
-    except jsonschema.ValidationError as exc:
+        _DISPUTE_RESOLVED_VALIDATOR.validate(message)
+    except ValidationError as exc:
         path = "/".join(str(p) for p in exc.absolute_path)
         raise DisputeResolvedSchemaError(
             f"DISPUTE_RESOLVED schema violation at /{path}: {exc.message}",
@@ -180,6 +224,65 @@ def _build_fulfills_reference(agreement_attestation_id: str) -> dict[str, Any]:
     }
 
 
+def _outcome_status(attestation: dict[str, Any]) -> Any:
+    outcome = attestation.get("outcome")
+    if isinstance(outcome, dict):
+        return outcome.get("status")
+    return None
+
+
+def _fulfillment_status(attestation: dict[str, Any]) -> Any:
+    fulfillment = attestation.get("fulfillment")
+    if fulfillment is None:
+        return None
+    if isinstance(fulfillment, dict):
+        return fulfillment.get("status")
+    return fulfillment
+
+
+def _reject_application(reason: str, detail: str) -> None:
+    raise DisputeResolvedApplicationError(
+        reason,
+        f"DISPUTE_RESOLVED application rejected: {reason}: {detail}",
+    )
+
+
+def _validate_application_preconditions(
+    *,
+    attestation: dict[str, Any],
+    message: dict[str, Any],
+    agreement_attestation_id: str,
+) -> None:
+    """Enforce semantic guards before mutating an attestation copy."""
+    if message["session_id"] != attestation.get("session_id"):
+        _reject_application(
+            "session_mismatch",
+            "message.session_id does not match attestation.session_id",
+        )
+    if agreement_attestation_id != attestation.get("attestation_id"):
+        _reject_application(
+            "agreement_mismatch",
+            "agreement_attestation_id does not match attestation.attestation_id",
+        )
+    if _outcome_status(attestation) != "agreed":
+        _reject_application(
+            "non_agreed_state",
+            "attestation outcome status must be agreed",
+        )
+    status = _fulfillment_status(attestation)
+    if status not in (None, "disputed"):
+        _reject_application(
+            "fulfillment_state_conflict",
+            "fulfillment status must be unset or disputed",
+        )
+    existing_message_id = (attestation.get("meta") or {}).get("a2cn_message_id")
+    if existing_message_id == message["message_id"]:
+        _reject_application(
+            "duplicate_message_id",
+            "a2cn_message_id is already attached to this attestation",
+        )
+
+
 def apply_dispute_resolved_to_attestation(
     *,
     attestation: dict[str, Any],
@@ -206,10 +309,17 @@ def apply_dispute_resolved_to_attestation(
     again but is idempotent).
 
     Raises ``DisputeResolvedSchemaError`` when ``message`` does not
-    validate, and ``ValueError`` when ``agreement_attestation_id`` is
-    missing or non-string.
+    validate, ``DisputeResolvedApplicationError`` when a valid message
+    does not bind to this attestation, and ``ValueError`` when
+    ``agreement_attestation_id`` is missing or non-string.
     """
     validated = parse_dispute_resolved(message)
+    fulfills_reference = _build_fulfills_reference(agreement_attestation_id)
+    _validate_application_preconditions(
+        attestation=attestation,
+        message=validated,
+        agreement_attestation_id=agreement_attestation_id,
+    )
     new_attestation = copy.deepcopy(attestation)
     new_attestation["fulfillment"] = build_fulfillment_from_dispute_resolved(
         validated,
@@ -218,6 +328,6 @@ def apply_dispute_resolved_to_attestation(
     meta.update(_build_mediation_meta(validated))
     new_attestation["meta"] = meta
     references = list(new_attestation.get("references") or [])
-    references.append(_build_fulfills_reference(agreement_attestation_id))
+    references.append(fulfills_reference)
     new_attestation["references"] = references
     return new_attestation

@@ -105,6 +105,8 @@ class TestUnknownTypeAndRelationshipPreserved:
             session, _key_pairs(seller, buyer), references=refs
         )
         assert att["references"][0]["type"] == "future_v07_primitive"
+        with pytest.warns(UserWarning, match="non-canonical"):
+            assert is_valid_attestation(att)
 
     def test_unknown_relationship_roundtrips(self, agreed_session):
         session, seller, buyer = agreed_session
@@ -115,6 +117,27 @@ class TestUnknownTypeAndRelationshipPreserved:
             session, _key_pairs(seller, buyer), references=refs
         )
         assert att["references"][0]["relationship"] == "v07_new_relation"
+        with pytest.warns(UserWarning, match="non-canonical"):
+            assert is_valid_attestation(att)
+
+    def test_unknown_type_and_relationship_roundtrip_through_schema(
+        self, agreed_session
+    ):
+        session, seller, buyer = agreed_session
+        refs = [
+            {
+                "type": "future-2027",
+                "id": "urn:concordia:future:x",
+                "relationship": "advisory",
+            }
+        ]
+        att = generate_attestation(
+            session, _key_pairs(seller, buyer), references=refs
+        )
+        with pytest.warns(UserWarning, match="non-canonical") as warnings_seen:
+            assert is_valid_attestation(att)
+        assert len(warnings_seen) == 2
+        assert att["references"][0] == refs[0]
 
 
 class TestEnvelopeForwardCompat:

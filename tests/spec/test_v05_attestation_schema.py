@@ -77,19 +77,23 @@ class TestEmbeddedReferenceDef:
         ref_def = attestation_schema["$defs"]["reference"]
         assert set(ref_def["required"]) == {"id", "type", "relationship"}
 
-    def test_embedded_reference_relationship_enum_matches_v05(
+    def test_embedded_reference_relationship_accepts_opaque_strings(
         self, attestation_schema: dict
     ) -> None:
         ref_def = attestation_schema["$defs"]["reference"]
-        rel = ref_def["properties"]["relationship"]["enum"]
-        assert rel == ["supersedes", "extends", "fulfills", "references"]
+        relationship = ref_def["properties"]["relationship"]
+        assert relationship["type"] == "string"
+        assert relationship["minLength"] == 1
+        assert "enum" not in relationship
 
-    def test_embedded_reference_type_enum_matches_v05(
+    def test_embedded_reference_type_accepts_opaque_strings(
         self, attestation_schema: dict
     ) -> None:
         ref_def = attestation_schema["$defs"]["reference"]
-        types = ref_def["properties"]["type"]["enum"]
-        assert types == ["receipt", "chain_session", "predicate", "mandate"]
+        ref_type = ref_def["properties"]["type"]
+        assert ref_type["type"] == "string"
+        assert ref_type["minLength"] == 1
+        assert "enum" not in ref_type
 
     def test_embedded_reference_optional_v05_fields_present(
         self, attestation_schema: dict

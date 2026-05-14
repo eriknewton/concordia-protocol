@@ -21,10 +21,13 @@
     "transaction_record_hash": {
       "type": "string",
       "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-fA-F0-9]{64}$",
       "description": "SHA-256 hex digest of the agreed transaction record"
     },
     "dispute_notice_message_id": {
       "type": "string",
+      "format": "uuid",
       "description": "message_id of the DISPUTE_NOTICE being resolved"
     },
     "resolution_outcome": {

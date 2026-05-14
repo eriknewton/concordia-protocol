@@ -11,6 +11,7 @@ Local mirror: ``schemas/a2cn/``
 
 from concordia.adapters.a2cn.dispute_resolved import (
     DISPUTE_RESOLVED_SCHEMA,
+    DisputeResolvedApplicationError,
     DisputeResolvedSchemaError,
     parse_dispute_resolved,
     apply_dispute_resolved_to_attestation,
@@ -19,6 +20,7 @@ from concordia.adapters.a2cn.dispute_resolved import (
 
 __all__ = [
     "DISPUTE_RESOLVED_SCHEMA",
+    "DisputeResolvedApplicationError",
     "DisputeResolvedSchemaError",
     "parse_dispute_resolved",
     "apply_dispute_resolved_to_attestation",
