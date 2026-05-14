@@ -191,6 +191,9 @@ class AgentCapabilityProfile:
     signature: str = ""
     """Ed25519 signature over canonical JSON (minus this field)."""
 
+    verified: bool = False
+    """Store-local verification status. Excluded from signed canonical JSON."""
+
     def to_canonical_dict(self) -> dict[str, Any]:
         """Produce the canonical form for signing (excludes signature field)."""
         return {
@@ -212,6 +215,7 @@ class AgentCapabilityProfile:
         """Produce the full profile dict including signature."""
         d = self.to_canonical_dict()
         d["signature"] = self.signature
+        d["verified"] = self.verified
         return d
 
     def to_canonical_json_bytes(self) -> bytes:
@@ -265,4 +269,5 @@ class AgentCapabilityProfile:
             ttl=data.get("ttl", 86400),
             updated_at=data.get("updated_at", _new_timestamp()),
             signature=data.get("signature", ""),
+            verified=data.get("verified", False),
         )

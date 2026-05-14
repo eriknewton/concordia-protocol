@@ -19,7 +19,7 @@ from .profile import (
     Sovereignty,
     TrustSignals,
 )
-from .profile_store import AgentProfileStore
+from .profile_store import AgentProfileStore, ProfileSignatureError
 
 __all__ = [
     "AgentCapabilityProfile",
@@ -30,4 +30,5 @@ __all__ = [
     "Sovereignty",
     "TrustSignals",
     "AgentProfileStore",
+    "ProfileSignatureError",
 ]
