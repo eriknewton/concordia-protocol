@@ -1,4 +1,4 @@
-"""RFC 8785 JSON Canonicalization Scheme (JCS) — named surface.
+"""RFC 8785 JSON Canonicalization Scheme (JCS): named surface.
 
 This module is the public, spec-named entry point for canonical JSON
 serialization at the mandate layer (and any caller that wants the same
@@ -17,7 +17,7 @@ References:
 
 The semantics this module guarantees:
 
-1. Object keys sorted lexicographically by Unicode code point.
+1. Object keys sorted lexicographically by UTF-16 code units.
 2. No whitespace between JSON tokens.
 3. Strings serialized with the seven RFC 8259 mandatory escapes plus
    ``\\u00XX`` for control characters U+0000-U+001F; all other
@@ -44,7 +44,7 @@ from .signing import canonical_json
 from .models.mandate import Mandate
 
 
-# JCS specification identifier — surfaces in audit trails / debug output
+# JCS specification identifier: surfaces in audit trails / debug output
 # so downstream consumers can confirm the canonicalization regime by
 # string match rather than by guessing.
 JCS_SPEC_ID = "RFC8785-JCS"
@@ -55,7 +55,7 @@ def canonicalize_jcs(data: Any) -> bytes:
 
     Returns UTF-8 encoded bytes suitable for digest / signature input.
     Rejects non-finite floats (NaN, Infinity, ``-0.0``) with
-    ``ValueError`` — JCS cannot represent them deterministically.
+    ``ValueError`` because JCS cannot represent them deterministically.
 
     Delegates to ``concordia.signing.canonical_json``; this is the
     spec-named alias so callers that want JCS guarantees do not have
@@ -78,7 +78,7 @@ def canonicalize_jcs(data: Any) -> bytes:
 def canonicalize_mandate(mandate: Mandate | dict[str, Any]) -> bytes:
     """Return the canonical bytes used for mandate signing / verification.
 
-    Strips the ``signature`` field before serialization — the
+    Strips the ``signature`` field before serialization. The
     signature covers everything except itself, so the canonical bytes
     must omit it for both signing and verifying paths.
 

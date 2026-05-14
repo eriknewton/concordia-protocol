@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+import warnings
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 import jsonschema
+
+from .attestation import REFERENCE_RELATIONSHIPS, REFERENCE_TYPES
 
 # Path to the bundled schemas directory
 _SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
@@ -134,6 +137,8 @@ def validate_attestation(attestation: dict[str, Any]) -> list[str]:
     )
     for error in validator.iter_errors(attestation):
         errors.append(f"{error.json_path}: {error.message}")
+    if not errors:
+        _warn_on_noncanonical_references(attestation)
     return errors
 
 
@@ -151,6 +156,35 @@ def validate_approval_receipt(receipt: dict[str, Any]) -> list[str]:
     for error in validator.iter_errors(receipt):
         errors.append(f"{error.json_path}: {error.message}")
     return errors
+
+
+def _warn_on_noncanonical_references(attestation: dict[str, Any]) -> None:
+    """Warn while preserving unknown references per SPEC §11.5.5 and §11.5.8."""
+    references = attestation.get("references") or []
+    if not isinstance(references, list):
+        return
+    for index, ref in enumerate(references):
+        if not isinstance(ref, dict):
+            continue
+        ref_type = ref.get("type")
+        if isinstance(ref_type, str) and ref_type not in REFERENCE_TYPES:
+            warnings.warn(
+                f"references[{index}].type {ref_type!r} is non-canonical; "
+                "preserving as opaque string per SPEC §11.5.8",
+                UserWarning,
+                stacklevel=3,
+            )
+        relationship = ref.get("relationship")
+        if (
+            isinstance(relationship, str)
+            and relationship not in REFERENCE_RELATIONSHIPS
+        ):
+            warnings.warn(
+                f"references[{index}].relationship {relationship!r} is "
+                "non-canonical; preserving as opaque string per SPEC §11.5.8",
+                UserWarning,
+                stacklevel=3,
+            )
 
 
 def is_valid_message(message: dict[str, Any]) -> bool:

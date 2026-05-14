@@ -16,14 +16,14 @@
 
     "type": {
       "type": "string",
-      "enum": ["receipt", "chain_session", "predicate", "mandate"],
-      "description": "Kind of artifact referenced. v0.4.x emits only 'receipt'; v0.5+ may emit the full vocabulary. Implementations MUST preserve unknown values as opaque strings per SPEC §11.5.3 forward-compat."
+      "minLength": 1,
+      "description": "Kind of artifact referenced. Canonical emit vocabulary is receipt, chain_session, predicate, mandate. Read-side validators accept non-empty strings and MUST preserve unknown values as opaque strings per SPEC §11.5.5 and §11.5.8 forward-compat."
     },
 
     "relationship": {
       "type": "string",
-      "enum": ["supersedes", "extends", "fulfills", "references"],
-      "description": "Semantic relationship per SPEC §11.5.5. supersedes (MUST): replaces the referenced artifact. extends (SHOULD): builds on it. fulfills (SHOULD): discharges its obligation. references (MAY): weak generic association; use only when no stronger relationship applies."
+      "minLength": 1,
+      "description": "Semantic relationship per SPEC §11.5.5. Canonical emit vocabulary is supersedes, extends, fulfills, references. Read-side validators accept non-empty strings and MUST preserve unknown values as opaque strings per SPEC §11.5.8 forward-compat."
     },
 
     "version": {

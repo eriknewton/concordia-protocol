@@ -153,6 +153,8 @@ class Mandate:
         issued_at: ISO 8601 timestamp of issuance.
         validity: Temporal validity window.
         constraints: JSON Schema dict defining what the mandate authorizes.
+            Predicate references remain opaque attestation references in
+            v0.5.2. A standalone predicate primitive is deferred to v0.6.
         delegation_chain: Ordered list of delegation links (root -> holder).
         revocation_endpoint: Optional URL to check revocation status.
         metadata: Additional key-value pairs.
