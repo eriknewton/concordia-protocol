@@ -30,6 +30,7 @@ import pytest
 
 from concordia.adapters.a2cn import (
     DISPUTE_RESOLVED_SCHEMA,
+    DisputeResolvedApplicationError,
     DisputeResolvedSchemaError,
     apply_dispute_resolved_to_attestation,
     build_fulfillment_from_dispute_resolved,
@@ -40,7 +41,7 @@ from concordia.types import FulfillmentStatus
 SAMPLE_RESOLUTION_TS = "2026-05-11T15:42:00Z"
 SAMPLE_HASH = "a" * 64
 SAMPLE_RESOLVER_DID = "did:web:example.org:resolver:001"
-SAMPLE_DISPUTE_NOTICE_ID = "msg_disp_notice_001"
+SAMPLE_DISPUTE_NOTICE_ID = "99999999-aaaa-4bbb-8ccc-dddddddddddd"
 SAMPLE_SESSION_ID = "session_abc123"
 SAMPLE_MESSAGE_UUID = "11111111-2222-4333-8444-555555555555"
 
@@ -158,6 +159,46 @@ def test_parse_rejects_short_transaction_hash():
     msg["transaction_record_hash"] = "deadbeef"  # 8 chars; schema requires 64+
     with pytest.raises(DisputeResolvedSchemaError):
         parse_dispute_resolved(msg)
+
+
+def test_parse_rejects_overlong_transaction_hash():
+    msg = _base_message()
+    msg["transaction_record_hash"] = "a" * 65
+    with pytest.raises(DisputeResolvedSchemaError) as info:
+        parse_dispute_resolved(msg)
+    assert info.value.path == "transaction_record_hash"
+
+
+def test_parse_rejects_non_hex_transaction_hash():
+    msg = _base_message()
+    msg["transaction_record_hash"] = "g" * 64
+    with pytest.raises(DisputeResolvedSchemaError) as info:
+        parse_dispute_resolved(msg)
+    assert info.value.path == "transaction_record_hash"
+
+
+def test_parse_rejects_invalid_message_uuid():
+    msg = _base_message()
+    msg["message_id"] = "not-a-uuid"
+    with pytest.raises(DisputeResolvedSchemaError) as info:
+        parse_dispute_resolved(msg)
+    assert info.value.path == "message_id"
+
+
+def test_parse_rejects_invalid_dispute_notice_uuid():
+    msg = _base_message()
+    msg["dispute_notice_message_id"] = "msg_disp_notice_001"
+    with pytest.raises(DisputeResolvedSchemaError) as info:
+        parse_dispute_resolved(msg)
+    assert info.value.path == "dispute_notice_message_id"
+
+
+def test_parse_rejects_invalid_resolution_timestamp():
+    msg = _base_message()
+    msg["resolution_timestamp"] = "not-a-date"
+    with pytest.raises(DisputeResolvedSchemaError) as info:
+        parse_dispute_resolved(msg)
+    assert info.value.path == "resolution_timestamp"
 
 
 def test_parse_rejects_additional_properties():
@@ -278,6 +319,93 @@ def test_apply_rejects_empty_agreement_attestation_id():
             message=msg,
             agreement_attestation_id="",
         )
+
+
+def _assert_application_rejected(
+    attestation: dict[str, Any],
+    message: dict[str, Any],
+    agreement_attestation_id: str,
+    reason: str,
+) -> None:
+    snapshot = copy.deepcopy(attestation)
+    with pytest.raises(DisputeResolvedApplicationError) as info:
+        apply_dispute_resolved_to_attestation(
+            attestation=attestation,
+            message=message,
+            agreement_attestation_id=agreement_attestation_id,
+        )
+    assert info.value.reason == reason
+    assert attestation == snapshot
+
+
+def test_apply_rejects_wrong_session():
+    msg = _base_message()
+    msg["session_id"] = "session_other"
+    _assert_application_rejected(
+        _base_attestation(),
+        msg,
+        "att_existing",
+        "session_mismatch",
+    )
+
+
+def test_apply_rejects_wrong_agreement_attestation_id():
+    _assert_application_rejected(
+        _base_attestation(),
+        _base_message(),
+        "att_other",
+        "agreement_mismatch",
+    )
+
+
+def test_apply_rejects_non_agreed_attestation():
+    base = _base_attestation()
+    base["outcome"]["status"] = "rejected"
+    _assert_application_rejected(
+        base,
+        _base_message(),
+        "att_existing",
+        "non_agreed_state",
+    )
+
+
+def test_apply_rejects_already_fulfilled_attestation():
+    base = _base_attestation()
+    base["fulfillment"] = {
+        "status": "fulfilled",
+        "settled_at": "2026-05-10T10:00:00Z",
+    }
+    _assert_application_rejected(
+        base,
+        _base_message(),
+        "att_existing",
+        "fulfillment_state_conflict",
+    )
+
+
+def test_apply_rejects_duplicate_a2cn_message_id():
+    base = _base_attestation()
+    base["meta"]["a2cn_message_id"] = SAMPLE_MESSAGE_UUID
+    _assert_application_rejected(
+        base,
+        _base_message(),
+        "att_existing",
+        "duplicate_message_id",
+    )
+
+
+def test_apply_allows_disputed_fulfillment_state():
+    base = _base_attestation()
+    base["fulfillment"] = {
+        "status": "disputed",
+        "settled_at": "2026-05-10T10:00:00Z",
+    }
+    out = apply_dispute_resolved_to_attestation(
+        attestation=base,
+        message=_base_message(),
+        agreement_attestation_id="att_existing",
+    )
+    assert out["fulfillment"]["status"] == "fulfilled_with_mediation"
 
 
 # ── E. Optional pass-through fields ──────────────────────────────────

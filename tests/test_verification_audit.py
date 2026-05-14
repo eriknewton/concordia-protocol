@@ -38,7 +38,7 @@ def test_mandate_grant_emits_one_audit_event_with_keys() -> None:
     audit_log = VerificationAuditLog()
 
     result = verify_mandate_with_resolver(
-        "urn:concordia:mandate:audit-1",
+        mandate.mandate_id,
         lambda _ref: mandate,
         tier=Tier.BASIC,
         audit_log=audit_log,
@@ -52,7 +52,7 @@ def test_mandate_grant_emits_one_audit_event_with_keys() -> None:
     assert len(events) == 1
     assert events[0].decision == "grant"
     assert events[0].resolver_outcome == "hit"
-    assert events[0].mandate_ref == "urn:concordia:mandate:audit-1"
+    assert events[0].mandate_ref == mandate.mandate_id
     assert events[0].session_ref == "urn:a2cn:session:s-1"
     assert events[0].offer_hash == "sha256:offer"
     assert events[0].receipt_ref == "urn:concordia:receipt:r-1"
@@ -85,7 +85,7 @@ def test_mandate_proof_failure_emits_deny_event() -> None:
     audit_log = VerificationAuditLog()
 
     result = verify_mandate_with_resolver(
-        "urn:concordia:mandate:bad-proof",
+        mandate.mandate_id,
         lambda _ref: mandate,
         tier=Tier.DID_VC,
         issuer_public_key=wrong_key.public_key,

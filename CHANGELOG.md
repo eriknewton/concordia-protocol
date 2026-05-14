@@ -35,6 +35,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- **Reference read-side forward compatibility.** `schemas/reference.schema.json`
+  and the embedded attestation reference schema now accept non-empty
+  strings for `type` and `relationship`, while documenting the canonical
+  emit vocabulary. Non-canonical values are preserved and warned on per
+  SPEC §11.5.5 and §11.5.8.
+- **A2CN DISPUTE_RESOLVED validation and application guards.** The parser
+  now uses Draft 2020-12 validation with a `FormatChecker`, enforces exact
+  64-character hexadecimal `transaction_record_hash` values, and rejects
+  semantic misbinding before applying mediated fulfillment to an attestation.
+- **Predicate reference slot scope.** SPEC §11.5 now states that
+  `predicate` is an opaque reference type only in v0.5.2. The standalone
+  predicate primitive is deferred to v0.6 pending signed artifact shape,
+  schema, canonical signing, verification, resolver hooks, and CTEF claim
+  mapping.
 - **SPEC §9.6.4 in-line fulfillment block.** Added cross-reference
   to the new §9.6.4a standalone Fulfillment Attestation shape, with
   guidance on which pattern to pick. Both shapes coexist; the

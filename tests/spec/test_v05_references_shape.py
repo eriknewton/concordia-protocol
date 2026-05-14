@@ -94,12 +94,18 @@ class TestRelationshipVocabulary:
         reference_validator.validate(ref)
 
     @pytest.mark.parametrize(
-        "bad_rel", ["follows", "supercedes", "FULFILLS", "", "related"]
+        "future_rel", ["follows", "supercedes", "FULFILLS", "related"]
     )
-    def test_unknown_relationship_rejected_at_schema(
-        self, reference_validator: Draft202012Validator, bad_rel: str
+    def test_unknown_relationship_preserved_at_schema(
+        self, reference_validator: Draft202012Validator, future_rel: str
     ) -> None:
-        ref = {"id": "x", "type": "receipt", "relationship": bad_rel}
+        ref = {"id": "x", "type": "receipt", "relationship": future_rel}
+        reference_validator.validate(ref)
+
+    def test_empty_relationship_rejected_at_schema(
+        self, reference_validator: Draft202012Validator
+    ) -> None:
+        ref = {"id": "x", "type": "receipt", "relationship": ""}
         with pytest.raises(ValidationError):
             reference_validator.validate(ref)
 
@@ -115,12 +121,18 @@ class TestTypeVocabulary:
         reference_validator.validate(ref)
 
     @pytest.mark.parametrize(
-        "bad_type", ["session", "Receipt", "MANDATE", "", "envelope"]
+        "future_type", ["session", "Receipt", "MANDATE", "envelope"]
     )
-    def test_unknown_type_rejected_at_schema(
-        self, reference_validator: Draft202012Validator, bad_type: str
+    def test_unknown_type_preserved_at_schema(
+        self, reference_validator: Draft202012Validator, future_type: str
     ) -> None:
-        ref = {"id": "x", "type": bad_type, "relationship": "references"}
+        ref = {"id": "x", "type": future_type, "relationship": "references"}
+        reference_validator.validate(ref)
+
+    def test_empty_type_rejected_at_schema(
+        self, reference_validator: Draft202012Validator
+    ) -> None:
+        ref = {"id": "x", "type": "", "relationship": "references"}
         with pytest.raises(ValidationError):
             reference_validator.validate(ref)
 

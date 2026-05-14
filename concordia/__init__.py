@@ -19,8 +19,10 @@ from .offer import (
     PartialOffer,
 )
 from .schema_validator import (
+    is_valid_approval_receipt,
     is_valid_attestation,
     is_valid_message,
+    validate_approval_receipt,
     validate_attestation,
     validate_message,
 )
@@ -30,6 +32,7 @@ from .signing import KeyPair, ES256KeyPair, sign_message, verify_signature
 from .envelope import build_trust_evidence_envelope, verify_envelope_signature
 from .verascore import VerascoreClient, make_verascore_auto_hook
 from .mandate import sign_mandate, verify_mandate, validate_constraints
+from .approval_receipt import ApprovalReceiptResult, verify_approval_receipt
 from .models.mandate import (
     Mandate,
     MandateVerificationResult,
@@ -101,8 +104,10 @@ __all__ = [
     "find_matches",
     # Validation
     "validate_message",
+    "validate_approval_receipt",
     "validate_attestation",
     "is_valid_message",
+    "is_valid_approval_receipt",
     "is_valid_attestation",
     # Mandate
     "Mandate",
@@ -115,6 +120,9 @@ __all__ = [
     "sign_mandate",
     "verify_mandate",
     "validate_constraints",
+    # ApprovalReceipt
+    "ApprovalReceiptResult",
+    "verify_approval_receipt",
     # Types
     "AgentIdentity",
     "BehaviorRecord",

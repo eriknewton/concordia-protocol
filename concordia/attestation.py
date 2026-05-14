@@ -163,11 +163,12 @@ def _validate_reference(ref: Any, index: int) -> dict[str, Any]:
     Required keys ``type``, ``id``, ``relationship`` are enforced
     structurally per §11.5.6. ``type`` and ``relationship`` values outside
     the canonical vocabularies (§11.5.5, §11.5.6) are preserved as opaque
-    strings per the §11.5.8 MUST forward-compat clause; the schema enum
-    constrains write-side emissions but read-side validators MUST NOT
-    reject unknown values. Optional keys (``version``, ``signed_at``,
-    ``signer_did``, ``extensions``) are passed through unchanged when
-    present so callers can roundtrip extension data per §11.5.6.
+    strings per the §11.5.8 MUST forward-compat clause. Read-side schemas
+    accept non-empty strings per §11.5.5 and §11.5.8; the canonical
+    vocabulary remains the emit-side default. Optional keys (``version``,
+    ``signed_at``, ``signer_did``, ``extensions``) are passed through
+    unchanged when present so callers can roundtrip extension data per
+    §11.5.6.
     """
     if not isinstance(ref, dict):
         raise ValueError(

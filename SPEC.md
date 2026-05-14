@@ -1158,7 +1158,7 @@ Concordia supports two distinct `references[]` surfaces, layered for two distinc
 1. The **envelope-level** surface expresses cryptographic provenance and supersession of envelopes (e.g., "this envelope replaces an earlier envelope that carried an older payload version"). Envelope-level references resolve to verification events, not content.
 2. The **attestation-level** surface expresses content-semantic linkage between signed attestation bodies (e.g., "this attestation extends a prior attestation by the same agent in the same negotiation context"). Attestation-level references resolve to content relationships, not verification events.
 
-Both surfaces are forward-compatible with CMPC v0.5 primitive types (chain_session, predicate, mandate). They are distinct from `validity_temporal` (which expresses an artifact's own time bounds) and from envelope-level chain hashes (which express transcript integrity within a single negotiation).
+Both surfaces are forward-compatible with CMPC v0.5 primitive types (chain_session, predicate, mandate). In v0.5.2, `predicate` is an opaque reference type only. Concordia preserves the typed pointer but does not ship a standalone predicate primitive, predicate schema, resolver, canonical signing path, verifier, or CTEF claim mapping. A standalone predicate primitive is deferred to v0.6. They are distinct from `validity_temporal` (which expresses an artifact's own time bounds) and from envelope-level chain hashes (which express transcript integrity within a single negotiation).
 
 #### 11.5.2 Envelope-level references[]
 
@@ -1192,7 +1192,7 @@ Attestation-level references appear inside the signed attestation body (the arti
 
 Required keys on every attestation-level reference: `type`, `id`, `relationship`. See §11.5.6 for the normative schema fragment. Attestation-level references express content-semantic linkage: the new attestation builds on, supersedes, fulfills, or merely refers to the artifact named by `id`. Verifiers consuming attestation-level references SHOULD treat the reference as a content-level claim about prior work, not as a verification event.
 
-Attestation-level references are populated by the issuer at attestation generation time. Concordia's `generate_attestation()` accepts an optional `references` parameter; the v0.4.0 implementation emits only `type: "receipt"` references today, but the schema accepts the full v0.5 type vocabulary (receipt, chain_session, predicate, mandate) as opaque references in v0.4.x and as resolved references in v0.5+ implementations.
+Attestation-level references are populated by the issuer at attestation generation time. Concordia's `generate_attestation()` accepts an optional `references` parameter; the v0.4.0 implementation emits only `type: "receipt"` references today, but the read-side schema accepts any non-empty `type` and `relationship` strings so unknown v0.x values roundtrip as opaque references. The canonical emit vocabulary remains receipt, chain_session, predicate, mandate for `type` and supersedes, extends, fulfills, references for `relationship`. `predicate` is a typed pointer only in v0.5.2. v0.6 must define a signed artifact shape, schema, canonical signing, verification, resolver hooks, and CTEF claim mapping before predicates become resolved Concordia primitives.
 
 #### 11.5.4 Layering Boundary
 
@@ -1235,13 +1235,13 @@ The attestation-level reference object normative JSON Schema fragment:
     },
     "type": {
       "type": "string",
-      "enum": ["receipt", "chain_session", "predicate", "mandate"],
-      "description": "Kind of artifact referenced. v0.4.x emits only 'receipt'; v0.5+ may emit the full vocabulary."
+      "minLength": 1,
+      "description": "Kind of artifact referenced. Canonical emit vocabulary is receipt, chain_session, predicate, mandate. Read-side validators accept non-empty strings and preserve unknown values per 11.5.5 and 11.5.8."
     },
     "relationship": {
       "type": "string",
-      "enum": ["supersedes", "extends", "fulfills", "references"],
-      "description": "Semantic relationship per 11.5.5."
+      "minLength": 1,
+      "description": "Semantic relationship per 11.5.5. Canonical emit vocabulary is supersedes, extends, fulfills, references. Read-side validators accept non-empty strings and preserve unknown values per 11.5.8."
     },
     "version": {
       "type": "string",
@@ -1294,7 +1294,7 @@ Non-URN identifiers are accepted by the schema (the `id` field is a free-form no
 A v0.5-conforming implementation:
 
 - MUST validate `references[]` per the schema fragment in 11.5.6 at attestation generation and at attestation verification.
-- MUST emit clear error text for malformed entries that maps to the specific 11.5.x section that defines the violated invariant (e.g., "references[2].relationship 'foo' not in {supersedes, extends, fulfills, references} per SPEC §11.5.5").
+- MUST emit clear error text for malformed entries that maps to the specific 11.5.x section that defines the violated invariant.
 - MUST preserve unknown relationship values as opaque strings rather than rejecting them, per 11.5.5 forward-compat.
 - MUST preserve unknown reference type values as opaque strings rather than rejecting them, per 11.5.3 forward-compat.
 - MUST preserve unknown keys under `extensions` verbatim across roundtrips.

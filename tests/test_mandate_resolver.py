@@ -56,6 +56,7 @@ from concordia.mandate_resolver import (
 )
 from concordia.models.mandate import (
     Mandate,
+    MandateStatus,
     MandateVerificationResult,
     TemporalMode,
     ValidityWindow,
@@ -166,9 +167,62 @@ class TestResolverHitValidProof:
         assert result.valid is True
         assert result.tier == Tier.BASIC
         # Basic tier does NOT run the proof check; only the resolver-hit
-        # check is recorded.
-        assert result.checks == {"resolver_hit": True}
+        # and reference binding checks are recorded.
+        assert result.checks == {"resolver_hit": True, "ref_binding": True}
         assert result.failure_reason is None
+
+
+class TestResolverRefBinding:
+    def test_basic_tier_ref_mismatch_denies(self, issuer_keypair: KeyPair) -> None:
+        requested_ref = "urn:concordia:mandate:requested"
+        returned = _make_signed_mandate(
+            issuer_keypair,
+            mandate_id="urn:concordia:mandate:returned",
+        )
+
+        result = verify_mandate_with_resolver(
+            requested_ref,
+            _fixed_resolver(returned),
+            tier=Tier.BASIC,
+        )
+
+        assert result.valid is False
+        assert result.failure_reason == FailureReason.REF_MISMATCH
+        assert result.checks["ref_binding"] is False
+
+    def test_did_vc_tier_ref_mismatch_denies_before_proof(
+        self, issuer_keypair: KeyPair
+    ) -> None:
+        requested_ref = "urn:concordia:mandate:requested"
+        returned = _make_signed_mandate(
+            issuer_keypair,
+            mandate_id="urn:concordia:mandate:returned",
+        )
+
+        result = verify_mandate_with_resolver(
+            requested_ref,
+            _fixed_resolver(returned),
+            tier=Tier.DID_VC,
+            issuer_public_key=issuer_keypair.public_key,
+        )
+
+        assert result.valid is False
+        assert result.failure_reason == FailureReason.REF_MISMATCH
+        assert "issuer_signature" not in result.checks
+
+    def test_basic_tier_revoked_status_denies(self, issuer_keypair: KeyPair) -> None:
+        mandate = _make_signed_mandate(issuer_keypair)
+        mandate.status = MandateStatus.REVOKED
+        mandate = sign_mandate(mandate, issuer_keypair)
+
+        result = verify_mandate_with_resolver(
+            mandate.mandate_id,
+            _fixed_resolver(mandate),
+            tier=Tier.BASIC,
+        )
+
+        assert result.valid is False
+        assert result.failure_reason == "mandate_revoked"
 
 
 # ---------------------------------------------------------------------------

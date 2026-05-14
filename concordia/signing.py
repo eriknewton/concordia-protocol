@@ -145,7 +145,7 @@ def _format_number_ecmascript(value: int | float) -> str:
     if isinstance(value, int):
         return str(value)
 
-    # Float handling — special floats already rejected by _check_no_special_floats
+    # Float handling: special floats already rejected by _check_no_special_floats
     if value == 0.0:
         return "0"
 
@@ -154,25 +154,14 @@ def _format_number_ecmascript(value: int | float) -> str:
         sign = "-"
         value = -value
 
-    # Integer-valued floats: format as integer (matching V8)
-    if value.is_integer():
-        int_val = int(value)
-        s = str(int_val)
-        if len(s) <= 21:
-            # ECMAScript uses decimal notation for integers up to 21 digits
-            return sign + s
-        # For > 21 digits, use exponential notation
-        trimmed = s.rstrip("0")
-        exp = len(s) - 1
-        if len(trimmed) == 1:
-            return sign + trimmed + "e+" + str(exp)
-        return sign + trimmed[0] + "." + trimmed[1:] + "e+" + str(exp)
-
-    # Non-integer floats: parse Python's repr and reformat to ECMAScript rules.
+    # Parse Python's shortest float representation and reformat to ECMAScript
+    # rules. This avoids expanding integer-valued floats like 1e30 through
+    # int(), which exposes the binary float's exact integer rather than the
+    # JSON number representation.
     # Python's repr() uses the same shortest-representation algorithm as V8
-    # (Grisu3/Dragon4), so the significant digits are identical — only the
+    # (Grisu3/Dragon4), so the significant digits are identical; only the
     # decimal/exponential formatting thresholds differ.
-    r = repr(value)
+    r = repr(value).lower()
 
     # Parse into significant digits and exponent
     if "e" in r:
@@ -195,8 +184,9 @@ def _format_number_ecmascript(value: int | float) -> str:
         else:
             digits = int_p + frac_p
             n = len(int_p)
+        digits = digits.rstrip("0") or "0"
     else:
-        # Shouldn't happen for non-integer float, but handle gracefully
+        # Should not happen for floats, but handle gracefully.
         digits = r
         n = len(r)
 
@@ -222,6 +212,12 @@ def _format_number_ecmascript(value: int | float) -> str:
             result = digits[0] + "." + digits[1:] + "e" + e_str
 
     return sign + result
+
+
+def _utf16_sort_key(value: str) -> bytes:
+    """Return RFC 8785 object-key sort bytes for a property name."""
+    # RFC 8785 §3.2.3 sorts raw property names as UTF-16 code units.
+    return value.encode("utf-16-be")
 
 
 def _stable_stringify(value: Any) -> str:
@@ -253,7 +249,7 @@ def _stable_stringify(value: Any) -> str:
     if isinstance(value, (list, tuple)):
         return "[" + ",".join(_stable_stringify(v) for v in value) + "]"
     if isinstance(value, dict):
-        keys = sorted(value.keys())
+        keys = sorted(value.keys(), key=_utf16_sort_key)
         pairs = (
             json.dumps(k, ensure_ascii=False) + ":" + _stable_stringify(value[k])
             for k in keys

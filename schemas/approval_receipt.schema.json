@@ -9,6 +9,7 @@
     "artifact_type",
     "id",
     "issued_at",
+    "expires_at",
     "approver",
     "scope",
     "references",
@@ -59,7 +60,7 @@
 
     "scope": {
       "type": "object",
-      "required": ["decision"],
+      "required": ["decision", "offer_hash", "amount", "threshold_crossed"],
       "additionalProperties": true,
       "properties": {
         "decision": {
@@ -69,6 +70,7 @@
         },
         "offer_hash": {
           "type": "string",
+          "pattern": "^sha256:[a-fA-F0-9]{64}$",
           "description": "Hash of the canonicalized offer the approver evaluated. Format: `sha256:<hex>`. Verifiers SHOULD re-canonicalize the on-the-wire offer at receipt-presentation time and compare."
         },
         "amount": {
@@ -86,6 +88,18 @@
       "type": "array",
       "minItems": 1,
       "description": "Cross-artifact linkage per SPEC §11.5.5 vocabulary. SHOULD include at least one entry with `relationship: \"approves\"` pointing at the negotiation session, and SHOULD include a `relationship: \"fulfills\"` entry when the approval discharges a pre-existing mandate.",
+      "contains": {
+        "type": "object",
+        "required": ["type", "relationship"],
+        "properties": {
+          "type": {
+            "enum": ["negotiation_session", "a2cn:negotiation_session"]
+          },
+          "relationship": {
+            "const": "approves"
+          }
+        }
+      },
       "items": {
         "type": "object",
         "required": ["id", "type", "relationship"],

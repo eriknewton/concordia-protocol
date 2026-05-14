@@ -7,13 +7,35 @@ and attestations against the attestation.schema.json.
 from __future__ import annotations
 
 import json
+from datetime import datetime
+import warnings
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import jsonschema
 
+from .attestation import REFERENCE_RELATIONSHIPS, REFERENCE_TYPES
+
 # Path to the bundled schemas directory
 _SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
+_FORMAT_CHECKER = jsonschema.FormatChecker()
+
+
+@_FORMAT_CHECKER.checks("date-time", raises=ValueError)
+def _is_date_time(value: object) -> bool:
+    if not isinstance(value, str):
+        return True
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return parsed.tzinfo is not None
+
+
+@_FORMAT_CHECKER.checks("uuid", raises=ValueError)
+def _is_uuid(value: object) -> bool:
+    if not isinstance(value, str):
+        return True
+    UUID(value)
+    return True
 
 
 def _load_schema(name: str) -> dict[str, Any]:
@@ -93,7 +115,10 @@ def validate_message(message: dict[str, Any]) -> list[str]:
     Returns a list of validation error messages (empty if valid).
     """
     errors: list[str] = []
-    validator = jsonschema.Draft202012Validator(_MESSAGE_SCHEMA)
+    validator = jsonschema.Draft202012Validator(
+        _MESSAGE_SCHEMA,
+        format_checker=_FORMAT_CHECKER,
+    )
     for error in validator.iter_errors(message):
         errors.append(f"{error.json_path}: {error.message}")
     return errors
@@ -106,9 +131,14 @@ def validate_attestation(attestation: dict[str, Any]) -> list[str]:
     """
     schema = _load_schema("attestation.schema.json")
     errors: list[str] = []
-    validator = jsonschema.Draft202012Validator(schema)
+    validator = jsonschema.Draft202012Validator(
+        schema,
+        format_checker=_FORMAT_CHECKER,
+    )
     for error in validator.iter_errors(attestation):
         errors.append(f"{error.json_path}: {error.message}")
+    if not errors:
+        _warn_on_noncanonical_references(attestation)
     return errors
 
 
@@ -142,6 +172,51 @@ def validate_fulfillment_attestation(attestation: dict[str, Any]) -> list[str]:
     return errors
 
 
+def validate_approval_receipt(receipt: dict[str, Any]) -> list[str]:
+    """Validate an ApprovalReceipt against approval_receipt.schema.json.
+
+    Returns a list of validation error messages (empty if valid).
+    """
+    schema = _load_schema("approval_receipt.schema.json")
+    errors: list[str] = []
+    validator = jsonschema.Draft202012Validator(
+        schema,
+        format_checker=_FORMAT_CHECKER,
+    )
+    for error in validator.iter_errors(receipt):
+        errors.append(f"{error.json_path}: {error.message}")
+    return errors
+
+
+def _warn_on_noncanonical_references(attestation: dict[str, Any]) -> None:
+    """Warn while preserving unknown references per SPEC §11.5.5 and §11.5.8."""
+    references = attestation.get("references") or []
+    if not isinstance(references, list):
+        return
+    for index, ref in enumerate(references):
+        if not isinstance(ref, dict):
+            continue
+        ref_type = ref.get("type")
+        if isinstance(ref_type, str) and ref_type not in REFERENCE_TYPES:
+            warnings.warn(
+                f"references[{index}].type {ref_type!r} is non-canonical; "
+                "preserving as opaque string per SPEC §11.5.8",
+                UserWarning,
+                stacklevel=3,
+            )
+        relationship = ref.get("relationship")
+        if (
+            isinstance(relationship, str)
+            and relationship not in REFERENCE_RELATIONSHIPS
+        ):
+            warnings.warn(
+                f"references[{index}].relationship {relationship!r} is "
+                "non-canonical; preserving as opaque string per SPEC §11.5.8",
+                UserWarning,
+                stacklevel=3,
+            )
+
+
 def is_valid_message(message: dict[str, Any]) -> bool:
     """Return True if the message passes schema validation."""
     return len(validate_message(message)) == 0
@@ -155,3 +230,8 @@ def is_valid_attestation(attestation: dict[str, Any]) -> bool:
 def is_valid_fulfillment_attestation(attestation: dict[str, Any]) -> bool:
     """Return True if the FulfillmentAttestation passes all validation."""
     return len(validate_fulfillment_attestation(attestation)) == 0
+
+
+def is_valid_approval_receipt(receipt: dict[str, Any]) -> bool:
+    """Return True if the ApprovalReceipt passes schema validation."""
+    return len(validate_approval_receipt(receipt)) == 0
