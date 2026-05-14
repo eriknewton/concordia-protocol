@@ -4,7 +4,11 @@ import importlib
 import builtins
 import pathlib
 import sys
-import tomllib
+
+try:
+    import tomllib  # type: ignore[import-not-found]
+except ModuleNotFoundError:
+    import tomli as tomllib  # type: ignore[import-not-found]
 
 
 def _pyproject() -> dict:

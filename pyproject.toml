@@ -39,6 +39,7 @@ dev = [
     "mypy>=1.8",
     "pytest>=8.0",
     "pytest-cov>=4.0",
+    "tomli; python_version < '3.11'",
 ]
 
 [project.urls]
