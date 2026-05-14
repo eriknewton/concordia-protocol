@@ -13,7 +13,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
 from concordia.agent_profile.profile import AgentCapabilityProfile
+
+
+class ProfileSignatureError(ValueError):
+    """Raised when an agent profile signature cannot be verified."""
 
 
 class AgentProfileStore:
@@ -51,8 +57,8 @@ class AgentProfileStore:
             profile: The AgentCapabilityProfile to publish
             verify_signature: If True, signature must be valid (default)
             public_key_bytes: The Ed25519 public key bytes to use for verification.
-                If None and verify_signature=True, the profile must be self-signed
-                (public key derived from agent_id as DID).
+                If None, the profile is accepted as unsigned discovery data and
+                stored with ``verified=False``.
 
         Returns:
             The stored profile
@@ -67,9 +73,18 @@ class AgentProfileStore:
         if len(self._profiles) >= self.MAX_PROFILES and profile.agent_id not in self._profiles:
             raise RuntimeError(f"Profile store at capacity ({self.MAX_PROFILES})")
 
-        # TODO: Add signature verification if public_key_bytes is provided
-        # For Phase 1, we accept profiles without strict verification
-        # Phase 2 will add Ed25519 public key verification against DIDs
+        if verify_signature and public_key_bytes is not None:
+            try:
+                public_key = Ed25519PublicKey.from_public_bytes(public_key_bytes)
+            except ValueError as exc:
+                raise ProfileSignatureError("Invalid Ed25519 public key bytes") from exc
+            if not profile.signature:
+                raise ProfileSignatureError("Profile signature is required")
+            if not profile.verify_signature(public_key):
+                raise ProfileSignatureError("Profile signature verification failed")
+            profile.verified = True
+        else:
+            profile.verified = False
 
         self._profiles[profile.agent_id] = profile
         return profile
@@ -185,7 +200,10 @@ class AgentProfileStore:
             matches.append((profile, score))
 
         # Sort
-        matches.sort(key=lambda x: self._sort_key(x[0], sort_by), reverse=True)
+        matches.sort(
+            key=lambda x: (x[0].verified, self._sort_key(x[0], sort_by), x[1]),
+            reverse=True,
+        )
 
         # Limit
         return matches[:limit]

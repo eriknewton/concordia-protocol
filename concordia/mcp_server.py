@@ -106,6 +106,7 @@ from .mandate import (
     verify_mandate,
     validate_constraints,
 )
+from .verification_audit import record_mandate_verification
 from .approval_receipt import verify_approval_receipt
 from .models.mandate import (
     Mandate,
@@ -3090,6 +3091,10 @@ def tool_verify_mandate(
     action: Annotated[dict | None, "Optional action dict to validate against constraints"] = None,
     delegation_keys: Annotated[dict | None, "Map of agent_id -> base64url public key for chain verification"] = None,
     check_revocation: Annotated[bool, "Whether to check revocation endpoint"] = True,
+    session_ref: Annotated[str | None, "Optional session reference for verification audit"] = None,
+    offer_hash: Annotated[str | None, "Optional offer hash for verification audit"] = None,
+    receipt_ref: Annotated[str | None, "Optional approval or receipt reference for verification audit"] = None,
+    mandate_ref: Annotated[str | None, "Optional mandate reference for verification audit"] = None,
 ) -> str:
     """Verify a signed mandate credential against all five checks."""
     import base64
@@ -3145,6 +3150,16 @@ def tool_verify_mandate(
         action=action,
         delegation_public_keys=deleg_pub_keys if deleg_pub_keys else None,
         check_revocation_status=check_revocation,
+    )
+    record_mandate_verification(
+        result=result,
+        verifier="mcp_server.concordia_verify_mandate",
+        mandate_ref=mandate_ref or mandate.get("mandate_id"),
+        session_ref=session_ref,
+        offer_hash=offer_hash,
+        receipt_ref=receipt_ref,
+        resolver_outcome=None,
+        inputs={"mandate": mandate},
     )
 
     return json.dumps(result.to_dict(), indent=2, default=str)

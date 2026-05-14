@@ -26,13 +26,20 @@ classifiers = [
 dependencies = [
     "cryptography>=42.0",
     "jsonschema>=4.20",
-    "mcp>=1.0",
 ]
 
 [project.optional-dependencies]
+server = [
+    "mcp>=1.0",
+]
 dev = [
+    "build>=1.2",
+    "hatchling>=1.27",
+    "mcp>=1.0",
+    "mypy>=1.8",
     "pytest>=8.0",
     "pytest-cov>=4.0",
+    "tomli; python_version < '3.11'",
 ]
 
 [project.urls]
@@ -46,6 +53,7 @@ concordia-mcp-server = "concordia.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["concordia"]
+force-include = { "concordia/py.typed" = "concordia/py.typed" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -62,6 +62,7 @@ from .models.mandate import (
     MandateStatus,
     MandateVerificationResult,
 )
+from .verification_audit import VerificationAuditLog, record_mandate_verification
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +145,10 @@ def verify_mandate_with_resolver(
     delegation_public_keys: Optional[dict[str, Any]] = None,
     check_revocation_status: bool = True,
     revocation_timeout: float = 5.0,
+    audit_log: VerificationAuditLog | None = None,
+    session_ref: str | None = None,
+    offer_hash: str | None = None,
+    receipt_ref: str | None = None,
 ) -> MandateVerificationResult:
     """Verify a mandate by URN reference using a caller-supplied resolver.
 
@@ -190,7 +195,7 @@ def verify_mandate_with_resolver(
     """
     # --- Tier sanity check (cheap; before any resolver call) ---
     if tier not in VALID_TIERS:
-        return MandateVerificationResult(
+        result = MandateVerificationResult(
             valid=False,
             tier=tier,
             failure_reason=FailureReason.INVALID_TIER,
@@ -199,6 +204,18 @@ def verify_mandate_with_resolver(
                 f"{sorted(VALID_TIERS)}"
             ],
         )
+        record_mandate_verification(
+            result=result,
+            verifier="mandate_resolver",
+            mandate_ref=mandate_ref,
+            session_ref=session_ref,
+            offer_hash=offer_hash,
+            receipt_ref=receipt_ref,
+            resolver_outcome="not_called",
+            inputs={"mandate_ref": mandate_ref, "tier": tier},
+            audit_log=audit_log,
+        )
+        return result
 
     # --- Call resolver. Exceptions wrap as ResolverError (protocol error). ---
     try:
@@ -210,16 +227,28 @@ def verify_mandate_with_resolver(
 
     # --- Soft miss: caller-decides. NOT raised. ---
     if resolved is None:
-        return MandateVerificationResult(
+        result = MandateVerificationResult(
             valid=False,
             tier=tier,
             mandate=None,
             failure_reason=FailureReason.RESOLVER_MISS,
             errors=[f"resolver returned no mandate for ref={mandate_ref!r}"],
         )
+        record_mandate_verification(
+            result=result,
+            verifier="mandate_resolver",
+            mandate_ref=mandate_ref,
+            session_ref=session_ref,
+            offer_hash=offer_hash,
+            receipt_ref=receipt_ref,
+            resolver_outcome="miss",
+            inputs={"mandate_ref": mandate_ref, "tier": tier},
+            audit_log=audit_log,
+        )
+        return result
 
     if resolved.mandate_id != mandate_ref:
-        return MandateVerificationResult(
+        result = MandateVerificationResult(
             valid=False,
             mandate_id=resolved.mandate_id,
             issuer=resolved.issuer,
@@ -233,13 +262,25 @@ def verify_mandate_with_resolver(
                 f"for requested ref={mandate_ref!r}"
             ],
         )
+        record_mandate_verification(
+            result=result,
+            verifier="mandate_resolver",
+            mandate_ref=mandate_ref,
+            session_ref=session_ref,
+            offer_hash=offer_hash,
+            receipt_ref=receipt_ref,
+            resolver_outcome="hit",
+            inputs={"mandate_ref": mandate_ref, "tier": tier},
+            audit_log=audit_log,
+        )
+        return result
 
     # --- Revocation surface: pull through but do NOT short-circuit. ---
     # Session policy decides revocation semantics per the 2026-05-10 thread.
     revoked_at = resolved.revoked_at
 
     if resolved.status != MandateStatus.ACTIVE:
-        return MandateVerificationResult(
+        result = MandateVerificationResult(
             valid=False,
             mandate_id=resolved.mandate_id,
             issuer=resolved.issuer,
@@ -255,6 +296,18 @@ def verify_mandate_with_resolver(
             },
             errors=[f"Mandate lifecycle status is {resolved.status.value!r}"],
         )
+        record_mandate_verification(
+            result=result,
+            verifier="mandate_resolver",
+            mandate_ref=mandate_ref,
+            session_ref=session_ref,
+            offer_hash=offer_hash,
+            receipt_ref=receipt_ref,
+            resolver_outcome="hit",
+            inputs={"mandate_ref": mandate_ref, "tier": tier},
+            audit_log=audit_log,
+        )
+        return result
 
     # --- Basic tier: resolver answer is authoritative. ---
     if tier == Tier.BASIC:
@@ -273,12 +326,23 @@ def verify_mandate_with_resolver(
                 f"mandate has revoked_at={revoked_at}; session policy decides "
                 f"whether to honor"
             )
+        record_mandate_verification(
+            result=result,
+            verifier="mandate_resolver",
+            mandate_ref=mandate_ref,
+            session_ref=session_ref,
+            offer_hash=offer_hash,
+            receipt_ref=receipt_ref,
+            resolver_outcome="hit",
+            inputs={"mandate_ref": mandate_ref, "tier": tier},
+            audit_log=audit_log,
+        )
         return result
 
     # --- DID-VC tier: two-step. Resolver gave us the mandate;
     # the classical verifier checks the proof against the issuer key. ---
     if issuer_public_key is None:
-        return MandateVerificationResult(
+        result = MandateVerificationResult(
             valid=False,
             mandate_id=resolved.mandate_id,
             issuer=resolved.issuer,
@@ -291,6 +355,18 @@ def verify_mandate_with_resolver(
                 "DID-VC tier requires issuer_public_key for proof verification"
             ],
         )
+        record_mandate_verification(
+            result=result,
+            verifier="mandate_resolver",
+            mandate_ref=mandate_ref,
+            session_ref=session_ref,
+            offer_hash=offer_hash,
+            receipt_ref=receipt_ref,
+            resolver_outcome="hit",
+            inputs={"mandate_ref": mandate_ref, "tier": tier},
+            audit_log=audit_log,
+        )
+        return result
 
     proof_result = _verify_resolved_mandate(
         resolved,
@@ -323,6 +399,17 @@ def verify_mandate_with_resolver(
             f"mandate has revoked_at={revoked_at}; session policy decides "
             f"whether to honor"
         )
+    record_mandate_verification(
+        result=proof_result,
+        verifier="mandate_resolver",
+        mandate_ref=mandate_ref,
+        session_ref=session_ref,
+        offer_hash=offer_hash,
+        receipt_ref=receipt_ref,
+        resolver_outcome="hit",
+        inputs={"mandate_ref": mandate_ref, "tier": tier},
+        audit_log=audit_log,
+    )
     return proof_result
 
 

@@ -142,6 +142,36 @@ def validate_attestation(attestation: dict[str, Any]) -> list[str]:
     return errors
 
 
+def validate_fulfillment_attestation(attestation: dict[str, Any]) -> list[str]:
+    """Validate a standalone FulfillmentAttestation artifact.
+
+    JSON Schema enforces the presence of a fulfills reference. This
+    companion check enforces the local equality invariant between that
+    canonical reference and ``agreement_attestation_id``.
+    """
+    schema = _load_schema("fulfillment_attestation.schema.json")
+    errors: list[str] = []
+    validator = jsonschema.Draft202012Validator(schema)
+    for error in validator.iter_errors(attestation):
+        errors.append(f"{error.json_path}: {error.message}")
+
+    agreement_id = attestation.get("agreement_attestation_id")
+    references = attestation.get("references", [])
+    if isinstance(agreement_id, str) and isinstance(references, list):
+        fulfills_targets = [
+            ref.get("id")
+            for ref in references
+            if isinstance(ref, dict) and ref.get("relationship") == "fulfills"
+        ]
+        if fulfills_targets and agreement_id not in fulfills_targets:
+            errors.append(
+                "$.references: fulfills reference id must equal "
+                "agreement_attestation_id"
+            )
+
+    return errors
+
+
 def validate_approval_receipt(receipt: dict[str, Any]) -> list[str]:
     """Validate an ApprovalReceipt against approval_receipt.schema.json.
 
@@ -195,6 +225,11 @@ def is_valid_message(message: dict[str, Any]) -> bool:
 def is_valid_attestation(attestation: dict[str, Any]) -> bool:
     """Return True if the attestation passes schema validation."""
     return len(validate_attestation(attestation)) == 0
+
+
+def is_valid_fulfillment_attestation(attestation: dict[str, Any]) -> bool:
+    """Return True if the FulfillmentAttestation passes all validation."""
+    return len(validate_fulfillment_attestation(attestation)) == 0
 
 
 def is_valid_approval_receipt(receipt: dict[str, Any]) -> bool:

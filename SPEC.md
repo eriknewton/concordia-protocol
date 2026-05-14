@@ -897,12 +897,12 @@ Worked example (matches the Draft A example reproduced in
   "references": [
     {
       "type": "negotiation_session",
-      "id": "a2cn:session:9e4d2c11",
+      "id": "urn:a2cn:session:9e4d2c11",
       "relationship": "approves"
     },
     {
       "type": "mandate",
-      "id": "a2cn:mandate:m-2026-04-19-0007",
+      "id": "urn:a2cn:mandate:m-2026-04-19-0007",
       "relationship": "fulfills"
     }
   ],
@@ -1282,6 +1282,7 @@ For cross-protocol linkages (e.g., to A2A messages, AP2 mandates, x402 payment p
 | Linked Protocol | URN Scheme Example |
 |-----------------|-------------------|
 | A2A | `urn:a2a:task:<task_id>` |
+| A2CN | `urn:a2cn:session:<session_id>`, `urn:a2cn:mandate:<mandate_id>` |
 | AP2 | `urn:ap2:mandate:<mandate_id>` |
 | x402 | `urn:x402:payment:<tx_hash>` |
 | ERC-8004 | `urn:erc8004:reputation:<entry_id>` |
