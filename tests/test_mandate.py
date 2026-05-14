@@ -118,6 +118,23 @@ def _make_mandate(
     return sign_mandate(mandate, keypair)
 
 
+def _make_mandate_with_status(
+    keypair: KeyPair,
+    status: MandateStatus,
+    validity: ValidityWindow | None = None,
+) -> Mandate:
+    if validity is None:
+        validity = _make_windowed_validity(datetime.now(timezone.utc))
+    mandate = Mandate.create(
+        issuer="did:concordia:issuer-001",
+        subject="did:concordia:agent-001",
+        constraints=_make_simple_constraints(),
+        validity=validity,
+    )
+    mandate.status = status
+    return sign_mandate(mandate, keypair)
+
+
 # ===========================================================================
 # SCHEMA VALIDATION TESTS
 # ===========================================================================
@@ -604,6 +621,114 @@ class TestDelegationChain:
         assert valid is True
 
 
+class TestDelegationScope:
+    """Delegation scope restrictions narrow authority."""
+
+    def test_middle_link_scope_restriction_denies_over_limit_action(
+        self, now: datetime
+    ):
+        keys = {f"did:concordia:agent-{i}": KeyPair.generate() for i in range(4)}
+        pairs = [
+            ("did:concordia:agent-0", "did:concordia:agent-1", None),
+            ("did:concordia:agent-1", "did:concordia:agent-2", {"max_spend": 500}),
+            ("did:concordia:agent-2", "did:concordia:agent-3", None),
+        ]
+        chain = []
+        for delegator, delegate, scope in pairs:
+            link = DelegationLink(
+                delegator=delegator,
+                delegate=delegate,
+                scope_restriction=scope,
+                delegated_at=now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            )
+            chain.append(sign_delegation(link, keys[delegator]))
+
+        mandate = Mandate.create(
+            issuer="did:concordia:agent-0",
+            subject="did:concordia:agent-3",
+            constraints=_make_simple_constraints(),
+            validity=_make_windowed_validity(now),
+            delegation_chain=chain,
+        )
+        mandate = sign_mandate(mandate, keys["did:concordia:agent-0"])
+
+        result = verify_mandate(
+            mandate,
+            keys["did:concordia:agent-0"].public_key,
+            now=now,
+            action={"max_spend": 750, "category": "books"},
+            delegation_public_keys={agent: key.public_key for agent, key in keys.items()},
+        )
+
+        assert result.valid is False
+        assert result.checks["delegation_scope"] is True
+        assert result.checks["constraint_compliance"] is False
+
+    def test_middle_link_scope_restriction_allows_in_limit_action(
+        self, now: datetime
+    ):
+        issuer_key = KeyPair.generate()
+        delegate_key = KeyPair.generate()
+        link = DelegationLink(
+            delegator="did:concordia:issuer-001",
+            delegate="did:concordia:agent-001",
+            scope_restriction={"max_spend": 500},
+            delegated_at=now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
+        link = sign_delegation(link, issuer_key)
+        mandate = Mandate.create(
+            issuer="did:concordia:issuer-001",
+            subject="did:concordia:agent-001",
+            constraints=_make_simple_constraints(),
+            validity=_make_windowed_validity(now),
+            delegation_chain=[link],
+        )
+        mandate = sign_mandate(mandate, issuer_key)
+
+        result = verify_mandate(
+            mandate,
+            issuer_key.public_key,
+            now=now,
+            action={"max_spend": 400, "category": "books"},
+            delegation_public_keys={
+                "did:concordia:issuer-001": issuer_key.public_key,
+                "did:concordia:agent-001": delegate_key.public_key,
+            },
+        )
+
+        assert result.valid is True
+        assert result.checks["delegation_scope"] is True
+
+    def test_unsupported_scope_restriction_denies(self, now: datetime):
+        issuer_key = KeyPair.generate()
+        link = DelegationLink(
+            delegator="did:concordia:issuer-001",
+            delegate="did:concordia:agent-001",
+            scope_restriction={"custom_rule": {"operator": "lte", "value": 500}},
+            delegated_at=now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
+        link = sign_delegation(link, issuer_key)
+        mandate = Mandate.create(
+            issuer="did:concordia:issuer-001",
+            subject="did:concordia:agent-001",
+            constraints=_make_simple_constraints(),
+            validity=_make_windowed_validity(now),
+            delegation_chain=[link],
+        )
+        mandate = sign_mandate(mandate, issuer_key)
+
+        result = verify_mandate(
+            mandate,
+            issuer_key.public_key,
+            now=now,
+            action={"max_spend": 100, "category": "books"},
+            delegation_public_keys={"did:concordia:issuer-001": issuer_key.public_key},
+        )
+
+        assert result.valid is False
+        assert result.failure_reason == "unsupported_scope_restriction"
+
+
 # ===========================================================================
 # REVOCATION TESTS
 # ===========================================================================
@@ -875,6 +1000,109 @@ class TestFullVerification:
         assert result.mandate_id == mandate.mandate_id
         assert result.issuer == mandate.issuer
         assert result.subject == mandate.subject
+
+
+class TestLifecycleStatus:
+    """Signed lifecycle status gates authority."""
+
+    @pytest.mark.parametrize(
+        ("status", "failure_reason"),
+        [
+            (MandateStatus.REVOKED, "mandate_revoked"),
+            (MandateStatus.SUSPENDED, "mandate_suspended"),
+            (MandateStatus.EXPIRED, "mandate_expired"),
+        ],
+    )
+    def test_non_active_status_denies(
+        self,
+        ed25519_keypair: KeyPair,
+        status: MandateStatus,
+        failure_reason: str,
+    ):
+        mandate = _make_mandate_with_status(ed25519_keypair, status)
+        result = verify_mandate(mandate, ed25519_keypair.public_key)
+
+        assert result.valid is False
+        assert result.checks["lifecycle_status"] is False
+        assert result.failure_reason == failure_reason
+
+    def test_active_status_still_passes(self, ed25519_keypair: KeyPair):
+        mandate = _make_mandate_with_status(ed25519_keypair, MandateStatus.ACTIVE)
+        result = verify_mandate(mandate, ed25519_keypair.public_key)
+
+        assert result.valid is True
+        assert result.checks["lifecycle_status"] is True
+
+
+class TestStrictBindingContext:
+    """Authority verification requires sequence and state context."""
+
+    def test_sequence_without_context_denies(self, ed25519_keypair: KeyPair):
+        mandate = _make_mandate(ed25519_keypair, _make_sequence_validity("session-a"))
+        result = verify_mandate(mandate, ed25519_keypair.public_key)
+
+        assert result.valid is False
+        assert result.failure_reason == "missing_sequence_context"
+
+    def test_sequence_matching_context_passes(self, ed25519_keypair: KeyPair):
+        mandate = _make_mandate(ed25519_keypair, _make_sequence_validity("session-a"))
+        result = verify_mandate(
+            mandate,
+            ed25519_keypair.public_key,
+            sequence_key="session-a",
+        )
+
+        assert result.valid is True
+
+    def test_sequence_exploratory_mode_preserves_permissive_behavior(
+        self, ed25519_keypair: KeyPair
+    ):
+        mandate = _make_mandate(ed25519_keypair, _make_sequence_validity("session-a"))
+        result = verify_mandate(
+            mandate,
+            ed25519_keypair.public_key,
+            require_binding_context=False,
+        )
+
+        assert result.valid is True
+
+    def test_state_bound_without_context_denies(self, ed25519_keypair: KeyPair):
+        mandate = _make_mandate(
+            ed25519_keypair,
+            _make_state_bound_validity("active"),
+        )
+        result = verify_mandate(mandate, ed25519_keypair.public_key)
+
+        assert result.valid is False
+        assert result.failure_reason == "missing_state_context"
+
+    def test_state_bound_matching_context_passes(self, ed25519_keypair: KeyPair):
+        mandate = _make_mandate(
+            ed25519_keypair,
+            _make_state_bound_validity("active"),
+        )
+        result = verify_mandate(
+            mandate,
+            ed25519_keypair.public_key,
+            state_active=True,
+        )
+
+        assert result.valid is True
+
+    def test_state_bound_exploratory_mode_preserves_permissive_behavior(
+        self, ed25519_keypair: KeyPair
+    ):
+        mandate = _make_mandate(
+            ed25519_keypair,
+            _make_state_bound_validity("active"),
+        )
+        result = verify_mandate(
+            mandate,
+            ed25519_keypair.public_key,
+            require_binding_context=False,
+        )
+
+        assert result.valid is True
 
 
 # ===========================================================================
