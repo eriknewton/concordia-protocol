@@ -62,6 +62,7 @@ Tools — Adoption (Viral Strategy §16, §17):
 
 Tools — Mandate Verification (v0.4.0):
     concordia_verify_mandate      — Verify a signed mandate credential (signature, temporal, constraints, delegation, revocation)
+    concordia_verify_approval_receipt - Verify a signed ApprovalReceipt artifact
 
 Tools — Verascore Integration:
     concordia_verascore_report    — Report a concluded negotiation to Verascore for reputation scoring
@@ -105,6 +106,7 @@ from .mandate import (
     verify_mandate,
     validate_constraints,
 )
+from .approval_receipt import verify_approval_receipt
 from .models.mandate import (
     Mandate,
     MandateVerificationResult,
@@ -3149,6 +3151,47 @@ def tool_verify_mandate(
 
 
 # ---------------------------------------------------------------------------
+# Tool: verify_approval_receipt
+# ---------------------------------------------------------------------------
+
+@mcp.tool(
+    name="concordia_verify_approval_receipt",
+    description=(
+        "Verify a signed ApprovalReceipt artifact. Checks schema, Ed25519 "
+        "signature, expiry, canonical offer hash binding, and the required "
+        "approves negotiation-session reference. Returns a typed approve or "
+        "deny decision result."
+    ),
+)
+def tool_verify_approval_receipt(
+    receipt: Annotated[dict, "The ApprovalReceipt artifact dict to verify"],
+    offer: Annotated[dict, "The offer dict the receipt is expected to approve or deny"],
+    issuer_public_key_b64: Annotated[str, "Base64url-encoded Ed25519 issuer public key"],
+) -> str:
+    """Verify a signed ApprovalReceipt artifact."""
+    import base64
+
+    try:
+        issuer_public_key = base64.urlsafe_b64decode(issuer_public_key_b64)
+    except Exception as e:
+        return json.dumps({
+            "valid": False,
+            "decision": receipt.get("scope", {}).get("decision")
+            if isinstance(receipt.get("scope"), dict)
+            else None,
+            "failure_reason": "signature_invalid",
+            "errors": [f"Invalid issuer public key encoding: {e}"],
+        })
+
+    result = verify_approval_receipt(
+        receipt=receipt,
+        offer=offer,
+        issuer_public_key=issuer_public_key,
+    )
+    return json.dumps(result.to_dict(), indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
 # Programmatic access — for direct Python usage and testing
 # ---------------------------------------------------------------------------
 
@@ -3218,6 +3261,7 @@ def handle_tool_call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         "concordia_list_receipt_bundles": tool_list_receipt_bundles,
         "concordia_verascore_report": tool_verascore_report,
         "concordia_verify_mandate": tool_verify_mandate,
+        "concordia_verify_approval_receipt": tool_verify_approval_receipt,
         # Discovery tools (Phase 2)
         "agent_profile_publish": _discovery_tools.get("agent_profile_publish"),
         "agent_profile_get": _discovery_tools.get("agent_profile_get"),
