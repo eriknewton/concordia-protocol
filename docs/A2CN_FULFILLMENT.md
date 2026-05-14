@@ -7,6 +7,10 @@ and SPEC.md §9.6.4. Adds the v0.5 `ApprovalReceipt` artifact type for
 HITL pause-resume composition with A2CN Section 14 (per A2A
 Discussion #1737).
 
+A2CN cross-protocol references use the SPEC.md §11.5.7 URN forms
+`urn:a2cn:session:<session_id>` and `urn:a2cn:mandate:<mandate_id>` in new
+artifacts. Older `a2cn:*` identifiers remain readable for compatibility.
+
 ## Two fulfillment shapes — when to use which
 
 Concordia v0.5 supports two fulfillment-recording patterns. They are
@@ -137,7 +141,7 @@ The full schema is `schemas/fulfillment_attestation.schema.json` (`$id`
     },
     {
       "type": "chain_session",
-      "id": "a2cn:session:9e4d2c11",
+      "id": "urn:a2cn:session:9e4d2c11",
       "relationship": "references"
     }
   ],
@@ -171,7 +175,7 @@ The full schema is `schemas/fulfillment_attestation.schema.json` (`$id`
     },
     {
       "type": "chain_session",
-      "id": "a2cn:session:7c2a1b09",
+      "id": "urn:a2cn:session:7c2a1b09",
       "relationship": "references"
     }
   ],
@@ -212,7 +216,7 @@ The full schema is `schemas/fulfillment_attestation.schema.json` (`$id`
     },
     {
       "type": "chain_session",
-      "id": "a2cn:session:e7f60a11",
+      "id": "urn:a2cn:session:e7f60a11",
       "relationship": "references"
     }
   ],
@@ -257,12 +261,12 @@ Worked example (matches A2A Discussion #1737 Draft A):
   "references": [
     {
       "type": "negotiation_session",
-      "id": "a2cn:session:9e4d2c11",
+      "id": "urn:a2cn:session:9e4d2c11",
       "relationship": "approves"
     },
     {
       "type": "mandate",
-      "id": "a2cn:mandate:m-2026-04-19-0007",
+      "id": "urn:a2cn:mandate:m-2026-04-19-0007",
       "relationship": "fulfills"
     }
   ],

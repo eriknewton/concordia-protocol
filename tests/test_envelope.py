@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from typing import Any
 
 import pytest
@@ -295,6 +296,34 @@ class TestReferences:
         assert len(refs) == 3
         assert refs[1]["kind"] == "upstream_envelope"
         assert refs[2]["kind"] == "mandate_proof"
+
+    def test_canonical_a2cn_urn_reference_is_accepted_without_warning(self):
+        _, attestation, _ = _make_agreed_session()
+        kp = KeyPair.generate()
+        extra = [{"kind": "chain_state", "urn": "urn:a2cn:session:9e4d2c11"}]
+
+        with warnings.catch_warnings(record=True) as captured:
+            warnings.simplefilter("always")
+            envelope = build_trust_evidence_envelope(
+                attestation, kp, "did:web:test.ai", "key-1", "did:test:seller",
+                references=extra,
+            )
+
+        assert captured == []
+        assert envelope["references"][1]["urn"] == "urn:a2cn:session:9e4d2c11"
+
+    def test_non_urn_reference_warns_but_is_preserved(self):
+        _, attestation, _ = _make_agreed_session()
+        kp = KeyPair.generate()
+        extra = [{"kind": "chain_state", "urn": "a2cn:session:legacy"}]
+
+        with pytest.warns(RuntimeWarning, match="Non-URN envelope reference"):
+            envelope = build_trust_evidence_envelope(
+                attestation, kp, "did:web:test.ai", "key-1", "did:test:seller",
+                references=extra,
+            )
+
+        assert envelope["references"][1]["urn"] == "a2cn:session:legacy"
 
     def test_invalid_reference_rejected(self):
         _, attestation, _ = _make_agreed_session()

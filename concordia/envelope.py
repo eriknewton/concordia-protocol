@@ -7,6 +7,7 @@ with the multi-provider trust evidence format (A2A Discussion #1734).
 from __future__ import annotations
 
 import uuid
+import warnings
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
@@ -156,6 +157,15 @@ def build_trust_evidence_envelope(
                 raise ValueError(
                     "envelope reference missing required keys per SPEC §11.5.2 "
                     "(kind, urn)"
+                )
+            urn = ref.get("urn")
+            if isinstance(urn, str) and not urn.startswith("urn:"):
+                warnings.warn(
+                    "Non-URN envelope reference accepted for backward "
+                    "compatibility; new cross-protocol references should use "
+                    "SPEC §11.5.7 URN identifiers",
+                    RuntimeWarning,
+                    stacklevel=2,
                 )
             all_references.append(ref)
 
