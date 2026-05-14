@@ -59,6 +59,7 @@ from typing import Any, Callable, Optional, Protocol, runtime_checkable
 from .mandate import verify_mandate as _verify_resolved_mandate
 from .models.mandate import (
     Mandate,
+    MandateStatus,
     MandateVerificationResult,
 )
 
@@ -122,6 +123,7 @@ class FailureReason:
     MISSING_ISSUER_KEY = "missing_issuer_key"
     INVALID_PROOF = "invalid_proof"
     SCHEMA_INVALID = "schema_invalid"
+    REF_MISMATCH = "ref_mismatch"
 
 
 # ---------------------------------------------------------------------------
@@ -216,9 +218,43 @@ def verify_mandate_with_resolver(
             errors=[f"resolver returned no mandate for ref={mandate_ref!r}"],
         )
 
+    if resolved.mandate_id != mandate_ref:
+        return MandateVerificationResult(
+            valid=False,
+            mandate_id=resolved.mandate_id,
+            issuer=resolved.issuer,
+            subject=resolved.subject,
+            tier=tier,
+            mandate=resolved,
+            failure_reason=FailureReason.REF_MISMATCH,
+            checks={"resolver_hit": True, "ref_binding": False},
+            errors=[
+                f"resolver returned mandate_id={resolved.mandate_id!r} "
+                f"for requested ref={mandate_ref!r}"
+            ],
+        )
+
     # --- Revocation surface: pull through but do NOT short-circuit. ---
     # Session policy decides revocation semantics per the 2026-05-10 thread.
     revoked_at = resolved.revoked_at
+
+    if resolved.status != MandateStatus.ACTIVE:
+        return MandateVerificationResult(
+            valid=False,
+            mandate_id=resolved.mandate_id,
+            issuer=resolved.issuer,
+            subject=resolved.subject,
+            mandate=resolved,
+            tier=tier,
+            revoked_at=revoked_at,
+            failure_reason=f"mandate_{resolved.status.value}",
+            checks={
+                "resolver_hit": True,
+                "ref_binding": True,
+                "lifecycle_status": False,
+            },
+            errors=[f"Mandate lifecycle status is {resolved.status.value!r}"],
+        )
 
     # --- Basic tier: resolver answer is authoritative. ---
     if tier == Tier.BASIC:
@@ -230,7 +266,7 @@ def verify_mandate_with_resolver(
             mandate=resolved,
             tier=tier,
             revoked_at=revoked_at,
-            checks={"resolver_hit": True},
+            checks={"resolver_hit": True, "ref_binding": True},
         )
         if revoked_at is not None:
             result.warnings.append(
@@ -274,6 +310,7 @@ def verify_mandate_with_resolver(
     proof_result.mandate = resolved
     proof_result.tier = tier
     proof_result.revoked_at = revoked_at
+    proof_result.checks["ref_binding"] = True
     if not proof_result.valid and proof_result.failure_reason is None:
         # Map the most-relevant check name to a stable failure_reason
         # so session policy can branch without parsing free-text errors.

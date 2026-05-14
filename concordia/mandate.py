@@ -41,6 +41,37 @@ from .signing import (
 )
 
 
+_JSON_SCHEMA_KEYWORDS = frozenset(
+    {
+        "$schema",
+        "$id",
+        "$ref",
+        "$defs",
+        "type",
+        "properties",
+        "required",
+        "additionalProperties",
+        "items",
+        "allOf",
+        "anyOf",
+        "oneOf",
+        "not",
+        "enum",
+        "const",
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "minLength",
+        "maxLength",
+        "pattern",
+        "minItems",
+        "maxItems",
+        "format",
+    }
+)
+
+
 # ---------------------------------------------------------------------------
 # Signing helpers
 # ---------------------------------------------------------------------------
@@ -124,6 +155,73 @@ def validate_constraints(
             return False, errors
 
     return True, errors
+
+
+def _scope_restriction_to_schema(
+    scope_restriction: dict[str, Any],
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Convert a signed delegation scope restriction into JSON Schema.
+
+    Supported forms are JSON Schema objects and the legacy shorthand
+    ``{"max_spend": number}``. Unknown shorthands fail closed.
+    """
+    if not isinstance(scope_restriction, dict) or not scope_restriction:
+        return None, ["unsupported_scope_restriction"]
+
+    if any(key in _JSON_SCHEMA_KEYWORDS for key in scope_restriction):
+        try:
+            jsonschema.Draft202012Validator.check_schema(scope_restriction)
+        except jsonschema.SchemaError as e:
+            return None, [f"unsupported_scope_restriction: {e.message}"]
+        return scope_restriction, []
+
+    max_spend = scope_restriction.get("max_spend")
+    if (
+        set(scope_restriction) == {"max_spend"}
+        and isinstance(max_spend, int | float)
+        and not isinstance(max_spend, bool)
+    ):
+        return (
+            {
+                "type": "object",
+                "properties": {
+                    "max_spend": {
+                        "type": "number",
+                        "maximum": max_spend,
+                    }
+                },
+            },
+            [],
+        )
+
+    return None, [
+        "unsupported_scope_restriction: expected JSON Schema or max_spend shorthand"
+    ]
+
+
+def compose_effective_constraints(
+    constraints: dict[str, Any],
+    chain: list[DelegationLink],
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Intersect mandate constraints with every delegation scope restriction."""
+    schemas = [constraints]
+    errors: list[str] = []
+
+    for i, link in enumerate(chain):
+        if link.scope_restriction is None:
+            continue
+        schema, scope_errors = _scope_restriction_to_schema(link.scope_restriction)
+        if scope_errors:
+            errors.extend(f"link {i}: {error}" for error in scope_errors)
+            continue
+        if schema is not None:
+            schemas.append(schema)
+
+    if errors:
+        return None, errors
+    if len(schemas) == 1:
+        return constraints, []
+    return {"allOf": schemas}, []
 
 
 # ---------------------------------------------------------------------------
@@ -323,6 +421,7 @@ def verify_mandate(
     delegation_public_keys: dict[str, Any] | None = None,
     check_revocation_status: bool = True,
     revocation_timeout: float = 5.0,
+    require_binding_context: bool = True,
 ) -> MandateVerificationResult:
     """Verify a mandate credential against all five checks.
 
@@ -336,6 +435,10 @@ def verify_mandate(
         delegation_public_keys: Map of agent_id -> public_key for chain verification.
         check_revocation_status: Whether to check revocation endpoint.
         revocation_timeout: Timeout for revocation endpoint check.
+        require_binding_context: When true, sequence and state-bound mandates
+            require caller-provided binding context before authority is granted.
+            Set false only for exploratory validation that is not granting
+            authority.
 
     Returns a MandateVerificationResult.
     """
@@ -378,8 +481,35 @@ def verify_mandate(
         result.errors.append("Invalid issuer signature")
         return result
 
+    # --- Check 1b: Signed lifecycle status ---
+    result.checks["lifecycle_status"] = mandate_obj.status == MandateStatus.ACTIVE
+    if mandate_obj.status != MandateStatus.ACTIVE:
+        result.failure_reason = f"mandate_{mandate_obj.status.value}"
+        result.errors.append(
+            f"Mandate lifecycle status is {mandate_obj.status.value!r}"
+        )
+        return result
+
     # --- Check 2: Temporal validity ---
     if mandate_obj.validity is not None:
+        if (
+            require_binding_context
+            and mandate_obj.validity.mode == TemporalMode.SEQUENCE
+            and sequence_key is None
+        ):
+            result.checks["temporal_validity"] = False
+            result.failure_reason = "missing_sequence_context"
+            result.errors.append("Sequence mandate requires sequence_key context")
+            return result
+        if (
+            require_binding_context
+            and mandate_obj.validity.mode == TemporalMode.STATE_BOUND
+            and state_active is None
+        ):
+            result.checks["temporal_validity"] = False
+            result.failure_reason = "missing_state_context"
+            result.errors.append("State-bound mandate requires state_active context")
+            return result
         temporal_valid, temporal_errors = check_temporal_validity(
             mandate_obj.validity,
             now=now,
@@ -396,7 +526,7 @@ def verify_mandate(
 
     # --- Check 3: Constraint compliance ---
     constraint_valid, constraint_errors = validate_constraints(
-        mandate_obj.constraints, action=action
+        mandate_obj.constraints
     )
     result.checks["constraint_compliance"] = constraint_valid
     if not constraint_valid:
@@ -416,8 +546,28 @@ def verify_mandate(
         if not chain_valid:
             result.errors.extend(chain_errors)
             return result
+        effective_constraints, scope_errors = compose_effective_constraints(
+            mandate_obj.constraints,
+            mandate_obj.delegation_chain,
+        )
+        result.checks["delegation_scope"] = effective_constraints is not None
+        if effective_constraints is None:
+            result.failure_reason = "unsupported_scope_restriction"
+            result.errors.extend(scope_errors)
+            return result
     else:
         result.checks["delegation_chain"] = True
+        effective_constraints = mandate_obj.constraints
+
+    # --- Check 4b: Effective action scope ---
+    constraint_valid, constraint_errors = validate_constraints(
+        effective_constraints,
+        action=action,
+    )
+    result.checks["constraint_compliance"] = constraint_valid
+    if not constraint_valid:
+        result.errors.extend(constraint_errors)
+        return result
 
     # --- Check 5: Revocation status ---
     if mandate_obj.revocation_endpoint and check_revocation_status:
