@@ -33,6 +33,16 @@ from .envelope import build_trust_evidence_envelope, verify_envelope_signature
 from .verascore import VerascoreClient, make_verascore_auto_hook
 from .mandate import sign_mandate, verify_mandate, validate_constraints
 from .approval_receipt import ApprovalReceiptResult, verify_approval_receipt
+from .predicate import (
+    Predicate,
+    PredicateFailureReason,
+    PredicateStatus,
+    PredicateVerificationResult,
+    sign_predicate,
+    verify_predicate,
+)
+from .predicate_resolver import BasicHttpsResolver, ResolverProtocolError
+from .ctef import predicate_to_ctef_claim
 from .models.mandate import (
     Mandate,
     MandateVerificationResult,
@@ -123,6 +133,16 @@ __all__ = [
     # ApprovalReceipt
     "ApprovalReceiptResult",
     "verify_approval_receipt",
+    # Predicate
+    "Predicate",
+    "PredicateFailureReason",
+    "PredicateStatus",
+    "PredicateVerificationResult",
+    "sign_predicate",
+    "verify_predicate",
+    "BasicHttpsResolver",
+    "ResolverProtocolError",
+    "predicate_to_ctef_claim",
     # Types
     "AgentIdentity",
     "BehaviorRecord",

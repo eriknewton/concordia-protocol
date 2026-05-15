@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:concordia:schema:predicate:v0.6",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "predicate_id",
+    "type",
+    "authority",
+    "issuer",
+    "subject",
+    "condition",
+    "issued_at",
+    "expires_at",
+    "references",
+    "algorithm",
+    "status",
+    "signature"
+  ],
+  "properties": {
+    "predicate_id": {
+      "type": "string",
+      "pattern": "^urn:concordia:predicate:.+"
+    },
+    "type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "authority": {
+      "type": "string",
+      "minLength": 1
+    },
+    "issuer": {
+      "type": "string",
+      "minLength": 1
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 1
+    },
+    "condition": {
+      "type": "object",
+      "minProperties": 1
+    },
+    "issued_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "references": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:concordia:schema:reference:v0.5"
+      }
+    },
+    "algorithm": {
+      "type": "string",
+      "enum": ["EdDSA", "ES256"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "expired", "revoked", "suspended"]
+    },
+    "signature": {
+      "type": "string",
+      "minLength": 1
+    },
+    "validity": {
+      "type": "object",
+      "required": ["mode"]
+    },
+    "constraints": {
+      "type": "object"
+    },
+    "delegation_chain": {
+      "type": "array",
+      "items": {"type": "object"}
+    },
+    "revocation_endpoint": {
+      "type": "string",
+      "format": "uri"
+    },
+    "revoked_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "metadata": {
+      "type": "object"
+    }
+  }
+}

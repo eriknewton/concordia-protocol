@@ -75,6 +75,21 @@ def canonicalize_jcs(data: Any) -> bytes:
     return _stable_stringify(data).encode("utf-8")
 
 
+def canonicalize_predicate(predicate: Any) -> bytes:
+    """Return JCS canonical predicate signing bytes.
+
+    Predicate signatures cover the full predicate object except the
+    ``signature`` member. This helper accepts either a predicate-like object
+    exposing ``to_dict()`` or a JSON-compatible mapping.
+    """
+    if hasattr(predicate, "to_dict"):
+        predicate_dict = predicate.to_dict()
+    else:
+        predicate_dict = dict(predicate)
+    predicate_dict.pop("signature", None)
+    return canonicalize_jcs(predicate_dict)
+
+
 def canonicalize_mandate(mandate: Mandate | dict[str, Any]) -> bytes:
     """Return the canonical bytes used for mandate signing / verification.
 
