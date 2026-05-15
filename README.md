@@ -275,7 +275,8 @@ Concordia defines:
 - **Want registry** — agents publish what they seek; discovery happens on demand
 
 **The tool set:**
-- 48 MCP tools covering the full negotiation lifecycle
+- 59 MCP tools across negotiation, session receipts, competence proofs, reputation, discovery, agent profiles, want registry, relay, adoption, Sanctuary bridge, receipt bundles, Verascore reporting, mandate verification, and approval receipt verification
+- Tool registration: 55 in `concordia.mcp_server` plus 4 agent-profile discovery tools registered via `register_discovery_tools()`, for 59 active runtime tools
 - Cryptographic signing and verification
 - Reputation attestation generation
 - Session state machine management
