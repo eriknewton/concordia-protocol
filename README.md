@@ -273,10 +273,12 @@ Concordia defines:
 - **Binding commitments** — cryptographic signatures that bridge to any settlement protocol
 - **Reputation attestations** — signed behavioral records that feed portable trust scores
 - **Want registry** — agents publish what they seek; discovery happens on demand
+- **Predicate primitive** — signed v0.6 authority, policy, eligibility, and bounds evaluations
 
 **The tool set:**
 - 59 MCP tools across negotiation, session receipts, competence proofs, reputation, discovery, agent profiles, want registry, relay, adoption, Sanctuary bridge, receipt bundles, Verascore reporting, mandate verification, and approval receipt verification
 - Tool registration: 55 in `concordia.mcp_server` plus 4 agent-profile discovery tools registered via `register_discovery_tools()`, for 59 active runtime tools
+- Predicate CLI verification with `python -m concordia predicate verify <file>`
 - Cryptographic signing and verification
 - Reputation attestation generation
 - Session state machine management
@@ -284,6 +286,7 @@ Concordia defines:
 
 **Documentation:**
 - [Full Specification](SPEC.md) — complete protocol specification
+- [v0.6 Predicate Primitive](docs/v0.6_predicate_primitive.md) — signed predicate artifact, verifier, resolver, and CTEF mapping
 - [Python SDK](concordia/) — reference implementation
 - [Examples](examples/) — negotiation scripts and use cases
 - [Contributing Guide](CONTRIBUTING.md) — how to contribute

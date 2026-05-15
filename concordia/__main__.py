@@ -8,7 +8,21 @@ Usage:
     concordia-mcp-server                    # via pip install entry point
 """
 
+import json
 import sys
+
+
+def _predicate_cli(argv: list[str]) -> bool:
+    if len(argv) >= 3 and argv[1] == "predicate" and argv[2] == "verify":
+        if len(argv) < 4:
+            raise SystemExit("Usage: python -m concordia predicate verify <file>")
+        from .predicate import verify_predicate
+
+        with open(argv[3], encoding="utf-8") as handle:
+            predicate = json.load(handle)
+        print(json.dumps(verify_predicate(predicate).to_dict(), indent=2, sort_keys=True))
+        return True
+    return False
 
 
 def _build_help_text() -> str:
@@ -20,6 +34,7 @@ def _build_help_text() -> str:
         "  concordia-mcp-server --transport sse   Run on SSE transport (HTTP)\n"
         "  python -m concordia                    Run on stdio transport (default)\n"
         "  python -m concordia --transport sse    Run on SSE transport (HTTP)\n"
+        "  python -m concordia predicate verify <file>  Verify a signed predicate artifact\n"
         "\n"
         "59 MCP tools across 14 categories:\n"
         "  Negotiation (8)                    open, propose, counter, accept, reject, commit, status, public_view\n"
@@ -39,6 +54,7 @@ def _build_help_text() -> str:
         "\n"
         "Tool registration: 55 in concordia.mcp_server plus 4 agent-profile discovery tools\n"
         "registered via register_discovery_tools(), for 59 active runtime tools.\n"
+        "Predicate CLI verification is available separately via python -m concordia predicate verify <file>.\n"
         "\n"
         "Built on the official Python MCP SDK (mcp package).\n"
         "Install: pip install 'concordia-protocol[server]'\n"
@@ -46,6 +62,9 @@ def _build_help_text() -> str:
 
 
 def main() -> None:
+    if _predicate_cli(sys.argv):
+        return
+
     if "--version" in sys.argv or "-V" in sys.argv:
         from importlib.metadata import version as pkg_version
         try:
