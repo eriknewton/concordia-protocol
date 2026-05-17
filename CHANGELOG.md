@@ -9,6 +9,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **v0.6 Predicate Primitive (`urn:concordia:predicate:<id>`).** Signed
+  authority artifact evaluating authority/scope/policy/eligibility/bounds
+  conditions. Composes with mandate, attestation, and ApprovalReceipt
+  without coupling. RFC 8785 JCS canonicalization via
+  `concordia.canonicalization.canonicalize_predicate()` produces the
+  signing bytes; EdDSA (Ed25519) is the v0.6 reference signer
+  (`concordia.predicate.sign_predicate`). Verification surface
+  (`verify_predicate`) returns a stable `PredicateVerificationResult`
+  consumable by policy gates. 13 executable canonicalization fixture
+  vectors at `tests/fixtures/predicate_canonical/` (vectors 1-12 plus
+  `vector_13_deterministic_gate_failure`).
+- **`PredicateVerificationResult` with 8 stable failure reasons.**
+  `PredicateFailureReason` enum in `concordia.predicate`:
+  `schema_invalid`, `bad_signature`, `expired`, `revoked`,
+  `unknown_authority`, `ref_mismatch`, `wrong_subject`, `resolver_miss`.
+  Result also carries per-check booleans (`schema`, `profile_condition`,
+  `resolver_binding`, `signature`, `lifecycle`, `subject_binding`,
+  `reference_binding`) for policy-readable introspection.
+- **Type-profile registry with deterministic-semantics gate (Q5
+  forward-compat protection).** `concordia.predicate_type_profiles`
+  ships four profiles: `authority_gate`, `policy_gate`,
+  `procurement_eligibility`, and `non_deterministic_test` (the explicit
+  forward-compat holdout that rejects predicates whose `condition`
+  cannot be evaluated deterministically). Unknown `type` values
+  validate cleanly today but verifiers MAY refuse to act on
+  non-deterministic conditions per the v0.6 profile-gate semantics.
+- **CTEF mapping for predicate evaluation.**
+  `concordia.ctef.predicate_to_ctef_claim()` emits a CTEF claim with
+  `claim_subtype: "predicate_evaluation"`, `artifact_ref` set to the
+  `predicate_id` URN, allowing predicate outcomes to flow into the
+  CTEF audit substrate alongside mandate and attestation claims.
+- **ApprovalReceipt compose-when-present.** Predicate verification
+  invokes the ApprovalReceipt verifier via `importlib` only when a
+  `receipt`-typed `fulfills` reference is present
+  (`_call_approval_receipt_verifier` in `concordia.predicate`). Absent
+  module surfaces a `warnings` entry rather than a hard failure,
+  preserving the non-dependency principle between primitives.
 - **Standalone Fulfillment Attestation artifact (SPEC §9.6.4a).** New
   v0.5 artifact type emitted on a discrete delivery boundary (e.g.,
   A2CN `DELIVERY_ACKNOWLEDGED`). Distinct from the in-line
@@ -56,6 +93,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   Producers MUST NOT emit both a standalone artifact and an in-line
   block for the same logical settlement (double-counting risk for
   reputation scorers).
+- **Test baseline.** 1,126 pytest pass on the v0.6 predicate primitive
+  merge (PR #20), up from the v0.5.0 release-cycle baseline. No
+  regressions in pre-v0.6 surfaces.
+
+### Documentation
+
+- **v0.6 Predicate Primitive spec draft.**
+  `Review/Concordia/V0.6_Predicate_Primitive_Spec_Draft_2026-05-14.md`
+  captures the predicate shape, condition profiles, canonicalization
+  rules, verification surface, and composition contracts with mandate,
+  attestation, and ApprovalReceipt. Public-draft promotion follows the
+  v0.6.0 PyPI cut.
 
 ## [0.5.0] - 2026-05-11: references[] ratification + Python SDK alignment
 
