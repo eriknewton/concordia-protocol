@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-16
+
 ### Added
 
 - **v0.6 Predicate Primitive (`urn:concordia:predicate:<id>`).** Signed
