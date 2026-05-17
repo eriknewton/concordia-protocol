@@ -206,7 +206,7 @@ And once agents are negotiating, their track records need to go somewhere. [Vera
 ---
 
 **Resources:**
-- Concordia Protocol: `pip install concordia-protocol` (v0.5.1 on PyPI and in source; 59 active runtime MCP tools as of 2026-05-15: 55 in `concordia.mcp_server` plus 4 agent-profile discovery tools registered via `register_discovery_tools()`)
+- Concordia Protocol: `pip install concordia-protocol` (v0.6.0 on PyPI and in source; 59 active runtime MCP tools as of 2026-05-16: 55 in `concordia.mcp_server` plus 4 agent-profile discovery tools registered via `register_discovery_tools()`)
 - GitHub: [github.com/eriknewton/concordia-protocol](https://github.com/eriknewton/concordia-protocol)
 - Full spec: [SPEC.md](https://github.com/eriknewton/concordia-protocol/blob/main/SPEC.md)
 - Verascore (agent reputation platform): [verascore.ai](https://verascore.ai)

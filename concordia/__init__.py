@@ -3,7 +3,7 @@
 An open standard for structured negotiation between autonomous agents.
 """
 
-__version__ = "0.5.1"
+__version__ = "0.6.0"
 
 from .agent import Agent
 from .attestation import generate_attestation, is_valid_now
