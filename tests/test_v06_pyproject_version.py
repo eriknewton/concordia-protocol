@@ -1,9 +1,8 @@
-"""v0.6 hard gate: pyproject.toml + concordia.__version__ at 0.6.0.
+"""v0.7 alpha gate: pyproject.toml + concordia.__version__ at 0.7.0a0.
 
-Per the spawn prompt: pyproject.toml version bumped from 0.5.1 to 0.6.0.
 The package's __version__ stays in lockstep so envelope.py
 (which embeds ``concordia.__version__`` into envelope payloads via
-``session_protocol_version``) emits v0.6.0 on the wire.
+``session_protocol_version``) emits v0.7.0a0 on the wire.
 """
 
 from __future__ import annotations
@@ -27,16 +26,16 @@ def _read_pyproject_version() -> str:
 
 
 class TestPyprojectVersion:
-    def test_pyproject_at_0_6_0(self):
-        assert _read_pyproject_version() == "0.6.0"
+    def test_pyproject_at_0_7_0a0(self):
+        assert _read_pyproject_version() == "0.7.0a0"
 
-    def test_module_version_at_0_6_0(self):
-        assert concordia.__version__ == "0.6.0"
+    def test_module_version_at_0_7_0a0(self):
+        assert concordia.__version__ == "0.7.0a0"
 
     def test_module_and_pyproject_in_lockstep(self):
         assert concordia.__version__ == _read_pyproject_version()
 
-    def test_envelope_session_protocol_version_at_0_6_0(self):
+    def test_envelope_session_protocol_version_at_0_7_0a0(self):
         """Envelope payload embeds concordia.__version__; verify on the wire."""
         from concordia import (
             Agent,
@@ -72,4 +71,4 @@ class TestPyprojectVersion:
             provider_kid="key-1",
             subject_did="did:web:example.org:subject",
         )
-        assert envelope["payload"]["session_protocol_version"] == "0.6.0"
+        assert envelope["payload"]["session_protocol_version"] == "0.7.0a0"

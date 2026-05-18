@@ -1,0 +1,28 @@
+{
+  "predicate_id": "urn:concordia:predicate:beer-game-closure-2026-05-17-001",
+  "type": "urn:concordia:predicate-type:bilateral_chain_closure:v1",
+  "authority": "did:web:beer-game-authority.example",
+  "issuer": "did:web:beer-game-authority.example",
+  "subject": "urn:concordia:chain-session:beer-game-2026-05-17-001",
+  "condition": {
+    "expected_participants": [
+      "did:web:retailer.example",
+      "did:web:wholesaler.example"
+    ],
+    "aggregate_quantity_required": 100,
+    "match_tolerance": 0.0,
+    "activation_deadline_iso": "2026-05-17T14:00:00Z",
+    "mandate_check_required": true
+  },
+  "issued_at": "2026-05-17T09:00:00Z",
+  "expires_at": "2026-05-17T14:00:00Z",
+  "references": [
+    {
+      "uri": "urn:concordia:chain-session:beer-game-2026-05-17-001",
+      "digest": "sha256:placeholder"
+    }
+  ],
+  "algorithm": "EdDSA",
+  "status": "active",
+  "signature": "PLACEHOLDER"
+}

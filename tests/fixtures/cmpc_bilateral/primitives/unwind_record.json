@@ -1,0 +1,19 @@
+{
+  "unwind_record_id": "urn:concordia:unwind:beer-game-2026-05-17-001",
+  "chain_session_id": "urn:concordia:chain-session:beer-game-2026-05-17-001",
+  "dissolution_reason": "timeout",
+  "dissolution_details": {
+    "activation_deadline": "2026-05-17T14:00:00Z",
+    "observed_at": "2026-05-17T14:01:00Z",
+    "note": "Activation predicate was not satisfied before deadline."
+  },
+  "affected_commitment_ids": [
+    "urn:concordia:commitment:retailer-beer-order-2026-05-17-001",
+    "urn:concordia:commitment:wholesaler-beer-supply-2026-05-17-001"
+  ],
+  "issuer_did": "did:web:retailer.example",
+  "issued_at": "2026-05-17T14:01:30Z",
+  "counterparty_acknowledgment": null,
+  "signature": "PLACEHOLDER",
+  "algorithm": "EdDSA"
+}
