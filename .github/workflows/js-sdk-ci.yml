@@ -1,0 +1,32 @@
+name: JS SDK CI
+
+on:
+  push:
+    branches: [main]
+    paths: ['js-sdk/**']
+  pull_request:
+    paths: ['js-sdk/**']
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Install dependencies
+        working-directory: js-sdk
+        run: npm install
+      - name: Typecheck
+        working-directory: js-sdk
+        run: npm run typecheck
+      - name: Test
+        working-directory: js-sdk
+        run: npm test
+      - name: Build
+        working-directory: js-sdk
+        run: npm run build
