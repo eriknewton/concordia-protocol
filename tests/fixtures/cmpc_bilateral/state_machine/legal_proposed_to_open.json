@@ -1,0 +1,10 @@
+{
+  "initial_session": {
+    "state": "PROPOSED",
+    "activation_deadline": "2026-05-18T13:00:00+00:00",
+    "commitments": ["urn:concordia:commitment:reader", "urn:concordia:commitment:writer"]
+  },
+  "attempt_transition": "OPEN",
+  "transition_now": "2026-05-18T12:00:00+00:00",
+  "expected": "ok"
+}

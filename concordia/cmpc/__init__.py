@@ -12,6 +12,14 @@ from .canonical import (
     canonicalize_conditional_commitment,
     canonicalize_unwind_record,
 )
+from .chain_session import (
+    LEGAL_TRANSITIONS,
+    ChainSession,
+    ChainSessionState,
+    InvalidTransitionError,
+    TransitionRecord,
+    verify_transcript,
+)
 from .errors import CMPCError, InvalidPrimitiveError, SchemaValidationError
 from .signing import (
     sign_atomic_activation_proof,
@@ -23,8 +31,6 @@ from .signing import (
 )
 from .types import (
     AtomicActivationProof,
-    ChainSession,
-    ChainSessionState,
     ClosurePredicate,
     ConditionalCommitment,
     UnwindRecord,
@@ -33,6 +39,9 @@ from .types import (
 __all__ = [
     "ChainSession",
     "ChainSessionState",
+    "InvalidTransitionError",
+    "LEGAL_TRANSITIONS",
+    "TransitionRecord",
     "ConditionalCommitment",
     "ClosurePredicate",
     "AtomicActivationProof",
@@ -51,4 +60,5 @@ __all__ = [
     "CMPCError",
     "InvalidPrimitiveError",
     "SchemaValidationError",
+    "verify_transcript",
 ]
