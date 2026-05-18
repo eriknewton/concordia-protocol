@@ -22,6 +22,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   consumable by policy gates. 13 executable canonicalization fixture
   vectors at `tests/fixtures/predicate_canonical/` (vectors 1-12 plus
   `vector_13_deterministic_gate_failure`).
+- **JavaScript canonical-JSON parity verifier (`scripts/js-parity/`).**
+  Proves byte-level parity with the Python canonicalizer across all 13
+  predicate fixture vectors, giving non-Python implementers an
+  executable conformance check.
 - **`PredicateVerificationResult` with 8 stable failure reasons.**
   `PredicateFailureReason` enum in `concordia.predicate`:
   `schema_invalid`, `bad_signature`, `expired`, `revoked`,
