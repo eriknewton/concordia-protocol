@@ -1,0 +1,1 @@
+Vector 13 exercises the Q2+Q5 coupling test: the type-profile gate is part of the signed canonical-byte contract, and authoring `condition.result` against a non-deterministic type produces fail-closed verification with `schema_invalid`.

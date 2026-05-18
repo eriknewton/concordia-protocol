@@ -1,0 +1,40 @@
+{
+  "name": "@concordia-protocol/sdk",
+  "version": "0.0.1-alpha.0",
+  "description": "TypeScript reference implementation of the Concordia Protocol -- signed agreement primitives for autonomous agents",
+  "license": "Apache-2.0",
+  "author": "Erik Newton <eriknewton@gmail.com>",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist", "README.md", "LICENSE", "CHANGELOG.md"],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@noble/curves": "^1.5",
+    "ajv": "^8.16",
+    "ajv-formats": "^3.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.3",
+    "tsup": "^8.0",
+    "vitest": "^1.6",
+    "@types/node": "^20",
+    "tsx": "^4"
+  }
+}
