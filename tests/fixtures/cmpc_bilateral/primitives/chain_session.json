@@ -1,0 +1,19 @@
+{
+  "chain_session_id": "urn:concordia:chain-session:beer-game-2026-05-17-001",
+  "participants": [
+    "did:web:retailer.example",
+    "did:web:wholesaler.example"
+  ],
+  "closure_predicate_ref": "urn:concordia:predicate:beer-game-closure-2026-05-17-001",
+  "state": "OPEN",
+  "created_at": "2026-05-17T09:00:00Z",
+  "activation_deadline": "2026-05-17T14:00:00Z",
+  "activated_at": null,
+  "dissolved_at": null,
+  "commitments": [
+    "urn:concordia:commitment:retailer-beer-order-2026-05-17-001",
+    "urn:concordia:commitment:wholesaler-beer-supply-2026-05-17-001"
+  ],
+  "unwind_record_id": null,
+  "activation_proof_id": null
+}

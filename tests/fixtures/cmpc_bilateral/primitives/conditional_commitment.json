@@ -1,0 +1,21 @@
+{
+  "commitment_id": "urn:concordia:commitment:retailer-beer-order-2026-05-17-001",
+  "chain_session_id": "urn:concordia:chain-session:beer-game-2026-05-17-001",
+  "committer_did": "did:web:retailer.example",
+  "predicate_reference": "urn:concordia:predicate:beer-game-closure-2026-05-17-001",
+  "commitment_terms": {
+    "role": "retailer",
+    "sku": "beer-case-12oz",
+    "quantity": 100,
+    "unit_price": {
+      "amount": "5.00",
+      "currency": "USD"
+    },
+    "delivery_date": "2026-05-24"
+  },
+  "mandate_proof_id": "urn:concordia:mandate-proof:retailer-buy-2026-05-17-001",
+  "issued_at": "2026-05-17T09:05:00Z",
+  "expires_at": "2026-05-17T18:00:00Z",
+  "signature": "PLACEHOLDER",
+  "algorithm": "EdDSA"
+}

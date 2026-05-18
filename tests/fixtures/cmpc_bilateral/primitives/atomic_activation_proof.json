@@ -1,0 +1,21 @@
+{
+  "activation_proof_id": "urn:concordia:activation-proof:beer-game-2026-05-17-001",
+  "chain_session_id": "urn:concordia:chain-session:beer-game-2026-05-17-001",
+  "closure_predicate_id": "urn:concordia:predicate:beer-game-closure-2026-05-17-001",
+  "predicate_evaluation": {
+    "result": "satisfied",
+    "evaluated_at": "2026-05-17T09:10:00Z",
+    "evidence": {
+      "aggregate_quantity": 100,
+      "participant_count": 2
+    }
+  },
+  "commitment_ids": [
+    "urn:concordia:commitment:retailer-beer-order-2026-05-17-001",
+    "urn:concordia:commitment:wholesaler-beer-supply-2026-05-17-001"
+  ],
+  "activated_at": "2026-05-17T09:10:30Z",
+  "issuer_did": "did:web:wholesaler.example",
+  "signature": "PLACEHOLDER",
+  "algorithm": "EdDSA"
+}
