@@ -21,6 +21,11 @@ from .chain_session import (
     verify_transcript,
 )
 from .errors import CMPCError, InvalidPrimitiveError, SchemaValidationError
+from .predicate import (
+    ClosurePredicate,
+    PredicateResult,
+    evaluate_predicate,
+)
 from .signing import (
     sign_atomic_activation_proof,
     sign_conditional_commitment,
@@ -31,7 +36,6 @@ from .signing import (
 )
 from .types import (
     AtomicActivationProof,
-    ClosurePredicate,
     ConditionalCommitment,
     UnwindRecord,
 )
@@ -44,6 +48,7 @@ __all__ = [
     "TransitionRecord",
     "ConditionalCommitment",
     "ClosurePredicate",
+    "PredicateResult",
     "AtomicActivationProof",
     "UnwindRecord",
     "canonicalize_chain_session",
@@ -61,4 +66,5 @@ __all__ = [
     "InvalidPrimitiveError",
     "SchemaValidationError",
     "verify_transcript",
+    "evaluate_predicate",
 ]
