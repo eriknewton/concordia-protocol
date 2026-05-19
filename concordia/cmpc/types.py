@@ -4,54 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
 from typing import Any
 
-
-def _enum_value(value: ChainSessionState | str) -> str:
-    return value.value if isinstance(value, ChainSessionState) else value
-
-
-@dataclass(kw_only=True)
-class ChainSession:
-    chain_session_id: str
-    participants: list[str]
-    closure_predicate_ref: str
-    state: "ChainSessionState"
-    created_at: datetime
-    activation_deadline: datetime
-    activated_at: datetime | None
-    dissolved_at: datetime | None
-    commitments: list[str]
-    unwind_record_id: str | None
-    activation_proof_id: str | None
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ChainSession":
-        return cls(**data)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "chain_session_id": self.chain_session_id,
-            "participants": self.participants,
-            "closure_predicate_ref": self.closure_predicate_ref,
-            "state": _enum_value(self.state),
-            "created_at": self.created_at,
-            "activation_deadline": self.activation_deadline,
-            "activated_at": self.activated_at,
-            "dissolved_at": self.dissolved_at,
-            "commitments": self.commitments,
-            "unwind_record_id": self.unwind_record_id,
-            "activation_proof_id": self.activation_proof_id,
-        }
-
-
-class ChainSessionState(str, Enum):
-    PROPOSED = "PROPOSED"
-    OPEN = "OPEN"
-    ACTIVATED = "ACTIVATED"
-    DISSOLVED = "DISSOLVED"
-    EXPIRED = "EXPIRED"
+from concordia.cmpc.chain_session import ChainSession, ChainSessionState
 
 
 @dataclass(kw_only=True)
