@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from datetime import datetime
 from typing import Any
 
 from concordia.cmpc.chain_session import ChainSession, ChainSessionState
+
+
+class RevocationScope(str, Enum):
+    SINGLE_ARTIFACT = "single_artifact"
+    CASCADE_TO_DEPENDENTS = "cascade_to_dependents"
 
 
 @dataclass(kw_only=True)
@@ -155,3 +161,44 @@ class UnwindRecord:
             "signature": self.signature,
             "algorithm": self.algorithm,
         }
+
+
+@dataclass(kw_only=True)
+class RevocationRecord:
+    revocation_id: str
+    revoked_artifact_id: str
+    revoked_artifact_type: str
+    revocation_scope: str
+    issuer_did: str
+    issued_at: str
+    effective_at: str
+    reason: str
+    references: list[dict[str, Any]]
+    cascade_depth: int = 3
+    signature: dict[str, str] | None = None
+    supersedes: str | None = None
+    extensions: dict[str, Any] | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "RevocationRecord":
+        return cls(**data)
+
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "revocation_id": self.revocation_id,
+            "revoked_artifact_id": self.revoked_artifact_id,
+            "revoked_artifact_type": self.revoked_artifact_type,
+            "revocation_scope": self.revocation_scope,
+            "issuer_did": self.issuer_did,
+            "issued_at": self.issued_at,
+            "effective_at": self.effective_at,
+            "reason": self.reason,
+            "references": self.references,
+            "cascade_depth": self.cascade_depth,
+            "signature": self.signature or {"alg": "EdDSA", "value": ""},
+        }
+        if self.supersedes is not None:
+            data["supersedes"] = self.supersedes
+        if self.extensions is not None:
+            data["extensions"] = self.extensions
+        return data

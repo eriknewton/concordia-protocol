@@ -10,6 +10,7 @@ from .errors import SchemaValidationError
 
 
 URN = r"^urn:concordia:"
+ANY_ARTIFACT_URN = r"^urn:(concordia|a2cn|ap2|x402|erc8004):"
 DID = r"^did:"
 ISO_DATETIME = r"^\d{4}-\d{2}-\d{2}T"
 
@@ -190,6 +191,89 @@ UNWIND_RECORD_SCHEMA: dict[str, Any] = {
     },
 }
 
+REFERENCE_OBJECT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["id", "type", "relationship"],
+    "additionalProperties": True,
+    "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "type": {"type": "string", "minLength": 1},
+        "relationship": {"type": "string", "minLength": 1},
+        "version": {"type": "string"},
+        "signed_at": {"type": "string", "pattern": ISO_DATETIME},
+        "signer_did": {"type": "string"},
+        "extensions": {"type": "object"},
+    },
+}
+
+REVOCATION_RECORD_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "urn:concordia:schema:revocation_record:v0.7",
+    "type": "object",
+    "required": [
+        "revocation_id",
+        "revoked_artifact_id",
+        "revoked_artifact_type",
+        "revocation_scope",
+        "issuer_did",
+        "issued_at",
+        "effective_at",
+        "reason",
+        "references",
+        "cascade_depth",
+        "signature",
+    ],
+    "additionalProperties": False,
+    "properties": {
+        "revocation_id": {"type": "string", "pattern": r"^urn:concordia:revocation:"},
+        "revoked_artifact_id": {"type": "string", "pattern": ANY_ARTIFACT_URN},
+        "revoked_artifact_type": {
+            "type": "string",
+            "enum": [
+                "mandate",
+                "commitment",
+                "approval_receipt",
+                "predicate",
+                "attestation",
+                "chain_session",
+            ],
+        },
+        "revocation_scope": {
+            "type": "string",
+            "enum": ["single_artifact", "cascade_to_dependents"],
+        },
+        "issuer_did": {"type": "string", "pattern": DID},
+        "issued_at": {"type": "string", "pattern": ISO_DATETIME},
+        "effective_at": {"type": "string", "pattern": ISO_DATETIME},
+        "reason": {"type": "string", "minLength": 1},
+        "references": {
+            "type": "array",
+            "minItems": 1,
+            "items": REFERENCE_OBJECT_SCHEMA,
+            "contains": {
+                "type": "object",
+                "required": ["id", "relationship"],
+                "properties": {
+                    "relationship": {"const": "revokes"},
+                    "id": {"type": "string"},
+                },
+            },
+        },
+        "cascade_depth": {"type": "integer", "minimum": 0, "maximum": 8, "default": 3},
+        "signature": {
+            "type": "object",
+            "required": ["alg", "value"],
+            "additionalProperties": False,
+            "properties": {
+                "alg": {"type": "string", "enum": ["EdDSA"]},
+                "value": {"type": "string", "minLength": 1},
+            },
+        },
+        "supersedes": {"type": "string", "pattern": r"^urn:concordia:revocation:"},
+        "extensions": {"type": "object", "additionalProperties": True},
+    },
+}
+
 
 def _validate(schema: dict[str, Any], data: dict[str, Any]) -> None:
     try:
@@ -218,3 +302,14 @@ def validate_atomic_activation_proof(data: dict[str, Any]) -> None:
 
 def validate_unwind_record(data: dict[str, Any]) -> None:
     _validate(UNWIND_RECORD_SCHEMA, data)
+
+
+def validate_revocation_record(data: dict[str, Any]) -> None:
+    _validate(REVOCATION_RECORD_SCHEMA, data)
+    revoked_artifact_id = data["revoked_artifact_id"]
+    if not any(
+        ref.get("relationship") == "revokes" and ref.get("id") == revoked_artifact_id
+        for ref in data["references"]
+        if isinstance(ref, dict)
+    ):
+        raise SchemaValidationError("references must include a revokes link to revoked_artifact_id")

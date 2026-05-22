@@ -1,0 +1,38 @@
+{
+  "candidate_artifacts": [
+    {
+      "artifact_id": "urn:concordia:receipt:single-001",
+      "artifact_type": "approval_receipt",
+      "references": []
+    }
+  ],
+  "expected_inadmissible": [
+    {
+      "artifact_id": "urn:concordia:receipt:single-001",
+      "cascade_depth": 0,
+      "reason": "revoked"
+    }
+  ],
+  "revocation_record": {
+    "cascade_depth": 3,
+    "effective_at": "2026-05-30T14:05:00Z",
+    "issued_at": "2026-05-30T14:05:00Z",
+    "issuer_did": "did:web:principal.example",
+    "reason": "principal_revoked",
+    "references": [
+      {
+        "id": "urn:concordia:receipt:single-001",
+        "relationship": "revokes",
+        "type": "approval_receipt"
+      }
+    ],
+    "revocation_id": "urn:concordia:revocation:single-001",
+    "revocation_scope": "single_artifact",
+    "revoked_artifact_id": "urn:concordia:receipt:single-001",
+    "revoked_artifact_type": "approval_receipt",
+    "signature": {
+      "alg": "EdDSA",
+      "value": "EV8Pw1gLvQSSHt31C9hbMyjITP5zs5bB6VfL1iiR3Pc2pP9i2ib9tjXDR7f6ObXRISVwXABVX1wINcV9ybZwBQ=="
+    }
+  }
+}

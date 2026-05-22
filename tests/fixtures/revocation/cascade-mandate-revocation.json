@@ -1,0 +1,86 @@
+{
+  "candidate_artifacts": [
+    {
+      "artifact_id": "urn:a2cn:mandate:m-2026-04-19-0007",
+      "artifact_type": "mandate",
+      "references": []
+    },
+    {
+      "artifact_id": "urn:concordia:commitment:cc-001",
+      "artifact_type": "commitment",
+      "references": [
+        {
+          "id": "urn:a2cn:mandate:m-2026-04-19-0007",
+          "relationship": "fulfills",
+          "type": "mandate"
+        }
+      ]
+    },
+    {
+      "artifact_id": "urn:concordia:commitment:cc-002",
+      "artifact_type": "commitment",
+      "references": [
+        {
+          "id": "urn:a2cn:mandate:m-2026-04-19-0007",
+          "relationship": "fulfills",
+          "type": "mandate"
+        }
+      ]
+    },
+    {
+      "artifact_id": "urn:concordia:receipt:7f2e1a93",
+      "artifact_type": "approval_receipt",
+      "references": [
+        {
+          "id": "urn:a2cn:mandate:m-2026-04-19-0007",
+          "relationship": "fulfills",
+          "type": "mandate"
+        }
+      ]
+    }
+  ],
+  "expected_inadmissible": [
+    {
+      "artifact_id": "urn:a2cn:mandate:m-2026-04-19-0007",
+      "cascade_depth": 0,
+      "reason": "revoked"
+    },
+    {
+      "artifact_id": "urn:concordia:commitment:cc-001",
+      "cascade_depth": 1,
+      "reason": "revoked"
+    },
+    {
+      "artifact_id": "urn:concordia:commitment:cc-002",
+      "cascade_depth": 1,
+      "reason": "revoked"
+    },
+    {
+      "artifact_id": "urn:concordia:receipt:7f2e1a93",
+      "cascade_depth": 1,
+      "reason": "revoked"
+    }
+  ],
+  "revocation_record": {
+    "cascade_depth": 3,
+    "effective_at": "2026-05-30T14:30:00Z",
+    "issued_at": "2026-05-30T14:30:00Z",
+    "issuer_did": "did:web:principal.example",
+    "reason": "mandate_amended",
+    "references": [
+      {
+        "id": "urn:a2cn:mandate:m-2026-04-19-0007",
+        "relationship": "revokes",
+        "type": "mandate"
+      }
+    ],
+    "revocation_id": "urn:concordia:revocation:cascade-001",
+    "revocation_scope": "cascade_to_dependents",
+    "revoked_artifact_id": "urn:a2cn:mandate:m-2026-04-19-0007",
+    "revoked_artifact_type": "mandate",
+    "signature": {
+      "alg": "EdDSA",
+      "value": "Ct_dABpWSSCN8UWJ563m32-WvPXiMqRCsR-viAxlVyydy7RcJ2oipW_-SNFt82k81PnDaeMGURi6wqSk55TkDQ=="
+    }
+  }
+}

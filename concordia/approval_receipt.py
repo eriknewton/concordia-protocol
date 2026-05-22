@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
@@ -19,6 +19,7 @@ SIGNATURE_INVALID = "signature_invalid"
 EXPIRED = "expired"
 OFFER_HASH_MISMATCH = "offer_hash_mismatch"
 MISSING_APPROVES_REFERENCE = "missing_approves_reference"
+REVOKED = "revoked"
 
 _NEGOTIATION_SESSION_TYPES = {"negotiation_session", "a2cn:negotiation_session"}
 
@@ -104,6 +105,7 @@ def verify_approval_receipt(
     *,
     now: datetime | None = None,
     issuer_public_key: bytes | Ed25519PublicKey | None = None,
+    revocation_records: Mapping[str, Any] | None = None,
 ) -> ApprovalReceiptResult:
     """Verify a signed ApprovalReceipt against schema, signature, and offer."""
     scope = receipt.get("scope", {})
@@ -166,6 +168,21 @@ def verify_approval_receipt(
         result.failure_reason = EXPIRED
         result.errors.append("ApprovalReceipt expired")
         return result
+
+    if revocation_records:
+        from concordia.cmpc.revocation import find_revocation_for_references
+
+        revocation = find_revocation_for_references(
+            result.references,
+            revocation_records,
+            now=_normalize_now(now),
+        )
+        if revocation is not None:
+            result.checks["revocation_records"] = False
+            result.failure_reason = REVOKED
+            result.errors.append(f"Referenced artifact revoked by {revocation.revocation_id}")
+            return result
+        result.checks["revocation_records"] = True
 
     expected_hash = _offer_hash(offer)
     result.checks["offer_hash"] = scope["offer_hash"] == expected_hash
