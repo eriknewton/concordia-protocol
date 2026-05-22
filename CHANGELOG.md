@@ -7,6 +7,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.7.0a1] - 2026-06-DD
+
+### Added
+
+- **RevocationRecord primitive.** Adds `RevocationRecord` and
+  `RevocationScope` to `concordia.cmpc.types` for artifact-side revocation.
+- **RevocationRecord schema and validator.** Adds
+  `schemas/revocation_record.schema.json` plus
+  `validate_revocation_record()` with Draft 2020-12 validation.
+- **RevocationRecord signing and verification.** Adds
+  `sign_revocation_record()`, `verify_revocation_record()`, and
+  `canonicalize_revocation_record()` using RFC 8785 JCS canonical bytes.
+- **Cross-mandate cascade verifier.** Adds `cascade_revocation()` plus
+  `CandidateArtifact`, `CascadeResult`, and `InadmissibleArtifact`.
+- **Predicate verifier integration.** `verify_predicate()` accepts optional
+  `revocation_records` and returns `PredicateFailureReason.REVOKED` for
+  revoked references.
+- **ApprovalReceipt verifier integration.** `verify_approval_receipt()`
+  accepts optional `revocation_records` and returns `revoked` for revoked
+  referenced mandates or sessions.
+- **Revocation conformance fixtures.** Adds single-artifact, cascade-mandate,
+  and `giskard09-mid-execution-rotation` fixture vectors.
+- **SPEC and integrator docs.** Adds SPEC §9.6.4c, the
+  `urn:concordia:revocation:<id>` URN row, the `revokes` relationship value,
+  `docs/cmpc_revocation.md`, and a RevocationRecord composition note in
+  `docs/revocation_resolver.md`.
+
+### Changed
+
+- None.
+
+### Removed
+
+- None.
+
 ## [0.6.0] - 2026-05-16
 
 ### Added

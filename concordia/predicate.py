@@ -7,7 +7,7 @@ import importlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Optional, Protocol, runtime_checkable
+from typing import Any, Mapping, Optional, Protocol, runtime_checkable
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
@@ -302,6 +302,8 @@ def verify_predicate(
     predicate: Predicate | dict[str, Any] | str,
     *,
     resolver: PredicateResolver | None = None,
+    revocation_records: Mapping[str, Any] | None = None,
+    now: datetime | None = None,
 ) -> PredicateVerificationResult:
     """Verify a signed predicate and return stable policy-readable status."""
     checks: dict[str, bool] = {}
@@ -363,8 +365,11 @@ def verify_predicate(
     if not signature_ok:
         return _fail(parsed, PredicateFailureReason.BAD_SIGNATURE, "invalid predicate signature", checks)
 
-    now = datetime.now(timezone.utc)
-    if parsed.status == PredicateStatus.EXPIRED.value or _parse_datetime(parsed.expires_at, "expires_at") < now:
+    verification_time = now or datetime.now(timezone.utc)
+    if verification_time.tzinfo is None:
+        verification_time = verification_time.replace(tzinfo=timezone.utc)
+    verification_time = verification_time.astimezone(timezone.utc)
+    if parsed.status == PredicateStatus.EXPIRED.value or _parse_datetime(parsed.expires_at, "expires_at") < verification_time:
         checks["lifecycle"] = False
         return _fail(parsed, PredicateFailureReason.EXPIRED, "predicate expired", checks)
     if parsed.status == PredicateStatus.REVOKED.value or parsed.revoked_at is not None:
@@ -374,6 +379,25 @@ def verify_predicate(
         checks["lifecycle"] = False
         return _fail(parsed, PredicateFailureReason.REVOKED, "predicate suspended", checks)
     checks["lifecycle"] = True
+
+    if revocation_records:
+        from concordia.cmpc.revocation import find_revocation_for_references
+
+        revocation = find_revocation_for_references(
+            parsed.references,
+            revocation_records,
+            now=verification_time,
+        )
+        if revocation is not None:
+            checks["revocation_records"] = False
+            return _fail(
+                parsed,
+                PredicateFailureReason.REVOKED,
+                f"referenced artifact revoked by {revocation.revocation_id}",
+                checks,
+                warnings,
+            )
+        checks["revocation_records"] = True
 
     expected_subject = (parsed.metadata or {}).get("expected_subject")
     if isinstance(expected_subject, str) and expected_subject != parsed.subject:

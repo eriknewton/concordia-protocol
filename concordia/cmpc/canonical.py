@@ -31,3 +31,7 @@ def canonicalize_atomic_activation_proof(proof: Any) -> bytes:
 
 def canonicalize_unwind_record(record: Any) -> bytes:
     return _canonicalize_primitive(record)
+
+
+def canonicalize_revocation_record(record: Any) -> bytes:
+    return _canonicalize_primitive(record)

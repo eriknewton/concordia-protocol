@@ -931,6 +931,53 @@ ApprovalReceipt invariants:
   not in the §11.5.5 base vocabulary, per the forward-compat rule
   in §11.5.3.
 
+#### 9.6.4c Cross-Mandate Revocation Record (v0.7)
+
+Standalone signed artifact declaring that a mandate, commitment,
+ApprovalReceipt, predicate, attestation, or chain session is revoked.
+The artifact side primitive is `RevocationRecord`; service-side lookup
+formats remain in `docs/revocation_resolver.md`.
+
+Schema: `schemas/revocation_record.schema.json`
+(`$id` `urn:concordia:schema:revocation_record:v0.7`).
+
+Required fields: `revocation_id` (URN-shaped per §11.5.7),
+`revoked_artifact_id`, `revoked_artifact_type`, `revocation_scope`,
+`issuer_did`, `issued_at`, `effective_at`, `reason`, `references[]`
+with at least one `relationship: "revokes"` entry pointing at
+`revoked_artifact_id`, `cascade_depth`, and `signature`.
+Optional fields: `supersedes` and `extensions`.
+
+Worked example for mid-execution mandate rotation:
+
+- Issuance at T = `2026-05-30T14:00:00Z`: ApprovalReceipt
+  `urn:concordia:receipt:abc` references mandate
+  `urn:a2cn:mandate:xyz` with relationship `fulfills`. The receipt's
+  `expires_at` is T + PT1H.
+- Mandate rotation at T + PT30M: the principal issues RevocationRecord
+  `urn:concordia:revocation:def` revoking
+  `urn:a2cn:mandate:xyz` with `revocation_scope:
+  "cascade_to_dependents"`.
+- Execution attempt at T + PT45M: the verifier loads the receipt and
+  revocation record, then checks references. The ApprovalReceipt's
+  `expires_at` is still in the future, but the referenced mandate is
+  revoked. `cascade_revocation()` returns `inadmissible` for
+  `urn:concordia:receipt:abc`. The verifier returns
+  `PredicateFailureReason.REVOKED` with an evidence trace.
+
+Cascade invariants:
+
+- Cascade traversal MUST follow only `references[]` entries whose
+  `relationship` is one of `fulfills`, `extends`, `approves`, or
+  `revokes`.
+- Cascade traversal MUST NOT follow `references` or `supersedes`.
+- Cascade depth MUST be bounded by `RevocationRecord.cascade_depth`.
+  The default is 3 and the maximum is 8.
+- Cycle detection is mandatory. An artifact MUST NOT appear twice in
+  any cascade traversal path.
+- Verifiers MUST NOT consider an artifact revoked before the
+  RevocationRecord's `effective_at` timestamp.
+
 #### 9.6.5 Attestation Integrity
 
 Attestations inherit the security properties of the transcript:
@@ -1207,7 +1254,7 @@ This layering boundary is the canonical reconciliation of the v0.4.0 follow-up (
 
 #### 11.5.5 Relationship Vocabulary
 
-The attestation-level reference object's `relationship` field uses a normative four-value vocabulary. Each value carries a normative obligation on verifiers:
+The attestation-level reference object's `relationship` field uses a normative vocabulary. Each value carries a normative obligation on verifiers:
 
 | Relationship | Conformance | Meaning | Verifier Obligation |
 |--------------|-------------|---------|---------------------|
@@ -1215,8 +1262,9 @@ The attestation-level reference object's `relationship` field uses a normative f
 | `extends` | SHOULD | The new artifact builds on the referenced one without replacing it. | Verifiers SHOULD chain the referenced artifact's commitments forward. Both artifacts remain authoritative. |
 | `fulfills` | SHOULD | The new artifact discharges an obligation declared by the referenced one (e.g., a payment fulfilling a mandate, an attestation fulfilling a commitment). | Verifiers SHOULD link payment, performance, or attestation evidence to the original mandate or commitment. |
 | `references` | MAY | Weak generic association. Use ONLY when no stronger relationship applies. | Verifiers MAY ignore. SHOULD warn when this weak relationship is used while a known stronger alternative is available. |
+| `revokes` | MUST | The new artifact revokes the referenced artifact. | Verifiers MUST treat the referenced artifact as revoked at and after this revocation's `effective_at`. Cascade traversal MUST follow `revokes` per §9.6.4c. |
 
-Implementations MUST preserve unknown relationship values as opaque strings (forward-compat for v0.x extension). Implementations SHOULD warn when the weak `references` relationship is used in contexts where one of the three stronger relationships applies more naturally; this prevents semantic drift toward the weakest possible binding.
+Implementations MUST preserve unknown relationship values as opaque strings (forward-compat for v0.x extension). Implementations SHOULD warn when the weak `references` relationship is used in contexts where one of the stronger relationships applies more naturally; this prevents semantic drift toward the weakest possible binding.
 
 #### 11.5.6 Reference Object Shape (Normative)
 
@@ -1241,7 +1289,7 @@ The attestation-level reference object normative JSON Schema fragment:
     "relationship": {
       "type": "string",
       "minLength": 1,
-      "description": "Semantic relationship per 11.5.5. Canonical emit vocabulary is supersedes, extends, fulfills, references. Read-side validators accept non-empty strings and preserve unknown values per 11.5.8."
+      "description": "Semantic relationship per 11.5.5. Canonical emit vocabulary is supersedes, extends, fulfills, references, revokes. Read-side validators accept non-empty strings and preserve unknown values per 11.5.8."
     },
     "version": {
       "type": "string",
@@ -1275,6 +1323,7 @@ Reference identifiers SHOULD be URN-shaped to enable cross-protocol resolution w
 | `urn:concordia:attestation:<id>` | Reference to a Concordia attestation by attestation_id. |
 | `urn:concordia:mandate:<id>` | Reference to a Concordia mandate primitive (concordia.models.mandate). |
 | `urn:concordia:offer:<id>` | Reference to a Concordia offer (§6). |
+| `urn:concordia:revocation:<id>` | Reference to a Concordia revocation record by revocation_id. |
 | `urn:concordia:session:<id>` | Reference to a Concordia session by session_id. |
 
 For cross-protocol linkages (e.g., to A2A messages, AP2 mandates, x402 payment proofs, ERC-8004 reputation entries), implementations SHOULD use the linked protocol's URN scheme:

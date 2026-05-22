@@ -1,0 +1,86 @@
+{
+  "approval_receipt": {
+    "approver": {
+      "identity": "did:web:principal.example#approval",
+      "role": "procurement_authority"
+    },
+    "artifact_type": "ApprovalReceipt",
+    "expires_at": "2026-05-30T15:00:00Z",
+    "id": "urn:concordia:receipt:abc",
+    "issued_at": "2026-05-30T14:00:00Z",
+    "references": [
+      {
+        "id": "a2cn:session:giskard09",
+        "relationship": "approves",
+        "type": "negotiation_session"
+      },
+      {
+        "id": "urn:a2cn:mandate:xyz",
+        "relationship": "fulfills",
+        "type": "mandate"
+      }
+    ],
+    "scope": {
+      "amount": "150000.00 USD",
+      "decision": "approve",
+      "offer_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "threshold_crossed": "100000.00 USD"
+    },
+    "signature": {
+      "alg": "Ed25519",
+      "value": "fixture-signature"
+    }
+  },
+  "candidate_artifacts": [
+    {
+      "artifact_id": "urn:a2cn:mandate:xyz",
+      "artifact_type": "mandate",
+      "references": []
+    },
+    {
+      "artifact_id": "urn:concordia:receipt:abc",
+      "artifact_type": "approval_receipt",
+      "references": [
+        {
+          "id": "urn:a2cn:mandate:xyz",
+          "relationship": "fulfills",
+          "type": "mandate"
+        }
+      ]
+    }
+  ],
+  "expected_verifier_output": {
+    "evidence_contains": "urn:a2cn:mandate:xyz",
+    "failure_reason": "revoked",
+    "revoked_via_revocation_id": "urn:concordia:revocation:def",
+    "valid": false
+  },
+  "revocation_record": {
+    "cascade_depth": 3,
+    "effective_at": "2026-05-30T14:30:00Z",
+    "issued_at": "2026-05-30T14:30:00Z",
+    "issuer_did": "did:web:principal.example",
+    "reason": "policy_rotated",
+    "references": [
+      {
+        "id": "urn:a2cn:mandate:xyz",
+        "relationship": "revokes",
+        "type": "mandate"
+      }
+    ],
+    "revocation_id": "urn:concordia:revocation:def",
+    "revocation_scope": "cascade_to_dependents",
+    "revoked_artifact_id": "urn:a2cn:mandate:xyz",
+    "revoked_artifact_type": "mandate",
+    "signature": {
+      "alg": "EdDSA",
+      "value": "ONlQgs63E5dOU0vwFV9sGooPe9-nGtO_rAkF3Rs1uFe0cG-1CSX1tdtAhbfuuT3QyhC2fRSvGiXqM6l0TYb4Cg=="
+    }
+  },
+  "scenario": {
+    "execution_attempt_at": "2026-05-30T14:45:00Z",
+    "issuance_at": "2026-05-30T14:00:00Z",
+    "mandate_rotation_at": "2026-05-30T14:30:00Z",
+    "receipt_expires_at": "2026-05-30T15:00:00Z"
+  }
+}

@@ -1,8 +1,8 @@
 """CMPC (Cross-Mandate Promise Chain) bilateral primitive set.
 
-This module ships the bilateral subset for Concordia v0.7-alpha. Multilateral
-primitives, transparency log, and Verascore scoring-dimension wire-up land in
-later stages.
+This module ships the bilateral subset for Concordia v0.7-alpha, including
+RevocationRecord. Multilateral primitives, transparency log, and Verascore
+scoring-dimension wire-up land in later stages.
 """
 
 from .canonical import (
@@ -10,6 +10,7 @@ from .canonical import (
     canonicalize_chain_session,
     canonicalize_closure_predicate,
     canonicalize_conditional_commitment,
+    canonicalize_revocation_record,
     canonicalize_unwind_record,
 )
 from .chain_session import (
@@ -29,10 +30,20 @@ from .signing import (
     verify_conditional_commitment,
     verify_unwind_record,
 )
+from .revocation import (
+    CandidateArtifact,
+    CascadeResult,
+    InadmissibleArtifact,
+    cascade_revocation,
+    sign_revocation_record,
+    verify_revocation_record,
+)
 from .types import (
     AtomicActivationProof,
     ClosurePredicate,
     ConditionalCommitment,
+    RevocationRecord,
+    RevocationScope,
     UnwindRecord,
 )
 
@@ -46,17 +57,26 @@ __all__ = [
     "ClosurePredicate",
     "AtomicActivationProof",
     "UnwindRecord",
+    "RevocationRecord",
+    "RevocationScope",
+    "CandidateArtifact",
+    "CascadeResult",
+    "InadmissibleArtifact",
     "canonicalize_chain_session",
     "canonicalize_conditional_commitment",
     "canonicalize_closure_predicate",
     "canonicalize_atomic_activation_proof",
     "canonicalize_unwind_record",
+    "canonicalize_revocation_record",
     "sign_conditional_commitment",
     "verify_conditional_commitment",
     "sign_atomic_activation_proof",
     "verify_atomic_activation_proof",
     "sign_unwind_record",
     "verify_unwind_record",
+    "sign_revocation_record",
+    "verify_revocation_record",
+    "cascade_revocation",
     "CMPCError",
     "InvalidPrimitiveError",
     "SchemaValidationError",
