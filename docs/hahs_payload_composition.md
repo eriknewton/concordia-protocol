@@ -148,34 +148,47 @@ Concordia spec changes.
 
 ## Hive-side payload details
 
-Authoring note: this subsection captures the HAHS payload shape from the
-canonical schema as of 2026-05-25. Steve Rotzin (HiveTrust) has offered to
-co-author this subsection. If a HiveTrust-authored draft arrives in PR
-comments, replace the body of this subsection with that draft verbatim and
-update the "Last revised by" footer.
+### Canonicalization
 
-HAHS payload required fields per the canonical schema at
-`https://hivetrust.onrender.com/.well-known/schemas/hahs-v1.json`:
-`policy_id`, `policy_version`, `scope`, `composed_scope`, `receipt_hash`, and
-`signature`.
+- All receipts canonicalize per **RFC 8785 JCS** before signing. No leading/trailing whitespace, sorted keys, no insignificant zeros.
+- Hash domain: `sha256(jcs(payload))`. The `sha:` field on the receipt envelope is hex-lowercase, no `0x` prefix.
 
-Optional but typical fields:
+### Key material
 
-- `issuer_pubkey`
-- `revocation_witness`
-- `epoch_id`
-- `created_at`
+- Issuer: `did:hive:hivetrust-issuer-001`
+- Algorithm: `ed25519`
+- Pubkey (multibase ed25519): `i6-Wo01AwSD1eAhSSC3e3VCTEYFXehGNOVdC5iobuBc`
+- Resolves via `https://thehiveryiq.com/.well-known/issuers/index.json`
 
-Canonical signing uses RFC 8785 JCS canonicalization and an Ed25519 signature
-over the canonical body. The signature is verifiable against the issuer pubkey
-advertised at `https://hivetrust.onrender.com/v1/audit/pubkey`.
+### Composition envelope
 
-Current HiveTrust issuer key material:
+When a Concordia §9.6.4b receipt references a HAHS receipt, the reference shape is:
 
-- DID: `did:hive:hivetrust-issuer-001`
-- Ed25519 public key: `i6-Wo01AwSD1eAhSSC3e3VCTEYFXehGNOVdC5iobuBc`
+```json
+{
+  "ref": {
+    "urn": "urn:hahs:<class>:<id>",
+    "sha": "<jcs-sha256-hex>",
+    "issuer": "did:hive:hivetrust-issuer-001",
+    "anchor": {
+      "chain": "base",
+      "tx": "0x...",
+      "merkle_root": "0x...",
+      "batch_index": 0
+    }
+  }
+}
+```
 
-Last revised by: Erik Newton (Concordia) 2026-05-25.
+The `anchor` block is optional pre-finalization (batch state machine: open → rooted → finalized). Verifiers should accept `rooted` as proof of inclusion; `finalized` is required for settlement triggers.
+
+### Reference implementations
+
+- TS: `@hive-protocol/sdk` (npm) — `Receipt.verify()` + `Receipt.compose()`
+- Python: `hive-py` (PyPI) — `hive.receipts.verify` + `hive.receipts.compose`
+- Anchor worker (open spec, closed impl): https://thehiveryiq.com/sdk/anchor/
+
+Last revised by: Steve Rotzin (HiveTrust) and Erik Newton (Concordia) 2026-05-25.
 
 ## Not in scope here
 
