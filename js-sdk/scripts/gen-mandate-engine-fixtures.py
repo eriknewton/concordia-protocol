@@ -1,0 +1,1106 @@
+#!/usr/bin/env python3
+"""Generate mandate-ENGINE parity fixtures FROM the Concordia Python reference.
+
+Run from the repo root (or anywhere with `concordia` importable). Emits a JSON
+document to stdout. The JS test suite (tests/mandate-engine.test.ts) asserts that
+the TypeScript mandate-engine layer (src/mandate/engine.ts) reproduces, against
+Python-generated vectors:
+
+  - sign_mandate / sign_delegation: byte-identical base64url Ed25519 signatures
+    over the same canonical signing payload (mandate/link dict minus signature).
+  - validate_mandate_schema: identical `Schema: <message>` error strings, where
+    `<message>` is Python jsonschema's message for the FIRST/best-match error.
+    The JS engine drives ajv and TRANSLATES ajv's structured error into Python
+    jsonschema's message templates; these fixtures pin the exact strings.
+  - validate_constraints: identical (compliant, errors) for empty / valid /
+    meta-schema-invalid / action-violation cases. The meta-schema-invalid error
+    text is jsonschema-internal; the fixture records Python's full string and the
+    JS test asserts the stable PREFIX + the boolean (see test for rationale).
+  - _scope_restriction_to_schema + compose_effective_constraints: identical
+    (schema, errors).
+  - check_temporal_validity: identical (valid, errors) across all three modes and
+    their edge cases (now before/after window, bad timestamp, sequence mismatch,
+    state inactive).
+  - verify_delegation_chain: identical (valid, errors) including root/tail
+    mismatch, chain break, missing key, missing signature, tampered signature.
+  - verify_mandate: identical (valid, checks, errors, failure_reason) end to end.
+    Revocation network I/O is DEFERRED; verify_mandate is exercised with
+    check_revocation_status=False (the no-revocation outcome the injected hook
+    defaults to), and a boundary case with a revocation_endpoint set +
+    check_revocation_status=False asserts the endpoint is NOT fetched.
+
+This is the parity source of truth: every expected value comes straight from
+`concordia.mandate` / `concordia.signing`, never hand-authored. Synced into the
+JS test surface by scripts/sync-fixtures-from-python.mjs.
+
+DEFERRED (documented, boundary fixture + skipped test in the JS suite): the
+actual revocation network fetch (`check_revocation`, urllib I/O). The JS engine
+takes the revocation check as an injectable hook defaulting to "no revocation
+records"; the network fetch itself is not ported in this PR.
+
+Requires `jsonschema` (the engine's validation dependency) and `cryptography`.
+Run under python3.12 (matches the engine's runtime; jsonschema message text is
+stable across 4.x).
+"""
+
+from __future__ import annotations
+
+import base64
+import copy
+import json
+import sys
+
+
+class _Delete:
+    """Sentinel marking a key to be removed from the valid baseline mandate."""
+
+
+_DELETE = _Delete()
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from concordia import signing
+from concordia.signing import KeyPair, canonical_json
+from concordia.models.mandate import (
+    DelegationLink,
+    Mandate,
+    MandateStatus,
+    TemporalMode,
+    ValidityWindow,
+)
+from concordia.mandate import (
+    sign_mandate,
+    sign_delegation,
+    validate_mandate_schema,
+    validate_constraints,
+    _scope_restriction_to_schema,
+    compose_effective_constraints,
+    check_temporal_validity,
+    verify_delegation_chain,
+    verify_mandate,
+)
+
+
+def _kp_from_seed(seed: bytes) -> KeyPair:
+    sk = Ed25519PrivateKey.from_private_bytes(seed)
+    return KeyPair(private_key=sk, public_key=sk.public_key())
+
+
+# Deterministic seeds so signatures are reproducible across machines. The raw
+# private key IS the Ed25519 seed in both Python `cryptography` and JS noble.
+ISSUER_SEED = bytes(range(32))
+MID_SEED = bytes(range(32, 64))
+LEAF_SEED = bytes(range(64, 96))
+WRONG_SEED = bytes(range(96, 128))
+
+ISSUER_KP = _kp_from_seed(ISSUER_SEED)
+MID_KP = _kp_from_seed(MID_SEED)
+LEAF_KP = _kp_from_seed(LEAF_SEED)
+WRONG_KP = _kp_from_seed(WRONG_SEED)
+
+# Far-future window so temporal checks pass when not the subject under test.
+ISSUED = "2026-05-14T00:00:00Z"
+NB = "2026-05-14T00:00:00Z"
+NA = "2126-06-14T00:00:00Z"
+
+# A fixed "now" used for every temporal/verify case so the JS test pins the same
+# instant rather than wall-clock. Sits inside [NB, NA].
+NOW = "2026-06-01T00:00:00Z"
+NOW_BEFORE = "2026-05-01T00:00:00Z"   # before NB
+NOW_AFTER = "2127-01-01T00:00:00Z"    # after NA
+
+from datetime import datetime, timezone
+
+
+def _dt(s: str) -> datetime:
+    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+
+
+def _b64_seed(seed: bytes) -> str:
+    return base64.urlsafe_b64encode(seed).decode()
+
+
+def _public_b64(kp: KeyPair) -> str:
+    return kp.public_key_b64()
+
+
+def _result_dict(r) -> dict:
+    """verify_mandate / verify_delegation_chain result -> JSON-able dict."""
+    return r.to_dict()
+
+
+def main() -> None:
+    doc: dict = {
+        "_comment": (
+            "Generated by js-sdk/scripts/gen-mandate-engine-fixtures.py from "
+            "concordia.mandate + concordia.signing. All signatures, schema/"
+            "constraint error strings, temporal/chain/verify outcomes are "
+            "Python-produced; do not edit by hand. Revocation NETWORK I/O "
+            "(check_revocation) is DEFERRED; verify_mandate is exercised with "
+            "check_revocation_status=False (the no-revocation outcome)."
+        )
+    }
+
+    # ------------------------------------------------------------------
+    # Key material the JS test needs (raw 32-byte seeds, base64url, so the JS
+    # side reconstructs the identical KeyPair via KeyPair.fromPrivateKey).
+    # ------------------------------------------------------------------
+    doc["keys"] = {
+        "issuer": {"seed_b64": _b64_seed(ISSUER_SEED), "public_b64": _public_b64(ISSUER_KP)},
+        "mid": {"seed_b64": _b64_seed(MID_SEED), "public_b64": _public_b64(MID_KP)},
+        "leaf": {"seed_b64": _b64_seed(LEAF_SEED), "public_b64": _public_b64(LEAF_KP)},
+        "wrong": {"seed_b64": _b64_seed(WRONG_SEED), "public_b64": _public_b64(WRONG_KP)},
+    }
+    doc["clock"] = {"now": NOW, "now_before": NOW_BEFORE, "now_after": NOW_AFTER}
+
+    # ------------------------------------------------------------------
+    # sign_mandate: a mandate signed by the issuer key, recording the resulting
+    # signature and the to_dict so JS can reproduce byte-for-byte.
+    # ------------------------------------------------------------------
+    sign_mandate_cases = []
+
+    def _sm(name: str, mandate: Mandate, kp: KeyPair):
+        m = copy.deepcopy(mandate)
+        signed = sign_mandate(m, kp)
+        sign_mandate_cases.append(
+            {
+                "name": name,
+                # The dict BEFORE signing (signature stripped) -- the JS side
+                # builds the same mandate, signs, and must match `signature`.
+                "input_to_dict": {k: v for k, v in mandate.to_dict().items() if k != "signature"},
+                "signature": signed.signature,
+                "signed_to_dict": signed.to_dict(),
+            }
+        )
+
+    _sm(
+        "windowed_basic",
+        Mandate(
+            mandate_id="urn:concordia:mandate:m1",
+            issuer="did:web:issuer",
+            subject="did:web:subject",
+            issued_at=ISSUED,
+            validity=ValidityWindow(mode=TemporalMode.WINDOWED, not_before=NB, not_after=NA),
+            constraints={"max_spend": {"amount": 100, "currency": "USD"}},
+        ),
+        ISSUER_KP,
+    )
+    _sm(
+        "with_metadata_unicode",
+        Mandate(
+            mandate_id="urn:concordia:mandate:m2",
+            issuer="did:web:café",
+            subject="did:web:sübject",
+            issued_at=ISSUED,
+            validity=ValidityWindow(mode=TemporalMode.SEQUENCE, sequence_key="s-1"),
+            constraints={"note": "héllo ✓"},
+            metadata={"k": "v"},
+        ),
+        ISSUER_KP,
+    )
+
+    doc["sign_mandate_cases"] = sign_mandate_cases
+
+    # ------------------------------------------------------------------
+    # sign_delegation: a delegation link signed by the delegator key.
+    # ------------------------------------------------------------------
+    sign_delegation_cases = []
+
+    def _sd(name: str, link: DelegationLink, kp: KeyPair):
+        ln = copy.deepcopy(link)
+        signed = sign_delegation(ln, kp)
+        sign_delegation_cases.append(
+            {
+                "name": name,
+                "input_to_dict": {k: v for k, v in link.to_dict().items() if k != "signature"},
+                "signature": signed.signature,
+                "signed_to_dict": signed.to_dict(),
+            }
+        )
+
+    _sd(
+        "basic",
+        DelegationLink(
+            delegator="did:web:issuer",
+            delegate="did:web:mid",
+            delegated_at=ISSUED,
+        ),
+        ISSUER_KP,
+    )
+    _sd(
+        "with_scope_restriction",
+        DelegationLink(
+            delegator="did:web:mid",
+            delegate="did:web:leaf",
+            delegated_at=ISSUED,
+            scope_restriction={"max_spend": 500},
+        ),
+        MID_KP,
+    )
+
+    doc["sign_delegation_cases"] = sign_delegation_cases
+
+    # ------------------------------------------------------------------
+    # validate_mandate_schema: error-string parity. Each case records the dict
+    # and the Python validate_mandate_schema(...) error list (a `Schema: ...`
+    # one-element list, or empty for valid).
+    # ------------------------------------------------------------------
+    valid_mandate = {
+        "mandate_id": "urn:concordia:mandate:m1",
+        "issuer": "i",
+        "subject": "s",
+        "issued_at": ISSUED,
+        "validity": {"mode": "windowed", "not_before": NB, "not_after": NA},
+        "constraints": {"k": "v"},
+        "algorithm": "EdDSA",
+    }
+
+    def _bad(**changes):
+        d = copy.deepcopy(valid_mandate)
+        for k, v in changes.items():
+            if v is _DELETE:
+                d.pop(k, None)
+            else:
+                d[k] = v
+        return d
+
+    schema_cases = []
+
+    def _sc(name: str, d: dict):
+        schema_cases.append(
+            {"name": name, "input": d, "errors": validate_mandate_schema(d)}
+        )
+
+    _sc("valid", copy.deepcopy(valid_mandate))
+    _sc("missing_issuer", _bad(issuer=_DELETE))
+    _sc("missing_subject", _bad(subject=_DELETE))
+    _sc("missing_mandate_id", _bad(mandate_id=_DELETE))
+    _sc("missing_algorithm", _bad(algorithm=_DELETE))
+    _sc("missing_validity", _bad(validity=_DELETE))
+    _sc("missing_constraints", _bad(constraints=_DELETE))
+    _sc("bad_id_pattern", _bad(mandate_id="nope"))
+    _sc("bad_algorithm_enum", _bad(algorithm="RS256"))
+    _sc("bad_status_enum", _bad(status="bogus"))
+    _sc("additional_property", _bad(extra=1))
+    _sc("empty_constraints", _bad(constraints={}))
+    _sc("empty_issuer", _bad(issuer=""))
+    _sc("empty_subject", _bad(subject=""))
+    _sc("issuer_wrong_type", _bad(issuer=123))
+    _sc("subject_wrong_type_bool", _bad(subject=True))
+    _sc("mandate_id_wrong_type_null", _bad(mandate_id=None))
+    _sc("windowed_missing_not_before", _bad(validity={"mode": "windowed", "not_after": NA}))
+    _sc("windowed_missing_not_after", _bad(validity={"mode": "windowed", "not_before": NB}))
+    _sc("sequence_missing_key", _bad(validity={"mode": "sequence"}))
+    _sc("state_bound_missing_condition", _bad(validity={"mode": "state_bound"}))
+    _sc("validity_bad_mode_enum", _bad(validity={"mode": "weird", "sequence_key": "k"}))
+    _sc("validity_max_uses_zero", _bad(validity={"mode": "sequence", "sequence_key": "k", "max_uses": 0}))
+    _sc("validity_not_object", _bad(validity="x"))
+    _sc(
+        "delegation_chain_item_missing_field",
+        _bad(delegation_chain=[{"delegator": "a", "delegate": "b", "delegated_at": ISSUED, "algorithm": "EdDSA"}]),
+    )
+    _sc(
+        "delegation_chain_not_array",
+        _bad(delegation_chain={"not": "array"}),
+    )
+    _sc("empty_dict", {})
+    # format keywords (date-time / uri) are NOT asserted by jsonschema.validate by
+    # default -> these MUST be VALID (no error). Pins the no-format-check parity.
+    _sc("bad_issued_at_format_is_valid", _bad(issued_at="not-a-date"))
+    _sc("bad_revocation_endpoint_format_is_valid", _bad(revocation_endpoint="not a uri"))
+
+    doc["schema_cases"] = schema_cases
+
+    # ------------------------------------------------------------------
+    # validate_constraints: (compliant, errors). action optional.
+    # ------------------------------------------------------------------
+    constraint_cases = []
+
+    def _cc(name: str, constraints, action=None):
+        compliant, errors = validate_constraints(constraints, action=action)
+        constraint_cases.append(
+            {
+                "name": name,
+                "constraints": constraints,
+                "action": action,
+                "compliant": compliant,
+                "errors": errors,
+            }
+        )
+
+    _cc("empty_constraints", {})
+    _cc("valid_schema_no_action", {"type": "object", "properties": {"x": {"type": "number"}}})
+    _cc(
+        "valid_action_passes",
+        {"type": "object", "properties": {"amount": {"type": "number", "maximum": 100}}},
+        action={"amount": 50},
+    )
+    _cc(
+        "action_violates_maximum",
+        {"type": "object", "properties": {"amount": {"type": "number", "maximum": 100}}},
+        action={"amount": 500},
+    )
+    _cc(
+        "action_violates_required",
+        {"type": "object", "required": ["amount"], "properties": {"amount": {"type": "number"}}},
+        action={},
+    )
+    _cc("meta_schema_invalid_bad_type", {"type": "not-a-type"})
+    _cc("meta_schema_invalid_minimum_str", {"minimum": "x"})
+    # codex MAJOR 2026-05-29: type-UNION violation. CPython jsonschema renders the
+    # union as the per-type reprs joined by ", " ("'a', 'b'"), NOT a Python list
+    # repr ("['a', 'b']"). Action value is a string against a number|boolean union.
+    _cc(
+        "action_violates_type_union",
+        {"type": "object", "properties": {"amount": {"type": ["number", "boolean"]}}},
+        action={"amount": "fifty"},
+    )
+    _cc(
+        "action_violates_type_union_three",
+        {"type": "object", "properties": {"amount": {"type": ["number", "boolean", "array"]}}},
+        action={"amount": "fifty"},
+    )
+    # codex MAJOR 2026-05-29: additionalProperties with MULTIPLE unexpected keys.
+    # CPython reports ALL extras in one message, sorted by str, with verb
+    # agreement ("'b', 'c' were unexpected"). ajv surfaces only one extra per
+    # error, so the TS formatter recomputes the full set. Single-key case retained
+    # for the singular "was unexpected" form.
+    _cc(
+        "action_violates_additional_props_multi",
+        {"type": "object", "properties": {"a": {}}, "additionalProperties": False},
+        action={"a": 1, "c": 3, "b": 2},
+    )
+    _cc(
+        "action_violates_additional_props_single",
+        {"type": "object", "properties": {"a": {}}, "additionalProperties": False},
+        action={"a": 1, "b": 2},
+    )
+    # MAJOR 2026-05-29: additionalProperties message parity for COMPOSED schemas.
+    # Once a delegation scope restriction is intersected, compose_effective_constraints
+    # emits {"allOf": [...]}, so the additionalProperties keyword fails UNDER an
+    # applicator array (CPython schemaPath analog: allOf/<i>/additionalProperties).
+    # find_additional_properties uses the FAILING subschema's own properties; the TS
+    # formatter must walk the array index to recover those properties, else it
+    # recomputes extras against an empty set and mislabels allowed keys. The composed
+    # schemas below are built via the real compose_effective_constraints so the allOf
+    # shape is exactly what the engine produces (constraints + scope_restriction).
+    def _composed_schema(base, *scope_restrictions):
+        chain = [
+            DelegationLink.from_dict(
+                {
+                    "delegator": "a",
+                    "delegate": "b",
+                    "delegated_at": ISSUED,
+                    "signature": "s",
+                    "algorithm": "EdDSA",
+                    "scope_restriction": sr,
+                }
+            )
+            for sr in scope_restrictions
+        ]
+        eff, errs = compose_effective_constraints(base, chain)
+        assert not errs, f"unexpected compose errors: {errs}"
+        assert eff is not None and "allOf" in eff, f"expected composed allOf, got {eff}"
+        return eff
+
+    # Single branch under allOf: base constraints intersected with one scope schema
+    # that closes additionalProperties. MULTIPLE extras -> "were" + sorted keys.
+    _composed_multi = _composed_schema(
+        {"type": "object", "properties": {"a": {}}},
+        {"type": "object", "properties": {"a": {}}, "additionalProperties": False},
+    )
+    _cc(
+        "composed_allof_additional_props_multi",
+        _composed_multi,
+        action={"a": 1, "c": 3, "b": 2},
+    )
+    # SINGLE extra under composed allOf -> "was" (singular verb).
+    _cc(
+        "composed_allof_additional_props_single",
+        _composed_multi,
+        action={"a": 1, "b": 2},
+    )
+    # ALL keys allowed under the composed schema -> compliant, NO false extras.
+    _cc(
+        "composed_allof_additional_props_all_allowed",
+        _composed_multi,
+        action={"a": 1},
+    )
+    # Hand-authored allOf (NOT via compose) where the FAILING branch is allOf/1:
+    # the second branch closes additionalProperties and only allows `b`, so extras
+    # are computed relative to THAT branch's properties -> "'a', 'c' were unexpected".
+    # Pins that the array-index walk selects the correct branch, not allOf/0.
+    _cc(
+        "composed_allof_additional_props_second_branch",
+        {
+            "allOf": [
+                {"type": "object", "properties": {"a": {}}},
+                {"type": "object", "properties": {"b": {}}, "additionalProperties": False},
+            ]
+        },
+        action={"a": 1, "b": 2, "c": 3},
+    )
+
+    doc["constraint_cases"] = constraint_cases
+
+    # ------------------------------------------------------------------
+    # _scope_restriction_to_schema: (schema, errors).
+    # ------------------------------------------------------------------
+    scope_cases = []
+
+    def _scope(name: str, scope):
+        schema, errors = _scope_restriction_to_schema(scope)
+        scope_cases.append(
+            {"name": name, "scope": scope, "schema": schema, "errors": errors}
+        )
+
+    _scope("max_spend_shorthand", {"max_spend": 100})
+    _scope("max_spend_float", {"max_spend": 99.5})
+    _scope("jsonschema_form", {"type": "object", "properties": {"amount": {"type": "number"}}})
+    _scope("unsupported_unknown_key", {"foo": "bar"})
+    _scope("empty_dict", {})
+    _scope("bad_jsonschema", {"type": "not-a-type"})
+    _scope("max_spend_bool_rejected", {"max_spend": True})
+    _scope("max_spend_with_extra_key", {"max_spend": 100, "other": 1})
+
+    doc["scope_cases"] = scope_cases
+
+    # ------------------------------------------------------------------
+    # compose_effective_constraints: (effective, errors). chain serialized as
+    # list-of-link-to_dict so JS rebuilds the same DelegationLink list.
+    # ------------------------------------------------------------------
+    compose_cases = []
+
+    def _compose(name: str, constraints, links):
+        chain = [DelegationLink.from_dict(d) for d in links]
+        eff, errors = compose_effective_constraints(constraints, chain)
+        compose_cases.append(
+            {
+                "name": name,
+                "constraints": constraints,
+                "chain": [l.to_dict() for l in chain],
+                "effective": eff,
+                "errors": errors,
+            }
+        )
+
+    base_constraints = {"type": "object", "properties": {"amount": {"type": "number"}}}
+    _compose("no_chain", base_constraints, [])
+    _compose(
+        "chain_no_scope",
+        base_constraints,
+        [{"delegator": "a", "delegate": "b", "delegated_at": ISSUED, "signature": "s", "algorithm": "EdDSA"}],
+    )
+    _compose(
+        "chain_with_max_spend_scope",
+        base_constraints,
+        [{"delegator": "a", "delegate": "b", "delegated_at": ISSUED, "signature": "s", "algorithm": "EdDSA", "scope_restriction": {"max_spend": 500}}],
+    )
+    _compose(
+        "chain_with_jsonschema_scope",
+        base_constraints,
+        [{"delegator": "a", "delegate": "b", "delegated_at": ISSUED, "signature": "s", "algorithm": "EdDSA", "scope_restriction": {"type": "object", "properties": {"amount": {"maximum": 200}}}}],
+    )
+    _compose(
+        "chain_with_unsupported_scope_fails",
+        base_constraints,
+        [{"delegator": "a", "delegate": "b", "delegated_at": ISSUED, "signature": "s", "algorithm": "EdDSA", "scope_restriction": {"foo": "bar"}}],
+    )
+    _compose(
+        "chain_multi_scope",
+        base_constraints,
+        [
+            {"delegator": "a", "delegate": "b", "delegated_at": ISSUED, "signature": "s", "algorithm": "EdDSA", "scope_restriction": {"max_spend": 500}},
+            {"delegator": "b", "delegate": "c", "delegated_at": ISSUED, "signature": "s2", "algorithm": "EdDSA", "scope_restriction": {"max_spend": 200}},
+        ],
+    )
+
+    doc["compose_cases"] = compose_cases
+
+    # ------------------------------------------------------------------
+    # check_temporal_validity: (valid, errors). Drives `now`/sequence/state.
+    # ------------------------------------------------------------------
+    temporal_cases = []
+
+    def _temporal(name, vw_dict, now=None, sequence_key=None, state_active=None):
+        vw = ValidityWindow.from_dict(vw_dict)
+        now_dt = _dt(now) if now is not None else _dt(NOW)
+        valid, errors = check_temporal_validity(
+            vw, now=now_dt, sequence_key=sequence_key, state_active=state_active
+        )
+        temporal_cases.append(
+            {
+                "name": name,
+                "validity": vw_dict,
+                "now": now if now is not None else NOW,
+                "sequence_key": sequence_key,
+                "state_active": state_active,
+                "valid": valid,
+                "errors": errors,
+            }
+        )
+
+    _temporal("windowed_in_range", {"mode": "windowed", "not_before": NB, "not_after": NA})
+    _temporal("windowed_before", {"mode": "windowed", "not_before": "2026-06-15T00:00:00Z", "not_after": NA})
+    _temporal("windowed_after", {"mode": "windowed", "not_before": NB, "not_after": "2026-05-15T00:00:00Z"})
+    _temporal("windowed_missing_bounds", {"mode": "windowed"})
+    _temporal("windowed_bad_timestamp", {"mode": "windowed", "not_before": "not-a-date", "not_after": NA})
+    _temporal("sequence_no_key_in_window", {"mode": "sequence", "sequence_key": "k"})
+    _temporal("sequence_missing_key", {"mode": "sequence"})
+    _temporal("sequence_match", {"mode": "sequence", "sequence_key": "k"}, sequence_key="k")
+    _temporal("sequence_mismatch", {"mode": "sequence", "sequence_key": "k"}, sequence_key="other")
+    _temporal("state_bound_no_arg", {"mode": "state_bound", "state_condition": "c"})
+    _temporal("state_bound_missing_condition", {"mode": "state_bound"})
+    _temporal("state_bound_active", {"mode": "state_bound", "state_condition": "c"}, state_active=True)
+    _temporal("state_bound_inactive", {"mode": "state_bound", "state_condition": "c"}, state_active=False)
+
+    doc["temporal_cases"] = temporal_cases
+
+    # ------------------------------------------------------------------
+    # verify_delegation_chain: (valid, errors). Build signed chains so the
+    # signature checks exercise real Ed25519 verify.
+    # ------------------------------------------------------------------
+    chain_cases = []
+
+    def _signed_link(delegator, delegate, kp, scope=None):
+        link = DelegationLink(
+            delegator=delegator,
+            delegate=delegate,
+            delegated_at=ISSUED,
+            scope_restriction=scope,
+        )
+        return sign_delegation(link, kp)
+
+    def _chain(name, links, issuer, subject, public_keys_b64):
+        # public_keys passed to verify_delegation_chain are public-key objects,
+        # but we record only the b64 the JS side reconstructs from.
+        public_keys = {}
+        for agent_id, b64 in public_keys_b64.items():
+            seed = {
+                "issuer": ISSUER_SEED,
+                "mid": MID_SEED,
+                "leaf": LEAF_SEED,
+                "wrong": WRONG_SEED,
+            }[b64]
+            public_keys[agent_id] = _kp_from_seed(seed).public_key
+        valid, errors = verify_delegation_chain(links, issuer, subject, public_keys)
+        chain_cases.append(
+            {
+                "name": name,
+                "chain": [l.to_dict() for l in links],
+                "issuer": issuer,
+                "subject": subject,
+                # map agent_id -> which named key (JS rebuilds from doc["keys"]).
+                "public_keys": public_keys_b64,
+                "valid": valid,
+                "errors": errors,
+            }
+        )
+
+    # Valid single link: issuer -> subject, signed by issuer.
+    l_issuer_subject = _signed_link("did:web:issuer", "did:web:subject", ISSUER_KP)
+    _chain(
+        "valid_single_link",
+        [l_issuer_subject],
+        "did:web:issuer",
+        "did:web:subject",
+        {"did:web:issuer": "issuer"},
+    )
+    # Valid two-link: issuer -> mid -> leaf.
+    l1 = _signed_link("did:web:issuer", "did:web:mid", ISSUER_KP)
+    l2 = _signed_link("did:web:mid", "did:web:leaf", MID_KP)
+    _chain(
+        "valid_two_link",
+        [l1, l2],
+        "did:web:issuer",
+        "did:web:leaf",
+        {"did:web:issuer": "issuer", "did:web:mid": "mid"},
+    )
+    # Empty chain -> valid (direct mandate).
+    _chain("empty_chain_valid", [], "did:web:issuer", "did:web:subject", {})
+    # Root mismatch.
+    _chain(
+        "root_mismatch",
+        [l_issuer_subject],
+        "did:web:other",
+        "did:web:subject",
+        {"did:web:issuer": "issuer"},
+    )
+    # Tail mismatch.
+    _chain(
+        "tail_mismatch",
+        [l_issuer_subject],
+        "did:web:issuer",
+        "did:web:other",
+        {"did:web:issuer": "issuer"},
+    )
+    # Chain break (mid->leaf with a gap).
+    l_broken = _signed_link("did:web:gap", "did:web:leaf", MID_KP)
+    _chain(
+        "chain_break",
+        [l1, l_broken],
+        "did:web:issuer",
+        "did:web:leaf",
+        {"did:web:issuer": "issuer", "did:web:gap": "mid"},
+    )
+    # Missing public key for delegator.
+    _chain(
+        "missing_public_key",
+        [l_issuer_subject],
+        "did:web:issuer",
+        "did:web:subject",
+        {},
+    )
+    # Wrong public key -> signature fails.
+    _chain(
+        "wrong_public_key_bad_signature",
+        [l_issuer_subject],
+        "did:web:issuer",
+        "did:web:subject",
+        {"did:web:issuer": "wrong"},
+    )
+    # Missing signature.
+    l_unsigned = DelegationLink(
+        delegator="did:web:issuer", delegate="did:web:subject", delegated_at=ISSUED
+    )
+    _chain(
+        "missing_signature",
+        [l_unsigned],
+        "did:web:issuer",
+        "did:web:subject",
+        {"did:web:issuer": "issuer"},
+    )
+    # Tampered signature (valid-then-field-changed): re-build the signed link but
+    # mutate delegated_at AFTER signing so the signature no longer matches.
+    l_tampered = _signed_link("did:web:issuer", "did:web:subject", ISSUER_KP)
+    l_tampered.delegated_at = "2099-01-01T00:00:00Z"
+    _chain(
+        "tampered_field_bad_signature",
+        [l_tampered],
+        "did:web:issuer",
+        "did:web:subject",
+        {"did:web:issuer": "issuer"},
+    )
+    # FAIL-OPEN REGRESSION GUARD (codex BLOCKER 2026-05-29): a link MARKED
+    # algorithm="ES256" but carrying a GENUINE Ed25519 signature over its own
+    # canonical payload. Python `verify_delegation_chain` recomputes the payload
+    # (which embeds `algorithm:"ES256"`) and calls `verify_signature(..., alg=
+    # "ES256")`; with an Ed25519 public key that helper returns False ->
+    # "Invalid signature at delegation link 0" (REJECT). An EdDSA-only TS verifier
+    # that ignores `link.algorithm` would instead PASS the Ed25519 check and
+    # return valid=true (fail-open). This fixture pins Python's reject so the TS
+    # algorithm gate must match.
+    l_es256_marked = DelegationLink(
+        delegator="did:web:issuer",
+        delegate="did:web:subject",
+        delegated_at=ISSUED,
+        algorithm="ES256",
+    )
+    _es256_dict = l_es256_marked.to_dict()
+    _es256_dict.pop("signature", None)
+    # Genuine Ed25519 signature over the ES256-marked canonical payload (attacker
+    # controls both the `algorithm` field and the signature).
+    _es256_raw = ISSUER_KP.private_key.sign(canonical_json(_es256_dict))
+    l_es256_marked.signature = base64.urlsafe_b64encode(_es256_raw).decode()
+    _chain(
+        "es256_marked_eddsa_signed_rejected",
+        [l_es256_marked],
+        "did:web:issuer",
+        "did:web:subject",
+        {"did:web:issuer": "issuer"},
+    )
+
+    doc["chain_cases"] = chain_cases
+
+    # ------------------------------------------------------------------
+    # verify_mandate: end-to-end. Revocation NETWORK I/O deferred, so every case
+    # runs check_revocation_status=False (the no-revocation outcome the injected
+    # JS hook defaults to). One boundary case keeps a revocation_endpoint set but
+    # still check_revocation_status=False to assert no fetch happens.
+    # ------------------------------------------------------------------
+    verify_cases = []
+
+    def _build_signed_mandate(**kw) -> Mandate:
+        chain = kw.pop("delegation_chain", [])
+        m = Mandate(**kw, delegation_chain=chain)
+        return sign_mandate(m, ISSUER_KP)
+
+    def _verify(
+        name,
+        mandate: Mandate,
+        issuer_key="issuer",
+        now=NOW,
+        sequence_key=None,
+        state_active=None,
+        action=None,
+        delegation_keys=None,
+        check_revocation_status=False,
+        require_binding_context=True,
+        tamper=None,
+    ):
+        md = mandate.to_dict()
+        if tamper is not None:
+            tamper(md)
+        seed = {
+            "issuer": ISSUER_SEED,
+            "mid": MID_SEED,
+            "leaf": LEAF_SEED,
+            "wrong": WRONG_SEED,
+        }[issuer_key]
+        pub = _kp_from_seed(seed).public_key
+        dkeys = None
+        if delegation_keys is not None:
+            dkeys = {}
+            for agent_id, named in delegation_keys.items():
+                s = {
+                    "issuer": ISSUER_SEED,
+                    "mid": MID_SEED,
+                    "leaf": LEAF_SEED,
+                    "wrong": WRONG_SEED,
+                }[named]
+                dkeys[agent_id] = _kp_from_seed(s).public_key
+        result = verify_mandate(
+            md,
+            pub,
+            now=_dt(now),
+            sequence_key=sequence_key,
+            state_active=state_active,
+            action=action,
+            delegation_public_keys=dkeys,
+            check_revocation_status=check_revocation_status,
+            require_binding_context=require_binding_context,
+        )
+        verify_cases.append(
+            {
+                "name": name,
+                "mandate_dict": md,
+                "issuer_key": issuer_key,
+                "now": now,
+                "sequence_key": sequence_key,
+                "state_active": state_active,
+                "action": action,
+                "delegation_keys": delegation_keys,
+                "check_revocation_status": check_revocation_status,
+                "require_binding_context": require_binding_context,
+                "result": _result_dict(result),
+            }
+        )
+
+    # Happy path: windowed mandate, signed, in range, no chain.
+    _verify(
+        "valid_windowed",
+        _build_signed_mandate(
+            mandate_id="urn:concordia:mandate:v1",
+            issuer="did:web:issuer",
+            subject="did:web:subject",
+            issued_at=ISSUED,
+            validity=ValidityWindow(mode=TemporalMode.WINDOWED, not_before=NB, not_after=NA),
+            constraints={"type": "object", "properties": {"amount": {"type": "number", "maximum": 100}}},
+        ),
+    )
+    # Happy path with an action that satisfies the constraint.
+    _verify(
+        "valid_with_action_pass",
+        _build_signed_mandate(
+            mandate_id="urn:concordia:mandate:v2",
+            issuer="did:web:issuer",
+            subject="did:web:subject",
+            issued_at=ISSUED,
+            validity=ValidityWindow(mode=TemporalMode.WINDOWED, not_before=NB, not_after=NA),
+            constraints={"type": "object", "properties": {"amount": {"type": "number", "maximum": 100}}},
+        ),
+        action={"amount": 50},
+    )
+    # Action violates -> constraint_compliance False.
+    _verify(
+        "action_violates_constraint",
+        _build_signed_mandate(
+            mandate_id="urn:concordia:mandate:v3",
+            issuer="did:web:issuer",
+            subject="did:web:subject",
+            issued_at=ISSUED,
+            validity=ValidityWindow(mode=TemporalMode.WINDOWED, not_before=NB, not_after=NA),
+            constraints={"type": "object", "properties": {"amount": {"type": "number", "maximum": 100}}},
+        ),
+        action={"amount": 500},
+    )
+    # Bad signature: tamper a field after signing.
+    _verify(
+        "tampered_after_signing",
+        _build_signed_mandate(
+            mandate_id="urn:concordia:mandate:v4",
+            issuer="did:web:issuer",
+            subject="did:web:subject",
+            issued_at=ISSUED,
+            validity=ValidityWindow(mode=TemporalMode.WINDOWED, not_before=NB, not_after=NA),
+            constraints={"k": "v"},
+        ),
+        tamper=lambda d: d.update({"subject": "did:web:attacker"}),
+    )
+    # Wrong issuer key -> bad signature.
+    _verify(
+        "wrong_issuer_key",
+        _build_signed_mandate(
+            mandate_id="urn:concordia:mandate:v5",
+            issuer="did:web:issuer",
+            subject="did:web:subject",
+            issued_at=ISSUED,
+            validity=ValidityWindow(mode=TemporalMode.WINDOWED, not_before=NB, not_after=NA),
+            constraints={"k": "v"},
+        ),
+        issuer_key="wrong",
+    )
+    # Missing signature entirely.
+    _verify(
+        "missing_signature",
+        Mandate(
+            mandate_id="urn:concordia:mandate:v6",
+            issuer="did:web:issuer",
+            subject="did:web:subject",
+            issued_at=ISSUED,
+            validity=ValidityWindow(mode=TemporalMode.WINDOWED, not_before=NB, not_after=NA),
+            constraints={"k": "v"},
+        ),
+    )
+    # Schema-invalid (missing required) -> schema check fails before signature.
+    _verify(
+        "schema_invalid_missing_subject",
+        _build_signed_mandate(
+            mandate_id="urn:concordia:mandate:v7",
+            issuer="did:web:issuer",
+            subject="did:web:subject",
+            issued_at=ISSUED,
+            validity=ValidityWindow(mode=TemporalMode.WINDOWED, not_before=NB, not_after=NA),
+            constraints={"k": "v"},
+        ),
+        tamper=lambda d: d.pop("subject", None),
+    )
+    # Lifecycle status not active (revoked) -> after signature. Sign with status
+    # in the signed bytes so the signature stays valid.
+    _verify(
+        "status_revoked",
+        _build_signed_mandate(
+            mandate_id="urn:concordia:mandate:v8",
+            issuer="did:web:issuer",
+            subject="did:web:subject",
+            issued_at=ISSUED,
+            validity=ValidityWindow(mode=TemporalMode.WINDOWED, not_before=NB, not_after=NA),
+            constraints={"k": "v"},
+            status=MandateStatus.REVOKED,
+        ),
+    )
+    # Temporal: expired (now after window).
+    _verify(
+        "temporal_expired",
+        _build_signed_mandate(
+            mandate_id="urn:concordia:mandate:v9",
+            issuer="did:web:issuer",
+            subject="did:web:subject",
+            issued_at=ISSUED,
+            validity=ValidityWindow(mode=TemporalMode.WINDOWED, not_before=NB, not_after="2026-05-20T00:00:00Z"),
+            constraints={"k": "v"},
+        ),
+        now=NOW,
+    )
+    # Temporal: not yet valid.
+    _verify(
+        "temporal_not_yet_valid",
+        _build_signed_mandate(
+            mandate_id="urn:concordia:mandate:v10",
+            issuer="did:web:issuer",
+            subject="did:web:subject",
+            issued_at=ISSUED,
+            validity=ValidityWindow(mode=TemporalMode.WINDOWED, not_before="2026-07-01T00:00:00Z", not_after=NA),
+            constraints={"k": "v"},
+        ),
+        now=NOW,
+    )
+    # Sequence mandate WITHOUT context + require_binding_context -> missing context.
+    _verify(
+        "sequence_missing_context",
+        _build_signed_mandate(
+            mandate_id="urn:concordia:mandate:v11",
+            issuer="did:web:issuer",
+            subject="did:web:subject",
+            issued_at=ISSUED,
+            validity=ValidityWindow(mode=TemporalMode.SEQUENCE, sequence_key="k"),
+            constraints={"k": "v"},
+        ),
+    )
+    # Sequence mandate WITH matching context -> valid.
+    _verify(
+        "sequence_with_context",
+        _build_signed_mandate(
+            mandate_id="urn:concordia:mandate:v12",
+            issuer="did:web:issuer",
+            subject="did:web:subject",
+            issued_at=ISSUED,
+            validity=ValidityWindow(mode=TemporalMode.SEQUENCE, sequence_key="k"),
+            constraints={"k": "v"},
+        ),
+        sequence_key="k",
+    )
+    # State-bound mandate without context -> missing_state_context.
+    _verify(
+        "state_missing_context",
+        _build_signed_mandate(
+            mandate_id="urn:concordia:mandate:v13",
+            issuer="did:web:issuer",
+            subject="did:web:subject",
+            issued_at=ISSUED,
+            validity=ValidityWindow(mode=TemporalMode.STATE_BOUND, state_condition="c"),
+            constraints={"k": "v"},
+        ),
+    )
+    # State-bound active -> valid.
+    _verify(
+        "state_active_valid",
+        _build_signed_mandate(
+            mandate_id="urn:concordia:mandate:v14",
+            issuer="did:web:issuer",
+            subject="did:web:subject",
+            issued_at=ISSUED,
+            validity=ValidityWindow(mode=TemporalMode.STATE_BOUND, state_condition="c"),
+            constraints={"k": "v"},
+        ),
+        state_active=True,
+    )
+    # No validity window -> warning + valid.
+    _verify(
+        "no_validity_window_warns",
+        _build_signed_mandate(
+            mandate_id="urn:concordia:mandate:v15",
+            issuer="did:web:issuer",
+            subject="did:web:subject",
+            issued_at=ISSUED,
+            validity=None,
+            constraints={"k": "v"},
+        ),
+    )
+    # Delegation chain valid (issuer -> subject) with scope; effective constraint
+    # composed; action within scope.
+    chain_link = sign_delegation(
+        DelegationLink(
+            delegator="did:web:issuer",
+            delegate="did:web:subject",
+            delegated_at=ISSUED,
+            scope_restriction={"max_spend": 200},
+        ),
+        ISSUER_KP,
+    )
+    _verify(
+        "delegation_chain_valid_with_scope",
+        _build_signed_mandate(
+            mandate_id="urn:concordia:mandate:v16",
+            issuer="did:web:issuer",
+            subject="did:web:subject",
+            issued_at=ISSUED,
+            validity=ValidityWindow(mode=TemporalMode.WINDOWED, not_before=NB, not_after=NA),
+            constraints={"type": "object", "properties": {"max_spend": {"type": "number"}}},
+            delegation_chain=[chain_link],
+        ),
+        delegation_keys={"did:web:issuer": "issuer"},
+        action={"max_spend": 150},
+    )
+    # Delegation chain with bad signature (wrong delegator key).
+    bad_chain_link = sign_delegation(
+        DelegationLink(
+            delegator="did:web:issuer",
+            delegate="did:web:subject",
+            delegated_at=ISSUED,
+        ),
+        WRONG_KP,
+    )
+    _verify(
+        "delegation_chain_bad_signature",
+        _build_signed_mandate(
+            mandate_id="urn:concordia:mandate:v17",
+            issuer="did:web:issuer",
+            subject="did:web:subject",
+            issued_at=ISSUED,
+            validity=ValidityWindow(mode=TemporalMode.WINDOWED, not_before=NB, not_after=NA),
+            constraints={"k": "v"},
+            delegation_chain=[bad_chain_link],
+        ),
+        delegation_keys={"did:web:issuer": "issuer"},
+    )
+    # Delegation chain with an unsupported scope restriction -> delegation_scope
+    # fails after chain verifies.
+    unsupported_scope_link = sign_delegation(
+        DelegationLink(
+            delegator="did:web:issuer",
+            delegate="did:web:subject",
+            delegated_at=ISSUED,
+            scope_restriction={"foo": "bar"},
+        ),
+        ISSUER_KP,
+    )
+    _verify(
+        "delegation_unsupported_scope",
+        _build_signed_mandate(
+            mandate_id="urn:concordia:mandate:v18",
+            issuer="did:web:issuer",
+            subject="did:web:subject",
+            issued_at=ISSUED,
+            validity=ValidityWindow(mode=TemporalMode.WINDOWED, not_before=NB, not_after=NA),
+            constraints={"type": "object", "properties": {}},
+            delegation_chain=[unsupported_scope_link],
+        ),
+        delegation_keys={"did:web:issuer": "issuer"},
+    )
+    # BOUNDARY (revocation deferred): revocation_endpoint SET but
+    # check_revocation_status=False -> endpoint NOT fetched, revocation_status
+    # check True. This is the outcome the injected JS hook defaults to.
+    _verify(
+        "revocation_endpoint_set_but_check_disabled",
+        _build_signed_mandate(
+            mandate_id="urn:concordia:mandate:v19",
+            issuer="did:web:issuer",
+            subject="did:web:subject",
+            issued_at=ISSUED,
+            validity=ValidityWindow(mode=TemporalMode.WINDOWED, not_before=NB, not_after=NA),
+            constraints={"k": "v"},
+            revocation_endpoint="https://issuer.example/revoke",
+        ),
+        check_revocation_status=False,
+    )
+
+    doc["verify_cases"] = verify_cases
+
+    # ------------------------------------------------------------------
+    # DEFERRED boundary: verify_mandate WITH check_revocation_status=True and a
+    # revocation_endpoint set WOULD attempt a urllib fetch. The JS engine defers
+    # the network fetch; with no checker injected it raises. This fixture records
+    # the mandate so the JS skipped-test documents the boundary. We do NOT run
+    # Python's network path here (no live endpoint); we only record the input.
+    # ------------------------------------------------------------------
+    deferred_revocation = _build_signed_mandate(
+        mandate_id="urn:concordia:mandate:rev1",
+        issuer="did:web:issuer",
+        subject="did:web:subject",
+        issued_at=ISSUED,
+        validity=ValidityWindow(mode=TemporalMode.WINDOWED, not_before=NB, not_after=NA),
+        constraints={"k": "v"},
+        revocation_endpoint="https://issuer.example/revoke",
+    )
+    doc["deferred_revocation_case"] = {
+        "_comment": (
+            "Python verify_mandate with check_revocation_status=True + this "
+            "revocation_endpoint calls check_revocation (urllib GET). The JS "
+            "engine DEFERS the network fetch: it accepts an injectable "
+            "revocationChecker hook; with none injected and a fetch required it "
+            "raises MandateValidationError('revocation check requires an "
+            "injected revocationChecker; network fetch is deferred'). A future "
+            "PR ports the urllib fetch. The skipped JS test pins this boundary."
+        ),
+        "mandate_dict": deferred_revocation.to_dict(),
+        "issuer_key": "issuer",
+        "now": NOW,
+    }
+
+    json.dump(doc, sys.stdout, ensure_ascii=False, indent=2)
+    sys.stdout.write("\n")
+
+
+if __name__ == "__main__":
+    main()
