@@ -63,13 +63,14 @@ writeFileSync(
 );
 console.log(`Wrote ${DELTA20_VECTORS.length} DELTA-20 vectors.`);
 
+const pythonBin = process.env.PYTHON ?? 'python3';
+
 // Ed25519 signing parity fixtures. Generated FROM the Python reference
 // (concordia.signing) via scripts/gen-signing-fixtures.py so the expected
 // signatures come straight from Python, never hand-authored. Run the
 // generator with the repo root on PYTHONPATH so `import concordia` resolves.
 const SIGNING_GEN = join(SDK_ROOT, 'scripts/gen-signing-fixtures.py');
 const SIGNING_DST = join(SDK_ROOT, 'tests/fixtures/signing/ed25519_vectors.json');
-const pythonBin = process.env.PYTHON ?? 'python3';
 try {
   const out = execFileSync(pythonBin, [SIGNING_GEN], {
     cwd: CONCORDIA_ROOT,
@@ -85,6 +86,35 @@ try {
 } catch (err) {
   console.error(
     `Failed to generate signing fixtures from Python: ${err.message}`,
+  );
+  process.exit(1);
+}
+
+// Foundational-types parity fixtures. Generated FROM the Python reference
+// (concordia.types) via scripts/gen-types-fixtures.py so every enum value,
+// to_dict() expectation, and round() expectation comes straight from Python,
+// never hand-authored. Run the generator with the repo root on PYTHONPATH so
+// `import concordia` resolves.
+const TYPES_GEN = join(SDK_ROOT, 'scripts/gen-types-fixtures.py');
+const TYPES_DST = join(SDK_ROOT, 'tests/fixtures/types/types_vectors.json');
+try {
+  const out = execFileSync(pythonBin, [TYPES_GEN], {
+    cwd: CONCORDIA_ROOT,
+    env: { ...process.env, PYTHONPATH: CONCORDIA_ROOT },
+    encoding: 'utf8',
+  });
+  mkdirSync(dirname(TYPES_DST), { recursive: true });
+  writeFileSync(TYPES_DST, out);
+  const parsed = JSON.parse(out);
+  console.log(
+    `Wrote types parity fixtures from Python: ` +
+      `${Object.keys(parsed.enums).length} enums, ` +
+      `${parsed.behavior_record_cases.length} behavior cases, ` +
+      `${parsed.round_parity.length} round-parity vectors.`,
+  );
+} catch (err) {
+  console.error(
+    `Failed to generate types fixtures from Python: ${err.message}`,
   );
   process.exit(1);
 }
