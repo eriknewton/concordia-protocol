@@ -6,10 +6,14 @@ agreement primitives for autonomous agents.
 Status: alpha. Currently ships the canonical JSON serializer, the Ed25519
 signing layer (key generation, sign, and verify over canonical JSON), the
 foundational types layer (session, message, term, and outcome enumerations plus
-the core data structures and their serialization), and the v0.6 signed
+the core data structures and their serialization), the v0.6 signed
 predicate primitive (sign, verify, write-validation, and the type-profile
-deterministic-semantics gate), all with byte-level parity against the Python
-reference implementation. Remaining primitives (mandate, attestation,
-session-receipt, lifecycle) ship in subsequent alpha releases.
+deterministic-semantics gate), and the mandate credential models (the
+`TemporalMode` / `MandateStatus` enumerations, the `DelegationLink`,
+`ValidityWindow`, and `Mandate` data structures with their serialization, and
+the mandate JSON-schema constants), all with byte-level parity against the
+Python reference implementation. The mandate signing / verification engine and
+the remaining primitives (attestation, session-receipt, lifecycle) ship in
+subsequent alpha releases.
 
 Apache-2.0. Spec at https://github.com/eriknewton/concordia-protocol.

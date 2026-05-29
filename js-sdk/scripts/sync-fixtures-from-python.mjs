@@ -153,3 +153,40 @@ try {
   );
   process.exit(1);
 }
+
+// Mandate-MODELS parity fixtures. Generated FROM the Python reference
+// (concordia.models.mandate) via scripts/gen-mandate-fixtures.py so every enum
+// value, to_dict()/from_dict() expectation, error string, and canonical schema
+// byte-string comes straight from Python, never hand-authored. Only the data
+// layer is exercised; mandate signing/verification (concordia/mandate.py) is
+// deferred to the engine PR. The generator imports only stdlib model code, so
+// it runs under any Python 3.9+.
+const MANDATE_GEN = join(SDK_ROOT, 'scripts/gen-mandate-fixtures.py');
+const MANDATE_DST = join(
+  SDK_ROOT,
+  'tests/fixtures/mandate/mandate_vectors.json',
+);
+try {
+  const out = execFileSync(pythonBin, [MANDATE_GEN], {
+    cwd: CONCORDIA_ROOT,
+    env: { ...process.env, PYTHONPATH: CONCORDIA_ROOT },
+    encoding: 'utf8',
+  });
+  mkdirSync(dirname(MANDATE_DST), { recursive: true });
+  writeFileSync(MANDATE_DST, out);
+  const parsed = JSON.parse(out);
+  console.log(
+    `Wrote mandate-models parity fixtures from Python: ` +
+      `${Object.keys(parsed.enums).length} enums, ` +
+      `${parsed.delegation_to_dict_cases.length} delegation to_dict, ` +
+      `${parsed.validity_to_dict_cases.length} validity to_dict, ` +
+      `${parsed.mandate_to_dict_cases.length} mandate to_dict, ` +
+      `${parsed.mandate_from_dict_cases.length} mandate from_dict, ` +
+      `${parsed.result_to_dict_cases.length} verification-result to_dict.`,
+  );
+} catch (err) {
+  console.error(
+    `Failed to generate mandate fixtures from Python: ${err.message}`,
+  );
+  process.exit(1);
+}
