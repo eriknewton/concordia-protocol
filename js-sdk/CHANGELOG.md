@@ -1,5 +1,108 @@
 # Changelog
 
+## 0.0.1-alpha.6 -- 2026-05-XX
+
+Mandate verification engine (the second half of the mandate layer). Ports the
+includable slice of `concordia/mandate.py` on top of the merged mandate models
+and Ed25519 crypto: `signMandate` / `signDelegation`, `validateMandateSchema`,
+`validateConstraints`, `scopeRestrictionToSchema`,
+`composeEffectiveConstraints`, `checkTemporalValidity`,
+`verifyDelegationChain`, and the full `verifyMandate` over all five checks
+(issuer signature, validity window, constraint compliance, delegation-chain
+integrity, revocation status), in Python's exact check order.
+
+`signMandate` / `signDelegation` reuse the merged Ed25519 `sign()` over the same
+canonical payload Python signs (the `to_dict()` minus `signature`), so the
+base64url signature is byte-identical to Python `sign_mandate` /
+`sign_delegation`. `verifyMandate` reproduces Python's per-check boolean map (in
+insertion order), `errors`, `warnings`, and `failure_reason` exactly; the result
+serializes (via `mandateVerificationResultToDict`) byte-for-byte with Python's
+`MandateVerificationResult.to_dict()`.
+
+The schema and constraint validation drives `ajv` (already a dependency) but
+reproduces CPython `jsonschema`'s accept/reject AND message text. Two parity
+properties are load-bearing and pinned by Python-generated fixtures:
+
+- **No format assertion.** CPython `jsonschema.validate` does NOT check `format`
+  by default, so a malformed `date-time` `issued_at` or non-URI
+  `revocation_endpoint` PASSES schema validation. ajv runs with
+  `validateFormats: false` to match; asserting formats would reject inputs
+  Python accepts (a fail-closed divergence).
+- **CPython message text.** ajv's native error strings differ entirely from
+  CPython jsonschema's. The engine translates ajv's structured error (keyword +
+  params) into CPython's message templates (`'issuer' is a required property`,
+  `'RS256' is not one of ['EdDSA', 'ES256']`, `{} should be non-empty`,
+  `123 is not of type 'string'`, `0 is less than the minimum of 1`, etc.), with
+  every embedded value rendered via CPython `repr()`. Each string is pinned by a
+  fixture, so an unhandled keyword fails the test loudly rather than diverging
+  silently.
+
+Strict, fail-closed semantics throughout: `validateConstraints` treats only a
+truthy non-empty constraints dict as compliant; `scopeRestrictionToSchema`
+rejects a `{"max_spend": true}` shorthand (a bool is not an `int|float` in
+Python) and fails closed on unknown shorthands; `verifyDelegationChain` and the
+`verifyMandate` signature check verify EdDSA only and treat a wrong-length or
+ES256 signature as invalid (never accept-without-verify); `checkTemporalValidity`
+surfaces CPython's exact `datetime.fromisoformat` text on a malformed window
+bound.
+
+`verifyDelegationChain` gates each link on its declared `algorithm` BEFORE the
+Ed25519 check, mirroring Python `verify_signature(..., alg=link.algorithm)`. A
+link marked `algorithm:"ES256"` (or any non-EdDSA value) is rejected fail-closed
+with the same `Invalid signature at delegation link {i}` error Python emits. This
+closes a fail-open where a link claiming ES256 but carrying a genuine Ed25519
+signature would have passed an EdDSA-only verifier that ignored the algorithm
+field, returning `valid=true` for a mandate Python rejects.
+
+**Known parity residual (fail-closed, unreachable):** `checkTemporalValidity`
+parses ISO-8601 bounds via `Date.parse` to emulate CPython `fromisoformat`.
+Accept/reject and error text match CPython for normal timestamps, but exotic or
+invalid UTC offsets diverge: CPython 3.12 accepts an out-of-range offset minute
+like `+00:99` (normalizing it), whereas `Date.parse` returns `NaN`, so the TS
+engine treats the timestamp as malformed and REJECTS. That is TS being stricter
+on an invalid offset, never looser (no fail-open); CPython's own behavior here is
+version-dependent (3.9 != 3.12), and real Concordia timestamps are normal `...Z`
+/ `+HH:MM`. Full CPython-`fromisoformat` offset parity is deliberately not chased
+(a version-coupled rabbit hole on inputs that do not occur). Same posture as the
+predicate ISO/parse-boundary residuals. A second, lower residual: an
+`anyOf`/`oneOf` constraint-schema failure can surface a branch-local jsonschema
+message where CPython emits the top-level "not valid under any of the given
+schemas". This is a message-TEXT-only divergence on a composed-schema shape;
+accept/reject (boolean) parity is preserved and it is fail-closed -- documented,
+not chased.
+
+Parity is enforced by fixtures generated directly from Python
+(`scripts/gen-mandate-engine-fixtures.py`, wired into
+`scripts/sync-fixtures-from-python.mjs`): 2 sign_mandate + 2 sign_delegation
+signature vectors, 29 schema error-string cases, 11 constraint cases (including
+a type-UNION violation rendered as `'a', 'b'` not the Python list repr, and
+single- vs multi-key `additionalProperties` with the correct `was`/`were` verb
+agreement and `sorted(extras, key=str)` ordering), 8 scope-restriction cases, 6
+compose cases, 13 temporal cases (all three modes and their edges), 11
+delegation-chain cases (root/tail mismatch, chain break, missing key, missing
+signature, tampered field, and an `algorithm:"ES256"`-marked link carrying a
+genuine Ed25519 signature that MUST be rejected), and 19 end-to-end
+`verifyMandate` cases (happy path, action pass/violate, tampered/wrong-key/
+missing signature, schema-invalid, revoked status, temporal edges, sequence and
+state binding context, delegation chain valid / bad-signature /
+unsupported-scope). The generator imports `jsonschema` + `cryptography` (the
+engine's own deps) and runs under Python 3.12.
+
+**Deferred:** the revocation-endpoint network fetch (`check_revocation`, Python's
+`urllib` GET) is NOT ported in this PR. `verifyMandate` accepts an injectable
+`revocationChecker` hook. With no hook injected, `checkRevocationStatus: false`
+(or no endpoint) reproduces Python's "endpoint not checked" outcome exactly;
+`checkRevocationStatus: true` + an endpoint set + no hook is the deferred network
+path and throws (no fail-open) rather than silently passing. The boundary is
+pinned by a Python-generated fixture (`deferred_revocation_case`) plus tests: a
+live test asserting the throw and the injected-hook outcomes, and an `it.skip`
+test documenting the ported-fetch result once a future PR adds the default
+fetch. ES256 mandate/delegation signing and chain verification are likewise
+deferred, matching the EdDSA-only crypto layer (the engine throws on ES256
+signing and treats ES256 signatures as invalid on verify). Reuses the merged
+Ed25519 crypto, mandate models, and canonicalizer; no cryptographic primitives
+are reimplemented.
+
 ## 0.0.1-alpha.5 -- 2026-05-XX
 
 Parse-boundary hardening for untrusted-JSON ingest. Adds `parseJsonStrict`, a

@@ -190,3 +190,52 @@ try {
   );
   process.exit(1);
 }
+
+// Mandate-ENGINE parity fixtures. Generated FROM the Python reference
+// (concordia.mandate + concordia.signing) via gen-mandate-engine-fixtures.py so
+// every Ed25519 signature, schema/constraint error string, temporal/chain
+// outcome, and end-to-end verify_mandate result comes straight from Python,
+// never hand-authored. Revocation NETWORK I/O is deferred; verify_mandate is
+// exercised with check_revocation_status=False. The generator imports jsonschema
+// + cryptography (the engine's own deps), so run it under the same Python the
+// engine targets (python3.12 in CI / dev).
+const MANDATE_ENGINE_GEN = join(
+  SDK_ROOT,
+  'scripts/gen-mandate-engine-fixtures.py',
+);
+const MANDATE_ENGINE_DST = join(
+  SDK_ROOT,
+  'tests/fixtures/mandate/mandate_engine_vectors.json',
+);
+// The engine generator imports jsonschema + cryptography (the engine's own
+// validation/signing deps). Pin python3.12 (verified jsonschema message text)
+// unless PYTHON is explicitly overridden.
+const enginePythonBin =
+  process.env.PYTHON ?? 'python3.12';
+try {
+  const out = execFileSync(enginePythonBin, [MANDATE_ENGINE_GEN], {
+    cwd: CONCORDIA_ROOT,
+    env: { ...process.env, PYTHONPATH: CONCORDIA_ROOT },
+    encoding: 'utf8',
+  });
+  mkdirSync(dirname(MANDATE_ENGINE_DST), { recursive: true });
+  writeFileSync(MANDATE_ENGINE_DST, out);
+  const parsed = JSON.parse(out);
+  console.log(
+    `Wrote mandate-engine parity fixtures from Python: ` +
+      `${parsed.sign_mandate_cases.length} sign_mandate, ` +
+      `${parsed.sign_delegation_cases.length} sign_delegation, ` +
+      `${parsed.schema_cases.length} schema, ` +
+      `${parsed.constraint_cases.length} constraint, ` +
+      `${parsed.scope_cases.length} scope, ` +
+      `${parsed.compose_cases.length} compose, ` +
+      `${parsed.temporal_cases.length} temporal, ` +
+      `${parsed.chain_cases.length} chain, ` +
+      `${parsed.verify_cases.length} verify_mandate.`,
+  );
+} catch (err) {
+  console.error(
+    `Failed to generate mandate-engine fixtures from Python: ${err.message}`,
+  );
+  process.exit(1);
+}

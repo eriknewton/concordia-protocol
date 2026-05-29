@@ -22,3 +22,16 @@ export {
   MANDATE_JSON_SCHEMA,
   CONSTRAINT_PATTERNS,
 } from './mandate.js';
+export {
+  signMandate,
+  signDelegation,
+  validateMandateSchema,
+  validateConstraints,
+  scopeRestrictionToSchema,
+  composeEffectiveConstraints,
+  checkTemporalValidity,
+  verifyDelegationChain,
+  verifyMandate,
+  type RevocationChecker,
+  type VerifyMandateOptions,
+} from './engine.js';
