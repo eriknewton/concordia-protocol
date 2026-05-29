@@ -11,13 +11,17 @@ predicate primitive (sign, verify, write-validation, and the type-profile
 deterministic-semantics gate), the mandate credential models (the
 `TemporalMode` / `MandateStatus` enumerations, the `DelegationLink`,
 `ValidityWindow`, and `Mandate` data structures with their serialization, and
-the mandate JSON-schema constants), and the mandate verification engine (mandate
+the mandate JSON-schema constants), the mandate verification engine (mandate
 and delegation signing, schema and constraint validation, delegation-scope
 composition, temporal-validity checking, delegation-chain verification, and the
-full `verifyMandate` over all five checks), all with byte-level parity against
-the Python reference implementation. The mandate revocation-endpoint network
-fetch is deferred (an injectable hook covers the no-revocation outcome); the
-remaining primitives (attestation, session-receipt, lifecycle) ship in
+full `verifyMandate` over all five checks), and the session lifecycle (the
+six-state negotiation state machine PROPOSED -> ACTIVE -> AGREED / REJECTED /
+EXPIRED -> DORMANT with its strict transition table, signature-verified message
+application, behavioral-signal tracking, and the hash-chain transcript helpers),
+all with byte-level parity against the Python reference implementation. The
+mandate revocation-endpoint network fetch is deferred (an injectable hook covers
+the no-revocation outcome); the remaining primitives (reputation attestation,
+which layers on a concluded session, and the approval-receipt verifier) ship in
 subsequent alpha releases.
 
 Apache-2.0. Spec at https://github.com/eriknewton/concordia-protocol.

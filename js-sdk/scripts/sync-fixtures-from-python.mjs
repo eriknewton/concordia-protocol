@@ -239,3 +239,50 @@ try {
   );
   process.exit(1);
 }
+
+// Session-lifecycle parity fixtures. Generated FROM the Python reference
+// (concordia.session + concordia.message + concordia.signing) via
+// gen-session-fixtures.py so the transition table, every applied-message
+// outcome (state, round_count, prev_hash, behavior records), invalid-transition
+// / invalid-signature / unknown-MessageType error text, expire/make_dormant
+// outcomes, the _compute_concession arithmetic, and compute_hash / validate_chain
+// outcomes all come straight from Python, never hand-authored. Messages are real
+// signed envelopes (built via build_envelope with deterministic seeded keys), so
+// the JS suite verifies the SAME Python signatures with the SAME keys. The
+// generator imports cryptography (the signing dep); pin python3.12 unless PYTHON
+// is overridden.
+const SESSION_GEN = join(SDK_ROOT, 'scripts/gen-session-fixtures.py');
+const SESSION_DST = join(
+  SDK_ROOT,
+  'tests/fixtures/session/session_vectors.json',
+);
+const sessionPythonBin = process.env.PYTHON ?? 'python3.12';
+try {
+  const out = execFileSync(sessionPythonBin, [SESSION_GEN], {
+    cwd: CONCORDIA_ROOT,
+    env: { ...process.env, PYTHONPATH: CONCORDIA_ROOT },
+    encoding: 'utf8',
+  });
+  mkdirSync(dirname(SESSION_DST), { recursive: true });
+  writeFileSync(SESSION_DST, out);
+  const parsed = JSON.parse(out);
+  console.log(
+    `Wrote session-lifecycle parity fixtures from Python: ` +
+      `${parsed.transition_table.length} transition entries, ` +
+      `${parsed.runs.length} runs, ` +
+      `${parsed.lifecycle_cases.length} lifecycle, ` +
+      `${parsed.invalid_transitions.length} invalid-transition, ` +
+      `${parsed.invalid_lifecycle.length} invalid-lifecycle, ` +
+      `${parsed.invalid_signatures.length} invalid-signature, ` +
+      `${parsed.unknown_type_cases.length} unknown-type, ` +
+      `${parsed.body_shape_cases.length} body-shape, ` +
+      `${parsed.concession_cases.length} concession, ` +
+      `${parsed.hash_cases.length} hash, ` +
+      `${parsed.chain_cases.length} chain.`,
+  );
+} catch (err) {
+  console.error(
+    `Failed to generate session fixtures from Python: ${err.message}`,
+  );
+  process.exit(1);
+}

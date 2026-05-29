@@ -89,3 +89,17 @@ export {
   type RevocationChecker,
   type VerifyMandateOptions,
 } from './mandate/index.js';
+export {
+  GENESIS_HASH,
+  computeHash,
+  validateChain,
+  Session,
+  InvalidTransitionError,
+  InvalidSignatureError,
+  InvalidMessageError,
+  computeConcession,
+  type Message,
+  type PublicKeyResolver,
+  type SessionClock,
+  type SessionOptions,
+} from './session/index.js';
