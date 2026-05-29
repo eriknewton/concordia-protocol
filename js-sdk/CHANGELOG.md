@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.0.1-alpha.2 -- 2026-05-XX
+
+Foundational types layer. Ports `concordia/types.py`: the session, message,
+term, flexibility, and outcome enumerations (8 enums, every value
+byte-identical to the Python member values that cross the wire) plus the core
+data structures (`Term`, `PreferenceSignal`, `AgentIdentity`, `TimingConfig`,
+`BehaviorRecord`) with their serialization. `agentIdentityToDict` and
+`behaviorRecordToDict` reproduce the Python `to_dict()` output exactly,
+including conditional `principal_id` omission and decimal rounding. `pyRound`
+reproduces CPython's `round(value, ndigits)` exactly: it rounds the exact
+binary value of the double half-to-EVEN (banker's rounding) via integer
+arithmetic, matching Python on every binary half-tie where a naive decimal
+half-up would diverge (e.g. `0.125` -> `0.12`, `123.625` -> `123.62`), and on
+large-magnitude `ndigits` without overflow. Parity is enforced by fixtures
+generated directly from Python (8 enum maps, 8 behavior cases, and 121
+round-parity vectors, of which 44 are exact binary half-ties that catch a
+half-up regression).
+
 ## 0.0.1-alpha.1 -- 2026-05-XX
 
 Crypto primitives. Ed25519 key generation, sign, and verify over canonical

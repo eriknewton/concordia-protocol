@@ -12,3 +12,23 @@ export {
   fromBase64Url,
   Base64UrlError,
 } from './crypto/base64url.js';
+export {
+  SessionState,
+  MessageType,
+  TermType,
+  Flexibility,
+  OutcomeStatus,
+  ResolutionMechanism,
+  FulfillmentStatus,
+  PartyRole,
+  type Term,
+  type PreferenceSignal,
+  type AgentIdentity,
+  type TimingConfig,
+  type BehaviorRecord,
+  pyRound,
+  agentIdentityToDict,
+  makeTimingConfig,
+  behaviorRecordToDict,
+  makeBehaviorRecord,
+} from './types/index.js';
