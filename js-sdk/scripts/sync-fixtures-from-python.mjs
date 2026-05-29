@@ -286,3 +286,49 @@ try {
   );
   process.exit(1);
 }
+
+// Reputation-attestation parity fixtures. Generated FROM the Python reference
+// (concordia.attestation driven over concordia.session + concordia.signing) via
+// gen-attestation-fixtures.py so the full attestation object (header fields,
+// outcome with conditional terms_count, per-party behavioral records and their
+// real Python Ed25519 signatures, transcript_hash, meta, normalized references,
+// validity_temporal, and the 4-line summary), the validate_validity_temporal
+// normalization + error text, the is_valid_now temporal checks, the
+// generate_receipt_summary formatting, and the no-raw-terms PRIVACY INVARIANT
+// all come straight from Python, never hand-authored. The non-deterministic
+// attestation_id / timestamp are captured per case so the JS side can inject
+// them as overrides and compare the ENTIRE object byte-for-byte. The generator
+// imports cryptography (the signing dep); pin python3.12 unless PYTHON is
+// overridden.
+const ATTESTATION_GEN = join(SDK_ROOT, 'scripts/gen-attestation-fixtures.py');
+const ATTESTATION_DST = join(
+  SDK_ROOT,
+  'tests/fixtures/attestation/attestation_vectors.json',
+);
+const attestationPythonBin = process.env.PYTHON ?? 'python3.12';
+try {
+  const out = execFileSync(attestationPythonBin, [ATTESTATION_GEN], {
+    cwd: CONCORDIA_ROOT,
+    env: { ...process.env, PYTHONPATH: CONCORDIA_ROOT },
+    encoding: 'utf8',
+  });
+  mkdirSync(dirname(ATTESTATION_DST), { recursive: true });
+  writeFileSync(ATTESTATION_DST, out);
+  const parsed = JSON.parse(out);
+  console.log(
+    `Wrote attestation parity fixtures from Python: ` +
+      `${parsed.cases.length} generate-attestation cases, ` +
+      `${parsed.vt_norm_cases.length} validity-temporal normalize, ` +
+      `${parsed.vt_error_cases.length} validity-temporal error, ` +
+      `${parsed.valid_now_cases.length} is-valid-now, ` +
+      `${parsed.valid_now_error_cases.length} is-valid-now error, ` +
+      `${parsed.summary_cases.length} receipt-summary, ` +
+      `${parsed.reference_strictness_cases.length} reference-strictness, ` +
+      `${parsed.terms_count_cases.length} terms-count.`,
+  );
+} catch (err) {
+  console.error(
+    `Failed to generate attestation fixtures from Python: ${err.message}`,
+  );
+  process.exit(1);
+}
