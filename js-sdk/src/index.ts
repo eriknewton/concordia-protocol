@@ -32,3 +32,22 @@ export {
   behaviorRecordToDict,
   makeBehaviorRecord,
 } from './types/index.js';
+export {
+  Predicate,
+  PredicateStatus,
+  PredicateFailureReason,
+  PredicateValidationError,
+  serializePredicateCanonical,
+  validatePredicateForWrite,
+  signPredicate,
+  verifyPredicate,
+  type PredicateDict,
+  type PredicateResolver,
+  type PredicateVerificationResult,
+  registerPredicateTypeProfile,
+  getPredicateTypeProfile,
+  validateConditionForProfile,
+  type PredicateTypeProfile,
+  ReferenceValidationError,
+  validateReference,
+} from './predicate/index.js';
