@@ -34,20 +34,23 @@ export function checkNoSpecialFloats(value: unknown): void {
     // plain-decimal unsafe integers are lossy. Non-integer floats (1.5, -3.25)
     // and safe integers are unaffected.
     //
-    // KNOWN RESIDUAL (accepted, Erik decision 2026-05-29): this guard cannot
-    // fully close one corner. A bare integer >= ~1e21 written in PLAIN DECIMAL
-    // in source JSON parses to a JS double that String()s as EXPONENTIAL, so it
-    // slips past this check, while a Python peer that holds it as an int emits
-    // full decimal -> divergence (a verification failure, never a fail-open
-    // accept). JS cannot distinguish such a lossy int from a legitimate float
-    // (e.g. the 1e30 limit above) post-parse, so the only true closure is a
-    // schema/parse-boundary rule (reject or string-ify big integers at JSON
-    // ingest). Concordia's schema does not carry bare integers this large
-    // (amounts are small ints / strings; limits are floats; timestamps are
-    // ISO-8601 strings), so the realistic precision-loss cases (16-19 digit
-    // IDs, nanosecond timestamps < 1e21) ARE caught here. Parse-boundary
-    // hardening is a logged follow-up, to do only if the schema ever
-    // introduces bare integers >= 1e21.
+    // ONE CORNER THIS POST-PARSE GUARD CANNOT REACH (closed at ingest; see
+    // below). A bare integer >= ~1e21 written in PLAIN DECIMAL in source JSON
+    // parses to a JS double that String()s as EXPONENTIAL, so it slips past
+    // this check, while a Python peer that holds it as an int emits full
+    // decimal -> divergence (a verification failure, never a fail-open accept).
+    // JS cannot distinguish such a lossy int from a legitimate float (e.g. the
+    // 1e30 limit above) once it is a double, so the only true closure is at the
+    // JSON parse/ingest boundary, before the double exists. That boundary now
+    // exists: `parseJsonStrict` (canonical/parse.ts) inspects the SOURCE literal
+    // and rejects bare unsafe integers at ingest, closing this corner for any
+    // caller that ingests untrusted JSON through it (`signJson` / `verifyJson`
+    // do so by default). This guard remains as the post-parse line of defense
+    // for values built in-process rather than parsed from JSON, where it catches
+    // every plain-decimal unsafe integer. Concordia's schema does not carry bare
+    // integers this large (amounts are small ints / strings; limits are floats;
+    // timestamps are ISO-8601 strings), so the realistic precision-loss cases
+    // (16-19 digit IDs, nanosecond timestamps < 1e21) are caught here too.
     if (
       Number.isInteger(value) &&
       !Number.isSafeInteger(value) &&

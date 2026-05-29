@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.0.1-alpha.5 -- 2026-05-XX
+
+Parse-boundary hardening for untrusted-JSON ingest. Adds `parseJsonStrict`, a
+JSON parse that fails closed on any bare integer literal outside the JS
+safe-integer range (|value| > 2^53 - 1) before it reaches a lossy double. This
+closes the residual the canonicalizer's large-integer guard documented but
+could not reach: a bare integer >= ~1e21 written in plain decimal parses to a
+double that `String()`s in exponential form, slipping past the post-parse guard,
+while a Python peer holding the same token as an arbitrary-precision integer
+emits full decimal and the canonical bytes diverge. `parseJsonStrict` inspects
+the source literal rather than the parsed value, so it catches the >= 1e21 case
+as well as the 16-19 digit cases the canonicalizer already caught. Float and
+exponential literals (`1.5`, `1e+30`), safe integers, and big integers carried
+as JSON strings are all accepted unchanged; the legitimate `1e+30` predicate
+limit (fixture vector_08) still round-trips byte-identically. `signJson` and
+`verifyJson` route the signing and verification ingest through this guard, so an
+unsafe integer is rejected at signing/verification time rather than producing
+bytes that silently diverge from Python. Malformed JSON still raises the native
+`SyntaxError`; the unsafe-integer rejection is a `CanonicalizationError`,
+matching the canonicalizer guard's fail-closed posture. The check is a lexical
+scan rather than a `JSON.parse` reviver because the reviver's source-text
+`context` argument is only available on Node 21+/ES2025, and the package
+supports Node >= 20. KNOWN RESIDUALS (fail-CLOSED, unreachable in real data):
+the ingest path is stricter than Python on `-0` (rejected; Python normalizes to
+0) and on an integer written with a redundant exponent (`9007199254740992e0`,
+rejected to avoid emitting int-vs-float-divergent canonical bytes) -- both
+rooted in the canonicalizer's deliberate fail-closed guards.
+
 ## 0.0.1-alpha.4 -- 2026-05-XX
 
 Mandate credential models (the data layer). Ports the data half of

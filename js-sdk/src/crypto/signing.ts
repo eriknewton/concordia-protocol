@@ -24,6 +24,7 @@
 
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { canonicalizeJcs } from '../canonical/canonicalize.js';
+import { parseJsonStrict } from '../canonical/parse.js';
 import { toBase64Url, fromBase64Url } from './base64url.js';
 
 /** Error raised for malformed keys or signing inputs. */
@@ -185,4 +186,62 @@ export function verify(
 /** Generate a fresh Ed25519 key pair. Alias for {@link KeyPair.generate}. */
 export function generateKeyPair(): KeyPair {
   return KeyPair.generate();
+}
+
+/**
+ * Parse a JSON string at the hardened ingest boundary, then sign the resulting
+ * object. The signing ingest path for untrusted JSON routes through
+ * {@link parseJsonStrict}, so a bare integer outside the JS safe-integer range
+ * is rejected BEFORE it can reach the lossy double and silently diverge from the
+ * Python reference's canonical bytes. Equivalent to
+ * `sign(parseJsonStrict(json), privateKey)` with a top-level object-shape check.
+ *
+ * @param json Raw JSON source text for the message object to sign.
+ * @param privateKey Raw 32-byte Ed25519 private key (seed), or a {@link KeyPair}.
+ * @throws {SyntaxError} if `json` is not well-formed JSON.
+ * @throws {CanonicalizationError} if `json` carries a bare unsafe integer literal.
+ * @throws {SigningError} if `json` is valid JSON but not a top-level object, or
+ *   the key is malformed.
+ */
+export function signJson(
+  json: string,
+  privateKey: Uint8Array | KeyPair,
+): string {
+  const data = parseJsonStrict(json);
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+    throw new SigningError(
+      'signJson expects a JSON object at the top level',
+    );
+  }
+  return sign(data as Record<string, unknown>, privateKey);
+}
+
+/**
+ * Parse a JSON string at the hardened ingest boundary, then verify a signature
+ * over the resulting object. Like {@link verify}, returns `false` (never `true`)
+ * for a bad signature, a wrong/malformed key, or a non-object payload.
+ *
+ * Unlike {@link verify}, it THROWS on an ingest failure -- malformed JSON or a
+ * bare unsafe integer literal -- because such input cannot be processed at all,
+ * and surfacing it is strictly fail-closed (it never yields a `true`). This
+ * keeps the verification ingest path from silently treating an unsafe-integer
+ * payload as if it canonicalized cleanly. Equivalent to
+ * `verify(parseJsonStrict(json), signature, publicKey)`.
+ *
+ * @param json Raw JSON source text for the signed message object.
+ * @param signature Strict, correctly-padded URL-safe base64 signature.
+ * @param publicKey Raw 32-byte Ed25519 public key, or a {@link KeyPair}.
+ * @throws {SyntaxError} if `json` is not well-formed JSON.
+ * @throws {CanonicalizationError} if `json` carries a bare unsafe integer literal.
+ */
+export function verifyJson(
+  json: string,
+  signature: string,
+  publicKey: Uint8Array | KeyPair,
+): boolean {
+  const data = parseJsonStrict(json);
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+    return false;
+  }
+  return verify(data as Record<string, unknown>, signature, publicKey);
 }

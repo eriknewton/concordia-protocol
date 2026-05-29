@@ -1,10 +1,13 @@
 export { canonicalizeJcs, canonicalizePredicate } from './canonical/canonicalize.js';
 export { CanonicalizationError, checkNoSpecialFloats } from './canonical/checks.js';
+export { parseJsonStrict } from './canonical/parse.js';
 export {
   KeyPair,
   SigningError,
   sign,
   verify,
+  signJson,
+  verifyJson,
   generateKeyPair,
 } from './crypto/signing.js';
 export {
