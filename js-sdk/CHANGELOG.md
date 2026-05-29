@@ -1,5 +1,70 @@
 # Changelog
 
+## 0.0.1-alpha.8 -- 2026-05-XX
+
+Reputation attestation (the signed behavioral record produced from a concluded
+negotiation). Ports `concordia/attestation.py` on top of the merged session,
+crypto, types, and predicate layers: `generateAttestation` (over a concluded
+`Session`), `generateReceiptSummary` (the 4-line plaintext receipt),
+`computeTranscriptHash` (the whole-transcript digest), `validateValidityTemporal`
+and `isValidNow` (the three-mode temporal-validity tagged union), plus the
+`ATTESTATION_VERSION` / `VALIDITY_TEMPORAL_MODES` constants and the
+`AttestationError` type. The attestation-level `references[]` validator
+(`validateReference`) is REUSED from the merged predicate layer rather than
+re-ported.
+
+PRIVACY INVARIANT (load-bearing): an attestation records behavioral signals only
+(`offers_made`, `concession_magnitude`, `reasoning_provided`, ...) and NEVER the
+raw deal terms (prices, quantities, the term values themselves). The only
+term-derived number that ever reaches the attestation is `outcome.terms_count`,
+the COUNT of negotiated dimensions, not their values. The port mirrors Python
+exactly: it copies each party's `behaviorRecordToDict(...)` and never reads
+`session.terms` except to take its length, so there is no code path that copies
+a term value into the attestation. A dedicated test serializes the whole
+attestation over real negotiations and asserts that no negotiated value
+(1000 / 900 / 850 / 10 / 12) leaks anywhere.
+
+Byte-level parity against the Python reference is the load-bearing property and
+is pinned by Python-generated fixtures (`scripts/gen-attestation-fixtures.py`,
+which drives the REAL `concordia.attestation` over a REAL concluded
+`concordia.session`; the per-party signatures are real Ed25519 `sign_message`
+outputs under deterministic seeded keys, so the JS suite verifies the SAME
+Python signatures with the SAME keys):
+
+- **Whole-object parity.** Each case replays a Python-signed transcript through
+  the JS `Session`, generates the attestation, and asserts the ENTIRE object is
+  byte-identical to Python's: header fields, `outcome` (with the conditional
+  `terms_count` omission at zero terms and Python's insertion order), per-party
+  behavioral records and their signatures, `transcript_hash`, `meta`, normalized
+  `references`, `validity_temporal`, and the `summary`. The non-deterministic
+  `attestation_id` / `timestamp` (not part of the signed per-party bytes) are
+  captured from Python and injected as overrides so even those fields compare
+  exactly.
+- **Signing payload.** Each party's signature is over `{agent_id, role,
+  behavior}` (no `signature` key at signing time), matching Python's
+  `sign_message`. An agent absent from the supplied key map gets an
+  empty-string signature, exactly as Python.
+- **Transcript hash.** `computeTranscriptHash` concatenates the canonical-JSON
+  bytes of every transcript message and takes ONE SHA-256 over the
+  concatenation (distinct from the per-message `computeHash`), returning
+  `sha256:<hex>` byte-identical to Python's `_compute_transcript_hash`.
+- **Rejection text.** A non-terminal, non-EXPIRED session raises
+  `AttestationError` with the exact Python `ValueError` text
+  (`Cannot generate attestation for session in state <state>`).
+- **Temporal validity.** `validateValidityTemporal` normalizes the three modes
+  (`absolute` / `relative` / `window`) and rejects malformed input with
+  Python-identical error strings (mode-not-in-tuple, missing-keys list,
+  ordering, the positive-int `duration_seconds` check using Python's
+  `isinstance(int)` semantics where a float is rejected, and the window-span
+  bound). `isValidNow` reproduces the inclusive-start / exclusive-end
+  containment and the window-tail-fits rule. A naive (no-offset) ISO 8601
+  timestamp is treated as UTC, matching Python's naive-datetime rule.
+- **Receipt summary.** `generateReceiptSummary` reproduces the 4-line format
+  exactly: the DID-shortening rule (`unknown` for empty, `...<last 12>` for
+  long), the `category -> topic -> N/A` fallback under Python `or` truthiness,
+  the uppercased outcome status (`UNKNOWN` when absent), and the
+  `sha256:`-prefix-stripped first-16-hex-chars transcript-hash line.
+
 ## 0.0.1-alpha.7 -- 2026-05-XX
 
 Session lifecycle (the six-state negotiation state machine). Ports the
