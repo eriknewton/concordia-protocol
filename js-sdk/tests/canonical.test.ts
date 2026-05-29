@@ -57,3 +57,74 @@ describe('canonicalizeJcs - special-float rejection', () => {
     expect(() => canonicalizeJcs({ x: -0 })).toThrow(CanonicalizationError);
   });
 });
+
+describe('canonicalizeJcs - large-integer fail-closed (Python parity)', () => {
+  // Python's canonical_json formats integers with str(value), preserving full
+  // precision. A JS number cannot represent integers beyond
+  // Number.MAX_SAFE_INTEGER (2^53 - 1) distinctly, so rather than silently
+  // emit a wrong value that diverges from Python, canonicalization throws and
+  // directs the caller to pass large integers as strings.
+  it('throws on 9007199254740993 (2^53 + 1, the canonical example)', () => {
+    expect(() => canonicalizeJcs({ x: 9007199254740993 })).toThrow(
+      CanonicalizationError,
+    );
+  });
+
+  it('throws on 2^53 itself (first unsafe integer)', () => {
+    expect(() => canonicalizeJcs({ x: Math.pow(2, 53) })).toThrow(
+      CanonicalizationError,
+    );
+  });
+
+  it('throws on a large negative unsafe integer', () => {
+    expect(() => canonicalizeJcs({ x: -9007199254740993 })).toThrow(
+      CanonicalizationError,
+    );
+  });
+
+  it('throws on a plain-decimal unsafe integer (1e20 renders as digits)', () => {
+    // 1e20 is integer-valued, beyond the safe range, and JSON.stringify emits
+    // it as plain decimal (100000000000000000000), so it falls in the lossy
+    // band and is rejected fail-closed.
+    expect(() => canonicalizeJcs({ x: 1e20 })).toThrow(CanonicalizationError);
+  });
+
+  it('throws when an unsafe integer is nested in an array', () => {
+    expect(() => canonicalizeJcs({ x: [1, 9007199254740993] })).toThrow(
+      CanonicalizationError,
+    );
+  });
+
+  it('accepts large floats that render in exponential form (1e30, parity-safe)', () => {
+    // Python parses 1e+30 as a float and emits the byte-identical exponential
+    // string, so there is no cross-language divergence. This is exactly the
+    // predicate fixture vector_08 value; rejecting it would break a real
+    // Python-sourced parity vector.
+    expect(canonicalizeJcs({ x: 1e30 }).toString('utf8')).toBe('{"x":1e+30}');
+    expect(canonicalizeJcs({ x: 1e21 }).toString('utf8')).toBe('{"x":1e+21}');
+  });
+
+  it('accepts Number.MAX_SAFE_INTEGER (2^53 - 1) unchanged', () => {
+    expect(canonicalizeJcs({ x: 9007199254740991 }).toString('utf8')).toBe(
+      '{"x":9007199254740991}',
+    );
+  });
+
+  it('accepts small safe integers unchanged', () => {
+    expect(canonicalizeJcs({ x: 42, y: -1, z: 0 }).toString('utf8')).toBe(
+      '{"x":42,"y":-1,"z":0}',
+    );
+  });
+
+  it('accepts normal (non-integer) floats unchanged', () => {
+    expect(canonicalizeJcs({ a: 1.5, b: -3.25 }).toString('utf8')).toBe(
+      '{"a":1.5,"b":-3.25}',
+    );
+  });
+
+  it('large integers passed as strings canonicalize identically (the guidance)', () => {
+    expect(canonicalizeJcs({ x: '9007199254740993' }).toString('utf8')).toBe(
+      '{"x":"9007199254740993"}',
+    );
+  });
+});

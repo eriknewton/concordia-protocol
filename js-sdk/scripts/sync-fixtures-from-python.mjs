@@ -5,6 +5,7 @@
 import { copyFileSync, mkdirSync, readdirSync, writeFileSync, existsSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { execFileSync } from 'child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SDK_ROOT = join(__dirname, '..');
@@ -61,3 +62,29 @@ writeFileSync(
   JSON.stringify(DELTA20_VECTORS, null, 2),
 );
 console.log(`Wrote ${DELTA20_VECTORS.length} DELTA-20 vectors.`);
+
+// Ed25519 signing parity fixtures. Generated FROM the Python reference
+// (concordia.signing) via scripts/gen-signing-fixtures.py so the expected
+// signatures come straight from Python, never hand-authored. Run the
+// generator with the repo root on PYTHONPATH so `import concordia` resolves.
+const SIGNING_GEN = join(SDK_ROOT, 'scripts/gen-signing-fixtures.py');
+const SIGNING_DST = join(SDK_ROOT, 'tests/fixtures/signing/ed25519_vectors.json');
+const pythonBin = process.env.PYTHON ?? 'python3';
+try {
+  const out = execFileSync(pythonBin, [SIGNING_GEN], {
+    cwd: CONCORDIA_ROOT,
+    env: { ...process.env, PYTHONPATH: CONCORDIA_ROOT },
+    encoding: 'utf8',
+  });
+  mkdirSync(dirname(SIGNING_DST), { recursive: true });
+  writeFileSync(SIGNING_DST, out);
+  const parsed = JSON.parse(out);
+  console.log(
+    `Wrote ${parsed.cases.length} Ed25519 signing vectors (+ tamper cases) from Python.`,
+  );
+} catch (err) {
+  console.error(
+    `Failed to generate signing fixtures from Python: ${err.message}`,
+  );
+  process.exit(1);
+}
