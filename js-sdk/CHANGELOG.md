@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.0.1-alpha.4 -- 2026-05-XX
+
+Mandate credential models (the data layer). Ports the data half of
+`concordia/models/mandate.py`: the `TemporalMode` and `MandateStatus`
+enumerations (values byte-identical to the Python member values that cross the
+wire), the `DelegationLink`, `ValidityWindow`, and `Mandate` data structures
+with their `to_dict()` / `from_dict()` serialization, the
+`MandateVerificationResult` data carrier (the result the deferred verifier will
+populate), and the static `MANDATE_JSON_SCHEMA` and `CONSTRAINT_PATTERNS`
+constants.
+
+Each `*ToDict` reproduces the Python `to_dict()` output exactly: snake_case wire
+keys, the same insertion order, and the same conditional-omission rules. The
+not-None vs truthiness distinction is load-bearing and pinned by fixtures: an
+empty `constraints` / `metadata` / `delegation_chain` is OMITTED (Python's
+`if self.x:` truthiness guard), whereas an empty-string `revocation_endpoint` /
+`revoked_at` / `failure_reason` is EMITTED (Python's `if x is not None` guard),
+and `validity.max_uses = 0` is emitted rather than dropped. `mandateFromDict`
+reproduces Python's unknown-status FAIL-SAFE (an unrecognized `status` silently
+defaults to `active`, matching the reference's `try MandateStatus(...) except
+ValueError -> ACTIVE`), the required-field `KeyError` text (`'delegator'`,
+`'delegate'`, `'mode'`), and the unknown-mode `ValueError`
+(`'<value>' is not a valid TemporalMode`). `createMandate` mirrors
+`Mandate.create` (`urn:concordia:mandate:{uuid4}` id, Python
+`%Y-%m-%dT%H:%M:%SZ` whole-second UTC timestamp) and accepts an injectable clock
+for deterministic output.
+
+Parity is enforced by fixtures generated directly from Python
+(`scripts/gen-mandate-fixtures.py`, wired into
+`scripts/sync-fixtures-from-python.mjs`): 2 enums, 5 delegation `to_dict` cases,
+6 validity `to_dict` cases, 8 mandate `to_dict` cases (covering every
+conditional branch and the not-None/truthiness edges), 4 mandate `from_dict`
+round-trips (including the unknown-status fail-safe), 4 verification-result
+`to_dict` cases, `from_dict` error-string cases, and byte-identical canonical
+JSON for the two static schema constants. The generator imports only stdlib
+model code, so it runs under any Python 3.9+ (unlike the predicate/signing
+generators, which need 3.12). Reuses the existing canonicalizer
+(`canonicalizeJcs`); no primitives are reimplemented.
+
+**Deferred to the engine PR** (the second half of the mandate layer, mirroring
+`concordia/mandate.py`): mandate signing (`sign_mandate` / `sign_delegation`),
+the jsonschema-based `validate_mandate_schema` / `validate_constraints`, the
+delegation-scope composition (`compose_effective_constraints` /
+`_scope_restriction_to_schema`), temporal-validity checking, delegation-chain
+verification, the urllib revocation-endpoint I/O (`check_revocation`), and the
+full `verify_mandate`. These depend on a JSON-schema engine, network I/O, and
+the mandate signing path; they are deferred rather than half-implemented.
+
 ## 0.0.1-alpha.3 -- 2026-05-XX
 
 Signed predicate primitive (Concordia v0.6). Ports `concordia/predicate.py`
