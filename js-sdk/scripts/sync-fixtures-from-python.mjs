@@ -118,3 +118,38 @@ try {
   );
   process.exit(1);
 }
+
+// v0.6 signed-predicate parity fixtures. Generated FROM the Python reference
+// (concordia.predicate / concordia.predicate_type_profiles /
+// concordia.attestation) via scripts/gen-predicate-fixtures.py so every
+// canonical-byte string, signature, verification outcome, and validation error
+// list comes straight from Python, never hand-authored. Run the generator with
+// the repo root on PYTHONPATH so `import concordia` resolves.
+const PREDICATE_GEN = join(SDK_ROOT, 'scripts/gen-predicate-fixtures.py');
+const PREDICATE_VEC_DST = join(
+  SDK_ROOT,
+  'tests/fixtures/predicate/predicate_vectors.json',
+);
+try {
+  const out = execFileSync(pythonBin, [PREDICATE_GEN], {
+    cwd: CONCORDIA_ROOT,
+    env: { ...process.env, PYTHONPATH: CONCORDIA_ROOT },
+    encoding: 'utf8',
+  });
+  mkdirSync(dirname(PREDICATE_VEC_DST), { recursive: true });
+  writeFileSync(PREDICATE_VEC_DST, out);
+  const parsed = JSON.parse(out);
+  console.log(
+    `Wrote predicate parity fixtures from Python: ` +
+      `${parsed.sign_cases.length} sign+verify cases, ` +
+      `${parsed.verify_fail_cases.length} verify-failure cases, ` +
+      `${parsed.profile_cases.length} profile cases, ` +
+      `${parsed.write_cases.length} write-validation cases, ` +
+      `${parsed.reference_cases.length} reference cases.`,
+  );
+} catch (err) {
+  console.error(
+    `Failed to generate predicate fixtures from Python: ${err.message}`,
+  );
+  process.exit(1);
+}
