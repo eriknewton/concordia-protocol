@@ -26,7 +26,7 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@noble/curves": "^1.5",
+    "@noble/curves": "1.9.7",
     "ajv": "^8.16",
     "ajv-formats": "^3.0"
   },
