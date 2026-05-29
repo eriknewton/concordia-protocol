@@ -1,5 +1,89 @@
 # Changelog
 
+## 0.0.1-alpha.7 -- 2026-05-XX
+
+Session lifecycle (the six-state negotiation state machine). Ports the
+self-contained slice of `concordia/session.py` on top of the merged crypto,
+types, and canonicalizer: the `Session` class with the
+PROPOSED -> ACTIVE -> AGREED / REJECTED / EXPIRED -> DORMANT lifecycle, the
+strict §5.2 transition table, `applyMessage` (signature-verify then
+transition-validate then transcript-append then behavioral tracking),
+`expire`, `makeDormant`, `getBehavior`, `durationSeconds`, and the `prevHash` /
+`terms` / `isTerminal` accessors. The hash-chain transcript helpers it depends
+on -- `computeHash`, `GENESIS_HASH`, and `validateChain` from
+`concordia/message.py` -- ship alongside it. The `computeConcession` static
+helper is exported for direct testing.
+
+Byte-level parity against the Python reference is the load-bearing property and
+is pinned by Python-generated fixtures (`scripts/gen-session-fixtures.py`, whose
+messages are real signed envelopes built with deterministic seeded keys, so the
+JS suite verifies the SAME Python signatures with the SAME keys):
+
+- **Transition table.** The legal `(fromState, messageType) -> toState` set is
+  identical to Python's `_TRANSITIONS`; an illegal pair raises
+  `InvalidTransitionError` with the exact Python message text
+  (`Cannot apply <type> in state <state>`). Every Python-legal transition is
+  exercised and every off-table pair in a 6x14 grid is asserted to reject.
+- **Signature contract (SEC-010 / SEC-005).** A mandatory resolver maps
+  `agentId -> public key | null`; a missing `from.agent_id`, a missing
+  `signature`, an unresolved identity, a tampered payload, and a flipped
+  signature byte each raise `InvalidSignatureError` with Python-identical text,
+  fail-closed (never accepted). Verification runs BEFORE the transition check,
+  matching Python's ordering.
+- **Enum-coercion text.** An unknown `type` value raises with CPython's
+  `MessageType(...)` `ValueError` text (`<repr> is not a valid MessageType`)
+  before the transition lookup; a missing `type` key throws like Python's
+  `message["type"]` `KeyError`. The `<repr>` rendering uses full CPython
+  `repr()` quote-selection + escaping (shared with the mandate layer via
+  `src/internal/py-repr.ts`): a string is single-quoted by default, switches to
+  double quotes when it contains `'` and not `"`, and backslash-escapes the
+  active quote / backslash / `\t` / `\n` / `\r` -- so e.g.
+  `type="negotiate.o'ops"` renders `"negotiate.o'ops"` exactly as Python does.
+  The astral-codepoint printability residual (Unicode-DB-version-dependent,
+  fail-closed, unreachable for the fixed `MessageType` enum) is documented in
+  the helper, matching the predicate/mandate treatment.
+- **Non-mapping `body` is rejected (fail closed).** Python reads
+  `message.get("body", {}).get(...)` ONLY for OPEN / OFFER / COUNTER, so a
+  present-but-non-mapping `body` (a list, string, number, bool, or `null`)
+  raises `AttributeError` there and the message is REJECTED. `applyMessage`
+  matches this exactly: it throws `InvalidMessageError` rather than silently
+  coercing a non-mapping body to `{}` (which would accept inputs Python
+  rejects). An ABSENT body uses the `{}` default (accepted), a mapping body
+  (including `{}`) is accepted, and message types that never read `body` (e.g.
+  SIGNAL) accept any body shape -- all asserted against Python-generated
+  accept/reject vectors.
+- **No per-append `prev_hash` check (intentional parity).** `applyMessage` does
+  NOT validate `message.prev_hash` against the current chain head on each
+  append, because Python's `apply_message` does not either: chain integrity is
+  enforced by the separate `validateChain` (`validate_chain`) over the whole
+  transcript, not per-append. Adding a per-append guard would reject messages
+  Python accepts and break parity, so it is deliberately omitted; the append
+  site carries a comment recording this.
+- **Behavioral accumulation.** `offersMade` / `concessions` / `roundCount` /
+  `signalsShared` / `constraintsDeclared` / `withdrawal` / `reasoningProvided`
+  and the running-average `concessionMagnitude` reproduce Python's accumulation
+  arithmetic bit-for-bit (asserted with `Object.is`), including treating JS
+  boolean term values as numeric (`true`->1, `false`->0) the way Python's
+  `isinstance(v, (int, float))` is True for `bool`, the `prev == 0` division
+  guard, and the missing-term / no-overlap skips. The raw magnitude rounds to 4
+  places via the merged `pyRound` in `behaviorRecordToDict`, also asserted.
+- **`terms` null-preservation.** `dict.get("terms")` semantics: an absent
+  `terms` body becomes `null`, an explicit `null` stays `null`, a present
+  mapping is kept verbatim.
+- **`durationSeconds`.** Truncates toward zero and clamps at 0
+  (`max(0, int(delta))`), driven by an injectable clock so the wall-clock value
+  is deterministic under test.
+- **Hash chain.** `computeHash` returns `sha256:<hex>` over the FULL message
+  (the `signature` field is NOT stripped, unlike the signing payload),
+  byte-identical to Python `compute_hash`; `validateChain` reproduces the
+  genesis-anchor + per-link checks.
+
+The reputation attestation generator (`concordia/attestation.py`) is deferred to
+a follow-up release: `generate_attestation` consumes a concluded `Session`, so it
+layers on top of this primitive. The `ApprovalReceipt` verifier
+(`concordia/approval_receipt.py`) is also deferred, as it depends on the
+not-yet-ported `schema_validator` module.
+
 ## 0.0.1-alpha.6 -- 2026-05-XX
 
 Mandate verification engine (the second half of the mandate layer). Ports the
