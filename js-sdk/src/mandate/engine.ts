@@ -55,6 +55,7 @@
 
 import Ajv2020, { type ErrorObject, type ValidateFunction } from 'ajv/dist/2020.js';
 import { sign, verify, KeyPair } from '../crypto/signing.js';
+import { pyRepr } from '../internal/py-repr.js';
 import {
   type Mandate,
   type DelegationLink,
@@ -417,30 +418,11 @@ function resolveSubschema(
 // ---------------------------------------------------------------------------
 
 /**
- * Render a JSON-shaped value the way CPython's `repr()` would, so jsonschema
- * message text matches byte-for-byte. Shares the rendering rules with the
- * mandate-models `pyRepr` (strings single/double-quoted per CPython, control
- * chars escaped, dict/list rendered recursively with `{k: v}` / `[a, b]`
- * spacing, `None`/`True`/`False`, `nan`/`inf`).
+ * The CPython `repr()` renderer is shared from `src/internal/py-repr.ts` (imported
+ * as {@link pyRepr}) so the mandate engine, the schema-validator layer, and the
+ * mandate/session enum paths all emit byte-identical embedded-value text from ONE
+ * implementation instead of drifting copies.
  */
-function pyRepr(value: unknown): string {
-  if (typeof value === 'string') return pyReprString(value);
-  if (value === null || value === undefined) return 'None';
-  if (value === true) return 'True';
-  if (value === false) return 'False';
-  if (typeof value === 'number') return pyReprNumber(value);
-  if (typeof value === 'bigint') return value.toString();
-  if (Array.isArray(value)) {
-    return `[${value.map(pyRepr).join(', ')}]`;
-  }
-  if (typeof value === 'object') {
-    const inner = Object.entries(value as Record<string, unknown>)
-      .map(([k, v]) => `${pyRepr(k)}: ${pyRepr(v)}`)
-      .join(', ');
-    return `{${inner}}`;
-  }
-  return String(value);
-}
 
 /** CPython list repr: `[repr(a), repr(b), ...]`. */
 function pyReprList(values: unknown[]): string {
@@ -457,60 +439,6 @@ function pyReprList(values: unknown[]): string {
 function pyReprTypeList(type: unknown): string {
   const types = Array.isArray(type) ? type : [type];
   return types.map(pyRepr).join(', ');
-}
-
-/**
- * CPython `repr()` of a `str`. Single-quote by default; double-quote when the
- * string contains a `'` and no `"`. Backslash-escapes the active quote and `\`;
- * `\t`/`\n`/`\r` use named escapes; other non-printable code points escape as
- * `\xNN`/`\uNNNN`/`\UNNNNNNNN`. Iterates by code point so astral chars produce
- * a single `\U........`.
- */
-function pyReprString(s: string): string {
-  const quote = s.includes("'") && !s.includes('"') ? '"' : "'";
-  let out = quote;
-  for (const ch of s) {
-    const cp = ch.codePointAt(0) as number;
-    if (ch === quote || ch === '\\') {
-      out += '\\' + ch;
-    } else if (ch === '\t') {
-      out += '\\t';
-    } else if (ch === '\n') {
-      out += '\\n';
-    } else if (ch === '\r') {
-      out += '\\r';
-    } else if (isPyPrintable(ch, cp)) {
-      out += ch;
-    } else if (cp < 0x100) {
-      out += '\\x' + cp.toString(16).padStart(2, '0');
-    } else if (cp < 0x10000) {
-      out += '\\u' + cp.toString(16).padStart(4, '0');
-    } else {
-      out += '\\U' + cp.toString(16).padStart(8, '0');
-    }
-  }
-  return out + quote;
-}
-
-const NON_PRINTABLE_RE = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}\p{Zs}]/u;
-
-/** True when CPython `str.isprintable()` would treat this code point as printable. */
-function isPyPrintable(ch: string, cp: number): boolean {
-  if (cp === 0x20) return true;
-  return !NON_PRINTABLE_RE.test(ch);
-}
-
-/**
- * CPython `repr()` of a number for jsonschema messages. JSON-sourced numbers
- * carry no int/float tag, so an integer-valued finite number reprs without a
- * trailing `.0` (matching `json.loads("100.0")` -> `100`). Non-finite values
- * map to `nan`/`inf`/`-inf` (CPython), not JS `NaN`/`Infinity`.
- */
-function pyReprNumber(n: number): string {
-  if (Number.isNaN(n)) return 'nan';
-  if (n === Infinity) return 'inf';
-  if (n === -Infinity) return '-inf';
-  return String(n);
 }
 
 // ---------------------------------------------------------------------------

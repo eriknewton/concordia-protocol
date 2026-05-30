@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.0.1-alpha.9 -- 2026-05-XX
+
+JSON Schema validation and ApprovalReceipt verification. Ports
+`concordia/schema_validator.py` (the validate-against-jsonschema surface) and
+`concordia/approval_receipt.py` (the consumer) on top of the merged crypto,
+canonicalizer, and internal `pyRepr` layers:
+
+- `validateMessage` / `isValidMessage` — validate a Concordia message envelope
+  (SPEC §4.1) and return the ordered `"{json_path}: {message}"` error list.
+- `validateApprovalReceipt` / `isValidApprovalReceipt` — validate an
+  ApprovalReceipt against `approval_receipt.schema.json` (the 7c prerequisite).
+- `validateFulfillmentAttestation` / `isValidFulfillmentAttestation` — validate a
+  standalone FulfillmentAttestation against its schema PLUS the companion local
+  equality invariant (every `fulfills`-relationship reference id must equal
+  `agreement_attestation_id`).
+- `verifyApprovalReceipt` — the full ApprovalReceipt verifier (schema, the
+  `approves` negotiation-session reference, the Ed25519 signature against a
+  caller-supplied issuer key, the `expires_at` window, and the canonical
+  `offer_hash` match), returning the typed `ApprovalReceiptResult` with the same
+  `failure_reason` constants, `checks` map, and ordering as Python.
+
+WHY A HAND-PORTED VALIDATOR (not ajv, the mandate engine's approach): this
+surface returns the FULL ORDERED error list from CPython
+`Draft202012Validator.iter_errors`, not the single best-match message the engine
+needed. CPython yields errors per node in the schema's KEY-INSERTION ORDER
+(verified empirically), with a specific `json_path` shape and CPython-`repr()`-
+rendered message text — none of which ajv reproduces byte-for-byte. So this layer
+adds an internal `iterErrors` (`src/internal/jsonschema.ts`) that re-implements
+the `iter_errors` traversal for the ported keyword subset (`type`, `enum`,
+`const`, `required`, `properties`, `additionalProperties`, `patternProperties`,
+`items`, `contains`, `allOf`, `if`/`then`/`else`, `minItems`/`maxItems`,
+`minLength`/`maxLength`, `pattern`, `minimum`/`maximum`/`exclusiveMinimum`/
+`exclusiveMaximum`, `format`). It SHARES the CPython `pyRepr` renderer with the
+mandate engine via `src/internal/py-repr.ts` (the engine's private duplicate was
+removed in this PR — behavior-neutral, its 110 tests still pass).
+
+FORMAT CHECKING is load-bearing for accept/reject parity: Python registers a
+custom `FormatChecker` and PASSES it to `validate_message` /
+`validate_approval_receipt`, so a bad `date-time` (e.g. a naive, tz-less
+timestamp) is REJECTED — the OPPOSITE of the mandate engine, which ran formats
+OFF. `validate_fulfillment_attestation` passes NO checker (its `format` keywords
+are inert), matched here.
+
+DEFERRED — `validate_attestation` (the §9.6 reputation-attestation schema). That
+schema uses `$ref` / `$defs` / `oneOf` (which the internal validator does not yet
+support) and a companion `_warn_on_noncanonical_references` that depends on
+`REFERENCE_TYPES` / `REFERENCE_RELATIONSHIPS` constants not yet ported. It is out
+of scope for this slice, pinned by a `deferred_attestation` boundary fixture and
+a skipped test that documents the expected Python output for the follow-up.
+
+Byte-level parity against the Python reference is the load-bearing property and is
+pinned by Python-generated fixtures (`scripts/gen-schema-validator-fixtures.py`,
+which drives the REAL `concordia.schema_validator` + `concordia.approval_receipt`;
+receipts are signed with deterministic seeded Ed25519 keys so the JS suite
+verifies the SAME Python signatures with the SAME keys): 21 message + 23
+approval-receipt-schema + 13 fulfillment + 10 approval-receipt-verify cases, each
+asserting the EXACT ordered error list / typed result Python emits. Robustness
+cases confirm a non-object top-level input reports the root `type` error rather
+than throwing (fail-closed).
+
 ## 0.0.1-alpha.8 -- 2026-05-XX
 
 Reputation attestation (the signed behavioral record produced from a concluded
