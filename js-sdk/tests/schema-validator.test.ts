@@ -18,7 +18,7 @@ import {
   isCpythonIsoDateTime,
   cpythonIsoDateTimeToEpochMs,
 } from '../src/internal/iso-datetime.js';
-import { KeyPair } from '../src/crypto/signing.js';
+import { KeyPair, sign } from '../src/crypto/signing.js';
 import { fromBase64Url } from '../src/crypto/base64url.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -192,6 +192,66 @@ describe('verifyApprovalReceipt — Python parity', () => {
       issuerPublicKey: kp,
     });
     expect(result.valid).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------------
+  // YEAR-9999 OVERFLOW — end-to-end fail-CLOSED parity (2026-05-30 finding #3)
+  // ---------------------------------------------------------------------------
+  //
+  // A year-9999 `expires_at` with a tz offset that pushes the UTC instant past
+  // `datetime.max` parses through CPython `fromisoformat` (so it PASSES the schema
+  // `date-time` format check), but Python `_parse_datetime`'s
+  // `.astimezone(timezone.utc)` then raises `OverflowError`. The reference verifier
+  // does NOT catch that, so the receipt is NOT honored. The old TS parser computed
+  // a finite far-future ms and the verifier reported the receipt VALID/not-expired
+  // -- a fail-OPEN relative to Python. The fail-closed guard in
+  // `cpythonIsoDateTimeToEpochMs` now returns `null` for the overflow instant, so
+  // `verifyApprovalReceipt` reports it EXPIRED (a clean validation failure, not an
+  // uncaught throw). This re-signs the Python-signed valid receipt with only
+  // `expires_at` changed -- TS `sign` is byte-identical to Python (asserted above),
+  // so the signature stays valid and the ONLY thing under test is the expiry guard.
+  it('rejects a year-9999 overflow expires_at (fail-closed, matches Python reject)', () => {
+    const valid = fixtures.verify_cases.find((c) => c.name === 'valid_approve');
+    expect(valid).toBeDefined();
+    if (!valid || valid.issuer_public_key_b64 === null) return;
+    const seed = hexToBytes(fixtures.seed_hex);
+    const kp = KeyPair.fromPrivateKey(seed);
+
+    // Sanity: the unmodified valid receipt verifies, so any rejection below is
+    // attributable to the overflow expiry alone, not a broken fixture.
+    const baseline = verifyApprovalReceipt(valid.receipt, valid.offer, {
+      now: nowMs(valid.now),
+      issuerPublicKey: kp,
+    });
+    expect(baseline.valid).toBe(true);
+
+    // The overflow expiry CPython rejects (verified against python3.12:
+    // `fromisoformat` ok, `astimezone(utc)` -> OverflowError).
+    const overflowReceipt: Record<string, unknown> = {
+      ...(valid.receipt as Record<string, unknown>),
+      expires_at: '9999-12-31T23:59:59-14:00',
+      signature: { alg: 'Ed25519', value: '' },
+    };
+    overflowReceipt.signature = {
+      alg: 'Ed25519',
+      value: sign(overflowReceipt, kp),
+    };
+
+    // Schema format check still passes (mirrors CPython `_is_date_time` -> True);
+    // the overflow only bites at the expiry parse, exactly like Python.
+    expect(conformsFormat('date-time', '9999-12-31T23:59:59-14:00')).toBe(true);
+    expect(
+      cpythonIsoDateTimeToEpochMs('9999-12-31T23:59:59-14:00'),
+    ).toBeNull();
+
+    const result = verifyApprovalReceipt(overflowReceipt, valid.offer, {
+      now: nowMs(valid.now),
+      issuerPublicKey: kp,
+    });
+    // Fail CLOSED: NOT valid, reported expired (Python rejects the receipt).
+    expect(result.valid).toBe(false);
+    expect(result.failureReason).toBe('expired');
+    expect(result.checks.not_expired).toBe(false);
   });
 });
 

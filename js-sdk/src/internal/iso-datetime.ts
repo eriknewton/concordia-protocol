@@ -39,24 +39,50 @@
  * `+0000`, `+00`, comma fractional, basic form `YYYYMMDDTHHMMSS`, sub-minute
  * offset `+00:00:30` -- all round-trip.
  *
- * CPYTHON ZERO-OFFSET QUIRK (matched exactly). When an offset's INTEGER
+ * YEAR-9999 OVERFLOW (FIXED, fail-CLOSED -- 2026-05-30 re-review finding #3).
+ * `_parse_datetime` is `fromisoformat(...).astimezone(timezone.utc)`. A year-9999
+ * (or year-0001) civil time with a tz OFFSET parses fine through `fromisoformat`
+ * (so the FORMAT check, which only calls `fromisoformat`, passes -- matching this
+ * module's {@link isCpythonIsoDateTime}), but `astimezone` then shifts the instant
+ * by the offset and CPython raises `OverflowError` when the UTC result leaves
+ * `[datetime.min, datetime.max]` (e.g. `9999-12-31T23:59:59-14:00`). The reference
+ * verifier does NOT catch that, so such a receipt is NOT honored. The ordinal
+ * arithmetic in {@link cpythonIsoDateTimeToEpochMs} has no ceiling, so it would
+ * otherwise return a finite ms and report the receipt VALID -- a fail-OPEN. The
+ * guard there rejects (returns `null`, the parse-failure signal) any UTC instant
+ * outside `[CPYTHON_DATETIME_MIN_MS, CPYTHON_DATETIME_MAX_MS]`, mirroring the
+ * raise as a clean fail-closed validation failure (the verifier then reports the
+ * receipt expired/invalid, never valid). Reject, do not clamp-and-accept.
+ *
+ * CPYTHON ZERO-OFFSET QUIRK (matched exactly -- relates to 2026-05-30 re-review
+ * finding #2, the sub-microsecond-offset off-by-1ms). When an offset's INTEGER
  * components (h/m/s) are all zero, `fromisoformat` collapses the offset to
  * `timezone.utc` and DISCARDS any fractional-second part: `+00,99`, `+00:00,30`,
  * `-00:00.30` all yield `0:00:00`, whereas `+01:02:03.5` (a nonzero integer part)
  * keeps the `.5`. {@link parseIsoTime} reproduces this; carrying the fraction
  * unconditionally over-shifted these degenerate zero-offset spellings by up to
- * ~1s, so the special-case drop is required for byte-identical epoch ms.
+ * ~1s, so the special-case drop is required for byte-identical epoch ms. The
+ * residual finding #2 captures is that a NONZERO-integer offset carrying a
+ * sub-microsecond fractional tail can floor to a ms 1 unit different from CPython.
+ * It is IMMATERIAL: expiry is a coarse "is it past `expires_at`" comparison at ms
+ * granularity, the divergence is at most 1ms on an exotic sub-microsecond offset
+ * that no real Concordia timestamp uses, and flooring keeps TS on the safe side.
+ * No behavior change; documented, not chased.
  *
  * KNOWN PARITY RESIDUAL (fail-CLOSED / SAFE direction; documented, not chased --
- * same posture as the prior PRs' ISO residuals). On purely MALFORMED inputs that
- * no real Python-emitted timestamp produces, this parser is STRICTER than CPython:
+ * same posture as the prior PRs' ISO residuals; the week-date bullet is the
+ * 2026-05-30 re-review finding #1). On purely MALFORMED inputs that no real
+ * Python-emitted timestamp produces, this parser is STRICTER than CPython:
  *   - CPython's time scan reads HH/MM/SS greedily by 2-digit pairs and IGNORES a
  *     trailing odd digit or single junk char (e.g. `12:47:044`, `11:57:16t`,
  *     `02001`); this parser requires the fixed `HH[:MM[:SS]]` widths and rejects
  *     such garbage.
- *   - A week date with an explicit weekday followed immediately by a DIGIT
- *     separator (e.g. `2026-W19-5023:00:55`) is rejected here (CPython's behavior
- *     there is form-dependent and version-coupled).
+ *   - FINDING #1 (ISO week-date forms like `2026-W22`): a week date with an
+ *     explicit weekday followed immediately by a DIGIT separator (e.g.
+ *     `2026-W19-5023:00:55`) is rejected here (CPython's behavior there is
+ *     form-dependent and version-coupled). Well-formed week dates (`2026-W19-5T..`)
+ *     round-trip identically; only this digit-separator garbage diverges, and only
+ *     in the strict direction. Not forgeable from valid wire data.
  * In every such case TS REJECTS a malformed timestamp that CPython would have
  * leniently truncated -- the safe direction (a bad receipt is rejected, never
  * falsely accepted). There is NO input on which this parser is looser than
@@ -124,8 +150,38 @@ export function cpythonIsoDateTimeToEpochMs(value: string): number | null {
   // sub-ms remainder (CPython compares at microsecond precision; the verifier
   // compares epoch ms, so flooring keeps TS on the safe side without diverging
   // on any normal `...Z` / `±HH:MM` form).
-  return Math.floor(dayMs + timeMs - offsetMs);
+  const epochMs = Math.floor(dayMs + timeMs - offsetMs);
+  // FAIL-CLOSED OVERFLOW GUARD (CPython `astimezone(timezone.utc)` parity).
+  // Python's `_parse_datetime` does `fromisoformat(...).astimezone(timezone.utc)`.
+  // `fromisoformat` accepts a year-9999 (or year-0001) civil time with a tz offset
+  // -- so the `date-time` FORMAT check (which only calls `fromisoformat`) passes --
+  // but `astimezone` then SHIFTS the instant by the offset, and if the resulting
+  // UTC instant falls outside `[datetime.min, datetime.max]` CPython raises
+  // `OverflowError`. The reference verifier does NOT catch that: such a receipt is
+  // NOT honored (Python treats it as invalid/rejected). The ordinal arithmetic
+  // above has no such ceiling, so without this guard TS would compute a finite ms
+  // and report the receipt VALID/not-expired -- a fail-OPEN relative to Python (it
+  // would honor a receipt Python rejects). Returning `null` here mirrors the raise
+  // as a clean parse failure: the format check still passes (it never reaches this
+  // path, matching CPython), but the expiry parse fails closed, so the receipt
+  // verifier reports it expired/invalid rather than valid. A timestamp that cannot
+  // be represented in both runtimes is not honored. We reject; we do NOT clamp.
+  if (epochMs < CPYTHON_DATETIME_MIN_MS || epochMs > CPYTHON_DATETIME_MAX_MS) {
+    return null;
+  }
+  return epochMs;
 }
+
+/**
+ * CPython `datetime.max` as a UTC epoch-ms ceiling (floored to whole ms):
+ * `9999-12-31T23:59:59.999999+00:00`. Verified against `python3` (see the
+ * overflow vectors in gen-schema-validator-fixtures.py).
+ */
+const CPYTHON_DATETIME_MAX_MS = 253402300799999;
+/**
+ * CPython `datetime.min` as a UTC epoch-ms floor: `0001-01-01T00:00:00+00:00`.
+ */
+const CPYTHON_DATETIME_MIN_MS = -62135596800000;
 
 // ---------------------------------------------------------------------------
 // CPython 3.12 `fromisoformat` port (Lib/datetime.py)

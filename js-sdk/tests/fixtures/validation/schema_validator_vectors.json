@@ -2251,6 +2251,16 @@
       "name": "zero_offset_comma_fraction",
       "value": "2026-05-10T14:22:08+00,99",
       "expected": true
+    },
+    {
+      "name": "year9999_neg_offset_format_ok",
+      "value": "9999-12-31T23:59:59-14:00",
+      "expected": true
+    },
+    {
+      "name": "year0001_pos_offset_format_ok",
+      "value": "0001-01-01T00:00:00+23:59",
+      "expected": true
     }
   ],
   "datetime_parse_cases": [
@@ -2328,6 +2338,36 @@
       "name": "garbage_null",
       "value": "nope",
       "expected": null
+    },
+    {
+      "name": "year9999_neg_offset_overflow_null",
+      "value": "9999-12-31T23:59:59-14:00",
+      "expected": null
+    },
+    {
+      "name": "year9999_extreme_neg_offset_null",
+      "value": "9999-12-31T23:59:59-23:59",
+      "expected": null
+    },
+    {
+      "name": "year0001_pos_offset_underflow_null",
+      "value": "0001-01-01T00:00:00+23:59",
+      "expected": null
+    },
+    {
+      "name": "year9999_offset0_in_range",
+      "value": "9999-12-31T23:59:59+00:00",
+      "expected": 253402300799000
+    },
+    {
+      "name": "year9999_neg1min_just_overflow_null",
+      "value": "9999-12-31T23:59:00-00:01",
+      "expected": null
+    },
+    {
+      "name": "year9999_neg1min_just_in_range",
+      "value": "9999-12-31T23:58:59-00:01",
+      "expected": 253402300799000
     }
   ],
   "deferred_attestation": {

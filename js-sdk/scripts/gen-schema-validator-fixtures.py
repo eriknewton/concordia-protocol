@@ -434,15 +434,23 @@ def _py_format_ok(value: str) -> bool:
 
 
 def _py_epoch_ms(value: str):
-    """Mirror concordia.approval_receipt._parse_datetime -> epoch ms (floored), or None."""
+    """Mirror concordia.approval_receipt._parse_datetime -> epoch ms (floored), or None.
+
+    Catches BOTH ValueError (malformed) AND OverflowError. A year-9999 (or
+    year-0001) civil time with a tz offset parses through `fromisoformat`, but
+    `.astimezone(timezone.utc)` raises OverflowError when the UTC instant leaves
+    [datetime.min, datetime.max]. The reference verifier does NOT catch that, so
+    such a receipt is not honored; here we surface it as None (a parse failure)
+    so the TS parser's fail-closed `null` matches Python's reject.
+    """
     from datetime import datetime, timezone
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.astimezone(timezone.utc)
+    except (ValueError, OverflowError):
         return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    parsed = parsed.astimezone(timezone.utc)
     delta = parsed - datetime(1970, 1, 1, tzinfo=timezone.utc)
     total_us = (
         delta.days * 86_400_000_000
@@ -481,6 +489,12 @@ def _datetime_format_cases() -> list[dict]:
         ("date_only_rejected", "2026-05-10"),
         ("garbage_rejected", "nope"),
         ("zero_offset_comma_fraction", "2026-05-10T14:22:08+00,99"),
+        # Year-9999 overflow (finding #3): `fromisoformat` succeeds, so the FORMAT
+        # check returns True for these (the OverflowError is only raised later by
+        # `astimezone` in the expiry parse). Pin that the format check stays True
+        # so TS's `isCpythonIsoDateTime` is not over-strict on the format axis.
+        ("year9999_neg_offset_format_ok", "9999-12-31T23:59:59-14:00"),
+        ("year0001_pos_offset_format_ok", "0001-01-01T00:00:00+23:59"),
     ]
     return [
         {"name": n, "value": v, "expected": _py_format_ok(v)} for n, v in forms
@@ -506,6 +520,18 @@ def _datetime_parse_cases() -> list[dict]:
         ("naive_utc", "2026-05-10T14:22:08"),
         ("frac_truncate_over_6", "2026-05-10T14:22:08.123456789Z"),
         ("garbage_null", "nope"),
+        # Year-9999 overflow (finding #3, THE FIX). `fromisoformat` parses these,
+        # but `_parse_datetime`'s `astimezone(timezone.utc)` raises OverflowError
+        # when the offset pushes the UTC instant past datetime.max / before
+        # datetime.min -> the receipt is NOT honored. `_py_epoch_ms` returns None;
+        # the TS parser's fail-closed guard returns null. Reject, not clamp.
+        ("year9999_neg_offset_overflow_null", "9999-12-31T23:59:59-14:00"),
+        ("year9999_extreme_neg_offset_null", "9999-12-31T23:59:59-23:59"),
+        ("year0001_pos_offset_underflow_null", "0001-01-01T00:00:00+23:59"),
+        # Boundary: still in range either side of the datetime.max tipping point.
+        ("year9999_offset0_in_range", "9999-12-31T23:59:59+00:00"),
+        ("year9999_neg1min_just_overflow_null", "9999-12-31T23:59:00-00:01"),
+        ("year9999_neg1min_just_in_range", "9999-12-31T23:58:59-00:01"),
     ]
     return [
         {"name": n, "value": v, "expected": _py_epoch_ms(v)} for n, v in forms
