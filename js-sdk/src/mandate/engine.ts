@@ -56,6 +56,7 @@
 import Ajv2020, { type ErrorObject, type ValidateFunction } from 'ajv/dist/2020.js';
 import { sign, verify, KeyPair } from '../crypto/signing.js';
 import { pyRepr } from '../internal/py-repr.js';
+import { isCpythonIsoDateTime } from '../internal/iso-datetime.js';
 import {
   type Mandate,
   type DelegationLink,
@@ -752,12 +753,53 @@ export function checkTemporalValidity(
       errors.push('Windowed mode requires not_before and not_after');
       return [false, errors];
     }
+    // FAIL-CLOSED NAIVE-DATETIME GUARD (CPython comparison-TypeError parity).
+    // Python parses with `datetime.fromisoformat(value.replace("Z","+00:00"))`,
+    // which SUCCEEDS for a tz-NAIVE timestamp (e.g. `2026-01-01T00:00:00`, no
+    // offset/`Z`) and yields a NAIVE datetime. The window comparison `now < nb`
+    // (with `now = datetime.now(timezone.utc)`, tz-AWARE) then raises
+    // `TypeError: can't compare offset-naive and offset-aware datetimes`. The
+    // reference `check_temporal_validity` only catches `ValueError`, NOT
+    // `TypeError`, so the exception propagates out of `verify_mandate` and the
+    // mandate is NOT honored. The earlier TS code instead appended `"Z"` to a
+    // naive timestamp, parsed it to a finite UTC ms, and HONORED the window --
+    // a fail-OPEN (TS over-permitted authorization Python rejects). We close it
+    // by rejecting any tz-naive `not_before`/`not_after` here, BEFORE the
+    // comparison, matching Python's reject. `isCpythonIsoDateTime` mirrors
+    // `_is_date_time`: it returns `false` for a value that is not a tz-aware
+    // CPython isoformat, so a naive (offset-less) timestamp fails it. A
+    // genuinely malformed timestamp also fails it, but is routed to the
+    // `Invalid timestamp format` (ValueError) path below for message parity.
+    if (
+      !isCpythonIsoDateTime(validity.notBefore) ||
+      !isCpythonIsoDateTime(validity.notAfter)
+    ) {
+      const naive = !isCpythonIsoDateTime(validity.notBefore)
+        ? validity.notBefore
+        : validity.notAfter;
+      // Distinguish a tz-naive (but otherwise valid) timestamp -- Python's
+      // comparison `TypeError` -- from a structurally invalid one (Python's
+      // parse `ValueError`). Only the latter carries the fromisoformat message.
+      if (cpythonFromisoformatError(naive) === null) {
+        errors.push(
+          `Timezone-naive timestamp not permitted (must include a UTC ` +
+            `offset or 'Z'): ${naive}`,
+        );
+      } else {
+        errors.push(
+          `Invalid timestamp format: ${cpythonFromisoformatError(naive)}`,
+        );
+      }
+      return [false, errors];
+    }
     const nb = parseIsoMs(validity.notBefore);
     const na = parseIsoMs(validity.notAfter);
     if (nb === null || na === null) {
       // Python: `datetime.fromisoformat(...)` raises ValueError ->
       // f"Invalid timestamp format: {e}". The Python message embeds the
-      // ValueError text; reproduce CPython's fromisoformat message.
+      // ValueError text; reproduce CPython's fromisoformat message. (Reached
+      // only for the residual offset cases where `Date.parse` is stricter than
+      // CPython; the tz-naive and structurally-invalid cases are handled above.)
       const bad = nb === null ? validity.notBefore : validity.notAfter;
       errors.push(
         `Invalid timestamp format: ${cpythonFromisoformatError(bad)}`,
@@ -804,9 +846,19 @@ export function checkTemporalValidity(
 }
 
 /**
- * Parse an ISO-8601 timestamp to epoch ms, mirroring Python
- * `datetime.fromisoformat(value.replace("Z", "+00:00"))`. Returns `null` if the
- * string is not a valid CPython isoformat.
+ * Parse an ISO-8601 timestamp to epoch ms for the windowed temporal check.
+ * Returns `null` if the string is not a valid, tz-AWARE CPython isoformat.
+ *
+ * FAIL-CLOSED ON TZ-NAIVE (CPython comparison-TypeError parity). Python parses
+ * with `datetime.fromisoformat(value.replace("Z","+00:00"))`, which succeeds for
+ * a tz-naive timestamp -- but the subsequent `now < nb` comparison against the
+ * tz-aware `datetime.now(timezone.utc)` raises `TypeError`, which
+ * `check_temporal_validity`'s `except ValueError` does NOT catch, so the mandate
+ * is NOT honored. This function therefore returns `null` for any tz-naive value
+ * (no offset / no `Z`): it must never resolve a naive timestamp to a finite ms,
+ * which would HONOR a window Python rejects (a fail-OPEN). The caller
+ * (`checkTemporalValidity`) screens tz-naive values first and emits a dedicated
+ * error; this guard is defense-in-depth so the helper is independently safe.
  *
  * KNOWN PARITY RESIDUAL (accepted 2026-05-29, fail-CLOSED / safe direction;
  * unreachable from real data -- same posture as the predicate ISO/parse-boundary
@@ -822,13 +874,16 @@ export function checkTemporalValidity(
  * rabbit hole on inputs that do not occur).
  */
 function parseIsoMs(value: string): number | null {
-  const s = value.replace(/Z/g, '+00:00');
-  if (cpythonFromisoformatError(value) !== null) {
+  // Reject anything that is not a tz-aware CPython isoformat. `isCpythonIsoDateTime`
+  // mirrors `_is_date_time` (valid isoformat AND `tzinfo is not None`), so a
+  // tz-naive timestamp returns `false` here and we never append a synthetic `Z`.
+  if (!isCpythonIsoDateTime(value)) {
     return null;
   }
-  const hasOffset = /[+-]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?$/.test(s);
-  const forParse = hasOffset ? s : s + 'Z';
-  const ms = Date.parse(forParse);
+  const s = value.replace(/Z/g, '+00:00');
+  // `value` is tz-aware per the guard above, so an offset is always present; no
+  // synthetic-`Z` fallback (the old fallback is what produced the fail-open).
+  const ms = Date.parse(s);
   return Number.isNaN(ms) ? null : ms;
 }
 

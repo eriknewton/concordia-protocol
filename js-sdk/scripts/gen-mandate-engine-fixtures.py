@@ -557,6 +557,75 @@ def main() -> None:
     doc["temporal_cases"] = temporal_cases
 
     # ------------------------------------------------------------------
+    # NAIVE-DATETIME temporal cases (TS fail-CLOSED parity; Python RAISES).
+    #
+    # `check_temporal_validity` parses `not_before`/`not_after` with
+    # `datetime.fromisoformat(value.replace("Z","+00:00"))`. For a tz-NAIVE
+    # timestamp (no offset / no `Z`) that parse SUCCEEDS and yields a naive
+    # datetime, but the subsequent `now < nb` comparison against the tz-AWARE
+    # `now` raises `TypeError: can't compare offset-naive and offset-aware
+    # datetimes`. The function's `except ValueError` does NOT catch `TypeError`,
+    # so it propagates out of `verify_mandate` and the mandate is NOT honored.
+    #
+    # Python therefore produces NO (valid, errors) tuple here -- it raises. We
+    # record the raised exception so the parity contract is explicit, and the JS
+    # test asserts the FAITHFUL behavioral mirror: TS rejects (valid=False), so
+    # it does not honor a window Python refuses to honor. (The earlier TS code
+    # appended a synthetic `"Z"` and HONORED the naive window -- a fail-OPEN this
+    # closes.) A naive value applied to EITHER bound must reject.
+    # ------------------------------------------------------------------
+    naive_temporal_cases = []
+
+    def _naive_temporal(name, vw_dict, now=None):
+        vw = ValidityWindow.from_dict(vw_dict)
+        now_dt = _dt(now) if now is not None else _dt(NOW)
+        raised = None
+        try:
+            check_temporal_validity(vw, now=now_dt)
+        except Exception as e:  # noqa: BLE001 -- recording the exact raise
+            raised = {"type": type(e).__name__, "message": str(e)}
+        assert raised is not None, (
+            f"expected {name} to raise in Python (naive datetime); it did not"
+        )
+        naive_temporal_cases.append(
+            {
+                "name": name,
+                "validity": vw_dict,
+                "now": now if now is not None else NOW,
+                # Python raises rather than returning; TS must fail closed.
+                "python_raises": raised,
+                "ts_valid": False,
+            }
+        )
+
+    # Naive not_before (no offset, no Z) -- within an otherwise-valid window.
+    _naive_temporal(
+        "windowed_naive_not_before",
+        {"mode": "windowed", "not_before": "2026-05-14T00:00:00", "not_after": NA},
+    )
+    # Naive not_after.
+    _naive_temporal(
+        "windowed_naive_not_after",
+        {"mode": "windowed", "not_before": NB, "not_after": "2126-06-14T00:00:00"},
+    )
+    # Both bounds naive.
+    _naive_temporal(
+        "windowed_naive_both",
+        {
+            "mode": "windowed",
+            "not_before": "2026-05-14T00:00:00",
+            "not_after": "2126-06-14T00:00:00",
+        },
+    )
+    # Naive not_before with a space separator (also a valid isoformat, still naive).
+    _naive_temporal(
+        "windowed_naive_space_sep",
+        {"mode": "windowed", "not_before": "2026-05-14 00:00:00", "not_after": NA},
+    )
+
+    doc["naive_temporal_cases"] = naive_temporal_cases
+
+    # ------------------------------------------------------------------
     # verify_delegation_chain: (valid, errors). Build signed chains so the
     # signature checks exercise real Ed25519 verify.
     # ------------------------------------------------------------------
@@ -1066,6 +1135,57 @@ def main() -> None:
     )
 
     doc["verify_cases"] = verify_cases
+
+    # ------------------------------------------------------------------
+    # NAIVE-DATETIME end-to-end (TS fail-CLOSED parity; Python RAISES).
+    #
+    # A signed, otherwise-valid mandate whose `not_before` is tz-naive. Python
+    # `verify_mandate` reaches `check_temporal_validity`, which raises
+    # `TypeError` on the naive-vs-aware comparison; nothing catches it, so the
+    # mandate is NOT honored. We record the signed mandate dict + the raised
+    # exception; the JS test asserts TS `verifyMandate` returns a NOT-honored
+    # result (valid False, temporal_validity False) rather than HONORING the
+    # naive window (the closed fail-open).
+    # ------------------------------------------------------------------
+    naive_signed = _build_signed_mandate(
+        mandate_id="urn:concordia:mandate:naive1",
+        issuer="did:web:issuer",
+        subject="did:web:subject",
+        issued_at=ISSUED,
+        validity=ValidityWindow(
+            mode=TemporalMode.WINDOWED,
+            not_before="2026-05-14T00:00:00",  # tz-naive
+            not_after=NA,
+        ),
+        constraints={"k": "v"},
+    )
+    naive_md = naive_signed.to_dict()
+    naive_raised = None
+    try:
+        verify_mandate(
+            naive_md,
+            ISSUER_KP.public_key,
+            now=_dt(NOW),
+            require_binding_context=True,
+        )
+    except Exception as e:  # noqa: BLE001 -- recording the exact raise
+        naive_raised = {"type": type(e).__name__, "message": str(e)}
+    assert naive_raised is not None, (
+        "expected verify_mandate to raise on a naive not_before; it did not"
+    )
+    doc["naive_verify_case"] = {
+        "_comment": (
+            "Python verify_mandate RAISES TypeError on the naive-vs-aware "
+            "datetime comparison inside check_temporal_validity (uncaught: the "
+            "guard only catches ValueError), so the mandate is NOT honored. TS "
+            "must fail closed: valid False, temporal_validity False."
+        ),
+        "mandate_dict": naive_md,
+        "issuer_key": "issuer",
+        "now": NOW,
+        "python_raises": naive_raised,
+        "ts_valid": False,
+    }
 
     # ------------------------------------------------------------------
     # DEFERRED boundary: verify_mandate WITH check_revocation_status=True and a
