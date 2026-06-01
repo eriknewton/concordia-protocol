@@ -53,6 +53,7 @@ import { createHash } from 'node:crypto';
 
 import { canonicalizeJcs } from '../canonical/canonicalize.js';
 import { sign, KeyPair } from '../crypto/signing.js';
+import { cpythonIsoDateTimeToEpochMs } from '../internal/iso-datetime.js';
 import {
   OutcomeStatus,
   ResolutionMechanism,
@@ -92,49 +93,44 @@ export class AttestationError extends Error {
  * - A value that does not parse raises
  *   `<field_name> is not a valid ISO 8601 timestamp: <detail>`. The `<detail>`
  *   half is the underlying parser's message and is NOT asserted for byte-parity
- *   (CPython's `datetime.fromisoformat` and JS `Date` produce different detail
+ *   (CPython's `datetime.fromisoformat` and our port produce different detail
  *   text); the prefix up to and including the colon is the stable, asserted part.
  * - A timestamp with no timezone offset is treated as UTC (Python's
  *   `tzinfo is None -> replace(tzinfo=utc)`), so naive and `Z`-suffixed forms of
  *   the same wall-clock instant compare equal.
+ *
+ * FAIL-CLOSED PARSE (Python parity, not lenient `Date.parse`). The prior
+ * implementation normalized a naive form to UTC and then handed the string to
+ * JS `Date.parse`. `Date.parse` is FAR more permissive than Python's
+ * `datetime.fromisoformat`: it accepts RFC-822 / RFC-1123 forms like
+ * `"Mon, 01 Jun 2026 00:00:00 GMT"`, `"June 1, 2026"`, and `"2026/06/01"`, all
+ * of which `fromisoformat` REJECTS with a `ValueError`. That was a fail-OPEN: an
+ * attestation carrying such a `validity_temporal` timestamp would be HONORED by
+ * the TS SDK while the Python reference rejects it outright. We now delegate to
+ * the shared CPython-3.12-`fromisoformat`-faithful parser
+ * ({@link cpythonIsoDateTimeToEpochMs}, the same source of truth the schema
+ * validator and approval-receipt verifier use), so anything Python's
+ * `fromisoformat` rejects is rejected here too, while every valid ISO-8601
+ * spelling (extended/basic, `Z` / `±HH:MM` / `±HHMM` / `±HH` offsets, comma or
+ * dot fractional seconds, naive-is-UTC) still parses to the identical instant.
  */
 function parseIso8601(ts: unknown, fieldName: string): number {
   if (typeof ts !== 'string') {
     throw new AttestationError(`${fieldName} must be an ISO 8601 string`);
   }
-  // Python: a naive datetime (no offset) is interpreted as UTC. JS `Date`
-  // parsing of a bare `YYYY-MM-DDTHH:MM:SS` (no offset, no `Z`) is
-  // implementation-defined but V8 treats it as LOCAL time, which would diverge
-  // from Python's UTC interpretation. Normalize a naive form to UTC by appending
-  // `Z` when the string carries no timezone designator, reproducing Python's
-  // `tzinfo is None -> UTC`. A trailing `Z` (or an explicit +/- offset) is left
-  // as-is.
-  const normalized = normalizeIso8601(ts);
-  const ms = Date.parse(normalized);
-  if (Number.isNaN(ms)) {
+  // Python `_parse_iso8601`: `ts.replace("Z", "+00:00") if ts.endswith("Z")
+  // else ts`, then `datetime.fromisoformat(...)`, then naive -> UTC. The shared
+  // strict parser does the `Z -> +00:00` substitution internally and interprets
+  // a naive value as UTC, so passing the raw string reproduces Python exactly --
+  // and, unlike `Date.parse`, it REJECTS any form `fromisoformat` rejects
+  // (RFC-822 / RFC-1123 / locale date spellings), closing the fail-open.
+  const ms = cpythonIsoDateTimeToEpochMs(ts);
+  if (ms === null) {
     throw new AttestationError(
       `${fieldName} is not a valid ISO 8601 timestamp: invalid isoformat string: ${jsRepr(ts)}`,
     );
   }
   return ms;
-}
-
-/**
- * Append a `Z` (UTC designator) to an ISO 8601 string that carries no timezone
- * offset, so JS `Date.parse` treats it as UTC -- matching Python's
- * naive-datetime-is-UTC rule. A string already ending in `Z`, or carrying an
- * explicit `+HH:MM` / `-HH:MM` offset in the time portion, is returned unchanged.
- */
-function normalizeIso8601(ts: string): string {
-  if (ts.endsWith('Z')) return ts;
-  // Look for an explicit offset (+/-) AFTER the date's `T` separator, so a
-  // leading `-` on a negative-year/BC date is not mistaken for an offset.
-  const tIndex = ts.indexOf('T');
-  const timePart = tIndex >= 0 ? ts.slice(tIndex + 1) : ts;
-  if (timePart.includes('+') || timePart.includes('-')) {
-    return ts; // explicit offset present
-  }
-  return `${ts}Z`;
 }
 
 /** A minimal Python-flavored repr of a string for the parse-error detail. */

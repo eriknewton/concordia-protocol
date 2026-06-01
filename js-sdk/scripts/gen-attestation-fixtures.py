@@ -504,6 +504,34 @@ def main() -> None:
         "absolute_naive",
         {"mode": "absolute", "from": "2026-01-01T00:00:00", "until": "2026-02-01T00:00:00"},
     )
+    # Alternate VALID ISO-8601 spellings `fromisoformat` accepts -- the strict
+    # parser must NOT over-reject these legitimate forms (no regression from the
+    # fail-open fix). Explicit +HH:MM offset, +HHMM (no colon) offset, and a
+    # comma fractional-second second all parse to real instants in BOTH runtimes.
+    _vt_norm(
+        "absolute_explicit_offset",
+        {
+            "mode": "absolute",
+            "from": "2026-01-01T00:00:00+00:00",
+            "until": "2026-02-01T00:00:00+00:00",
+        },
+    )
+    _vt_norm(
+        "absolute_offset_no_colon",
+        {
+            "mode": "absolute",
+            "from": "2026-01-01T00:00:00+0000",
+            "until": "2026-02-01T00:00:00+0000",
+        },
+    )
+    _vt_norm(
+        "absolute_comma_fraction",
+        {
+            "mode": "absolute",
+            "from": "2026-01-01T00:00:00,500Z",
+            "until": "2026-02-01T00:00:00Z",
+        },
+    )
 
     vt_error_cases = []
 
@@ -557,6 +585,41 @@ def main() -> None:
     _vt_err(
         "from_not_string",
         {"mode": "absolute", "from": 123, "until": "2026-02-01T00:00:00Z"},
+    )
+    # FAIL-OPEN FIX (2026-06-01): RFC-822 / RFC-1123 / locale date spellings that
+    # JS `Date.parse` ACCEPTS but Python `datetime.fromisoformat` REJECTS with a
+    # ValueError. The strict parser must reject these too (fail-CLOSED, Python
+    # parity) so the TS SDK never honors a `validity_temporal` timestamp the
+    # reference rejects. Each raises the "is not a valid ISO 8601 timestamp:"
+    # prefix; the detail half is implementation-specific and not asserted.
+    _vt_err(
+        "absolute_rfc822_from",
+        {
+            "mode": "absolute",
+            "from": "Mon, 01 Jun 2026 00:00:00 GMT",
+            "until": "2026-07-01T00:00:00Z",
+        },
+    )
+    _vt_err(
+        "absolute_rfc1123_until",
+        {
+            "mode": "absolute",
+            "from": "2026-06-01T00:00:00Z",
+            "until": "Wed, 01 Jul 2026 00:00:00 GMT",
+        },
+    )
+    _vt_err(
+        "relative_locale_month_name",
+        {"mode": "relative", "from": "June 1, 2026", "duration_seconds": 3600},
+    )
+    _vt_err(
+        "window_slash_date_start",
+        {
+            "mode": "window",
+            "start": "2026/06/01",
+            "end": "2026-06-02T00:00:00Z",
+            "duration_seconds": 60,
+        },
     )
 
     # ------------------------------------------------------------------
