@@ -332,3 +332,49 @@ try {
   );
   process.exit(1);
 }
+
+// Schema-validator + approval-receipt parity fixtures. Generated FROM the Python
+// reference (concordia.schema_validator + concordia.approval_receipt) via
+// gen-schema-validator-fixtures.py so every ORDERED error list (validate_message
+// / validate_approval_receipt / validate_fulfillment_attestation, matching
+// CPython jsonschema's iter_errors traversal + message text + json_path), and
+// every ApprovalReceipt verification result (the 7c consumer), comes straight
+// from Python, never hand-authored. Receipts are signed with deterministic seeded
+// Ed25519 keys, so the JS suite verifies the SAME Python signatures with the SAME
+// keys. The generator imports jsonschema + cryptography (the reference's deps);
+// pin python3.12 (the jsonschema version whose message templates the JS port
+// reproduces) unless PYTHON is overridden.
+const SCHEMA_VALIDATOR_GEN = join(
+  SDK_ROOT,
+  'scripts/gen-schema-validator-fixtures.py',
+);
+const SCHEMA_VALIDATOR_DST = join(
+  SDK_ROOT,
+  'tests/fixtures/validation/schema_validator_vectors.json',
+);
+const schemaValidatorPythonBin = process.env.PYTHON ?? 'python3.12';
+try {
+  const out = execFileSync(schemaValidatorPythonBin, [SCHEMA_VALIDATOR_GEN], {
+    cwd: CONCORDIA_ROOT,
+    env: { ...process.env, PYTHONPATH: CONCORDIA_ROOT },
+    encoding: 'utf8',
+  });
+  mkdirSync(dirname(SCHEMA_VALIDATOR_DST), { recursive: true });
+  writeFileSync(SCHEMA_VALIDATOR_DST, out);
+  const parsed = JSON.parse(out);
+  console.log(
+    `Wrote schema-validator parity fixtures from Python: ` +
+      `${parsed.message_cases.length} message, ` +
+      `${parsed.approval_receipt_schema_cases.length} approval-receipt schema, ` +
+      `${parsed.fulfillment_cases.length} fulfillment, ` +
+      `${parsed.verify_cases.length} approval-receipt verify, ` +
+      `${parsed.datetime_format_cases.length} date-time format, ` +
+      `${parsed.datetime_parse_cases.length} date-time parse, ` +
+      `1 deferred-attestation boundary.`,
+  );
+} catch (err) {
+  console.error(
+    `Failed to generate schema-validator fixtures from Python: ${err.message}`,
+  );
+  process.exit(1);
+}
