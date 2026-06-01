@@ -173,13 +173,13 @@
         "references": null,
         "validity_temporal": null
       },
-      "attestation_id": "att_4cd502b1",
-      "timestamp": "2026-05-29T22:25:48Z",
+      "attestation_id": "att_ce420fc4",
+      "timestamp": "2026-06-01T18:02:24Z",
       "expected": {
         "concordia_attestation": "0.1.0",
-        "attestation_id": "att_4cd502b1",
+        "attestation_id": "att_ce420fc4",
         "session_id": "ses_agree_full",
-        "timestamp": "2026-05-29T22:25:48Z",
+        "timestamp": "2026-06-01T18:02:24Z",
         "outcome": {
           "status": "agreed",
           "rounds": 3,
@@ -301,13 +301,13 @@
         "references": null,
         "validity_temporal": null
       },
-      "attestation_id": "att_a3661024",
-      "timestamp": "2026-05-29T22:25:48Z",
+      "attestation_id": "att_8ba38142",
+      "timestamp": "2026-06-01T18:02:24Z",
       "expected": {
         "concordia_attestation": "0.1.0",
-        "attestation_id": "att_a3661024",
+        "attestation_id": "att_8ba38142",
         "session_id": "ses_decline_session",
-        "timestamp": "2026-05-29T22:25:48Z",
+        "timestamp": "2026-06-01T18:02:24Z",
         "outcome": {
           "status": "rejected",
           "rounds": 0,
@@ -461,13 +461,13 @@
         "references": null,
         "validity_temporal": null
       },
-      "attestation_id": "att_201764c5",
-      "timestamp": "2026-05-29T22:25:48Z",
+      "attestation_id": "att_41f87d73",
+      "timestamp": "2026-06-01T18:02:24Z",
       "expected": {
         "concordia_attestation": "0.1.0",
-        "attestation_id": "att_201764c5",
+        "attestation_id": "att_41f87d73",
         "session_id": "ses_partial_keys",
-        "timestamp": "2026-05-29T22:25:48Z",
+        "timestamp": "2026-06-01T18:02:24Z",
         "outcome": {
           "status": "agreed",
           "rounds": 1,
@@ -563,13 +563,13 @@
         "references": null,
         "validity_temporal": null
       },
-      "attestation_id": "att_9595d86c",
-      "timestamp": "2026-05-29T22:25:48Z",
+      "attestation_id": "att_b4b90bed",
+      "timestamp": "2026-06-01T18:02:24Z",
       "expected": {
         "concordia_attestation": "0.1.0",
-        "attestation_id": "att_9595d86c",
+        "attestation_id": "att_b4b90bed",
         "session_id": "ses_no_terms",
-        "timestamp": "2026-05-29T22:25:48Z",
+        "timestamp": "2026-06-01T18:02:24Z",
         "outcome": {
           "status": "expired",
           "rounds": 0,
@@ -741,13 +741,13 @@
           "until": "2026-06-29T00:00:00Z"
         }
       },
-      "attestation_id": "att_4ac351f3",
-      "timestamp": "2026-05-29T22:25:48Z",
+      "attestation_id": "att_c1f850f8",
+      "timestamp": "2026-06-01T18:02:24Z",
       "expected": {
         "concordia_attestation": "0.1.0",
-        "attestation_id": "att_4ac351f3",
+        "attestation_id": "att_c1f850f8",
         "session_id": "ses_with_refs_vt",
-        "timestamp": "2026-05-29T22:25:48Z",
+        "timestamp": "2026-06-01T18:02:24Z",
         "outcome": {
           "status": "agreed",
           "rounds": 1,
@@ -872,6 +872,45 @@
         "from": "2026-01-01T00:00:00",
         "until": "2026-02-01T00:00:00"
       }
+    },
+    {
+      "name": "absolute_explicit_offset",
+      "input": {
+        "mode": "absolute",
+        "from": "2026-01-01T00:00:00+00:00",
+        "until": "2026-02-01T00:00:00+00:00"
+      },
+      "expected": {
+        "mode": "absolute",
+        "from": "2026-01-01T00:00:00+00:00",
+        "until": "2026-02-01T00:00:00+00:00"
+      }
+    },
+    {
+      "name": "absolute_offset_no_colon",
+      "input": {
+        "mode": "absolute",
+        "from": "2026-01-01T00:00:00+0000",
+        "until": "2026-02-01T00:00:00+0000"
+      },
+      "expected": {
+        "mode": "absolute",
+        "from": "2026-01-01T00:00:00+0000",
+        "until": "2026-02-01T00:00:00+0000"
+      }
+    },
+    {
+      "name": "absolute_comma_fraction",
+      "input": {
+        "mode": "absolute",
+        "from": "2026-01-01T00:00:00,500Z",
+        "until": "2026-02-01T00:00:00Z"
+      },
+      "expected": {
+        "mode": "absolute",
+        "from": "2026-01-01T00:00:00,500Z",
+        "until": "2026-02-01T00:00:00Z"
+      }
     }
   ],
   "vt_error_cases": [
@@ -981,6 +1020,43 @@
         "until": "2026-02-01T00:00:00Z"
       },
       "expected_error": "validity_temporal.from must be an ISO 8601 string"
+    },
+    {
+      "name": "absolute_rfc822_from",
+      "input": {
+        "mode": "absolute",
+        "from": "Mon, 01 Jun 2026 00:00:00 GMT",
+        "until": "2026-07-01T00:00:00Z"
+      },
+      "expected_error": "validity_temporal.from is not a valid ISO 8601 timestamp: Invalid isoformat string: 'Mon, 01 Jun 2026 00:00:00 GMT'"
+    },
+    {
+      "name": "absolute_rfc1123_until",
+      "input": {
+        "mode": "absolute",
+        "from": "2026-06-01T00:00:00Z",
+        "until": "Wed, 01 Jul 2026 00:00:00 GMT"
+      },
+      "expected_error": "validity_temporal.until is not a valid ISO 8601 timestamp: Invalid isoformat string: 'Wed, 01 Jul 2026 00:00:00 GMT'"
+    },
+    {
+      "name": "relative_locale_month_name",
+      "input": {
+        "mode": "relative",
+        "from": "June 1, 2026",
+        "duration_seconds": 3600
+      },
+      "expected_error": "validity_temporal.from is not a valid ISO 8601 timestamp: Invalid isoformat string: 'June 1, 2026'"
+    },
+    {
+      "name": "window_slash_date_start",
+      "input": {
+        "mode": "window",
+        "start": "2026/06/01",
+        "end": "2026-06-02T00:00:00Z",
+        "duration_seconds": 60
+      },
+      "expected_error": "validity_temporal.start is not a valid ISO 8601 timestamp: Invalid isoformat string: '2026/06/01'"
     }
   ],
   "valid_now_cases": [

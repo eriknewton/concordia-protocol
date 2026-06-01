@@ -575,3 +575,95 @@ describe('attestation constants parity', () => {
     expect(ATTESTATION_VERSION).toBe(fixtures.attestation_version);
   });
 });
+
+// ---------------------------------------------------------------------------
+// FAIL-OPEN FIX (2026-06-01): attestation timestamp parse must be fail-CLOSED,
+// matching Python `datetime.fromisoformat`, NOT lenient `Date.parse`.
+//
+// The bug: `parseIso8601` normalized the string and handed it to JS
+// `Date.parse`, which accepts RFC-822 / RFC-1123 / locale date spellings (e.g.
+// `"Mon, 01 Jun 2026 00:00:00 GMT"`, `"June 1, 2026"`, `"2026/06/01"`). Python's
+// `fromisoformat` REJECTS all of those with a ValueError. That was a fail-OPEN:
+// the TS SDK would HONOR a `validity_temporal` timestamp the Python reference
+// rejects. The fix delegates to the shared CPython-3.12-faithful parser, so
+// anything Python rejects is rejected here too -- while every valid ISO-8601
+// spelling still parses to the identical instant (no over-rejection).
+//
+// These cases pin the behavior directly (independent of the fixture-driven
+// vt_error_cases / vt_norm_cases above) so a regression to `Date.parse` fails
+// loudly here. The temporal validators are the real attack surface: a forged
+// attestation reaches `parseIso8601` through `validateValidityTemporal`.
+// ---------------------------------------------------------------------------
+describe('attestation timestamp parse is fail-closed (Python parity, not Date.parse)', () => {
+  // Forms `Date.parse` ACCEPTS but Python `fromisoformat` REJECTS. Each MUST now
+  // raise an AttestationError with the stable "is not a valid ISO 8601
+  // timestamp:" prefix (the parser-detail half is implementation-specific).
+  const failOpenForms = [
+    'Mon, 01 Jun 2026 00:00:00 GMT', // RFC-822 / RFC-1123
+    'Wed, 01 Jul 2026 00:00:00 GMT',
+    'June 1, 2026', // locale long-form
+    '2026/06/01', // slash-separated date
+    'Jun 1 2026',
+  ];
+  for (const ts of failOpenForms) {
+    it(`rejects RFC-822 / locale form "${ts}" (was honored via Date.parse)`, () => {
+      // Sanity: this is exactly the leniency that made the old code fail open --
+      // Date.parse does NOT return NaN for these.
+      expect(Number.isNaN(Date.parse(ts))).toBe(false);
+      // The fix: the temporal validator now rejects it, matching Python.
+      const vt = {
+        mode: 'absolute',
+        from: ts,
+        until: '2027-01-01T00:00:00Z',
+      };
+      expect(() => validateValidityTemporal(vt)).toThrow(AttestationError);
+      expect(() => validateValidityTemporal(vt)).toThrow(
+        /validity_temporal\.from is not a valid ISO 8601 timestamp:/,
+      );
+    });
+  }
+
+  // Over-rejection guard: every VALID ISO-8601 spelling Python's fromisoformat
+  // accepts must STILL parse (no legitimate attestation is newly rejected). We
+  // assert the validator accepts the window and the instant ordering is right.
+  const validForms: Array<{ from: string; until: string }> = [
+    { from: '2026-06-01T00:00:00Z', until: '2026-07-01T00:00:00Z' }, // Z
+    { from: '2026-06-01T00:00:00+00:00', until: '2026-07-01T00:00:00+00:00' }, // ±HH:MM
+    { from: '2026-06-01T00:00:00+0000', until: '2026-07-01T00:00:00+0000' }, // ±HHMM
+    { from: '2026-06-01T00:00:00', until: '2026-07-01T00:00:00' }, // naive -> UTC
+    { from: '2026-06-01T00:00:00.500Z', until: '2026-07-01T00:00:00Z' }, // dot fraction
+    { from: '2026-06-01T00:00:00,500Z', until: '2026-07-01T00:00:00Z' }, // comma fraction
+    { from: '2026-06-01T00:00:00-05:00', until: '2026-07-01T00:00:00-05:00' }, // negative offset
+  ];
+  for (const { from, until } of validForms) {
+    it(`still accepts valid ISO-8601 form "${from}" (no over-rejection)`, () => {
+      const out = validateValidityTemporal({ mode: 'absolute', from, until });
+      expect(out).toEqual({ mode: 'absolute', from, until });
+    });
+  }
+
+  it('isValidNow rejects an RFC-822 timestamp too (same parser, both paths)', () => {
+    const att = {
+      validity_temporal: {
+        mode: 'absolute',
+        from: 'Mon, 01 Jun 2026 00:00:00 GMT',
+        until: '2027-01-01T00:00:00Z',
+      },
+    };
+    expect(() => isValidNow(att, Date.UTC(2026, 5, 15))).toThrow(
+      AttestationError,
+    );
+  });
+
+  it('isValidNow honors a valid naive-is-UTC absolute window unchanged', () => {
+    const att = {
+      validity_temporal: {
+        mode: 'absolute',
+        from: '2026-06-01T00:00:00', // naive -> UTC
+        until: '2026-07-01T00:00:00',
+      },
+    };
+    expect(isValidNow(att, Date.UTC(2026, 5, 15))).toBe(true); // inside
+    expect(isValidNow(att, Date.UTC(2026, 7, 1))).toBe(false); // after
+  });
+});
