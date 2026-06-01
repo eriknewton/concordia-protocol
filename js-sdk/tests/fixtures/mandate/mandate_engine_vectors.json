@@ -1539,6 +1539,64 @@
       ]
     }
   ],
+  "naive_temporal_cases": [
+    {
+      "name": "windowed_naive_not_before",
+      "validity": {
+        "mode": "windowed",
+        "not_before": "2026-05-14T00:00:00",
+        "not_after": "2126-06-14T00:00:00Z"
+      },
+      "now": "2026-06-01T00:00:00Z",
+      "python_raises": {
+        "type": "TypeError",
+        "message": "can't compare offset-naive and offset-aware datetimes"
+      },
+      "ts_valid": false
+    },
+    {
+      "name": "windowed_naive_not_after",
+      "validity": {
+        "mode": "windowed",
+        "not_before": "2026-05-14T00:00:00Z",
+        "not_after": "2126-06-14T00:00:00"
+      },
+      "now": "2026-06-01T00:00:00Z",
+      "python_raises": {
+        "type": "TypeError",
+        "message": "can't compare offset-naive and offset-aware datetimes"
+      },
+      "ts_valid": false
+    },
+    {
+      "name": "windowed_naive_both",
+      "validity": {
+        "mode": "windowed",
+        "not_before": "2026-05-14T00:00:00",
+        "not_after": "2126-06-14T00:00:00"
+      },
+      "now": "2026-06-01T00:00:00Z",
+      "python_raises": {
+        "type": "TypeError",
+        "message": "can't compare offset-naive and offset-aware datetimes"
+      },
+      "ts_valid": false
+    },
+    {
+      "name": "windowed_naive_space_sep",
+      "validity": {
+        "mode": "windowed",
+        "not_before": "2026-05-14 00:00:00",
+        "not_after": "2126-06-14T00:00:00Z"
+      },
+      "now": "2026-06-01T00:00:00Z",
+      "python_raises": {
+        "type": "TypeError",
+        "message": "can't compare offset-naive and offset-aware datetimes"
+      },
+      "ts_valid": false
+    }
+  ],
   "chain_cases": [
     {
       "name": "valid_single_link",
@@ -2682,6 +2740,33 @@
       }
     }
   ],
+  "naive_verify_case": {
+    "_comment": "Python verify_mandate RAISES TypeError on the naive-vs-aware datetime comparison inside check_temporal_validity (uncaught: the guard only catches ValueError), so the mandate is NOT honored. TS must fail closed: valid False, temporal_validity False.",
+    "mandate_dict": {
+      "mandate_id": "urn:concordia:mandate:naive1",
+      "issuer": "did:web:issuer",
+      "subject": "did:web:subject",
+      "issued_at": "2026-05-14T00:00:00Z",
+      "algorithm": "EdDSA",
+      "status": "active",
+      "validity": {
+        "mode": "windowed",
+        "not_before": "2026-05-14T00:00:00",
+        "not_after": "2126-06-14T00:00:00Z"
+      },
+      "constraints": {
+        "k": "v"
+      },
+      "signature": "nlXqyNRhJa078OwFrjTPgmm6pgcymJXFOQcwtrKuBpEW9CJLcjEGvBIzLWQXZ_YUH4jkb8E9lNU1Oes-3m86BQ=="
+    },
+    "issuer_key": "issuer",
+    "now": "2026-06-01T00:00:00Z",
+    "python_raises": {
+      "type": "TypeError",
+      "message": "can't compare offset-naive and offset-aware datetimes"
+    },
+    "ts_valid": false
+  },
   "deferred_revocation_case": {
     "_comment": "Python verify_mandate with check_revocation_status=True + this revocation_endpoint calls check_revocation (urllib GET). The JS engine DEFERS the network fetch: it accepts an injectable revocationChecker hook; with none injected and a fetch required it raises MandateValidationError('revocation check requires an injected revocationChecker; network fetch is deferred'). A future PR ports the urllib fetch. The skipped JS test pins this boundary.",
     "mandate_dict": {

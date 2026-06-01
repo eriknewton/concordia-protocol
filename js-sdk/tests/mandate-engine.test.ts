@@ -78,6 +78,22 @@ interface TemporalCase {
   valid: boolean;
   errors: string[];
 }
+interface NaiveTemporalCase {
+  name: string;
+  validity: Record<string, unknown>;
+  now: string;
+  // Python RAISES (TypeError) rather than returning; recorded for the contract.
+  python_raises: { type: string; message: string };
+  ts_valid: boolean;
+}
+interface NaiveVerifyCase {
+  _comment: string;
+  mandate_dict: Record<string, unknown>;
+  issuer_key: string;
+  now: string;
+  python_raises: { type: string; message: string };
+  ts_valid: boolean;
+}
 interface ChainCase {
   name: string;
   chain: Record<string, unknown>[];
@@ -110,8 +126,10 @@ interface EngineFixtures {
   scope_cases: ScopeCase[];
   compose_cases: ComposeCase[];
   temporal_cases: TemporalCase[];
+  naive_temporal_cases: NaiveTemporalCase[];
   chain_cases: ChainCase[];
   verify_cases: VerifyCase[];
+  naive_verify_case: NaiveVerifyCase;
   deferred_revocation_case: {
     _comment: string;
     mandate_dict: Record<string, unknown>;
@@ -306,6 +324,69 @@ describe('checkTemporalValidity - parity with Python check_temporal_validity', (
 });
 
 // ---------------------------------------------------------------------------
+// check_temporal_validity - tz-NAIVE not_before/not_after must FAIL CLOSED.
+//
+// Python's `check_temporal_validity` parses a naive timestamp successfully but
+// then raises `TypeError` comparing it against the tz-aware `now`; the
+// `except ValueError` does NOT catch it, so the mandate is NOT honored. There
+// is no Python (valid, errors) tuple to byte-match -- the fixture records the
+// raised exception. TS has no uncaught-exception-aborts idiom here; the
+// faithful behavioral mirror is to REJECT (valid=false), which is what the
+// fix does. The pre-fix code appended a synthetic `"Z"` and HONORED the naive
+// window -- the fail-OPEN this closes.
+// ---------------------------------------------------------------------------
+
+describe('checkTemporalValidity - tz-naive timestamps fail closed (Python raises TypeError)', () => {
+  for (const c of fixtures.naive_temporal_cases) {
+    it(`case ${c.name}`, () => {
+      // Confirm the fixture pins Python's TypeError, the behavior we mirror.
+      expect(c.python_raises.type).toBe('TypeError');
+      const vw: ValidityWindow = validityWindowFromDict(c.validity);
+      const [valid, errors] = checkTemporalValidity(vw, {
+        now: epochMs(c.now),
+      });
+      // TS must NOT honor a window Python refuses to honor.
+      expect(valid).toBe(false);
+      expect(c.ts_valid).toBe(false);
+      // The rejection names the tz-naive problem (it is a valid isoformat, so
+      // it must NOT be mislabeled as an "Invalid timestamp format").
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain('Timezone-naive timestamp not permitted');
+    });
+  }
+
+  it('valid offset / Z timestamps still verify unchanged', () => {
+    // Z form.
+    const z = makeValidityWindow({
+      mode: TemporalMode.WINDOWED,
+      notBefore: '2026-05-14T00:00:00Z',
+      notAfter: '2126-06-14T00:00:00Z',
+    });
+    expect(
+      checkTemporalValidity(z, { now: epochMs('2026-06-01T00:00:00Z') })[0],
+    ).toBe(true);
+    // Explicit +00:00 offset.
+    const off = makeValidityWindow({
+      mode: TemporalMode.WINDOWED,
+      notBefore: '2026-05-14T00:00:00+00:00',
+      notAfter: '2126-06-14T00:00:00+00:00',
+    });
+    expect(
+      checkTemporalValidity(off, { now: epochMs('2026-06-01T00:00:00Z') })[0],
+    ).toBe(true);
+    // Non-UTC offset (still tz-aware -> honored).
+    const tokyo = makeValidityWindow({
+      mode: TemporalMode.WINDOWED,
+      notBefore: '2026-05-14T09:00:00+09:00',
+      notAfter: '2126-06-14T00:00:00Z',
+    });
+    expect(
+      checkTemporalValidity(tokyo, { now: epochMs('2026-06-01T00:00:00Z') })[0],
+    ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // verify_delegation_chain.
 // ---------------------------------------------------------------------------
 
@@ -368,6 +449,37 @@ describe('verifyMandate - end-to-end parity with Python verify_mandate', () => {
       );
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// verifyMandate end-to-end - a signed mandate with a tz-NAIVE not_before must
+// fail CLOSED. Python verify_mandate reaches check_temporal_validity, which
+// raises TypeError on the naive-vs-aware comparison (uncaught), so the mandate
+// is NOT honored. TS must report it not-honored (valid false, temporal_validity
+// false) -- never HONOR the naive window. This is the closed fail-open.
+// ---------------------------------------------------------------------------
+
+describe('verifyMandate - tz-naive temporal field fails closed (Python raises)', () => {
+  it('does not honor a signed mandate whose not_before is tz-naive', () => {
+    const c = fixtures.naive_verify_case;
+    expect(c.python_raises.type).toBe('TypeError');
+    const issuerKey = publicKeyBytesFor(c.issuer_key);
+    const result = verifyMandate(c.mandate_dict, issuerKey, {
+      now: epochMs(c.now),
+      requireBindingContext: true,
+    });
+    expect(result.valid).toBe(false);
+    expect(c.ts_valid).toBe(false);
+    expect(result.checks.temporal_validity).toBe(false);
+    // The signature still verifies (the mandate is genuinely signed); the
+    // rejection is specifically temporal, naming the tz-naive cause.
+    expect(result.checks.issuer_signature).toBe(true);
+    expect(
+      result.errors.some((e) =>
+        e.includes('Timezone-naive timestamp not permitted'),
+      ),
+    ).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
