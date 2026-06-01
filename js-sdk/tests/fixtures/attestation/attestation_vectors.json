@@ -1013,6 +1013,26 @@
       "expected_error": "validity_temporal[window].duration_seconds exceeds the window span"
     },
     {
+      "name": "window_duration_exceeds_span_subms",
+      "input": {
+        "mode": "window",
+        "start": "2026-06-01T00:00:00.000999Z",
+        "end": "2026-06-01T00:00:01.000000Z",
+        "duration_seconds": 1
+      },
+      "expected_error": "validity_temporal[window].duration_seconds exceeds the window span"
+    },
+    {
+      "name": "window_duration_exceeds_span_subms_comma",
+      "input": {
+        "mode": "window",
+        "start": "2026-06-01T00:00:00,000999Z",
+        "end": "2026-06-01T00:00:01.000000Z",
+        "duration_seconds": 1
+      },
+      "expected_error": "validity_temporal[window].duration_seconds exceeds the window span"
+    },
+    {
       "name": "from_not_string",
       "input": {
         "mode": "absolute",

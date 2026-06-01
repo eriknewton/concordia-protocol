@@ -173,6 +173,60 @@ export function cpythonIsoDateTimeToEpochMs(value: string): number | null {
 }
 
 /**
+ * Microsecond-precision sibling of {@link cpythonIsoDateTimeToEpochMs}, for the
+ * one place that needs sub-millisecond resolution: the attestation
+ * `validity_temporal[window]` SPAN comparison. Python computes that span as
+ * `(end - start).total_seconds()`, which carries the MICROSECOND precision a
+ * Python `datetime` holds. The ms function FLOORS the fractional second to whole
+ * milliseconds (correct for the coarse "is it past `expires_at`" comparisons it
+ * feeds), but reusing those floored ms for the window span rounds a
+ * sub-millisecond span UP to the next whole ms -- INFLATING the apparent span and
+ * letting the validator ACCEPT a window the Python reference REJECTS (a
+ * fail-OPEN; e.g. `...00.000999Z` -> `...01.000000Z` is a 0.999001s span that
+ * floors to a flat 1.000s, so `duration_seconds=1` wrongly passes `1 > 1.0`).
+ * Returning microseconds lets the caller reproduce Python's comparison exactly.
+ *
+ * Same parse, same `Z`->`+00:00` substitution, same naive-is-UTC and zero-offset
+ * quirks as the ms function; the ONLY differences are (a) the fractional second
+ * is carried to full microsecond resolution (no `Math.floor(microsecond / 1000)`)
+ * and (b) the result is in microseconds. Because the offset is snapped to integer
+ * microseconds here, this function does NOT carry the ms function's documented
+ * sub-microsecond-offset residual -- at microsecond granularity it is exact.
+ *
+ * Returns a `bigint` so the result is EXACT across the entire CPython datetime
+ * range (year 1..9999). Epoch microseconds exceed `Number.MAX_SAFE_INTEGER`
+ * (2^53 - 1) beyond ~year 2255 (and below ~year 1685), so a `number` would
+ * silently lose the low microsecond bits there. An earlier draft returned `null`
+ * past the safe range and let the caller fall back to the coarse-ms span -- but
+ * that fallback REOPENED the very fail-open this function exists to close (a
+ * valid far-future window with a sub-millisecond span would be over-accepted,
+ * confirmed against python3.12). `bigint` removes the fallback entirely: the
+ * caller compares the exact bigint span against `duration_seconds * 1_000_000`
+ * as INTEGERS (no float division), so no rounding can reopen the fail-open at any
+ * datetime range. Returns `null` ONLY on an input the shared parser rejects.
+ */
+export function cpythonIsoDateTimeToEpochMicros(value: string): bigint | null {
+  const parsed = parseCpythonIsoformat(value.replace(/Z/g, '+00:00'));
+  if (parsed === null) {
+    return null;
+  }
+  const EPOCH_ORDINAL = 719163n; // ymdToOrdinal(1970, 1, 1)
+  const dayMicros =
+    (BigInt(ymdToOrdinal(parsed.year, parsed.month, parsed.day)) - EPOCH_ORDINAL) *
+    86_400_000_000n;
+  const timeMicros =
+    BigInt(parsed.hour) * 3_600_000_000n +
+    BigInt(parsed.minute) * 60_000_000n +
+    BigInt(parsed.second) * 1_000_000n +
+    BigInt(parsed.microsecond);
+  // CPython's UTC offset is a microsecond-resolution timedelta; snap to integer
+  // microseconds (Math.round clears the float dust the seconds->micros scale can
+  // leave on a fractional-second offset) before widening to bigint.
+  const offsetMicros = BigInt(Math.round((parsed.offsetSeconds ?? 0) * 1_000_000));
+  return dayMicros + timeMicros - offsetMicros;
+}
+
+/**
  * CPython `datetime.max` as a UTC epoch-ms ceiling (floored to whole ms):
  * `9999-12-31T23:59:59.999999+00:00`. Verified against `python3` (see the
  * overflow vectors in gen-schema-validator-fixtures.py).
