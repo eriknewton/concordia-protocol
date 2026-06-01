@@ -297,6 +297,71 @@ describe('Predicate - sign/verify round-trip with a fresh key', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// FINDING #3 (fail-OPEN, fixed): year-9999 expiry overflow in the predicate
+// verifier. A year-9999 (or year-0001) expires_at/issued_at with a tz offset
+// that pushes the UTC instant past datetime.max/min parses through CPython
+// `fromisoformat`, but `_parse_datetime`'s `.astimezone(timezone.utc)` raises
+// OverflowError. Python's predicate `_schema_errors` wraps that in try/except
+// and appends `str(exc)` == `date value out of range`, so such a predicate FAILS
+// the schema check (verify -> schema_invalid) AND `sign_predicate` /
+// `validate_predicate_for_write` raise. The TS verifier used a guard-less
+// `Date.parse`, returned a finite far-future ms, and reported the predicate
+// VALID -- a fail-OPEN vs Python. The shared CPython-faithful parser detects the
+// overflow (returns null) and we throw the same `date value out of range` text.
+// Confirmed against python3.12 (sign + verify both reject; failure_reason
+// schema_invalid; errors == ["date value out of range"]).
+describe('Predicate - Finding #3: year-9999 expiry overflow (fail-closed)', () => {
+  const OVERFLOW = '9999-12-31T23:59:59-14:00'; // CPython astimezone OverflowError
+
+  it('control: a far-future in-range expiry verifies (baseline)', () => {
+    const kp = KeyPair.generate();
+    const signed = signPredicate(
+      baseSigningInput({ issuer: 'did:web:issuer.test#key-1' }),
+      kp,
+    );
+    const result = verifyPredicate(signed);
+    expect(result.valid).toBe(true);
+  });
+
+  it('verifyPredicate rejects an overflow expires_at as schema_invalid', () => {
+    // A signature-less raw dict: the schema check runs first, so the overflow
+    // expiry is caught at schema (matching Python's failure_reason ordering)
+    // before the signature check is ever reached.
+    const result = verifyPredicate(baseSigningInput({ expires_at: OVERFLOW }));
+    expect(result.valid).toBe(false);
+    expect(result.failure_reason).toBe('schema_invalid');
+    expect(result.errors).toContain('date value out of range');
+  });
+
+  it('verifyPredicate rejects an overflow issued_at as schema_invalid', () => {
+    const result = verifyPredicate(
+      baseSigningInput({ issued_at: '0001-01-01T00:00:00+23:59' }),
+    );
+    expect(result.valid).toBe(false);
+    expect(result.failure_reason).toBe('schema_invalid');
+    expect(result.errors).toContain('date value out of range');
+  });
+
+  it('validatePredicateForWrite throws on an overflow expiry (sign path)', () => {
+    let thrown: unknown;
+    try {
+      validatePredicateForWrite(baseSigningInput({ expires_at: OVERFLOW }));
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(PredicateValidationError);
+    expect((thrown as Error).message).toContain('date value out of range');
+  });
+
+  it('signPredicate refuses to sign an overflow-expiry predicate, matching Python', () => {
+    const kp = KeyPair.generate();
+    expect(() =>
+      signPredicate(baseSigningInput({ expires_at: OVERFLOW }), kp),
+    ).toThrow(PredicateValidationError);
+  });
+});
+
 // A minimal valid predicate-signing input, mirroring the generator's
 // `_base_predicate`, used to inject malformed condition / metadata values.
 function baseSigningInput(

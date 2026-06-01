@@ -34,6 +34,7 @@
 import { canonicalizePredicate } from '../canonical/canonicalize.js';
 import { sign, verify, KeyPair } from '../crypto/signing.js';
 import { toBase64Url, fromBase64Url } from '../crypto/base64url.js';
+import { cpythonIsoDateTimeToEpochMs } from '../internal/iso-datetime.js';
 import { validateReference } from './references.js';
 import { validateConditionForProfile } from './profiles.js';
 
@@ -388,6 +389,23 @@ function fromIsoformatError(s: string): string | null {
  * string"` (from `_parse_datetime`); a malformed string raises CPython's exact
  * `datetime.fromisoformat` message (see {@link fromIsoformatError}), NOT a
  * generic placeholder, because `_schema_errors` surfaces that text in `errors`.
+ *
+ * FAIL-CLOSED YEAR-9999 OVERFLOW (2026-05-30 finding #3, predicate caller).
+ * Python's predicate `_parse_datetime` is `fromisoformat(...).astimezone(
+ * timezone.utc)`. A year-9999 (or year-0001) civil time with a tz offset that
+ * pushes the UTC instant past `datetime.max` / before `datetime.min` parses
+ * through `fromisoformat` (so `fromIsoformatError` returns null) but raises
+ * `OverflowError` at `astimezone`. The predicate `_schema_errors` wraps that
+ * call in `try/except Exception` and appends `str(exc)` -- the literal text
+ * `date value out of range` -- so such a predicate FAILS Python's schema check
+ * (failure_reason `schema_invalid`) and is NOT honored. `Date.parse` has no such
+ * ceiling and returns a finite far-future ms, which made the TS verifier mark
+ * lifecycle valid and return `valid: true` -- a fail-OPEN relative to Python.
+ * We detect the overflow with the shared CPython-faithful parser (it returns
+ * null on exactly the inputs `astimezone` overflows on) and throw the SAME
+ * `date value out of range` text so the schema error list matches Python
+ * byte-for-byte. The non-overflow ms value still comes from the existing
+ * `Date.parse` path, preserving all prior epoch-ms parity. Reject, not clamp.
  */
 function parseDatetimeMs(value: unknown, fieldName: string): number {
   if (typeof value !== 'string') {
@@ -403,9 +421,18 @@ function parseDatetimeMs(value: unknown, fieldName: string): number {
   if (isoError !== null) {
     throw new PredicateValidationError(isoError);
   }
-  // The string is a valid CPython isoformat. For the epoch-ms comparison,
-  // append 'Z' when there is no explicit offset so JS parses it as UTC (Python
-  // forces naive timestamps to UTC in `_parse_datetime`).
+  // The string is a structurally-valid CPython isoformat. CPython's
+  // `_parse_datetime` then does `.astimezone(timezone.utc)`, which raises
+  // `OverflowError: date value out of range` when the offset pushes the UTC
+  // instant out of `[datetime.min, datetime.max]`. The shared guarded parser
+  // returns null on exactly those inputs; mirror Python's raise as the same
+  // schema-error text (fail-closed: the predicate is rejected, never honored).
+  if (cpythonIsoDateTimeToEpochMs(s) === null) {
+    throw new PredicateValidationError('date value out of range');
+  }
+  // For the epoch-ms comparison, append 'Z' when there is no explicit offset so
+  // JS parses it as UTC (Python forces naive timestamps to UTC in
+  // `_parse_datetime`).
   let forParse = s;
   const hasOffset = /[+-]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?$/.test(forParse);
   if (!hasOffset) {
