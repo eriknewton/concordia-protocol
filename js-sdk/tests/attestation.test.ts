@@ -667,3 +667,133 @@ describe('attestation timestamp parse is fail-closed (Python parity, not Date.pa
     expect(isValidNow(att, Date.UTC(2026, 7, 1))).toBe(false); // after
   });
 });
+
+// ---------------------------------------------------------------------------
+// FAIL-OPEN FIX (2026-06-01): validity_temporal[window] span comparison must be
+// MICROSECOND-precise, matching Python `(end - start).total_seconds()`, NOT a
+// whole-millisecond floor.
+//
+// The residual: `parseIso8601` floors the fractional second to whole ms (correct
+// for the coarse ordering/expiry comparisons it feeds). Reusing those floored ms
+// for the window SPAN rounded a sub-millisecond span UP to the next ms -- e.g.
+// start=...00.000999Z / end=...01.000000Z is a 0.999001s span that floors to a
+// flat 1.000s, so duration_seconds=1 wrongly passed `1 > 1.0`. Python compares at
+// microsecond precision and REJECTS (`1 > 0.999001`). This was pre-existing on
+// main (the dot-fraction form already failed open under the old `Date.parse`
+// code) and was explicitly out of scope for PR #43 (the RFC-822 fail-open). The
+// fix recomputes the span via `cpythonIsoDateTimeToEpochMicros`.
+//
+// These cases pin the behavior directly (independent of the fixture-driven
+// vt_error_cases / vt_norm_cases) so a regression to the floored-ms span fails
+// loudly. The comma-fraction spelling has identical behavior.
+// ---------------------------------------------------------------------------
+describe('validity_temporal[window] span is microsecond-precise (Python parity)', () => {
+  // Sub-millisecond spans (0.999001s real) that Python REJECTS vs
+  // duration_seconds=1, but a whole-ms floor (span -> 1.000s) would ACCEPT.
+  const subMsRejects: Array<{ name: string; start: string; end: string }> = [
+    {
+      name: 'dot fraction',
+      start: '2026-06-01T00:00:00.000999Z',
+      end: '2026-06-01T00:00:01.000000Z',
+    },
+    {
+      name: 'comma fraction',
+      start: '2026-06-01T00:00:00,000999Z',
+      end: '2026-06-01T00:00:01.000000Z',
+    },
+    {
+      // Past the JS safe-integer microsecond range (~year 2255). An earlier draft
+      // of the micros parser returned null here and the caller fell back to the
+      // coarse-ms span, REOPENING this exact fail-open for a valid far-future
+      // window (confirmed vs python3.12: span 0.999001). The bigint parser is
+      // exact across year 1..9999, so this is still rejected vs duration_seconds=1.
+      name: 'far-future dot fraction (beyond safe-micros range)',
+      start: '2256-01-01T00:00:00.000999Z',
+      end: '2256-01-01T00:00:01.000000Z',
+    },
+  ];
+  for (const { name, start, end } of subMsRejects) {
+    it(`rejects a 0.999001s span vs duration_seconds=1 (${name})`, () => {
+      const vt = { mode: 'window', start, end, duration_seconds: 1 };
+      expect(() => validateValidityTemporal(vt)).toThrow(AttestationError);
+      expect(() => validateValidityTemporal(vt)).toThrow(
+        /validity_temporal\[window\]\.duration_seconds exceeds the window span/,
+      );
+    });
+  }
+
+  // Over-rejection guard: a span that is EXACTLY duration_seconds (or larger),
+  // including with fractional-second endpoints, must STILL accept -- Python's
+  // `1 > 1.0` is false. The micros fix must not newly reject any of these.
+  const accepts: Array<{
+    name: string;
+    start: string;
+    end: string;
+    duration_seconds: number;
+  }> = [
+    {
+      name: 'exactly 1s',
+      start: '2026-06-01T00:00:00.000000Z',
+      end: '2026-06-01T00:00:01.000000Z',
+      duration_seconds: 1,
+    },
+    {
+      name: 'exactly 2s with fractional endpoints',
+      start: '2026-06-01T00:00:00.250000Z',
+      end: '2026-06-01T00:00:02.250000Z',
+      duration_seconds: 2,
+    },
+    {
+      name: 'span comfortably larger than duration',
+      start: '2026-06-01T00:00:00.000999Z',
+      end: '2026-06-01T00:00:02.000000Z',
+      duration_seconds: 1,
+    },
+    {
+      // Far-future valid window (beyond the safe-micros range) must NOT be
+      // over-rejected: the bigint span is exactly 1.0s because the huge absolute
+      // epoch-microseconds cancel in the difference.
+      name: 'far-future exactly 1s (beyond safe-micros range)',
+      start: '2256-01-01T00:00:00.000000Z',
+      end: '2256-01-01T00:00:01.000000Z',
+      duration_seconds: 1,
+    },
+  ];
+  for (const { name, start, end, duration_seconds } of accepts) {
+    it(`still accepts a span >= duration_seconds (${name})`, () => {
+      expect(
+        validateValidityTemporal({ mode: 'window', start, end, duration_seconds }),
+      ).toEqual({ mode: 'window', start, end, duration_seconds });
+    });
+  }
+
+  // Full-range edge: a near year-1..year-9999 span. The delta is ~3.15e17 micros,
+  // far past Number.MAX_SAFE_INTEGER, so narrowing the bigint delta to a Number
+  // before dividing rounds it differently than Python's total_seconds()
+  // (315537897599.99994) and would ACCEPT duration_seconds=315537897600 -- a
+  // fail-open. The integer comparison (duration * 1e6 micros vs the bigint span)
+  // rejects exactly, matching python3.12.
+  it('rejects a near-full-range span just under an integer-second duration', () => {
+    const vt = {
+      mode: 'window',
+      start: '0001-01-01T00:00:00.000000Z',
+      end: '9999-12-31T23:59:59.999968Z',
+      duration_seconds: 315537897600,
+    };
+    expect(() => validateValidityTemporal(vt)).toThrow(
+      /validity_temporal\[window\]\.duration_seconds exceeds the window span/,
+    );
+  });
+
+  // ...and must NOT over-reject a huge valid window: the same ~10000-year span
+  // trivially contains a 1-second duration.
+  it('accepts a near-full-range span with a small duration (no over-rejection)', () => {
+    const vt = {
+      mode: 'window',
+      start: '0001-01-01T00:00:00.000000Z',
+      end: '9999-12-31T23:59:59.999968Z',
+      duration_seconds: 1,
+    };
+    expect(validateValidityTemporal(vt)).toEqual(vt);
+  });
+});

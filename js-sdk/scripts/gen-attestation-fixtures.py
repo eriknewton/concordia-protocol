@@ -582,6 +582,31 @@ def main() -> None:
             "duration_seconds": 7200,
         },
     )
+    # SUB-MILLISECOND span fail-open (fixed 2026-06-01; residual left out of scope
+    # by the PR #43 RFC-822 fix). The real span is 0.999001s, so Python compares
+    # `1 > (end - start).total_seconds()` == `1 > 0.999001` -> True -> REJECT. A TS
+    # port that FLOORS both endpoints to whole epoch ms reads a flat 1.000s span
+    # and wrongly ACCEPTS (`1 > 1.0` is False). The fix recomputes the window span
+    # at microsecond precision (cpythonIsoDateTimeToEpochMicros). These two cases
+    # pin the dot- and comma-fraction spellings -- both reject identically here.
+    _vt_err(
+        "window_duration_exceeds_span_subms",
+        {
+            "mode": "window",
+            "start": "2026-06-01T00:00:00.000999Z",  # 999 microseconds
+            "end": "2026-06-01T00:00:01.000000Z",
+            "duration_seconds": 1,  # 0.999001s real span < 1s
+        },
+    )
+    _vt_err(
+        "window_duration_exceeds_span_subms_comma",
+        {
+            "mode": "window",
+            "start": "2026-06-01T00:00:00,000999Z",  # comma fractional spelling
+            "end": "2026-06-01T00:00:01.000000Z",
+            "duration_seconds": 1,
+        },
+    )
     _vt_err(
         "from_not_string",
         {"mode": "absolute", "from": 123, "until": "2026-02-01T00:00:00Z"},

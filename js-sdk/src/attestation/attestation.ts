@@ -53,7 +53,10 @@ import { createHash } from 'node:crypto';
 
 import { canonicalizeJcs } from '../canonical/canonicalize.js';
 import { sign, KeyPair } from '../crypto/signing.js';
-import { cpythonIsoDateTimeToEpochMs } from '../internal/iso-datetime.js';
+import {
+  cpythonIsoDateTimeToEpochMs,
+  cpythonIsoDateTimeToEpochMicros,
+} from '../internal/iso-datetime.js';
 import {
   OutcomeStatus,
   ResolutionMechanism,
@@ -422,9 +425,41 @@ export function validateValidityTemporal(vt: unknown): ValidityTemporal {
       'validity_temporal[window].duration_seconds must be a positive int',
     );
   }
-  // Python compares against `(end - start).total_seconds()`, a float number of
-  // seconds. Our `start`/`end` are epoch ms, so divide the span by 1000.
-  if (duration > (end - start) / 1000) {
+  // Python compares `duration_seconds` against `(end - start).total_seconds()`,
+  // which carries MICROSECOND precision (a Python `datetime`'s resolution). The
+  // ms-floored `start`/`end` above are correct for the ordering check, but using
+  // them for the SPAN floors a sub-millisecond fractional second down to the whole
+  // ms -- INFLATING the apparent span to the next ms and ACCEPTING a window Python
+  // REJECTS (fail-OPEN; e.g. start=...00.000999Z / end=...01.000000Z is a
+  // 0.999001s span that floors to a flat 1.000s, so duration_seconds=1 wrongly
+  // passes `1 > 1.0`, while Python's `1 > 0.999001` rejects). Recompute the span
+  // at EXACT microsecond precision (bigint, exact across the full year 1..9999
+  // datetime range) so the comparison is byte-identical to Python's
+  // `total_seconds()`. Using bigint -- rather than a number with a safe-integer
+  // fallback to the coarse-ms span -- is deliberate: that fallback would reopen
+  // this same fail-open for valid far-future windows (> ~year 2255). `vt.start`/
+  // `vt.end` are strings here (`parseIso8601` above already rejected a non-string
+  // or unparseable value), so the micros parse cannot be null; treat null
+  // defensively as fail-closed rather than falling back to a coarser span.
+  const startMicros = cpythonIsoDateTimeToEpochMicros(vt.start as string);
+  const endMicros = cpythonIsoDateTimeToEpochMicros(vt.end as string);
+  if (startMicros === null || endMicros === null) {
+    throw new AttestationError(
+      'validity_temporal[window] start/end not parseable at microsecond precision',
+    );
+  }
+  // Compare at EXACT integer-microsecond precision: `duration_seconds > span`
+  // is equivalent to `duration_seconds * 1_000_000 (micros) > (end - start)
+  // micros`, an all-bigint comparison with NO floating point. This is the
+  // ground-truth rational comparison, so no rounding can let a sub-span window
+  // through at ANY datetime range. (Narrowing the bigint delta to a Number and
+  // dividing -- as an earlier draft did -- rounds the delta to a double BEFORE
+  // dividing for spans beyond ~285 years, which diverges from Python and reopened
+  // the fail-open for a near-full-range window.) The only residual vs Python's
+  // lossy float `total_seconds()` is at extreme (>285-year) spans and is in the
+  // over-STRICT (fail-closed, safe) direction -- the same residual class the ms
+  // ordering check above already carries. `duration` is a validated positive int.
+  if (BigInt(duration) * 1_000_000n > endMicros - startMicros) {
     throw new AttestationError(
       'validity_temporal[window].duration_seconds exceeds the window span',
     );
