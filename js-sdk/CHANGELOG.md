@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.0.1-alpha.10 -- 2026-06-01
+
+Python-parity hardening: three fail-open fixes discovered during cross-language
+adversarial testing. Each fix makes the JS SDK strictly more correct (fail-closed
+where it previously accepted inputs Python rejects).
+
+- **Mandate naive-datetime temporal validity (#42).** `checkTemporalValidity`
+  now rejects naive (timezone-less) ISO-8601 timestamps in validity window
+  bounds, matching Python's `datetime.fromisoformat` behavior under the
+  mandate engine's strict temporal checks. Previously accepted silently
+  (fail-open).
+- **Attestation RFC-822 timestamp parse (#43).** `validateValidityTemporal`
+  in the attestation layer now rejects RFC-822-style timestamps (e.g.
+  `Mon, 01 Jan 2026 00:00:00 GMT`) that `Date.parse` accepted but Python's
+  `datetime.fromisoformat` rejects. Fail-closed: only strict ISO-8601 with
+  explicit timezone offset is accepted, matching Python exactly.
+- **Attestation window-span exact-microsecond (#44).** The window-span
+  duration bound check now uses exact microsecond comparison matching
+  Python's `timedelta` arithmetic, closing a sub-second rounding edge where
+  the JS SDK could accept a window Python rejects.
+
+All three fixes are pinned by Python-generated fixtures that assert the exact
+accept/reject boundary.
+
 ## 0.0.1-alpha.9 -- 2026-05-XX
 
 JSON Schema validation and ApprovalReceipt verification. Ports
@@ -7,15 +31,15 @@ JSON Schema validation and ApprovalReceipt verification. Ports
 `concordia/approval_receipt.py` (the consumer) on top of the merged crypto,
 canonicalizer, and internal `pyRepr` layers:
 
-- `validateMessage` / `isValidMessage` — validate a Concordia message envelope
+- `validateMessage` / `isValidMessage` -- validate a Concordia message envelope
   (SPEC §4.1) and return the ordered `"{json_path}: {message}"` error list.
-- `validateApprovalReceipt` / `isValidApprovalReceipt` — validate an
+- `validateApprovalReceipt` / `isValidApprovalReceipt` -- validate an
   ApprovalReceipt against `approval_receipt.schema.json` (the 7c prerequisite).
-- `validateFulfillmentAttestation` / `isValidFulfillmentAttestation` — validate a
+- `validateFulfillmentAttestation` / `isValidFulfillmentAttestation` -- validate a
   standalone FulfillmentAttestation against its schema PLUS the companion local
   equality invariant (every `fulfills`-relationship reference id must equal
   `agreement_attestation_id`).
-- `verifyApprovalReceipt` — the full ApprovalReceipt verifier (schema, the
+- `verifyApprovalReceipt` -- the full ApprovalReceipt verifier (schema, the
   `approves` negotiation-session reference, the Ed25519 signature against a
   caller-supplied issuer key, the `expires_at` window, and the canonical
   `offer_hash` match), returning the typed `ApprovalReceiptResult` with the same
@@ -26,7 +50,7 @@ surface returns the FULL ORDERED error list from CPython
 `Draft202012Validator.iter_errors`, not the single best-match message the engine
 needed. CPython yields errors per node in the schema's KEY-INSERTION ORDER
 (verified empirically), with a specific `json_path` shape and CPython-`repr()`-
-rendered message text — none of which ajv reproduces byte-for-byte. So this layer
+rendered message text -- none of which ajv reproduces byte-for-byte. So this layer
 adds an internal `iterErrors` (`src/internal/jsonschema.ts`) that re-implements
 the `iter_errors` traversal for the ported keyword subset (`type`, `enum`,
 `const`, `required`, `properties`, `additionalProperties`, `patternProperties`,
@@ -34,16 +58,16 @@ the `iter_errors` traversal for the ported keyword subset (`type`, `enum`,
 `minLength`/`maxLength`, `pattern`, `minimum`/`maximum`/`exclusiveMinimum`/
 `exclusiveMaximum`, `format`). It SHARES the CPython `pyRepr` renderer with the
 mandate engine via `src/internal/py-repr.ts` (the engine's private duplicate was
-removed in this PR — behavior-neutral, its 110 tests still pass).
+removed in this PR -- behavior-neutral, its 110 tests still pass).
 
 FORMAT CHECKING is load-bearing for accept/reject parity: Python registers a
 custom `FormatChecker` and PASSES it to `validate_message` /
 `validate_approval_receipt`, so a bad `date-time` (e.g. a naive, tz-less
-timestamp) is REJECTED — the OPPOSITE of the mandate engine, which ran formats
+timestamp) is REJECTED -- the OPPOSITE of the mandate engine, which ran formats
 OFF. `validate_fulfillment_attestation` passes NO checker (its `format` keywords
 are inert), matched here.
 
-DEFERRED — `validate_attestation` (the §9.6 reputation-attestation schema). That
+DEFERRED -- `validate_attestation` (the §9.6 reputation-attestation schema). That
 schema uses `$ref` / `$defs` / `oneOf` (which the internal validator does not yet
 support) and a companion `_warn_on_noncanonical_references` that depends on
 `REFERENCE_TYPES` / `REFERENCE_RELATIONSHIPS` constants not yet ported. It is out
