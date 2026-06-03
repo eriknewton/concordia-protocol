@@ -1335,8 +1335,36 @@ For cross-protocol linkages (e.g., to A2A messages, AP2 mandates, x402 payment p
 | AP2 | `urn:ap2:mandate:<mandate_id>` |
 | x402 | `urn:x402:payment:<tx_hash>` |
 | ERC-8004 | `urn:erc8004:reputation:<entry_id>` |
+| Foxbook | `urn:foxbook:leaf:<tl_host>:<leaf_index>` |
 
 Non-URN identifiers are accepted by the schema (the `id` field is a free-form non-empty string) but receive no protocol-level resolution support. Implementations MAY emit non-URN identifiers for backward-compatibility with existing artifact id formats; URN-shaping is RECOMMENDED for new emissions.
+
+##### Worked example: Foxbook transparency-log typed reference
+
+Foxbook is a transparency log for agent identity. A Foxbook leaf records a signed snapshot of an agent's public AgentCard at a point in time, anchored in a Merkle tree so that the log operator cannot silently revise history.
+
+Concordia attestations can carry a pointer to a Foxbook leaf using the generic `references[]` surface (§11.5.3, §11.5.6). The pointer rides the existing reference schema; no Foxbook-specific fields are added to the Concordia core. The Foxbook typed-reference metadata is carried in the `extensions` map, which implementations MUST preserve verbatim across roundtrips per §11.5.8.
+
+The following reference object links a Concordia attestation to a Foxbook transparency-log leaf. The `id` uses the Foxbook URN scheme above; the `extensions` map carries the typed-reference fields defined by the Foxbook typed-reference v1.0 schema (`typed_reference_version`, `tl_url`, `leaf_index`, `tl_leaf_canonical_hash`, `verified_signing_key_hex`):
+
+```json
+{
+  "id": "urn:foxbook:leaf:log.foxbook.dev:42",
+  "type": "transparency_log_leaf",
+  "relationship": "references",
+  "signed_at": "2026-05-07T18:30:00Z",
+  "signer_did": "did:web:log.foxbook.dev:agent-7",
+  "extensions": {
+    "typed_reference_version": "1.0",
+    "tl_url": "https://log.foxbook.dev",
+    "leaf_index": 42,
+    "tl_leaf_canonical_hash": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+    "verified_signing_key_hex": "d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5"
+  }
+}
+```
+
+This reference validates against the §11.5.6 schema fragment: `id`, `type`, and `relationship` are required strings; `signed_at`, `signer_did`, and `extensions` are optional fields accepted by the schema. Concordia does not interpret or verify the Foxbook-specific fields inside `extensions`; verification of the transparency-log leaf (Merkle inclusion proof, signing-key binding, log-operator signature) is the consumer's responsibility and may be performed by a separate system such as Sanctuary's Selective Disclosure layer. Concordia and Foxbook compose independently in both directions: Concordia does not require Foxbook, and Foxbook does not require Concordia.
 
 #### 11.5.8 Conformance
 

@@ -1,0 +1,24 @@
+{
+  "description": "Worked example: Concordia attestation-level reference carrying a Foxbook transparency-log typed reference (SPEC §11.5.7). The Foxbook-specific fields ride the generic extensions map; no Concordia-core fields are added.",
+  "reference": {
+    "id": "urn:foxbook:leaf:log.foxbook.dev:42",
+    "type": "transparency_log_leaf",
+    "relationship": "references",
+    "signed_at": "2026-05-07T18:30:00Z",
+    "signer_did": "did:web:log.foxbook.dev:agent-7",
+    "extensions": {
+      "typed_reference_version": "1.0",
+      "tl_url": "https://log.foxbook.dev",
+      "leaf_index": 42,
+      "tl_leaf_canonical_hash": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+      "verified_signing_key_hex": "d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5"
+    }
+  },
+  "foxbook_typed_reference_v1_required_fields": [
+    "typed_reference_version",
+    "tl_url",
+    "leaf_index",
+    "tl_leaf_canonical_hash",
+    "verified_signing_key_hex"
+  ]
+}
