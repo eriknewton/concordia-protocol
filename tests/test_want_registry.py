@@ -498,6 +498,69 @@ class TestWantRegistry:
         assert stats["total_matches"] == 1
         assert stats["unique_agents"] == 2
 
+    def test_get_expired_want_removes_agent_index(self):
+        reg = WantRegistry()
+        want, _ = reg.post_want(agent_id="buyer", category="electronics", terms={}, ttl=60)
+        want.expires_at = time.time() - 1
+
+        assert reg.get_want(want.id) is None
+        assert reg.list_wants(agent_id="buyer") == []
+
+    def test_get_expired_have_removes_agent_index(self):
+        reg = WantRegistry()
+        have, _ = reg.post_have(agent_id="seller", category="electronics", terms={}, ttl=60)
+        have.expires_at = time.time() - 1
+
+        assert reg.get_have(have.id) is None
+        assert reg.list_haves(agent_id="seller") == []
+
+    def test_find_matches_filters_by_want_have_and_limit(self):
+        reg = WantRegistry()
+        want, _ = reg.post_want(
+            agent_id="buyer",
+            category="electronics",
+            terms={"price": {"max": 2000}},
+        )
+        have_1, _ = reg.post_have(
+            agent_id="seller_1",
+            category="electronics",
+            terms={"price": {"min": 1000}},
+        )
+        reg.post_have(
+            agent_id="seller_2",
+            category="electronics",
+            terms={"price": {"min": 1500}},
+        )
+
+        assert len(reg.find_matches(want_id=want.id)) == 2
+        assert len(reg.find_matches(have_id=have_1.id)) == 1
+        assert len(reg.find_matches(agent_id="seller_1")) == 1
+        assert len(reg.find_matches(want_id=want.id, limit=1)) == 1
+
+    def test_match_storage_cap_returns_matches_without_storing_over_cap(self):
+        reg = WantRegistry()
+        reg.MAX_MATCHES = 1
+        reg.post_have(
+            agent_id="seller_1",
+            category="electronics",
+            terms={"price": {"min": 1000}},
+        )
+        reg.post_have(
+            agent_id="seller_2",
+            category="electronics",
+            terms={"price": {"min": 1200}},
+        )
+
+        want, matches = reg.post_want(
+            agent_id="buyer",
+            category="electronics",
+            terms={"price": {"max": 2000}},
+        )
+
+        assert len(matches) == 2
+        assert len(reg.find_matches(want_id=want.id)) == 1
+        assert reg.stats()["total_matches"] == 1
+
 
 # ===================================================================
 # MCP Tool integration tests
