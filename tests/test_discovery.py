@@ -212,6 +212,79 @@ class TestAgentRegistry:
         assert d["concordia_preferred"] is True
         assert d["agent_id"] == "agent_1"
 
+    def test_register_update_preserves_optional_fields_when_omitted(self):
+        reg = AgentRegistry()
+        reg.register(
+            "agent_1",
+            endpoint="https://agent.example/mcp",
+            description="First description",
+            metadata={"tier": "gold"},
+            public_key="pub_1",
+        )
+
+        updated = reg.register("agent_1", categories=["electronics"])
+
+        assert updated.endpoint == "https://agent.example/mcp"
+        assert updated.description == "First description"
+        assert updated.metadata == {"tier": "gold"}
+        assert updated.public_key == "pub_1"
+        assert updated.capabilities.categories == ["electronics"]
+
+    def test_get_expired_agent_prunes_registration(self):
+        reg = AgentRegistry()
+        agent = reg.register("agent_1", ttl=1)
+        agent.last_seen = "1970-01-01T00:00:00Z"
+
+        assert reg.get("agent_1") is None
+        assert reg.count() == 0
+
+    def test_search_prunes_expired_agents_before_filtering(self):
+        reg = AgentRegistry()
+        expired = reg.register("old_seller", roles=["seller"], ttl=1)
+        expired.last_seen = "1970-01-01T00:00:00Z"
+        reg.register("active_seller", roles=["seller"])
+
+        results = reg.search(role="seller")
+
+        assert [agent.agent_id for agent in results] == ["active_seller"]
+        assert reg.get("old_seller") is None
+
+    def test_list_all_include_expired_does_not_prune(self):
+        reg = AgentRegistry()
+        expired = reg.register("old_agent", ttl=1)
+        expired.last_seen = "1970-01-01T00:00:00Z"
+
+        assert [agent.agent_id for agent in reg.list_all(include_expired=True)] == ["old_agent"]
+        assert "old_agent" in reg._agents
+
+    def test_invalid_last_seen_is_treated_as_not_expired(self):
+        reg = AgentRegistry()
+        agent = reg.register("agent_1", ttl=1)
+        agent.last_seen = "not-a-timestamp"
+
+        assert agent.is_expired() is False
+        assert reg.get("agent_1") is agent
+
+    def test_badge_and_public_key_helpers(self):
+        reg = AgentRegistry()
+        reg.register(
+            "agent_1",
+            roles=["seller"],
+            categories=["electronics"],
+            resolution_mechanisms=["tradeoff"],
+            public_key="pub_1",
+            metadata={"sanctuary_enabled": True},
+        )
+
+        badge = reg.get_badge("agent_1")
+
+        assert badge is not None
+        assert badge["public_key"] == "pub_1"
+        assert badge["features"]["sanctuary_bridge"] is True
+        assert reg.get_public_key("agent_1") == "pub_1"
+        assert reg.get_badge("missing") is None
+        assert reg.get_public_key("missing") is None
+
 
 # ===================================================================
 # Protocol Meta-negotiation tests
