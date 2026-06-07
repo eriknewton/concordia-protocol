@@ -149,6 +149,17 @@ class TestRelaySessionLifecycle:
         relay = NegotiationRelay()
         assert relay.get_session("fake") is None
 
+    def test_get_session_times_out_active_session(self):
+        relay = NegotiationRelay()
+        session = relay.create_session("a", "b", session_ttl=1)
+        session.created_at = "1970-01-01T00:00:00+00:00"
+
+        result = relay.get_session(session.relay_session_id)
+
+        assert result is session
+        assert session.state == RelaySessionState.TIMED_OUT
+        assert session.conclusion_reason == "session_timeout"
+
     def test_link_concordia_session(self):
         relay = NegotiationRelay()
         session = relay.create_session("a", "b")
@@ -156,6 +167,10 @@ class TestRelaySessionLifecycle:
         found = relay.get_by_concordia_id("ses_123")
         assert found is not None
         assert found.relay_session_id == session.relay_session_id
+
+    def test_link_concordia_session_missing(self):
+        relay = NegotiationRelay()
+        assert relay.link_concordia_session("fake", "ses_123") is False
 
     def test_get_by_concordia_id_missing(self):
         relay = NegotiationRelay()
@@ -215,6 +230,20 @@ class TestMessageRouting:
         relay.conclude_session(session.relay_session_id)
         assert relay.send_message(session.relay_session_id, "a", "offer", {}) is None
 
+    def test_send_from_non_participant_fails(self):
+        relay = NegotiationRelay()
+        session = relay.create_session("a", "b")
+        assert relay.send_message(session.relay_session_id, "c", "offer", {}) is None
+
+    def test_send_to_timed_out_session_fails_and_marks_timeout(self):
+        relay = NegotiationRelay()
+        session = relay.create_session("a", "b", session_ttl=1)
+        session.created_at = "1970-01-01T00:00:00+00:00"
+
+        assert relay.send_message(session.relay_session_id, "a", "offer", {}) is None
+        assert session.state == RelaySessionState.TIMED_OUT
+        assert session.conclusion_reason == "session_timeout"
+
     def test_send_without_responder(self):
         relay = NegotiationRelay()
         session = relay.create_session("a")  # pending, no responder
@@ -267,6 +296,16 @@ class TestMessageRouting:
             relay.send_message(session.relay_session_id, "a", "msg", {"i": i})
         received = relay.receive_messages("b", limit=3)
         assert len(received) == 3
+
+    def test_receive_drops_expired_messages(self):
+        relay = NegotiationRelay()
+        session = relay.create_session("a", "b")
+        msg = relay.send_message(session.relay_session_id, "a", "offer", {}, ttl=1)
+        msg.created_at = "1970-01-01T00:00:00+00:00"
+
+        assert relay.receive_messages("b") == []
+        assert msg.status == DeliveryStatus.EXPIRED
+        assert relay.receive_messages("b") == []
 
     def test_terminal_message_concludes_session(self):
         relay = NegotiationRelay()
@@ -344,6 +383,30 @@ class TestTranscriptAndArchival:
         relay = NegotiationRelay()
         session = relay.create_session("a", "b")
         assert relay.archive_session(session.relay_session_id) is None
+
+    def test_archive_timed_out_session(self):
+        relay = NegotiationRelay()
+        session = relay.create_session("a", "b", concordia_session_id="ses_123")
+        relay._timeout_session(session)
+
+        archive = relay.archive_session(session.relay_session_id)
+
+        assert archive is not None
+        assert archive.concordia_session_id == "ses_123"
+        assert archive.conclusion_reason == "session_timeout"
+        assert session.state == RelaySessionState.ARCHIVED
+
+    def test_archive_limit_raises(self):
+        relay = NegotiationRelay()
+        relay.MAX_ARCHIVES = 1
+        first = relay.create_session("a", "b")
+        second = relay.create_session("c", "d")
+        relay.conclude_session(first.relay_session_id)
+        relay.conclude_session(second.relay_session_id)
+        relay.archive_session(first.relay_session_id)
+
+        with pytest.raises(ValueError, match="Archive limit reached"):
+            relay.archive_session(second.relay_session_id)
 
     def test_archive_nonexistent(self):
         relay = NegotiationRelay()
@@ -451,6 +514,13 @@ class TestRelayStats:
         assert len(pending) == 1
         concluded = relay.list_sessions(state="concluded")
         assert len(concluded) == 1
+
+    def test_list_sessions_limit(self):
+        relay = NegotiationRelay()
+        for i in range(5):
+            relay.create_session(f"a{i}", f"b{i}")
+
+        assert len(relay.list_sessions(limit=2)) == 2
 
 
 # ===================================================================
