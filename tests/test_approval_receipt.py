@@ -8,6 +8,7 @@ import json
 from datetime import datetime, timezone
 
 from concordia.approval_receipt import (
+    ApprovalReceiptResult,
     EXPIRED,
     MISSING_APPROVES_REFERENCE,
     OFFER_HASH_MISMATCH,
@@ -111,6 +112,37 @@ def test_valid_deny_receipt_returns_typed_decision():
     assert result.failure_reason is None
 
 
+def test_result_to_dict_includes_default_collections():
+    result = ApprovalReceiptResult(valid=False, failure_reason=SIGNATURE_INVALID)
+
+    assert result.to_dict() == {
+        "valid": False,
+        "decision": None,
+        "failure_reason": SIGNATURE_INVALID,
+        "receipt_id": None,
+        "approver": None,
+        "references": [],
+        "checks": {},
+        "errors": [],
+    }
+
+
+def test_valid_receipt_accepts_public_key_object_and_naive_now():
+    key_pair = KeyPair.generate()
+    offer = _offer()
+    receipt = _receipt(key_pair, offer)
+
+    result = verify_approval_receipt(
+        receipt,
+        offer,
+        now=datetime(2026, 5, 14, 12, 0),
+        issuer_public_key=key_pair.public_key,
+    )
+
+    assert result.valid is True
+    assert result.checks["not_expired"] is True
+
+
 def test_expired_receipt_is_rejected():
     key_pair = KeyPair.generate()
     offer = _offer()
@@ -151,6 +183,51 @@ def test_missing_approves_reference_is_rejected_with_specific_reason():
 
     assert result.valid is False
     assert result.failure_reason == MISSING_APPROVES_REFERENCE
+
+
+def test_schema_invalid_without_approves_reference_keeps_specific_reason():
+    key_pair = KeyPair.generate()
+    offer = _offer()
+    receipt = _receipt(key_pair, offer)
+    receipt["references"] = "not-a-list"
+
+    result = _verify(receipt, offer, key_pair)
+
+    assert result.valid is False
+    assert result.failure_reason == MISSING_APPROVES_REFERENCE
+    assert result.checks["schema"] is False
+    assert result.checks["approves_reference"] is False
+
+
+def test_non_ed25519_signature_algorithm_is_schema_invalid():
+    key_pair = KeyPair.generate()
+    offer = _offer()
+    receipt = _receipt(key_pair, offer)
+    receipt["signature"]["alg"] = "ES256"
+
+    result = _verify(receipt, offer, key_pair)
+
+    assert result.valid is False
+    assert result.failure_reason == SCHEMA_INVALID
+    assert result.checks["schema"] is False
+
+
+def test_invalid_public_key_bytes_are_rejected():
+    key_pair = KeyPair.generate()
+    offer = _offer()
+    receipt = _receipt(key_pair, offer)
+
+    result = verify_approval_receipt(
+        receipt,
+        offer,
+        now=NOW,
+        issuer_public_key=b"not-a-raw-ed25519-public-key",
+    )
+
+    assert result.valid is False
+    assert result.failure_reason == SIGNATURE_INVALID
+    assert result.checks["signature"] is False
+    assert result.errors == ["Missing or invalid Ed25519 issuer public key"]
 
 
 def test_bad_signature_is_rejected():
