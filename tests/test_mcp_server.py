@@ -154,6 +154,19 @@ class TestSessionStore:
         # open + accept_session = 2 messages
         assert len(ctx.session.transcript) == 2
 
+    def test_create_rejects_when_session_store_at_capacity(self):
+        store = SessionStore()
+        original_max = store.MAX_SESSIONS
+        store.MAX_SESSIONS = 2
+        try:
+            store.create("agent_a", "agent_b", SAMPLE_TERMS)
+            store.create("agent_c", "agent_d", SAMPLE_TERMS)
+
+            with pytest.raises(ValueError, match="Session store capacity reached"):
+                store.create("agent_e", "agent_f", SAMPLE_TERMS)
+        finally:
+            store.MAX_SESSIONS = original_max
+
 
 # ---------------------------------------------------------------------------
 # Tool: open_session
