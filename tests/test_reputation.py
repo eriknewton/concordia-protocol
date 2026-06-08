@@ -20,6 +20,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from concordia.reputation.store import (
+    CLOSED_LOOP_MIN_HISTORY,
     AttestationStore,
     StoredAttestation,
     SybilSignals,
@@ -377,6 +378,68 @@ class TestSybilDetection:
         record = store.get(att["attestation_id"])
         assert record.sybil_signals.flagged is False
 
+    def test_closed_loop_flags_established_exclusive_pair(self):
+        # Two agents who transact ONLY with each other are flagged once their
+        # shared history reaches CLOSED_LOOP_MIN_HISTORY prior transactions.
+        store = AttestationStore()
+        priors = _ingest_n(
+            store, CLOSED_LOOP_MIN_HISTORY,
+            agent_a="alice", agent_b="bob",
+            duration_seconds=120, concession_a=0.2, concession_b=0.15,
+        )
+        # The last prior is still below threshold at its own ingest time.
+        assert store.get(priors[-1]["attestation_id"]).sybil_signals.closed_loop is False
+
+        att = _make_attestation(
+            agent_a="alice", agent_b="bob",
+            duration_seconds=120, concession_a=0.2, concession_b=0.15,
+        )
+        accepted, result = store.ingest(att, _test_resolver)
+        assert accepted is True  # flagged, not blocked
+        record = store.get(att["attestation_id"])
+        assert record.sybil_signals.closed_loop is True
+        assert record.sybil_signals.flagged is True
+        # closed_loop is the SOLE reason — no other signal is muddying it.
+        assert record.sybil_signals.self_dealing is False
+        assert record.sybil_signals.suspiciously_fast is False
+        assert record.sybil_signals.symmetric_concessions is False
+        assert any("Sybil" in w for w in result.warnings)
+
+    def test_closed_loop_not_flagged_below_threshold(self):
+        # An exclusive pair below the history threshold is not yet flagged.
+        store = AttestationStore()
+        atts = _ingest_n(
+            store, CLOSED_LOOP_MIN_HISTORY - 1,
+            agent_a="alice", agent_b="bob",
+            duration_seconds=120, concession_a=0.2, concession_b=0.15,
+        )
+        for att in atts:
+            assert store.get(att["attestation_id"]).sybil_signals.closed_loop is False
+
+    def test_closed_loop_not_flagged_for_diverse_trading(self):
+        # Heavy history with one partner does NOT flag closed_loop when the
+        # agent also transacts with others (counterparty set is not exclusive).
+        store = AttestationStore()
+        _ingest_n(
+            store, CLOSED_LOOP_MIN_HISTORY + 1,
+            agent_a="alice", agent_b="bob",
+            duration_seconds=120, concession_a=0.2, concession_b=0.15,
+        )
+        _ingest_n(
+            store, 1, agent_a="alice", agent_b="carol",
+            duration_seconds=120, concession_a=0.2, concession_b=0.15,
+        )
+        # alice now has counterparties {bob, carol}; a further alice-bob
+        # attestation must not flag closed_loop.
+        att = _make_attestation(
+            agent_a="alice", agent_b="bob",
+            duration_seconds=120, concession_a=0.2, concession_b=0.15,
+        )
+        accepted, result = store.ingest(att, _test_resolver)
+        assert accepted is True
+        record = store.get(att["attestation_id"])
+        assert record.sybil_signals.closed_loop is False
+
 
 # ===================================================================
 # ReputationScorer tests
@@ -506,7 +569,13 @@ class TestReputationScorer:
 
     def test_custom_weights(self):
         store = AttestationStore()
-        _ingest_n(store, 10, agent_a="s", agent_b="b")
+        # Diverse counterparties so the custom-weights behavior is isolated from
+        # the closed_loop sybil signal (an exclusive s<->b pair would now be
+        # flagged once its shared history passes the threshold).
+        for i in range(10):
+            att = _make_attestation(agent_a="s", agent_b=f"b{i}")
+            accepted, _ = store.ingest(att, _test_resolver)
+            assert accepted
 
         # Default weights
         scorer1 = ReputationScorer(store)
