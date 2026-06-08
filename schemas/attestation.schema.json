@@ -186,7 +186,8 @@
 
     "summary": {
       "type": "string",
-      "description": "Plaintext receipt summary generated from behavioral metadata and transcript hash prefix. Does not include raw deal terms."
+      "maxLength": 1024,
+      "description": "Plaintext receipt summary generated from behavioral metadata and transcript hash prefix. Structured raw term fields are rejected by this schema. This free-text field is a behavioral-signal summary and, by caller contract, MUST NOT contain raw deal terms; validators apply best-effort checks for obvious raw-term patterns as defense in depth."
     },
 
     "fulfillment": {
@@ -255,7 +256,7 @@
               "description": {
                 "type": "string",
                 "maxLength": 1024,
-                "description": "Brief description of the dispute. No deal specifics — just the nature of the issue."
+                "description": "Brief behavioral description of the dispute. Structured raw term fields are rejected by this schema. This free-text field, by caller contract, MUST NOT contain raw deal terms; validators apply best-effort checks for obvious raw-term patterns as defense in depth."
               },
               "resolution": {
                 "type": ["string", "null"],
@@ -275,7 +276,7 @@
             "notes": {
               "type": "string",
               "maxLength": 512,
-              "description": "Optional brief note about the experience."
+              "description": "Optional brief behavioral note about the experience. Structured raw term fields are rejected by this schema. This free-text field, by caller contract, MUST NOT contain raw deal terms; validators apply best-effort checks for obvious raw-term patterns as defense in depth."
             },
             "signature": { "type": "string" }
           },

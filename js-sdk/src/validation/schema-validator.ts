@@ -56,6 +56,17 @@ assertSupportedSchema(ATTESTATION_SCHEMA, 'attestation');
 assertSupportedSchema(APPROVAL_RECEIPT_SCHEMA, 'approval_receipt');
 assertSupportedSchema(FULFILLMENT_ATTESTATION_SCHEMA, 'fulfillment_attestation');
 
+const FREE_TEXT_TERM_ERROR =
+  'free-text field must not contain obvious raw deal terms';
+const RAW_TERM_PATTERNS = [
+  /[$€£¥]\s*\d/i,
+  /\b(?:USD|EUR|GBP|JPY|CAD|AUD|CHF|CNY|INR)\s*\d/i,
+  /\b\d+(?:[.,]\d+)?\s*(?:USD|EUR|GBP|JPY|CAD|AUD|CHF|CNY|INR)\b/i,
+  /\bprice\s*:/i,
+  /\b(?:qty|quantity)\s*[:=]?\s*\d+\b/i,
+  /\b\d+\s*(?:units?|items?|pcs|pieces)\b/i,
+];
+
 // ---------------------------------------------------------------------------
 // Format checker (mirrors `concordia/schema_validator.py` `_FORMAT_CHECKER`)
 // ---------------------------------------------------------------------------
@@ -136,7 +147,10 @@ export function isValidMessage(message: unknown): boolean {
  * `date-time` formats and intra-document `$ref` / `oneOf` applicators.
  */
 export function validateAttestation(attestation: unknown): string[] {
-  return format(iterErrors(ATTESTATION_SCHEMA, attestation, conformsFormat));
+  return [
+    ...format(iterErrors(ATTESTATION_SCHEMA, attestation, conformsFormat)),
+    ...validateAttestationFreeText(attestation),
+  ];
 }
 
 /** Return `true` if the Reputation Attestation passes schema validation. */
@@ -210,4 +224,44 @@ export function isValidFulfillmentAttestation(attestation: unknown): boolean {
 /** Python `isinstance(x, dict)`: a plain object, not an array / null. */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function validateAttestationFreeText(attestation: unknown): string[] {
+  if (!isPlainObject(attestation)) return [];
+
+  const candidates: Array<[string, unknown]> = [['$.summary', attestation.summary]];
+  const fulfillment = attestation.fulfillment;
+  if (isPlainObject(fulfillment)) {
+    const disputes = fulfillment.disputes;
+    if (Array.isArray(disputes)) {
+      disputes.forEach((dispute, index) => {
+        if (isPlainObject(dispute)) {
+          candidates.push([
+            `$.fulfillment.disputes[${index}].description`,
+            dispute.description,
+          ]);
+        }
+      });
+    }
+
+    const counterparty = fulfillment.counterparty_attestation;
+    if (isPlainObject(counterparty)) {
+      candidates.push([
+        '$.fulfillment.counterparty_attestation.notes',
+        counterparty.notes,
+      ]);
+    }
+  }
+
+  const errors: string[] = [];
+  for (const [path, value] of candidates) {
+    if (typeof value === 'string' && containsObviousRawTerm(value)) {
+      errors.push(`${path}: ${FREE_TEXT_TERM_ERROR}`);
+    }
+  }
+  return errors;
+}
+
+function containsObviousRawTerm(value: string): boolean {
+  return RAW_TERM_PATTERNS.some((pattern) => pattern.test(value));
 }

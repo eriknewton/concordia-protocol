@@ -519,6 +519,66 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
     );
   });
 
+  it('accepts a legitimate behavioral summary', () => {
+    const attestation = validAttestation();
+    attestation.summary = [
+      'Parties: agent_a, agent_b',
+      'Topic: electronics.cameras',
+      'Outcome: AGREED',
+      'Transcript hash: aaaaaaaaaaaaaaaa',
+    ].join('\n');
+    expect(validateAttestation(attestation)).toEqual([]);
+  });
+
+  it('rejects overlong attestation free text', () => {
+    const attestation = validAttestation();
+    attestation.summary = 'x'.repeat(1025);
+    const errors = validateAttestation(attestation);
+    expect(errors.some((e) => e.startsWith('$.summary:') && e.includes('is too long'))).toBe(
+      true,
+    );
+  });
+
+  it('rejects obvious raw terms in attestation free text without echoing them', () => {
+    const attestation = validAttestation();
+    attestation.summary = 'Raw terms: price 1900 USD, quantity 2';
+    attestation.fulfillment = {
+      status: 'disputed',
+      settled_at: '2026-05-11T00:00:00Z',
+      delivery_confirmed: false,
+      disputes: [
+        {
+          term_id: 'delivery',
+          complainant_agent_id: 'agent_a',
+          description: 'Counterparty asked for qty: 2',
+          resolution: 'unresolved',
+        },
+      ],
+      counterparty_attestation: {
+        agent_id: 'agent_b',
+        confirms_fulfillment: false,
+        notes: 'Asked for $1900 before delivery.',
+        signature: 'sig_fulfillment',
+      },
+    };
+    const errors = validateAttestation(attestation);
+    expect(errors).toContain(
+      '$.summary: free-text field must not contain obvious raw deal terms',
+    );
+    expect(errors).toContain(
+      '$.fulfillment.disputes[0].description: free-text field must not contain obvious raw deal terms',
+    );
+    expect(errors).toContain(
+      '$.fulfillment.counterparty_attestation.notes: free-text field must not contain obvious raw deal terms',
+    );
+    expect(
+      errors.some(
+        (e) =>
+          e.includes('1900') || e.includes('quantity 2') || e.includes('$1900'),
+      ),
+    ).toBe(false);
+  });
+
   it('rejects invalid $ref targets under references[]', () => {
     const attestation = validAttestation();
     attestation.references = [{ id: '', type: '', relationship: '' }];

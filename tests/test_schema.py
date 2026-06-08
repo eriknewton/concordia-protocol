@@ -209,3 +209,63 @@ class TestAttestationValidation:
             "$.references[0].extensions: Additional properties are not allowed "
             "('price', 'quantity' were unexpected)"
         ) in errors
+
+    def test_accepts_legitimate_behavioral_summary(self):
+        att = self._valid_attestation()
+        att["summary"] = (
+            "Parties: agent_a, agent_b\n"
+            "Topic: electronics.cameras\n"
+            "Outcome: AGREED\n"
+            "Transcript hash: aaaaaaaaaaaaaaaa"
+        )
+        errors = validate_attestation(att)
+        assert not errors
+
+    def test_rejects_overlong_attestation_free_text(self):
+        att = self._valid_attestation()
+        att["summary"] = "x" * 1025
+        errors = validate_attestation(att)
+        assert any(
+            error.startswith("$.summary:") and "is too long" in error
+            for error in errors
+        )
+
+    def test_rejects_obvious_raw_terms_in_attestation_free_text_without_echo(self):
+        att = self._valid_attestation()
+        att["summary"] = "Raw terms: price 1900 USD, quantity 2"
+        att["fulfillment"] = {
+            "status": "disputed",
+            "settled_at": "2026-05-11T00:00:00Z",
+            "delivery_confirmed": False,
+            "disputes": [
+                {
+                    "term_id": "delivery",
+                    "complainant_agent_id": "agent_a",
+                    "description": "Counterparty asked for qty: 2",
+                    "resolution": "unresolved",
+                }
+            ],
+            "counterparty_attestation": {
+                "agent_id": "agent_b",
+                "confirms_fulfillment": False,
+                "notes": "Asked for $1900 before delivery.",
+                "signature": "sig_fulfillment",
+            },
+        }
+        errors = validate_attestation(att)
+        assert (
+            "$.summary: free-text field must not contain obvious raw deal terms"
+            in errors
+        )
+        assert (
+            "$.fulfillment.disputes[0].description: "
+            "free-text field must not contain obvious raw deal terms"
+        ) in errors
+        assert (
+            "$.fulfillment.counterparty_attestation.notes: "
+            "free-text field must not contain obvious raw deal terms"
+        ) in errors
+        assert not any(
+            "1900" in error or "quantity 2" in error or "$1900" in error
+            for error in errors
+        )

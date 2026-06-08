@@ -3,6 +3,26 @@
 Date: 2026-06-08
 Branch: `feat/js-sdk-attestation-schema-9.6`
 
+## 2026-06-08 residual P1 free-text leakage hardening
+
+- Corrected the attestation schema descriptions for `summary`, fulfillment dispute `description`, and counterparty `notes`: the schema now says structured raw term fields are rejected, while free-text fields are caller-contracted behavioral summaries that MUST NOT contain raw terms and are only best-effort checked.
+- Added `maxLength: 1024` to attestation `summary`; existing fulfillment dispute `description` and counterparty `notes` remain bounded at 1024 and 512 respectively.
+- Added Python and JS defense-in-depth validation for obvious raw-term patterns in attestation free text: currency+amount, `price:`, quantity/qty counts, and count+unit phrases. The added validator errors name only the JSON path and do not echo matched content.
+- Preserved back-compat for generated-style behavioral summaries.
+- Added Python and JS tests for legitimate behavioral summaries, the summary maxLength bound, and raw-term rejection in `summary`, fulfillment dispute `description`, and counterparty `notes`.
+
+## 2026-06-08 residual P1 gates
+
+- `cd js-sdk && npm run build`: passed.
+- `cd js-sdk && npm run typecheck`: passed.
+- `cd js-sdk && npm test`: passed. 10 files, 843 passed, 2 skipped.
+- `.venv/bin/pytest tests/test_schema.py -q`: passed. 14 passed.
+- Direct Python validator probes:
+  - valid behavioral summary: `[]`.
+  - raw `summary` terms: `['$.summary: free-text field must not contain obvious raw deal terms']`.
+  - nested free-text terms: rejected at `$.fulfillment.disputes[0].description` and `$.fulfillment.counterparty_attestation.notes`.
+  - overlong `summary`: rejected by schema maxLength.
+
 ## 2026-06-08 invariant #8 hardening update
 
 - Closed the JS SDK attestation schema object graph with `additionalProperties: false` at the attestation root, outcome, party, behavior, meta, fulfillment, fulfillment dispute/counterparty, reference, reference extensions, and validity-temporal variant objects.

@@ -648,7 +648,8 @@ export const ATTESTATION_SCHEMA = {
       "pattern": "^sha256:[a-f0-9]{64}$"
     },
     "summary": {
-      "type": "string"
+      "type": "string",
+      "maxLength": 1024
     },
     "fulfillment": {
       "oneOf": [
