@@ -43,6 +43,14 @@ class ValidationResult:
 # Sybil signals
 # ---------------------------------------------------------------------------
 
+# Minimum number of prior exclusive transactions between two agents before
+# their two-party loop is flagged as closed_loop. The closed_loop check runs
+# before the current attestation is indexed (see AttestationStore.ingest), so a
+# value of 3 means an exclusive pair is flagged starting with their 4th
+# transaction. Tunable; conservative to avoid first-contact false positives.
+CLOSED_LOOP_MIN_HISTORY = 3
+
+
 @dataclass
 class SybilSignals:
     """Signals that may indicate Sybil or gaming behavior."""
@@ -76,14 +84,25 @@ class SybilSignals:
                     and behaviors[0].get("concession_magnitude", 0) > 0):
                 self.symmetric_concessions = True
 
-        # Closed loop: check if these two agents only transact with each other
-        if len(agent_ids) >= 2:
+        # Closed loop: two agents who transact EXCLUSIVELY with each other and
+        # have an established repeated history (wash-trading / collusion shape).
+        # Only applies to strictly two-party attestations: a transaction that
+        # includes a third party is not an exclusive A<->B loop, so it is not a
+        # closed_loop signal even if A and B's prior history was exclusive.
+        # Counts come from prior attestations because this check runs before the
+        # current one is indexed, so requiring >= CLOSED_LOOP_MIN_HISTORY means
+        # the loop is already well established. The exclusivity check uses the
+        # counterparty *set* (each side has only the other); the history check
+        # uses the attestation *count* (which, given exclusivity, is the count
+        # of transactions between exactly these two).
+        if len(agent_ids) == 2:
             a, b = agent_ids[0], agent_ids[1]
             a_counterparties = store.get_counterparties(a)
             b_counterparties = store.get_counterparties(b)
-            # If both have history and only with each other, flag it
-            if (len(a_counterparties) > 2 and a_counterparties == {b}
-                    and len(b_counterparties) > 2 and b_counterparties == {a}):
+            if (a != b
+                    and a_counterparties == {b} and b_counterparties == {a}
+                    and store.agent_count(a) >= CLOSED_LOOP_MIN_HISTORY
+                    and store.agent_count(b) >= CLOSED_LOOP_MIN_HISTORY):
                 self.closed_loop = True
 
         self.flagged = any([
