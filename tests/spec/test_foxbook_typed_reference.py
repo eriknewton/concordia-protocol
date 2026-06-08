@@ -3,7 +3,7 @@ the §11.5.6 reference schema.
 
 Loads the cross_protocol/foxbook-typed-reference.json fixture and confirms
 it validates against schemas/reference.schema.json. Also confirms the
-Foxbook typed-reference v1.0 required fields are present in the extensions
+Foxbook ADR 0009 typed-reference.v1 fields are present in the extensions
 map. See SPEC.md §11.5.7 worked example.
 """
 
@@ -73,18 +73,20 @@ class TestFoxbookTypedReference:
     def test_extensions_carry_foxbook_typed_reference_fields(
         self, fixture: dict
     ) -> None:
-        """All Foxbook typed-reference v1.0 required fields MUST be
+        """All Foxbook ADR 0009 typed-reference.v1 fields are
         present in the extensions map."""
         extensions = fixture["reference"].get("extensions", {})
         expected_fields = fixture["foxbook_typed_reference_v1_required_fields"]
         for field in expected_fields:
             assert field in extensions, (
-                f"Foxbook v1.0 required field '{field}' missing from extensions"
+                f"Foxbook typed-reference.v1 field '{field}' missing from extensions"
             )
 
-    def test_typed_reference_version_is_1_0(self, fixture: dict) -> None:
+    def test_typed_reference_version_is_typed_reference_v1(
+        self, fixture: dict
+    ) -> None:
         extensions = fixture["reference"]["extensions"]
-        assert extensions["typed_reference_version"] == "1.0"
+        assert extensions["typed_reference_version"] == "typed-reference.v1"
 
     def test_tl_leaf_canonical_hash_is_64_hex(self, fixture: dict) -> None:
         """tl_leaf_canonical_hash must be a 64-char lowercase hex string
