@@ -471,6 +471,54 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
     ]);
   });
 
+  it('rejects raw deal terms carried as extra attestation fields', () => {
+    const attestation = validAttestation();
+    attestation.price = { value: 1900, currency: 'USD' };
+    expect(validateAttestation(attestation)).toContain(
+      "$: Additional properties are not allowed ('price' was unexpected)",
+    );
+  });
+
+  it('rejects raw agreed terms carried under outcome', () => {
+    const attestation = validAttestation();
+    (attestation.outcome as Record<string, unknown>).agreed_terms = {
+      price: { value: 1900, currency: 'USD' },
+      quantity: 2,
+    };
+    expect(validateAttestation(attestation)).toContain(
+      "$.outcome: Additional properties are not allowed ('agreed_terms' was unexpected)",
+    );
+  });
+
+  it('rejects raw price fields carried under party behavior', () => {
+    const attestation = validAttestation();
+    const parties = attestation.parties as Array<Record<string, unknown>>;
+    const behavior = parties[0].behavior as Record<string, unknown>;
+    behavior.price_floor = 1750;
+    behavior.accepted_price = 1900;
+    expect(validateAttestation(attestation)).toContain(
+      "$.parties[0].behavior: Additional properties are not allowed ('accepted_price', 'price_floor' were unexpected)",
+    );
+  });
+
+  it('rejects raw term payloads carried under reference extensions', () => {
+    const attestation = validAttestation();
+    attestation.references = [
+      {
+        id: 'urn:concordia:predicate:privacy',
+        type: 'predicate',
+        relationship: 'references',
+        extensions: {
+          price: 1900,
+          quantity: 2,
+        },
+      },
+    ];
+    expect(validateAttestation(attestation)).toContain(
+      "$.references[0].extensions: Additional properties are not allowed ('price', 'quantity' were unexpected)",
+    );
+  });
+
   it('rejects invalid $ref targets under references[]', () => {
     const attestation = validAttestation();
     attestation.references = [{ id: '', type: '', relationship: '' }];
@@ -519,6 +567,45 @@ describe('internal jsonschema $ref/oneOf support', () => {
         message: '0 is not valid under any of the given schemas',
       },
     ]);
+  });
+
+  it('rejects oneOf values that match multiple branches', () => {
+    expect(iterErrors({ oneOf: [{ type: 'number' }, { minimum: 0 }] }, 1)).toEqual([
+      {
+        jsonPath: '$',
+        message: "1 is valid under each of {'type': 'number'}, {'minimum': 0}",
+      },
+    ]);
+  });
+
+  it('throws for missing $ref targets', () => {
+    expect(() =>
+      iterErrors({ $ref: '#/$defs/missing', $defs: {} }, 'x'),
+    ).toThrow("schema-validator: unresolved $ref '#/$defs/missing'");
+  });
+
+  it('throws for malformed $ref JSON Pointers', () => {
+    expect(() =>
+      iterErrors({ $ref: '#/$defs/~2bad', $defs: {} }, 'x'),
+    ).toThrow("schema-validator: malformed $ref '#/$defs/~2bad'");
+  });
+
+  it('throws for unsupported external $refs', () => {
+    expect(() => iterErrors({ $ref: 'https://example.com/schema.json' }, 'x')).toThrow(
+      "schema-validator: unsupported $ref 'https://example.com/schema.json'; only intra-document JSON Pointer refs are supported",
+    );
+  });
+
+  it('throws for cyclic $refs', () => {
+    const cyclicSchema = {
+      $ref: '#/$defs/self',
+      $defs: {
+        self: { $ref: '#/$defs/self' },
+      },
+    };
+    expect(() => iterErrors(cyclicSchema, 'x')).toThrow(
+      "schema-validator: cyclic $ref '#/$defs/self'",
+    );
   });
 });
 

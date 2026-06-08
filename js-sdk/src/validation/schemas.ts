@@ -546,7 +546,8 @@ export const ATTESTATION_SCHEMA = {
             "none"
           ]
         }
-      }
+      },
+      "additionalProperties": false
     },
     "parties": {
       "type": "array",
@@ -610,12 +611,14 @@ export const ATTESTATION_SCHEMA = {
                 "type": "number",
                 "minimum": 0
               }
-            }
+            },
+            "additionalProperties": false
           },
           "signature": {
             "type": "string"
           }
-        }
+        },
+        "additionalProperties": false
       }
     },
     "meta": {
@@ -637,11 +640,15 @@ export const ATTESTATION_SCHEMA = {
         "mediator_invoked": {
           "type": "boolean"
         }
-      }
+      },
+      "additionalProperties": false
     },
     "transcript_hash": {
       "type": "string",
       "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "summary": {
+      "type": "string"
     },
     "fulfillment": {
       "oneOf": [
@@ -663,6 +670,7 @@ export const ATTESTATION_SCHEMA = {
       "$ref": "#/$defs/validity_temporal"
     }
   },
+  "additionalProperties": false,
   "$defs": {
     "fulfillment_attestation": {
       "type": "object",
@@ -736,7 +744,8 @@ export const ATTESTATION_SCHEMA = {
                   null
                 ]
               }
-            }
+            },
+            "additionalProperties": false
           }
         },
         "counterparty_attestation": {
@@ -760,9 +769,11 @@ export const ATTESTATION_SCHEMA = {
             "agent_id",
             "confirms_fulfillment",
             "signature"
-          ]
+          ],
+          "additionalProperties": false
         }
-      }
+      },
+      "additionalProperties": false
     },
     "reference": {
       "type": "object",
@@ -795,9 +806,47 @@ export const ATTESTATION_SCHEMA = {
           "type": "string"
         },
         "extensions": {
-          "type": "object"
+          "type": "object",
+          "properties": {
+            "profile": {
+              "type": "string"
+            },
+            "custom_key": {
+              "type": "string"
+            },
+            "future_field": {
+              "type": "string"
+            },
+            "future_v0x_field": {
+              "type": "string"
+            },
+            "another_extension": {
+              "type": "object",
+              "properties": {
+                "nested": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            },
+            "tl_leaf_canonical_hash": {
+              "type": "string"
+            },
+            "verified_signing_key_hex": {
+              "type": "string"
+            },
+            "leaf_index": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "tl_url": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
         }
-      }
+      },
+      "additionalProperties": false
     },
     "validity_temporal": {
       "oneOf": [
@@ -820,7 +869,8 @@ export const ATTESTATION_SCHEMA = {
               "type": "string",
               "format": "date-time"
             }
-          }
+          },
+          "additionalProperties": false
         },
         {
           "type": "object",
@@ -841,7 +891,8 @@ export const ATTESTATION_SCHEMA = {
               "type": "integer",
               "minimum": 1
             }
-          }
+          },
+          "additionalProperties": false
         },
         {
           "type": "object",
@@ -867,7 +918,8 @@ export const ATTESTATION_SCHEMA = {
               "type": "integer",
               "minimum": 1
             }
-          }
+          },
+          "additionalProperties": false
         }
       ]
     }

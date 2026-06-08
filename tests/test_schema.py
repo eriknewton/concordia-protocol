@@ -1,5 +1,9 @@
 """Tests for JSON Schema validation of messages and attestations."""
 
+from __future__ import annotations
+
+import copy
+
 from concordia import (
     Agent,
     BasicOffer,
@@ -79,6 +83,53 @@ class TestMessageValidation:
 
 
 class TestAttestationValidation:
+    def _valid_attestation(self):
+        behavior = {
+            "offers_made": 1,
+            "concessions": 0,
+            "concession_magnitude": 0,
+            "signals_shared": 0,
+            "constraints_declared": 0,
+            "constraints_violated": 0,
+            "reasoning_provided": True,
+            "withdrawal": False,
+        }
+        return {
+            "concordia_attestation": "0.1.0",
+            "attestation_id": "att_valid",
+            "session_id": "ses_valid",
+            "timestamp": "2026-05-10T14:22:08Z",
+            "outcome": {
+                "status": "agreed",
+                "rounds": 2,
+                "duration_seconds": 60,
+                "terms_count": 3,
+                "resolution_mechanism": "direct",
+            },
+            "parties": [
+                {
+                    "agent_id": "agent_a",
+                    "role": "initiator",
+                    "behavior": copy.deepcopy(behavior),
+                    "signature": "sig_a",
+                },
+                {
+                    "agent_id": "agent_b",
+                    "role": "responder",
+                    "behavior": copy.deepcopy(behavior),
+                    "signature": "sig_b",
+                },
+            ],
+            "meta": {
+                "category": "electronics.cameras",
+                "value_range": "1000-5000_USD",
+                "extensions_used": [],
+                "mediator_invoked": False,
+            },
+            "transcript_hash": "sha256:" + "a" * 64,
+            "fulfillment": None,
+        }
+
     def test_valid_attestation(self):
         seller = Agent("seller_01")
         buyer = Agent("buyer_42")
@@ -111,3 +162,50 @@ class TestAttestationValidation:
         att = {"concordia_attestation": "0.1.0"}
         errors = validate_attestation(att)
         assert len(errors) > 0
+
+    def test_rejects_top_level_raw_term_extra_field(self):
+        att = self._valid_attestation()
+        att["price"] = {"value": 1900, "currency": "USD"}
+        errors = validate_attestation(att)
+        assert "$: Additional properties are not allowed ('price' was unexpected)" in errors
+
+    def test_rejects_outcome_agreed_terms(self):
+        att = self._valid_attestation()
+        att["outcome"]["agreed_terms"] = {
+            "price": {"value": 1900, "currency": "USD"},
+            "quantity": 2,
+        }
+        errors = validate_attestation(att)
+        assert (
+            "$.outcome: Additional properties are not allowed "
+            "('agreed_terms' was unexpected)"
+        ) in errors
+
+    def test_rejects_per_party_raw_price(self):
+        att = self._valid_attestation()
+        att["parties"][0]["behavior"]["price_floor"] = 1750
+        att["parties"][0]["behavior"]["accepted_price"] = 1900
+        errors = validate_attestation(att)
+        assert (
+            "$.parties[0].behavior: Additional properties are not allowed "
+            "('accepted_price', 'price_floor' were unexpected)"
+        ) in errors
+
+    def test_rejects_reference_extensions_term_payload(self):
+        att = self._valid_attestation()
+        att["references"] = [
+            {
+                "id": "urn:concordia:predicate:privacy",
+                "type": "predicate",
+                "relationship": "references",
+                "extensions": {
+                    "price": 1900,
+                    "quantity": 2,
+                },
+            }
+        ]
+        errors = validate_attestation(att)
+        assert (
+            "$.references[0].extensions: Additional properties are not allowed "
+            "('price', 'quantity' were unexpected)"
+        ) in errors

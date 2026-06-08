@@ -71,7 +71,8 @@
           "enum": ["direct", "split", "foa", "tradeoff", "escalation", "none"],
           "description": "How agreement was reached (or 'none' if not reached)."
         }
-      }
+      },
+      "additionalProperties": false
     },
 
     "parties": {
@@ -139,13 +140,15 @@
                 "minimum": 0,
                 "description": "Average time to respond to counterparty messages."
               }
-            }
+            },
+            "additionalProperties": false
           },
           "signature": {
             "type": "string",
             "description": "Ed25519 signature over this party's behavioral record, confirming accuracy."
           }
-        }
+        },
+        "additionalProperties": false
       }
     },
 
@@ -171,13 +174,19 @@
           "type": "boolean",
           "description": "Whether a mediator was used."
         }
-      }
+      },
+      "additionalProperties": false
     },
 
     "transcript_hash": {
       "type": "string",
       "pattern": "^sha256:[a-f0-9]{64}$",
       "description": "SHA-256 hash of the complete negotiation transcript. Allows independent verification."
+    },
+
+    "summary": {
+      "type": "string",
+      "description": "Plaintext receipt summary generated from behavioral metadata and transcript hash prefix. Does not include raw deal terms."
     },
 
     "fulfillment": {
@@ -199,6 +208,7 @@
       "description": "Optional temporal validity window for the attestation. Added in v0.4.0 (WP3)."
     }
   },
+  "additionalProperties": false,
 
   "$defs": {
     "fulfillment_attestation": {
@@ -251,7 +261,8 @@
                 "type": ["string", "null"],
                 "enum": ["resolved_favor_complainant", "resolved_favor_respondent", "resolved_compromise", "unresolved", null]
               }
-            }
+            },
+            "additionalProperties": false
           },
           "description": "Disputes raised about specific terms. Empty array if no disputes."
         },
@@ -268,9 +279,11 @@
             },
             "signature": { "type": "string" }
           },
-          "required": ["agent_id", "confirms_fulfillment", "signature"]
+          "required": ["agent_id", "confirms_fulfillment", "signature"],
+          "additionalProperties": false
         }
-      }
+      },
+      "additionalProperties": false
     },
 
     "reference": {
@@ -308,9 +321,28 @@
         },
         "extensions": {
           "type": "object",
+          "properties": {
+            "profile": { "type": "string" },
+            "custom_key": { "type": "string" },
+            "future_field": { "type": "string" },
+            "future_v0x_field": { "type": "string" },
+            "another_extension": {
+              "type": "object",
+              "properties": {
+                "nested": { "type": "boolean" }
+              },
+              "additionalProperties": false
+            },
+            "tl_leaf_canonical_hash": { "type": "string" },
+            "verified_signing_key_hex": { "type": "string" },
+            "leaf_index": { "type": "integer", "minimum": 0 },
+            "tl_url": { "type": "string" }
+          },
+          "additionalProperties": false,
           "description": "Optional. Forward-compatibility map for v0.x extension keys. Implementations SHOULD preserve unknown keys verbatim across roundtrips."
         }
-      }
+      },
+      "additionalProperties": false
     },
 
     "validity_temporal": {
@@ -323,6 +355,7 @@
             "from": { "type": "string", "format": "date-time" },
             "until": { "type": "string", "format": "date-time" }
           },
+          "additionalProperties": false,
           "description": "Absolute clock-bounded validity. Added in v0.4.0 (WP3)."
         },
         {
@@ -333,6 +366,7 @@
             "from": { "type": "string", "format": "date-time" },
             "duration_seconds": { "type": "integer", "minimum": 1 }
           },
+          "additionalProperties": false,
           "description": "Validity is N seconds after the anchor timestamp. Added in v0.4.0 (WP3)."
         },
         {
@@ -344,6 +378,7 @@
             "end": { "type": "string", "format": "date-time" },
             "duration_seconds": { "type": "integer", "minimum": 1 }
           },
+          "additionalProperties": false,
           "description": "Valid during any N-second window within [start, end]. Added in v0.4.0 (WP3)."
         }
       ]

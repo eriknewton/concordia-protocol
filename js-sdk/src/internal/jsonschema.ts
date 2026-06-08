@@ -54,6 +54,7 @@ export type FormatChecker = (format: string, value: string) => boolean;
 interface ValidationContext {
   rootSchema: unknown;
   formatChecker?: FormatChecker;
+  refStack: Set<string>;
 }
 
 /**
@@ -77,6 +78,7 @@ export function iterErrors(
   validateNode(schema, instance, '$', errors, {
     rootSchema: schema,
     formatChecker,
+    refStack: new Set(),
   });
   return errors;
 }
@@ -646,8 +648,16 @@ function checkRef(
   errors: SchemaError[],
   ctx: ValidationContext,
 ): void {
-  const target = resolveJsonPointerRef(ctx.rootSchema, ref);
-  validateNode(target, instance, path, errors, ctx);
+  if (ctx.refStack.has(ref)) {
+    throw new Error(`schema-validator: cyclic $ref ${pyRepr(ref)}`);
+  }
+  ctx.refStack.add(ref);
+  try {
+    const target = resolveJsonPointerRef(ctx.rootSchema, ref);
+    validateNode(target, instance, path, errors, ctx);
+  } finally {
+    ctx.refStack.delete(ref);
+  }
 }
 
 function checkIfThenElse(
@@ -697,6 +707,9 @@ function resolveJsonPointerRef(root: unknown, ref: string): unknown {
   }
   let current = root;
   for (const rawPart of ref.slice(2).split('/')) {
+    if (/~(?![01])/.test(rawPart)) {
+      throw new Error(`schema-validator: malformed $ref ${pyRepr(ref)}`);
+    }
     const part = rawPart.replace(/~1/g, '/').replace(/~0/g, '~');
     if (isPlainObject(current) && part in current) {
       current = current[part];
