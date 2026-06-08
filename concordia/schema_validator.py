@@ -7,6 +7,7 @@ and attestations against the attestation.schema.json.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 import warnings
 from pathlib import Path
@@ -20,6 +21,17 @@ from .attestation import REFERENCE_RELATIONSHIPS, REFERENCE_TYPES
 # Path to the bundled schemas directory
 _SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
 _FORMAT_CHECKER = jsonschema.FormatChecker()
+_FREE_TEXT_TERM_ERROR = (
+    "free-text field must not contain obvious raw deal terms"
+)
+_RAW_TERM_PATTERNS = (
+    re.compile(r"[$€£¥]\s*\d", re.IGNORECASE),
+    re.compile(r"\b(?:USD|EUR|GBP|JPY|CAD|AUD|CHF|CNY|INR)\s*\d", re.IGNORECASE),
+    re.compile(r"\b\d+(?:[.,]\d+)?\s*(?:USD|EUR|GBP|JPY|CAD|AUD|CHF|CNY|INR)\b", re.IGNORECASE),
+    re.compile(r"\bprice\s*:", re.IGNORECASE),
+    re.compile(r"\b(?:qty|quantity)\s*[:=]?\s*\d+\b", re.IGNORECASE),
+    re.compile(r"\b\d+\s*(?:units?|items?|pcs|pieces)\b", re.IGNORECASE),
+)
 
 
 @_FORMAT_CHECKER.checks("date-time", raises=ValueError)
@@ -137,6 +149,7 @@ def validate_attestation(attestation: dict[str, Any]) -> list[str]:
     )
     for error in validator.iter_errors(attestation):
         errors.append(f"{error.json_path}: {error.message}")
+    errors.extend(_validate_attestation_free_text(attestation))
     if not errors:
         _warn_on_noncanonical_references(attestation)
     return errors
@@ -215,6 +228,52 @@ def _warn_on_noncanonical_references(attestation: dict[str, Any]) -> None:
                 UserWarning,
                 stacklevel=3,
             )
+
+
+def _validate_attestation_free_text(attestation: Any) -> list[str]:
+    """Best-effort defense-in-depth check for raw terms in attestation text.
+
+    The schema rejects structured term fields. This scanner is intentionally
+    narrower: it catches obvious accidental raw-term strings without treating
+    free text as the privacy guarantee, and without echoing matched content.
+    """
+    if not isinstance(attestation, dict):
+        return []
+
+    errors: list[str] = []
+    candidates: list[tuple[str, Any]] = [
+        ("$.summary", attestation.get("summary")),
+    ]
+
+    fulfillment = attestation.get("fulfillment")
+    if isinstance(fulfillment, dict):
+        disputes = fulfillment.get("disputes")
+        if isinstance(disputes, list):
+            for index, dispute in enumerate(disputes):
+                if isinstance(dispute, dict):
+                    candidates.append(
+                        (
+                            f"$.fulfillment.disputes[{index}].description",
+                            dispute.get("description"),
+                        )
+                    )
+        counterparty = fulfillment.get("counterparty_attestation")
+        if isinstance(counterparty, dict):
+            candidates.append(
+                (
+                    "$.fulfillment.counterparty_attestation.notes",
+                    counterparty.get("notes"),
+                )
+            )
+
+    for path, value in candidates:
+        if isinstance(value, str) and _contains_obvious_raw_term(value):
+            errors.append(f"{path}: {_FREE_TEXT_TERM_ERROR}")
+    return errors
+
+
+def _contains_obvious_raw_term(value: str) -> bool:
+    return any(pattern.search(value) for pattern in _RAW_TERM_PATTERNS)
 
 
 def is_valid_message(message: dict[str, Any]) -> bool:

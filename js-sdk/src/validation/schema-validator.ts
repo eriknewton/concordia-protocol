@@ -2,11 +2,12 @@
  * JSON Schema validation for Concordia messages and artifacts.
  *
  * Port of `concordia/schema_validator.py`. Validates a Concordia message
- * envelope against the SPEC §4.1 schema, an ApprovalReceipt against
+ * envelope against the SPEC §4.1 schema, a §9.6 Reputation Attestation against
+ * `attestation.schema.json`, an ApprovalReceipt against
  * `approval_receipt.schema.json`, and a standalone FulfillmentAttestation
  * against `fulfillment_attestation.schema.json` — each returning a list of
  * `"{json_path}: {message}"` strings (empty when valid), byte-identical to the
- * Python reference.
+ * Python reference for the supported schema surface.
  *
  * PARITY APPROACH. Python drives `jsonschema.Draft202012Validator(...,
  * format_checker=...).iter_errors(...)` and joins `f"{error.json_path}:
@@ -28,13 +29,11 @@
  * keyword). `validate_fulfillment_attestation` passes NO checker (its `format`
  * keywords are inert), matching Python.
  *
- * DEFERRED — `validate_attestation` (the §9.6 reputation-attestation schema).
- * That schema uses `$ref` / `$defs` / `oneOf`, which the internal validator does
- * not yet support, and its companion `_warn_on_noncanonical_references` depends
- * on `REFERENCE_TYPES` / `REFERENCE_RELATIONSHIPS` from `concordia/attestation.py`
- * (not yet ported as constants). Both are out of scope for this slice and pinned
- * by a boundary fixture + a skipped test in the suite. {@link validateAttestation}
- * is intentionally NOT exported here.
+ * `validate_attestation` warning side effect: Python emits `UserWarning`s for
+ * non-canonical but schema-valid reference type/relationship strings. JavaScript
+ * has no matching warnings API on this validation surface, so this port preserves
+ * the fail-closed schema behavior and intentionally does not emit side-channel
+ * warnings.
  */
 
 import {
@@ -45,6 +44,7 @@ import {
 import { isCpythonIsoDateTime } from '../internal/iso-datetime.js';
 import {
   MESSAGE_SCHEMA,
+  ATTESTATION_SCHEMA,
   APPROVAL_RECEIPT_SCHEMA,
   FULFILLMENT_ATTESTATION_SCHEMA,
 } from './schemas.js';
@@ -52,8 +52,20 @@ import {
 // Fail fast at module load if a bundled schema introduces a keyword the internal
 // validator does not support (which would silently under-validate vs Python).
 assertSupportedSchema(MESSAGE_SCHEMA, 'message');
+assertSupportedSchema(ATTESTATION_SCHEMA, 'attestation');
 assertSupportedSchema(APPROVAL_RECEIPT_SCHEMA, 'approval_receipt');
 assertSupportedSchema(FULFILLMENT_ATTESTATION_SCHEMA, 'fulfillment_attestation');
+
+const FREE_TEXT_TERM_ERROR =
+  'free-text field must not contain obvious raw deal terms';
+const RAW_TERM_PATTERNS = [
+  /[$€£¥]\s*\d/i,
+  /\b(?:USD|EUR|GBP|JPY|CAD|AUD|CHF|CNY|INR)\s*\d/i,
+  /\b\d+(?:[.,]\d+)?\s*(?:USD|EUR|GBP|JPY|CAD|AUD|CHF|CNY|INR)\b/i,
+  /\bprice\s*:/i,
+  /\b(?:qty|quantity)\s*[:=]?\s*\d+\b/i,
+  /\b\d+\s*(?:units?|items?|pcs|pieces)\b/i,
+];
 
 // ---------------------------------------------------------------------------
 // Format checker (mirrors `concordia/schema_validator.py` `_FORMAT_CHECKER`)
@@ -130,6 +142,23 @@ export function isValidMessage(message: unknown): boolean {
 }
 
 /**
+ * Validate a §9.6 Reputation Attestation against `attestation.schema.json`.
+ * Mirrors Python `validate_attestation` for schema errors, including asserted
+ * `date-time` formats and intra-document `$ref` / `oneOf` applicators.
+ */
+export function validateAttestation(attestation: unknown): string[] {
+  return [
+    ...format(iterErrors(ATTESTATION_SCHEMA, attestation, conformsFormat)),
+    ...validateAttestationFreeText(attestation),
+  ];
+}
+
+/** Return `true` if the Reputation Attestation passes schema validation. */
+export function isValidAttestation(attestation: unknown): boolean {
+  return validateAttestation(attestation).length === 0;
+}
+
+/**
  * Validate an ApprovalReceipt against `approval_receipt.schema.json`. Mirrors
  * Python `validate_approval_receipt`: returns a list of validation error messages
  * (empty if valid), with `date-time` formats asserted via the custom checker.
@@ -195,4 +224,44 @@ export function isValidFulfillmentAttestation(attestation: unknown): boolean {
 /** Python `isinstance(x, dict)`: a plain object, not an array / null. */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function validateAttestationFreeText(attestation: unknown): string[] {
+  if (!isPlainObject(attestation)) return [];
+
+  const candidates: Array<[string, unknown]> = [['$.summary', attestation.summary]];
+  const fulfillment = attestation.fulfillment;
+  if (isPlainObject(fulfillment)) {
+    const disputes = fulfillment.disputes;
+    if (Array.isArray(disputes)) {
+      disputes.forEach((dispute, index) => {
+        if (isPlainObject(dispute)) {
+          candidates.push([
+            `$.fulfillment.disputes[${index}].description`,
+            dispute.description,
+          ]);
+        }
+      });
+    }
+
+    const counterparty = fulfillment.counterparty_attestation;
+    if (isPlainObject(counterparty)) {
+      candidates.push([
+        '$.fulfillment.counterparty_attestation.notes',
+        counterparty.notes,
+      ]);
+    }
+  }
+
+  const errors: string[] = [];
+  for (const [path, value] of candidates) {
+    if (typeof value === 'string' && containsObviousRawTerm(value)) {
+      errors.push(`${path}: ${FREE_TEXT_TERM_ERROR}`);
+    }
+  }
+  return errors;
+}
+
+function containsObviousRawTerm(value: string): boolean {
+  return RAW_TERM_PATTERNS.some((pattern) => pattern.test(value));
 }

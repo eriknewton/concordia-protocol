@@ -21,17 +21,15 @@
  *   It reuses the SAME `pyRepr` rendering as the engine (now shared from
  *   `src/internal/py-repr.ts`), so the embedded-value text matches both layers.
  *
- * DEFERRED keywords (NOT used by the message / approval-receipt / fulfillment
- * schemas this PR validates; used only by `attestation.schema.json`, whose
- * `validate_attestation` port is deferred to a follow-up — see
- * `src/validation/schema-validator.ts` and the boundary fixture): `$ref`,
- * `$defs`, `oneOf`, `anyOf`, `not`, `propertyNames`, `dependentRequired`,
- * `dependentSchemas`, `prefixItems`, `uniqueItems`, `multipleOf`. If a schema
- * carrying one of these reaches {@link iterErrors}, the unknown keyword is
- * IGNORED (jsonschema ignores unknown keywords too), which would silently
- * under-validate — so the consuming modules MUST only feed schemas built from
- * the supported subset. A `validateSchemaKeywords` guard asserts this at module
- * load for the bundled schemas.
+ * Supported applicators now include the §9.6 attestation schema's narrow
+ * `$ref` / `$defs` / `oneOf` needs. Still unsupported: `anyOf`, `not`,
+ * `propertyNames`, `dependentRequired`, `dependentSchemas`, `prefixItems`,
+ * `uniqueItems`, `multipleOf`. If a schema carrying one of these reaches
+ * {@link iterErrors}, the unknown keyword is IGNORED (jsonschema ignores unknown
+ * keywords too), which would silently under-validate — so the consuming modules
+ * MUST only feed schemas built from the supported subset. A
+ * `validateSchemaKeywords` guard asserts this at module load for the bundled
+ * schemas.
  */
 
 import { pyRepr } from './py-repr.js';
@@ -53,6 +51,12 @@ export interface SchemaError {
  */
 export type FormatChecker = (format: string, value: string) => boolean;
 
+interface ValidationContext {
+  rootSchema: unknown;
+  formatChecker?: FormatChecker;
+  refStack: Set<string>;
+}
+
 /**
  * Yield validation errors for `instance` against `schema`, reproducing CPython
  * `Draft202012Validator(schema, format_checker=...).iter_errors(instance)` in
@@ -71,7 +75,11 @@ export function iterErrors(
   formatChecker?: FormatChecker,
 ): SchemaError[] {
   const errors: SchemaError[] = [];
-  validateNode(schema, instance, '$', errors, formatChecker);
+  validateNode(schema, instance, '$', errors, {
+    rootSchema: schema,
+    formatChecker,
+    refStack: new Set(),
+  });
   return errors;
 }
 
@@ -86,7 +94,7 @@ function validateNode(
   instance: unknown,
   path: string,
   errors: SchemaError[],
-  fc?: FormatChecker,
+  ctx: ValidationContext,
 ): void {
   // Boolean schemas (Draft 2020-12). `false` rejects any instance; `true`
   // accepts. CPython's `false` message is the generic one below.
@@ -120,19 +128,19 @@ function validateNode(
         checkRequired(value as string[], instance, path, errors);
         break;
       case 'properties':
-        checkProperties(value as Record<string, unknown>, instance, path, errors, fc);
+        checkProperties(value as Record<string, unknown>, instance, path, errors, ctx);
         break;
       case 'additionalProperties':
-        checkAdditionalProperties(s, value, instance, path, errors, fc);
+        checkAdditionalProperties(s, value, instance, path, errors, ctx);
         break;
       case 'patternProperties':
-        checkPatternProperties(value as Record<string, unknown>, instance, path, errors, fc);
+        checkPatternProperties(value as Record<string, unknown>, instance, path, errors, ctx);
         break;
       case 'items':
-        checkItems(value, instance, path, errors, fc);
+        checkItems(value, instance, path, errors, ctx);
         break;
       case 'contains':
-        checkContains(value, instance, path, errors);
+        checkContains(value, instance, path, errors, ctx);
         break;
       case 'minItems':
         checkMinItems(value as number, instance, path, errors);
@@ -162,13 +170,19 @@ function validateNode(
         checkExclusiveMaximum(value as number, instance, path, errors);
         break;
       case 'format':
-        checkFormat(value as string, instance, path, errors, fc);
+        checkFormat(value as string, instance, path, errors, ctx);
         break;
       case 'allOf':
-        checkAllOf(value as unknown[], instance, path, errors, fc);
+        checkAllOf(value as unknown[], instance, path, errors, ctx);
+        break;
+      case 'oneOf':
+        checkOneOf(value as unknown[], instance, path, errors, ctx);
+        break;
+      case '$ref':
+        checkRef(value as string, instance, path, errors, ctx);
         break;
       case 'if':
-        checkIfThenElse(s, instance, path, errors, fc);
+        checkIfThenElse(s, instance, path, errors, ctx);
         break;
       // `then` / `else` are handled by the `if` branch; skip when seen directly.
       case 'then':
@@ -301,7 +315,7 @@ function checkProperties(
   instance: unknown,
   path: string,
   errors: SchemaError[],
-  fc?: FormatChecker,
+  ctx: ValidationContext,
 ): void {
   if (!isPlainObject(instance)) {
     return;
@@ -315,7 +329,7 @@ function checkProperties(
         instance[prop],
         `${path}${childPath(prop)}`,
         errors,
-        fc,
+        ctx,
       );
     }
   }
@@ -327,7 +341,7 @@ function checkAdditionalProperties(
   instance: unknown,
   path: string,
   errors: SchemaError[],
-  fc?: FormatChecker,
+  ctx: ValidationContext,
 ): void {
   if (!isPlainObject(instance)) {
     return;
@@ -357,7 +371,7 @@ function checkAdditionalProperties(
       instance[key],
       `${path}${childPath(key)}`,
       errors,
-      fc,
+      ctx,
     );
   }
 }
@@ -367,7 +381,7 @@ function checkPatternProperties(
   instance: unknown,
   path: string,
   errors: SchemaError[],
-  fc?: FormatChecker,
+  ctx: ValidationContext,
 ): void {
   if (!isPlainObject(instance)) {
     return;
@@ -381,7 +395,7 @@ function checkPatternProperties(
           instance[key],
           `${path}${childPath(key)}`,
           errors,
-          fc,
+          ctx,
         );
       }
     }
@@ -393,14 +407,14 @@ function checkItems(
   instance: unknown,
   path: string,
   errors: SchemaError[],
-  fc?: FormatChecker,
+  ctx: ValidationContext,
 ): void {
   if (!Array.isArray(instance)) {
     return;
   }
   // Draft 2020-12 `items` (schema form) applies to every element.
   instance.forEach((element, i) => {
-    validateNode(itemsSchema, element, `${path}[${i}]`, errors, fc);
+    validateNode(itemsSchema, element, `${path}[${i}]`, errors, ctx);
   });
 }
 
@@ -409,6 +423,7 @@ function checkContains(
   instance: unknown,
   path: string,
   errors: SchemaError[],
+  ctx: ValidationContext,
 ): void {
   if (!Array.isArray(instance)) {
     return;
@@ -416,7 +431,7 @@ function checkContains(
   // CPython: at least one element must match. If none do, ONE error at the array
   // path. The element sub-errors are NOT surfaced (jsonschema discards them).
   const anyMatch = instance.some(
-    (element) => iterErrorsSilent(containsSchema, element).length === 0,
+    (element) => iterErrorsSilent(containsSchema, element, ctx).length === 0,
   );
   if (!anyMatch) {
     errors.push({
@@ -568,15 +583,15 @@ function checkFormat(
   instance: unknown,
   path: string,
   errors: SchemaError[],
-  fc?: FormatChecker,
+  ctx: ValidationContext,
 ): void {
   // CPython jsonschema only asserts `format` when a `format_checker` is passed.
   // Non-string instances are skipped here (the custom Concordia checkers return
   // `True` for non-strings, deferring to the `type` keyword).
-  if (fc === undefined || typeof instance !== 'string') {
+  if (ctx.formatChecker === undefined || typeof instance !== 'string') {
     return;
   }
-  if (fc(format, instance)) {
+  if (ctx.formatChecker(format, instance)) {
     return;
   }
   errors.push({
@@ -590,11 +605,58 @@ function checkAllOf(
   instance: unknown,
   path: string,
   errors: SchemaError[],
-  fc?: FormatChecker,
+  ctx: ValidationContext,
 ): void {
   // CPython yields the sub-errors of EVERY failing branch, in branch order.
   for (const branch of branches) {
-    validateNode(branch, instance, path, errors, fc);
+    validateNode(branch, instance, path, errors, ctx);
+  }
+}
+
+function checkOneOf(
+  branches: unknown[],
+  instance: unknown,
+  path: string,
+  errors: SchemaError[],
+  ctx: ValidationContext,
+): void {
+  const matches = branches.filter(
+    (branch) => iterErrorsSilent(branch, instance, ctx).length === 0,
+  );
+  if (matches.length === 1) {
+    return;
+  }
+  if (matches.length === 0) {
+    errors.push({
+      jsonPath: path,
+      message: `${pyRepr(instance)} is not valid under any of the given schemas`,
+    });
+    return;
+  }
+  errors.push({
+    jsonPath: path,
+    message: `${pyRepr(instance)} is valid under each of ${branches
+      .map(pyRepr)
+      .join(', ')}`,
+  });
+}
+
+function checkRef(
+  ref: string,
+  instance: unknown,
+  path: string,
+  errors: SchemaError[],
+  ctx: ValidationContext,
+): void {
+  if (ctx.refStack.has(ref)) {
+    throw new Error(`schema-validator: cyclic $ref ${pyRepr(ref)}`);
+  }
+  ctx.refStack.add(ref);
+  try {
+    const target = resolveJsonPointerRef(ctx.rootSchema, ref);
+    validateNode(target, instance, path, errors, ctx);
+  } finally {
+    ctx.refStack.delete(ref);
   }
 }
 
@@ -603,18 +665,18 @@ function checkIfThenElse(
   instance: unknown,
   path: string,
   errors: SchemaError[],
-  fc?: FormatChecker,
+  ctx: ValidationContext,
 ): void {
   // Draft 2020-12 if/then/else: if `if` validates, apply `then`; else apply
   // `else`. The `if` keyword itself produces NO errors (it is a condition).
   const ifSchema = schema.if;
-  const ifValid = iterErrorsSilent(ifSchema, instance, fc).length === 0;
+  const ifValid = iterErrorsSilent(ifSchema, instance, ctx).length === 0;
   if (ifValid) {
     if ('then' in schema) {
-      validateNode(schema.then, instance, path, errors, fc);
+      validateNode(schema.then, instance, path, errors, ctx);
     }
   } else if ('else' in schema) {
-    validateNode(schema.else, instance, path, errors, fc);
+    validateNode(schema.else, instance, path, errors, ctx);
   }
 }
 
@@ -630,11 +692,32 @@ function checkIfThenElse(
 function iterErrorsSilent(
   schema: unknown,
   instance: unknown,
-  fc?: FormatChecker,
+  ctx: ValidationContext,
 ): SchemaError[] {
   const local: SchemaError[] = [];
-  validateNode(schema, instance, '$', local, fc);
+  validateNode(schema, instance, '$', local, ctx);
   return local;
+}
+
+function resolveJsonPointerRef(root: unknown, ref: string): unknown {
+  if (!ref.startsWith('#/')) {
+    throw new Error(
+      `schema-validator: unsupported $ref ${pyRepr(ref)}; only intra-document JSON Pointer refs are supported`,
+    );
+  }
+  let current = root;
+  for (const rawPart of ref.slice(2).split('/')) {
+    if (/~(?![01])/.test(rawPart)) {
+      throw new Error(`schema-validator: malformed $ref ${pyRepr(ref)}`);
+    }
+    const part = rawPart.replace(/~1/g, '/').replace(/~0/g, '~');
+    if (isPlainObject(current) && part in current) {
+      current = current[part];
+      continue;
+    }
+    throw new Error(`schema-validator: unresolved $ref ${pyRepr(ref)}`);
+  }
+  return current;
 }
 
 /**
@@ -750,9 +833,12 @@ const SUPPORTED_KEYWORDS = new Set<string>([
   'items',
   'contains',
   'allOf',
+  'oneOf',
   'if',
   'then',
   'else',
+  '$ref',
+  '$defs',
   // string / number / array constraints
   'minItems',
   'maxItems',
@@ -777,8 +863,8 @@ const SUPPORTED_KEYWORDS = new Set<string>([
 /**
  * Walk a schema and throw if it uses a keyword this validator does NOT support
  * (which would silently under-validate vs CPython jsonschema). Called at module
- * load on each bundled schema so a future schema edit that adds `$ref`/`oneOf`/
- * etc. fails fast at import rather than passing invalid instances silently.
+ * load on each bundled schema so a future schema edit that adds an unported
+ * keyword fails fast at import rather than passing invalid instances silently.
  */
 export function assertSupportedSchema(schema: unknown, name: string): void {
   // Keywords whose VALUE is a map of {name -> subschema}; the names are arbitrary

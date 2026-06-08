@@ -6,6 +6,8 @@ import { fileURLToPath } from 'url';
 import {
   validateMessage,
   isValidMessage,
+  validateAttestation,
+  isValidAttestation,
   validateApprovalReceipt,
   isValidApprovalReceipt,
   validateFulfillmentAttestation,
@@ -14,6 +16,7 @@ import {
   approvalReceiptResultToDict,
   conformsFormat,
 } from '../src/validation/index.js';
+import { iterErrors } from '../src/internal/jsonschema.js';
 import {
   isCpythonIsoDateTime,
   cpythonIsoDateTimeToEpochMs,
@@ -359,26 +362,310 @@ describe('schema validators — robustness on malformed top-level input', () => 
 });
 
 // ===========================================================================
-// DEFERRED — validate_attestation (uses $ref / $defs / oneOf)
+// validate_attestation — §9.6 schema, $ref/$defs/oneOf fail-closed coverage
 // ===========================================================================
-//
-// `validate_attestation` (the §9.6 reputation-attestation schema) is NOT ported
-// in this slice: its schema uses `$ref` / `$defs` / `oneOf` (which the internal
-// validator does not yet support), and its companion
-// `_warn_on_noncanonical_references` depends on `REFERENCE_TYPES` /
-// `REFERENCE_RELATIONSHIPS` constants from `concordia/attestation.py` (not yet
-// ported). The boundary is pinned by the `deferred_attestation` fixture so the
-// follow-up PR has a Python-produced parity target. This test is SKIPPED until
-// the internal validator gains `$ref`/`oneOf` support and the function lands.
-describe('validateAttestation — DEFERRED ($ref/$defs/oneOf)', () => {
-  it.skip('matches Python validate_attestation once $ref/oneOf land', () => {
-    // When ported, `validateAttestation` should reproduce these exact lists:
+
+function validAttestation(): Record<string, unknown> {
+  const behavior = {
+    offers_made: 1,
+    concessions: 0,
+    concession_magnitude: 0,
+    signals_shared: 0,
+    constraints_declared: 0,
+    constraints_violated: 0,
+    reasoning_provided: true,
+    withdrawal: false,
+  };
+  return {
+    concordia_attestation: '0.1.0',
+    attestation_id: 'att_valid',
+    session_id: 'ses_valid',
+    timestamp: '2026-05-10T14:22:08Z',
+    outcome: {
+      status: 'agreed',
+      rounds: 2,
+      duration_seconds: 60,
+      terms_count: 3,
+      resolution_mechanism: 'direct',
+    },
+    parties: [
+      {
+        agent_id: 'agent_a',
+        role: 'initiator',
+        behavior,
+        signature: 'sig_a',
+      },
+      {
+        agent_id: 'agent_b',
+        role: 'responder',
+        behavior,
+        signature: 'sig_b',
+      },
+    ],
+    meta: {
+      category: 'electronics.cameras',
+      value_range: '1000-5000_USD',
+      extensions_used: [],
+      mediator_invoked: false,
+    },
+    transcript_hash:
+      'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    fulfillment: null,
+  };
+}
+
+describe('validateAttestation — Python parity and fail-closed behavior', () => {
+  it('matches the Python-produced deferred boundary fixture exactly', () => {
     const d = fixtures.deferred_attestation;
-    // expect(validateAttestation(d.valid_attestation)).toEqual(d.valid_expected);
-    // expect(validateAttestation(d.bad_oneof_attestation)).toEqual(
-    //   d.bad_oneof_expected,
-    // );
-    expect(d.bad_oneof_expected.some((e) => e.includes('any of'))).toBe(true);
+    expect(validateAttestation(d.valid_attestation)).toEqual(d.valid_expected);
+    expect(validateAttestation(d.bad_oneof_attestation)).toEqual(
+      d.bad_oneof_expected,
+    );
+  });
+
+  it('accepts a valid §9.6 attestation with null fulfillment', () => {
+    const attestation = validAttestation();
+    expect(validateAttestation(attestation)).toEqual([]);
+    expect(isValidAttestation(attestation)).toBe(true);
+  });
+
+  it('accepts a valid in-line fulfillment block through $ref/oneOf', () => {
+    const attestation = validAttestation();
+    attestation.fulfillment = {
+      status: 'fulfilled',
+      settled_at: '2026-05-11T00:00:00Z',
+      fulfilled_at: '2026-05-11T00:05:00Z',
+      settlement_protocol: 'acp',
+      delivery_confirmed: true,
+      disputes: [],
+      counterparty_attestation: {
+        agent_id: 'agent_b',
+        confirms_fulfillment: true,
+        signature: 'sig_fulfillment',
+      },
+    };
+    expect(validateAttestation(attestation)).toEqual([]);
+  });
+
+  it('rejects malformed and unknown attestations instead of failing open', () => {
+    expect(validateAttestation(null)).toEqual([
+      "$: None is not of type 'object'",
+    ]);
+    expect(validateAttestation({})).toEqual([
+      "$: 'concordia_attestation' is a required property",
+      "$: 'attestation_id' is a required property",
+      "$: 'session_id' is a required property",
+      "$: 'timestamp' is a required property",
+      "$: 'outcome' is a required property",
+      "$: 'parties' is a required property",
+      "$: 'meta' is a required property",
+      "$: 'transcript_hash' is a required property",
+    ]);
+  });
+
+  it('rejects invalid date-time formats with the Python format checker', () => {
+    const attestation = validAttestation();
+    attestation.timestamp = '2026-05-10T14:22:08';
+    expect(validateAttestation(attestation)).toEqual([
+      "$.timestamp: '2026-05-10T14:22:08' is not a 'date-time'",
+    ]);
+  });
+
+  it('rejects raw deal terms carried as extra attestation fields', () => {
+    const attestation = validAttestation();
+    attestation.price = { value: 1900, currency: 'USD' };
+    expect(validateAttestation(attestation)).toContain(
+      "$: Additional properties are not allowed ('price' was unexpected)",
+    );
+  });
+
+  it('rejects raw agreed terms carried under outcome', () => {
+    const attestation = validAttestation();
+    (attestation.outcome as Record<string, unknown>).agreed_terms = {
+      price: { value: 1900, currency: 'USD' },
+      quantity: 2,
+    };
+    expect(validateAttestation(attestation)).toContain(
+      "$.outcome: Additional properties are not allowed ('agreed_terms' was unexpected)",
+    );
+  });
+
+  it('rejects raw price fields carried under party behavior', () => {
+    const attestation = validAttestation();
+    const parties = attestation.parties as Array<Record<string, unknown>>;
+    const behavior = parties[0].behavior as Record<string, unknown>;
+    behavior.price_floor = 1750;
+    behavior.accepted_price = 1900;
+    expect(validateAttestation(attestation)).toContain(
+      "$.parties[0].behavior: Additional properties are not allowed ('accepted_price', 'price_floor' were unexpected)",
+    );
+  });
+
+  it('rejects raw term payloads carried under reference extensions', () => {
+    const attestation = validAttestation();
+    attestation.references = [
+      {
+        id: 'urn:concordia:predicate:privacy',
+        type: 'predicate',
+        relationship: 'references',
+        extensions: {
+          price: 1900,
+          quantity: 2,
+        },
+      },
+    ];
+    expect(validateAttestation(attestation)).toContain(
+      "$.references[0].extensions: Additional properties are not allowed ('price', 'quantity' were unexpected)",
+    );
+  });
+
+  it('accepts a legitimate behavioral summary', () => {
+    const attestation = validAttestation();
+    attestation.summary = [
+      'Parties: agent_a, agent_b',
+      'Topic: electronics.cameras',
+      'Outcome: AGREED',
+      'Transcript hash: aaaaaaaaaaaaaaaa',
+    ].join('\n');
+    expect(validateAttestation(attestation)).toEqual([]);
+  });
+
+  it('rejects overlong attestation free text', () => {
+    const attestation = validAttestation();
+    attestation.summary = 'x'.repeat(1025);
+    const errors = validateAttestation(attestation);
+    expect(errors.some((e) => e.startsWith('$.summary:') && e.includes('is too long'))).toBe(
+      true,
+    );
+  });
+
+  it('rejects obvious raw terms in attestation free text without echoing them', () => {
+    const attestation = validAttestation();
+    attestation.summary = 'Raw terms: price 1900 USD, quantity 2';
+    attestation.fulfillment = {
+      status: 'disputed',
+      settled_at: '2026-05-11T00:00:00Z',
+      delivery_confirmed: false,
+      disputes: [
+        {
+          term_id: 'delivery',
+          complainant_agent_id: 'agent_a',
+          description: 'Counterparty asked for qty: 2',
+          resolution: 'unresolved',
+        },
+      ],
+      counterparty_attestation: {
+        agent_id: 'agent_b',
+        confirms_fulfillment: false,
+        notes: 'Asked for $1900 before delivery.',
+        signature: 'sig_fulfillment',
+      },
+    };
+    const errors = validateAttestation(attestation);
+    expect(errors).toContain(
+      '$.summary: free-text field must not contain obvious raw deal terms',
+    );
+    expect(errors).toContain(
+      '$.fulfillment.disputes[0].description: free-text field must not contain obvious raw deal terms',
+    );
+    expect(errors).toContain(
+      '$.fulfillment.counterparty_attestation.notes: free-text field must not contain obvious raw deal terms',
+    );
+    expect(
+      errors.some(
+        (e) =>
+          e.includes('1900') || e.includes('quantity 2') || e.includes('$1900'),
+      ),
+    ).toBe(false);
+  });
+
+  it('rejects invalid $ref targets under references[]', () => {
+    const attestation = validAttestation();
+    attestation.references = [{ id: '', type: '', relationship: '' }];
+    expect(validateAttestation(attestation)).toEqual([
+      "$.references[0].id: '' should be non-empty",
+      "$.references[0].type: '' should be non-empty",
+      "$.references[0].relationship: '' should be non-empty",
+    ]);
+  });
+
+  it('rejects invalid oneOf temporal and fulfillment variants', () => {
+    const badTemporal = validAttestation();
+    badTemporal.validity_temporal = { mode: 'absolute' };
+    expect(validateAttestation(badTemporal)).toEqual([
+      "$.validity_temporal: {'mode': 'absolute'} is not valid under any of the given schemas",
+    ]);
+
+    const badFulfillment = validAttestation();
+    badFulfillment.fulfillment = { status: 'fulfilled' };
+    expect(validateAttestation(badFulfillment)).toEqual([
+      "$.fulfillment: {'status': 'fulfilled'} is not valid under any of the given schemas",
+    ]);
+  });
+});
+
+describe('internal jsonschema $ref/oneOf support', () => {
+  const schema = {
+    type: 'object',
+    properties: {
+      choice: {
+        oneOf: [{ $ref: '#/$defs/text' }, { $ref: '#/$defs/count' }],
+      },
+    },
+    $defs: {
+      text: { type: 'string', minLength: 1 },
+      count: { type: 'integer', minimum: 1 },
+    },
+  };
+
+  it('resolves intra-document refs while evaluating oneOf', () => {
+    expect(iterErrors(schema, { choice: 'ok' })).toEqual([]);
+    expect(iterErrors(schema, { choice: 2 })).toEqual([]);
+    expect(iterErrors(schema, { choice: 0 })).toEqual([
+      {
+        jsonPath: '$.choice',
+        message: '0 is not valid under any of the given schemas',
+      },
+    ]);
+  });
+
+  it('rejects oneOf values that match multiple branches', () => {
+    expect(iterErrors({ oneOf: [{ type: 'number' }, { minimum: 0 }] }, 1)).toEqual([
+      {
+        jsonPath: '$',
+        message: "1 is valid under each of {'type': 'number'}, {'minimum': 0}",
+      },
+    ]);
+  });
+
+  it('throws for missing $ref targets', () => {
+    expect(() =>
+      iterErrors({ $ref: '#/$defs/missing', $defs: {} }, 'x'),
+    ).toThrow("schema-validator: unresolved $ref '#/$defs/missing'");
+  });
+
+  it('throws for malformed $ref JSON Pointers', () => {
+    expect(() =>
+      iterErrors({ $ref: '#/$defs/~2bad', $defs: {} }, 'x'),
+    ).toThrow("schema-validator: malformed $ref '#/$defs/~2bad'");
+  });
+
+  it('throws for unsupported external $refs', () => {
+    expect(() => iterErrors({ $ref: 'https://example.com/schema.json' }, 'x')).toThrow(
+      "schema-validator: unsupported $ref 'https://example.com/schema.json'; only intra-document JSON Pointer refs are supported",
+    );
+  });
+
+  it('throws for cyclic $refs', () => {
+    const cyclicSchema = {
+      $ref: '#/$defs/self',
+      $defs: {
+        self: { $ref: '#/$defs/self' },
+      },
+    };
+    expect(() => iterErrors(cyclicSchema, 'x')).toThrow(
+      "schema-validator: cyclic $ref '#/$defs/self'",
+    );
   });
 });
 
