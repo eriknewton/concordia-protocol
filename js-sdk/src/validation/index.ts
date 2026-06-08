@@ -1,6 +1,8 @@
 export {
   validateMessage,
   isValidMessage,
+  validateAttestation,
+  isValidAttestation,
   validateApprovalReceipt,
   isValidApprovalReceipt,
   validateFulfillmentAttestation,
@@ -9,6 +11,7 @@ export {
 } from './schema-validator.js';
 export {
   MESSAGE_SCHEMA,
+  ATTESTATION_SCHEMA,
   APPROVAL_RECEIPT_SCHEMA,
   FULFILLMENT_ATTESTATION_SCHEMA,
 } from './schemas.js';

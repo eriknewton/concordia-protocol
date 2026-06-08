@@ -6,6 +6,8 @@ import { fileURLToPath } from 'url';
 import {
   validateMessage,
   isValidMessage,
+  validateAttestation,
+  isValidAttestation,
   validateApprovalReceipt,
   isValidApprovalReceipt,
   validateFulfillmentAttestation,
@@ -14,6 +16,7 @@ import {
   approvalReceiptResultToDict,
   conformsFormat,
 } from '../src/validation/index.js';
+import { iterErrors } from '../src/internal/jsonschema.js';
 import {
   isCpythonIsoDateTime,
   cpythonIsoDateTimeToEpochMs,
@@ -359,26 +362,163 @@ describe('schema validators — robustness on malformed top-level input', () => 
 });
 
 // ===========================================================================
-// DEFERRED — validate_attestation (uses $ref / $defs / oneOf)
+// validate_attestation — §9.6 schema, $ref/$defs/oneOf fail-closed coverage
 // ===========================================================================
-//
-// `validate_attestation` (the §9.6 reputation-attestation schema) is NOT ported
-// in this slice: its schema uses `$ref` / `$defs` / `oneOf` (which the internal
-// validator does not yet support), and its companion
-// `_warn_on_noncanonical_references` depends on `REFERENCE_TYPES` /
-// `REFERENCE_RELATIONSHIPS` constants from `concordia/attestation.py` (not yet
-// ported). The boundary is pinned by the `deferred_attestation` fixture so the
-// follow-up PR has a Python-produced parity target. This test is SKIPPED until
-// the internal validator gains `$ref`/`oneOf` support and the function lands.
-describe('validateAttestation — DEFERRED ($ref/$defs/oneOf)', () => {
-  it.skip('matches Python validate_attestation once $ref/oneOf land', () => {
-    // When ported, `validateAttestation` should reproduce these exact lists:
+
+function validAttestation(): Record<string, unknown> {
+  const behavior = {
+    offers_made: 1,
+    concessions: 0,
+    concession_magnitude: 0,
+    signals_shared: 0,
+    constraints_declared: 0,
+    constraints_violated: 0,
+    reasoning_provided: true,
+    withdrawal: false,
+  };
+  return {
+    concordia_attestation: '0.1.0',
+    attestation_id: 'att_valid',
+    session_id: 'ses_valid',
+    timestamp: '2026-05-10T14:22:08Z',
+    outcome: {
+      status: 'agreed',
+      rounds: 2,
+      duration_seconds: 60,
+      terms_count: 3,
+      resolution_mechanism: 'direct',
+    },
+    parties: [
+      {
+        agent_id: 'agent_a',
+        role: 'initiator',
+        behavior,
+        signature: 'sig_a',
+      },
+      {
+        agent_id: 'agent_b',
+        role: 'responder',
+        behavior,
+        signature: 'sig_b',
+      },
+    ],
+    meta: {
+      category: 'electronics.cameras',
+      value_range: '1000-5000_USD',
+      extensions_used: [],
+      mediator_invoked: false,
+    },
+    transcript_hash:
+      'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    fulfillment: null,
+  };
+}
+
+describe('validateAttestation — Python parity and fail-closed behavior', () => {
+  it('matches the Python-produced deferred boundary fixture exactly', () => {
     const d = fixtures.deferred_attestation;
-    // expect(validateAttestation(d.valid_attestation)).toEqual(d.valid_expected);
-    // expect(validateAttestation(d.bad_oneof_attestation)).toEqual(
-    //   d.bad_oneof_expected,
-    // );
-    expect(d.bad_oneof_expected.some((e) => e.includes('any of'))).toBe(true);
+    expect(validateAttestation(d.valid_attestation)).toEqual(d.valid_expected);
+    expect(validateAttestation(d.bad_oneof_attestation)).toEqual(
+      d.bad_oneof_expected,
+    );
+  });
+
+  it('accepts a valid §9.6 attestation with null fulfillment', () => {
+    const attestation = validAttestation();
+    expect(validateAttestation(attestation)).toEqual([]);
+    expect(isValidAttestation(attestation)).toBe(true);
+  });
+
+  it('accepts a valid in-line fulfillment block through $ref/oneOf', () => {
+    const attestation = validAttestation();
+    attestation.fulfillment = {
+      status: 'fulfilled',
+      settled_at: '2026-05-11T00:00:00Z',
+      fulfilled_at: '2026-05-11T00:05:00Z',
+      settlement_protocol: 'acp',
+      delivery_confirmed: true,
+      disputes: [],
+      counterparty_attestation: {
+        agent_id: 'agent_b',
+        confirms_fulfillment: true,
+        signature: 'sig_fulfillment',
+      },
+    };
+    expect(validateAttestation(attestation)).toEqual([]);
+  });
+
+  it('rejects malformed and unknown attestations instead of failing open', () => {
+    expect(validateAttestation(null)).toEqual([
+      "$: None is not of type 'object'",
+    ]);
+    expect(validateAttestation({})).toEqual([
+      "$: 'concordia_attestation' is a required property",
+      "$: 'attestation_id' is a required property",
+      "$: 'session_id' is a required property",
+      "$: 'timestamp' is a required property",
+      "$: 'outcome' is a required property",
+      "$: 'parties' is a required property",
+      "$: 'meta' is a required property",
+      "$: 'transcript_hash' is a required property",
+    ]);
+  });
+
+  it('rejects invalid date-time formats with the Python format checker', () => {
+    const attestation = validAttestation();
+    attestation.timestamp = '2026-05-10T14:22:08';
+    expect(validateAttestation(attestation)).toEqual([
+      "$.timestamp: '2026-05-10T14:22:08' is not a 'date-time'",
+    ]);
+  });
+
+  it('rejects invalid $ref targets under references[]', () => {
+    const attestation = validAttestation();
+    attestation.references = [{ id: '', type: '', relationship: '' }];
+    expect(validateAttestation(attestation)).toEqual([
+      "$.references[0].id: '' should be non-empty",
+      "$.references[0].type: '' should be non-empty",
+      "$.references[0].relationship: '' should be non-empty",
+    ]);
+  });
+
+  it('rejects invalid oneOf temporal and fulfillment variants', () => {
+    const badTemporal = validAttestation();
+    badTemporal.validity_temporal = { mode: 'absolute' };
+    expect(validateAttestation(badTemporal)).toEqual([
+      "$.validity_temporal: {'mode': 'absolute'} is not valid under any of the given schemas",
+    ]);
+
+    const badFulfillment = validAttestation();
+    badFulfillment.fulfillment = { status: 'fulfilled' };
+    expect(validateAttestation(badFulfillment)).toEqual([
+      "$.fulfillment: {'status': 'fulfilled'} is not valid under any of the given schemas",
+    ]);
+  });
+});
+
+describe('internal jsonschema $ref/oneOf support', () => {
+  const schema = {
+    type: 'object',
+    properties: {
+      choice: {
+        oneOf: [{ $ref: '#/$defs/text' }, { $ref: '#/$defs/count' }],
+      },
+    },
+    $defs: {
+      text: { type: 'string', minLength: 1 },
+      count: { type: 'integer', minimum: 1 },
+    },
+  };
+
+  it('resolves intra-document refs while evaluating oneOf', () => {
+    expect(iterErrors(schema, { choice: 'ok' })).toEqual([]);
+    expect(iterErrors(schema, { choice: 2 })).toEqual([]);
+    expect(iterErrors(schema, { choice: 0 })).toEqual([
+      {
+        jsonPath: '$.choice',
+        message: '0 is not valid under any of the given schemas',
+      },
+    ]);
   });
 });
 

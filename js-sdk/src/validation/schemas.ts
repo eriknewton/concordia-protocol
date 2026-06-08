@@ -474,3 +474,402 @@ export const FULFILLMENT_ATTESTATION_SCHEMA = {
   ],
   "additionalProperties": true
 } as const;
+
+export const ATTESTATION_SCHEMA = {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:concordia:schema:attestation:v0.5",
+  "type": "object",
+  "required": [
+    "concordia_attestation",
+    "attestation_id",
+    "session_id",
+    "timestamp",
+    "outcome",
+    "parties",
+    "meta",
+    "transcript_hash"
+  ],
+  "properties": {
+    "concordia_attestation": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "attestation_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "outcome": {
+      "type": "object",
+      "required": [
+        "status",
+        "rounds",
+        "duration_seconds"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "agreed",
+            "rejected",
+            "expired",
+            "withdrawn"
+          ]
+        },
+        "rounds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "duration_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "terms_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "resolution_mechanism": {
+          "type": "string",
+          "enum": [
+            "direct",
+            "split",
+            "foa",
+            "tradeoff",
+            "escalation",
+            "none"
+          ]
+        }
+      }
+    },
+    "parties": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "required": [
+          "agent_id",
+          "role",
+          "behavior",
+          "signature"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "initiator",
+              "responder",
+              "mediator",
+              "witness"
+            ]
+          },
+          "behavior": {
+            "type": "object",
+            "properties": {
+              "offers_made": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "concessions": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "concession_magnitude": {
+                "type": "number",
+                "minimum": 0.0,
+                "maximum": 1.0
+              },
+              "signals_shared": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "constraints_declared": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "constraints_violated": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "reasoning_provided": {
+                "type": "boolean"
+              },
+              "withdrawal": {
+                "type": "boolean"
+              },
+              "response_time_avg_seconds": {
+                "type": "number",
+                "minimum": 0
+              }
+            }
+          },
+          "signature": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "properties": {
+        "category": {
+          "type": "string"
+        },
+        "value_range": {
+          "type": "string",
+          "pattern": "^\\d+-\\d+_[A-Z]{3}$"
+        },
+        "extensions_used": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "mediator_invoked": {
+          "type": "boolean"
+        }
+      }
+    },
+    "transcript_hash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "fulfillment": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/fulfillment_attestation"
+        }
+      ]
+    },
+    "references": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/reference"
+      }
+    },
+    "validity_temporal": {
+      "$ref": "#/$defs/validity_temporal"
+    }
+  },
+  "$defs": {
+    "fulfillment_attestation": {
+      "type": "object",
+      "required": [
+        "status",
+        "settled_at"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "fulfilled",
+            "partial",
+            "unfulfilled",
+            "disputed",
+            "pending",
+            "fulfilled_with_mediation"
+          ]
+        },
+        "settled_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "fulfilled_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "settlement_protocol": {
+          "type": "string",
+          "enum": [
+            "acp",
+            "ap2",
+            "x402",
+            "stripe",
+            "lightning",
+            "escrow",
+            "custom"
+          ]
+        },
+        "delivery_confirmed": {
+          "type": "boolean"
+        },
+        "disputes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "term_id": {
+                "type": "string"
+              },
+              "complainant_agent_id": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 1024
+              },
+              "resolution": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "enum": [
+                  "resolved_favor_complainant",
+                  "resolved_favor_respondent",
+                  "resolved_compromise",
+                  "unresolved",
+                  null
+                ]
+              }
+            }
+          }
+        },
+        "counterparty_attestation": {
+          "type": "object",
+          "properties": {
+            "agent_id": {
+              "type": "string"
+            },
+            "confirms_fulfillment": {
+              "type": "boolean"
+            },
+            "notes": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "signature": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "agent_id",
+            "confirms_fulfillment",
+            "signature"
+          ]
+        }
+      }
+    },
+    "reference": {
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "relationship"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "relationship": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string"
+        },
+        "signed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "signer_did": {
+          "type": "string"
+        },
+        "extensions": {
+          "type": "object"
+        }
+      }
+    },
+    "validity_temporal": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "mode",
+            "from",
+            "until"
+          ],
+          "properties": {
+            "mode": {
+              "const": "absolute"
+            },
+            "from": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "until": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "mode",
+            "from",
+            "duration_seconds"
+          ],
+          "properties": {
+            "mode": {
+              "const": "relative"
+            },
+            "from": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "duration_seconds": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "mode",
+            "start",
+            "end",
+            "duration_seconds"
+          ],
+          "properties": {
+            "mode": {
+              "const": "window"
+            },
+            "start": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "end": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "duration_seconds": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      ]
+    }
+  }
+} as const;
