@@ -305,6 +305,29 @@ class TestAttestationStoreIndexing:
         assert store.agent_count("y") == 3
         assert store.agent_count("z") == 0
 
+    def test_ingest_rejects_when_store_at_capacity(self):
+        store = AttestationStore()
+        original_max = store.MAX_ATTESTATIONS
+        store.MAX_ATTESTATIONS = 2
+        try:
+            first = _make_attestation(att_id="att_cap_1", session_id="sess_cap_1")
+            second = _make_attestation(att_id="att_cap_2", session_id="sess_cap_2")
+            third = _make_attestation(att_id="att_cap_3", session_id="sess_cap_3")
+
+            assert store.ingest(first, _test_resolver)[0] is True
+            assert store.ingest(second, _test_resolver)[0] is True
+            accepted, result = store.ingest(third, _test_resolver)
+
+            assert accepted is False
+            assert result.valid is False
+            assert "Attestation store capacity reached" in result.errors
+            assert store.count() == 2
+            assert store.get("att_cap_1") is not None
+            assert store.get("att_cap_2") is not None
+            assert store.get("att_cap_3") is None
+        finally:
+            store.MAX_ATTESTATIONS = original_max
+
     def test_get_missing_returns_none(self):
         store = AttestationStore()
         assert store.get("nonexistent") is None
