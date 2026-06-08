@@ -1343,9 +1343,11 @@ Non-URN identifiers are accepted by the schema (the `id` field is a free-form no
 
 Foxbook is a transparency log for agent identity. A Foxbook leaf records a signed snapshot of an agent's public AgentCard at a point in time, anchored in a Merkle tree so that the log operator cannot silently revise history.
 
-Concordia attestations can carry a pointer to a Foxbook leaf using the generic `references[]` surface (§11.5.3, §11.5.6). The pointer rides the existing reference schema; no Foxbook-specific fields are added to the Concordia core. The Foxbook typed-reference metadata is carried in the `extensions` map, which implementations MUST preserve verbatim across roundtrips per §11.5.8.
+This is a worked example of the existing generic `references[]` carrier, not a Concordia schema change. Concordia does not depend on Foxbook, does not require Foxbook-aware verification, and does not add any Foxbook-specific normative top-level reference fields.
 
-The following reference object links a Concordia attestation to a Foxbook transparency-log leaf. The `id` uses the Foxbook URN scheme above; the `extensions` map carries the typed-reference fields defined by the Foxbook typed-reference v1.0 schema (`typed_reference_version`, `tl_url`, `leaf_index`, `tl_leaf_canonical_hash`, `verified_signing_key_hex`):
+Concordia attestations can carry a pointer to a Foxbook leaf using the generic `references[]` surface (§11.5.3, §11.5.6). The pointer rides the existing reference schema. The Foxbook typed-reference metadata is carried in the `extensions` map, which implementations MUST preserve verbatim across roundtrips per §11.5.8.
+
+The following reference object links a Concordia attestation to a Foxbook transparency-log leaf. The `id` uses the Foxbook URN scheme above; the `extensions` map carries the typed-reference fields defined by cloakmaster/foxbook ADR 0009 `typed-reference.v1` (`typed_reference_version`, `tl_url`, `leaf_index`, `tl_leaf_canonical_hash`, `verified_signing_key_hex`):
 
 ```json
 {
@@ -1355,7 +1357,7 @@ The following reference object links a Concordia attestation to a Foxbook transp
   "signed_at": "2026-05-07T18:30:00Z",
   "signer_did": "did:web:log.foxbook.dev:agent-7",
   "extensions": {
-    "typed_reference_version": "1.0",
+    "typed_reference_version": "typed-reference.v1",
     "tl_url": "https://log.foxbook.dev",
     "leaf_index": 42,
     "tl_leaf_canonical_hash": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",

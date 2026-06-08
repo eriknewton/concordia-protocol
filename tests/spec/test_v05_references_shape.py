@@ -183,6 +183,7 @@ class TestUrnShapedIdentifiers:
             "urn:ap2:mandate:mnd_pay_001",
             "urn:x402:payment:0xdeadbeef",
             "urn:erc8004:reputation:entry_99",
+            "urn:foxbook:leaf:log.foxbook.dev:42",
         ],
     )
     def test_urn_shaped_id_validates(
