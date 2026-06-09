@@ -212,6 +212,21 @@ class TestAgentRegistry:
         assert d["concordia_preferred"] is True
         assert d["agent_id"] == "agent_1"
 
+    def test_to_dict_includes_optional_registration_fields(self):
+        reg = AgentRegistry()
+        agent = reg.register(
+            "agent_1",
+            endpoint="https://agent.example/mcp",
+            metadata={"tier": "gold"},
+            public_key="pub_1",
+        )
+
+        d = agent.to_dict()
+
+        assert d["endpoint"] == "https://agent.example/mcp"
+        assert d["metadata"] == {"tier": "gold"}
+        assert d["public_key"] == "pub_1"
+
     def test_register_update_preserves_optional_fields_when_omitted(self):
         reg = AgentRegistry()
         reg.register(
@@ -256,6 +271,17 @@ class TestAgentRegistry:
 
         assert [agent.agent_id for agent in reg.list_all(include_expired=True)] == ["old_agent"]
         assert "old_agent" in reg._agents
+
+    def test_list_all_prunes_expired_agents_by_default(self):
+        reg = AgentRegistry()
+        expired = reg.register("old_agent", ttl=1)
+        expired.last_seen = "1970-01-01T00:00:00Z"
+        reg.register("active_agent")
+
+        active = reg.list_all()
+
+        assert [agent.agent_id for agent in active] == ["active_agent"]
+        assert "old_agent" not in reg._agents
 
     def test_invalid_last_seen_is_treated_as_not_expired(self):
         reg = AgentRegistry()
