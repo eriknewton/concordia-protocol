@@ -80,6 +80,23 @@ class TestLocationCompatibility:
         )
         assert ok is True
 
+    def test_missing_coordinates_are_lenient(self):
+        ok, dist = locations_compatible(
+            {"within_km": 10, "label": "San Francisco"},
+            {"coordinates": {"lat": 37.78}},
+        )
+        assert ok is True
+        assert dist is None
+
+    def test_flat_lat_lng_coordinates(self):
+        ok, dist = locations_compatible(
+            {"within_km": 2, "lat": 37.7749, "lng": -122.4194},
+            {"lat": 37.775, "lng": -122.4195},
+        )
+        assert ok is True
+        assert dist is not None
+        assert dist < 2
+
     def test_close_enough(self):
         want_loc = {"within_km": 50, "of": {"lat": 37.7749, "lng": -122.4194}}
         have_loc = {"coordinates": {"lat": 37.7849, "lng": -122.4094}}
@@ -151,6 +168,13 @@ class TestTermOverlap:
         overlap, score = compute_term_overlap(want, have)
         assert score == 0.0
 
+    def test_unknown_condition_values_are_lenient(self):
+        want = {"condition": {"min": "collector_grade"}}
+        have = {"condition": {"value": "archival"}}
+        overlap, score = compute_term_overlap(want, have)
+        assert overlap["condition"] == {"value": "archival", "meets_minimum": None}
+        assert score == 0.5
+
     def test_fuzzy_item(self):
         want = {"item": {"match": "fuzzy", "value": "Canon EOS R5"}}
         have = {"item": {"value": "Canon EOS R5"}}
@@ -200,6 +224,15 @@ class TestTermOverlap:
         _, score_full = compute_term_overlap(want2, have2)
 
         assert score_full > score_partial
+
+    def test_unrecognized_term_structure_is_preserved_with_neutral_score(self):
+        want = {"availability": {"window": ["morning", "evening"]}}
+        have = {"availability": {"timezone": "America/Los_Angeles"}}
+
+        overlap, score = compute_term_overlap(want, have)
+
+        assert overlap == {"availability": {"want": want["availability"], "have": have["availability"]}}
+        assert score == 0.5
 
 
 # ===================================================================
@@ -279,6 +312,21 @@ class TestWantModel:
         assert d["id"] == "w1"
         assert d["category"] == "electronics"
 
+    def test_to_dict_includes_optional_location_and_metadata(self):
+        w = Want(
+            id="w1",
+            agent_id="buyer",
+            category="electronics",
+            terms={},
+            location={"lat": 37.77, "lng": -122.42},
+            metadata={"source": "fixture"},
+        )
+
+        d = w.to_dict()
+
+        assert d["location"] == {"lat": 37.77, "lng": -122.42}
+        assert d["metadata"] == {"source": "fixture"}
+
     def test_expiration(self):
         w = Want(
             id="w1", agent_id="buyer", category="electronics",
@@ -298,6 +346,21 @@ class TestHaveModel:
         d = h.to_dict()
         assert d["type"] == "concordia.have"
         assert d["id"] == "h1"
+
+    def test_to_dict_includes_optional_location_and_metadata(self):
+        h = Have(
+            id="h1",
+            agent_id="seller",
+            category="electronics",
+            terms={},
+            location={"coordinates": {"lat": 37.77, "lng": -122.42}},
+            metadata={"condition_note": "boxed"},
+        )
+
+        d = h.to_dict()
+
+        assert d["location"] == {"coordinates": {"lat": 37.77, "lng": -122.42}}
+        assert d["metadata"] == {"condition_note": "boxed"}
 
     def test_expiration(self):
         h = Have(
@@ -536,6 +599,18 @@ class TestWantRegistry:
         assert len(reg.find_matches(have_id=have_1.id)) == 1
         assert len(reg.find_matches(agent_id="seller_1")) == 1
         assert len(reg.find_matches(want_id=want.id, limit=1)) == 1
+
+    def test_get_match_returns_stored_match(self):
+        reg = WantRegistry()
+        reg.post_want(agent_id="buyer", category="electronics", terms={"price": {"max": 2000}})
+        _, matches = reg.post_have(
+            agent_id="seller",
+            category="electronics",
+            terms={"price": {"min": 1000}},
+        )
+
+        assert reg.get_match(matches[0].match_id) is matches[0]
+        assert reg.get_match("missing") is None
 
     def test_match_storage_cap_returns_matches_without_storing_over_cap(self):
         reg = WantRegistry()
