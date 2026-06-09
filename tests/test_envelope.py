@@ -172,6 +172,16 @@ class TestSignatureVerification:
         )
         assert not verify_envelope_signature(envelope, kp2.public_key, "EdDSA")
 
+    def test_missing_signature_block_fails(self):
+        _, attestation, _ = _make_agreed_session()
+        kp = KeyPair.generate()
+        envelope = build_trust_evidence_envelope(
+            attestation, kp, "did:web:test.ai", "key-1", "did:test:seller"
+        )
+        del envelope["signature"]
+
+        assert verify_envelope_signature(envelope, kp.public_key, "EdDSA") is False
+
 
 # ---------------------------------------------------------------------------
 # Field mapping accuracy
@@ -227,6 +237,62 @@ class TestFieldMapping:
         assert pg["deal_terms_disclosed"] is False
         assert pg["counterparty_identity_disclosed"] is True
         assert pg["zk_proof_available"] is False
+
+    def test_single_party_attestation_maps_quality_signals_without_counterparty(self):
+        kp = KeyPair.generate()
+        attestation = {
+            "session_id": "session-single-party",
+            "timestamp": "2026-05-14T12:00:00Z",
+            "transcript_hash": "sha256:abc123",
+            "outcome": {"status": "agreed", "rounds": 3},
+            "parties": [
+                {
+                    "agent_id": "did:test:solo",
+                    "behavior": {
+                        "concession_magnitude": 0.25,
+                        "reasoning_provided": 0.8,
+                        "response_time_avg_seconds": 1.5,
+                    },
+                }
+            ],
+        }
+
+        envelope = build_trust_evidence_envelope(
+            attestation, kp, "did:web:test.ai", "key-1", "did:test:solo"
+        )
+
+        payload = envelope["payload"]
+        assert payload["counterparty_did"] is None
+        assert payload["quality_signals"] == {
+            "concession_magnitude": 0.25,
+            "reasoning_quality": 0.8,
+            "response_latency_p50_ms": 1500.0,
+        }
+
+    def test_fulfillment_fields_are_mapped_into_commitment(self):
+        kp = KeyPair.generate()
+        attestation = {
+            "session_id": "session-fulfilled",
+            "timestamp": "2026-05-14T12:00:00Z",
+            "transcript_hash": "sha256:def456",
+            "outcome": {"status": "agreed", "rounds": 2},
+            "parties": [
+                {"agent_id": "did:test:seller", "behavior": {}},
+                {"agent_id": "did:test:buyer", "behavior": {}},
+            ],
+            "fulfillment": {
+                "honored": True,
+                "verified_at": "2026-05-15T12:00:00Z",
+            },
+        }
+
+        envelope = build_trust_evidence_envelope(
+            attestation, kp, "did:web:test.ai", "key-1", "did:test:seller"
+        )
+
+        commitment = envelope["payload"]["commitment"]
+        assert commitment["honored"] is True
+        assert commitment["honored_verified_at"] == "2026-05-15T12:00:00Z"
 
     def test_provider_block(self):
         _, attestation, _ = _make_agreed_session()
