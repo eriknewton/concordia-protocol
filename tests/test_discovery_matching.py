@@ -156,6 +156,19 @@ def test_compute_overlap_numeric_range_without_overlap_scores_zero() -> None:
     assert score == 0.0
 
 
+def test_compute_overlap_missing_have_term_counts_against_score() -> None:
+    overlap, score = _compute_overlap(
+        {
+            "price": {"max": 100, "currency": "USD"},
+            "region": {"value": "us-west"},
+        },
+        {"price": {"min": 80, "currency": "USD"}},
+    )
+
+    assert overlap == {"price": {"range": [80, 100], "currency": "USD"}}
+    assert score == 0.5
+
+
 def test_compute_overlap_categorical_value_match_and_score_rounding() -> None:
     # Equal categorical values on the two matched terms (the clearly-correct
     # case); the third term is a numeric pair that cannot overlap, so the
