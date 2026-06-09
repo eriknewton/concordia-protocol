@@ -85,6 +85,16 @@ class TestRelaySession:
         assert d["state"] == "pending"
         assert d["message_count"] == 0
 
+    def test_to_dict_includes_metadata_when_present(self):
+        session = RelaySession(
+            relay_session_id="relay_001",
+            concordia_session_id=None,
+            initiator=RelayParticipant(agent_id="agent_a"),
+            metadata={"priority": "high"},
+        )
+
+        assert session.to_dict()["metadata"] == {"priority": "high"}
+
     def test_message_count(self):
         session = RelaySession(
             relay_session_id="r1",
@@ -137,6 +147,15 @@ class TestRelaySessionLifecycle:
         relay = NegotiationRelay()
         session = relay.create_session("a", "b")
         assert relay.join_session(session.relay_session_id, "c") is None
+
+    def test_join_pending_session_with_existing_responder_is_rejected(self):
+        relay = NegotiationRelay()
+        session = relay.create_session("a")
+        session.responder = RelayParticipant(agent_id="b")
+
+        assert relay.join_session(session.relay_session_id, "c") is None
+        assert session.responder.agent_id == "b"
+        assert session.state == RelaySessionState.PENDING
 
     def test_get_session(self):
         relay = NegotiationRelay()
@@ -521,6 +540,12 @@ class TestRelayStats:
             relay.create_session(f"a{i}", f"b{i}")
 
         assert len(relay.list_sessions(limit=2)) == 2
+
+    def test_get_counterparty_returns_none_for_nonparticipant(self):
+        relay = NegotiationRelay()
+        session = relay.create_session("a", "b")
+
+        assert relay._get_counterparty(session, "c") is None
 
 
 # ===================================================================
