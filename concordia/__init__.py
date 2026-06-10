@@ -30,6 +30,7 @@ from .session import (
     ChainIntegrityError,
     InvalidSignatureError,
     InvalidTransitionError,
+    MaxRoundsExceededError,
     SessionBindingError,
     Session,
 )
@@ -83,6 +84,7 @@ __all__ = [
     "InvalidTransitionError",
     "SessionBindingError",
     "ChainIntegrityError",
+    "MaxRoundsExceededError",
     # Offers
     "BasicOffer",
     "PartialOffer",
