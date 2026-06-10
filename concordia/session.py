@@ -31,6 +31,15 @@ class InvalidTransitionError(Exception):
     """Raised when a message would cause an illegal state transition."""
 
 
+class MaxRoundsExceededError(InvalidTransitionError):
+    """Raised when an offer/counter would exceed the session's ``max_rounds``.
+
+    Subclasses ``InvalidTransitionError`` so the MCP offer/counter tools, which
+    already catch ``(InvalidTransitionError, ValueError)``, surface it as a
+    clean, fail-closed rejection without touching every call site.
+    """
+
+
 class InvalidSignatureError(Exception):
     """Raised when a message has an invalid, missing, or unverifiable signature."""
 
@@ -250,6 +259,22 @@ class Session:
             )
 
         new_state = _TRANSITIONS[key]
+
+        # --- Round-cap enforcement (SPEC §9.5 offer-spam rate limit) ---
+        # max_rounds was advertised in the spec and surfaced in session metadata
+        # but never enforced: round_count incremented without bound, so a peer
+        # could drive unlimited offer/counter rounds (offer-spam / unbounded
+        # transcript growth). Reject the offer/counter that WOULD exceed the cap,
+        # before it is appended or counted, so the limit is load-bearing rather
+        # than merely reported. Non-offer messages (accept/reject/commit/...) are
+        # unaffected, so a session can always be concluded.
+        if msg_type in (MessageType.OFFER, MessageType.COUNTER):
+            if self.round_count >= self.timing.max_rounds:
+                raise MaxRoundsExceededError(
+                    f"Session has reached its max_rounds limit "
+                    f"({self.timing.max_rounds}); no further offers or counters "
+                    f"are accepted"
+                )
 
         # Append to transcript
         self.transcript.append(message)
