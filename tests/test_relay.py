@@ -556,7 +556,7 @@ class TestRelayMcpTools:
 
     @pytest.fixture(autouse=True)
     def reset_relay(self):
-        from concordia.mcp_server import _relay, _auth
+        from concordia.mcp_server import _relay, _auth, _registry
         _relay._sessions.clear()
         _relay._archives.clear()
         _relay._mailboxes.clear()
@@ -564,6 +564,7 @@ class TestRelayMcpTools:
         _auth._agent_tokens.clear()
         _auth._session_tokens.clear()
         _auth._token_to_agent.clear()
+        _registry._agents.clear()
         yield
 
     def _parse(self, result_str: str) -> dict:

@@ -645,7 +645,7 @@ class TestWantRegistryMcpTools:
 
     @pytest.fixture(autouse=True)
     def reset_registry(self):
-        from concordia.mcp_server import _want_registry
+        from concordia.mcp_server import _want_registry, _registry
         _want_registry._wants.clear()
         _want_registry._haves.clear()
         _want_registry._matches.clear()
@@ -654,6 +654,7 @@ class TestWantRegistryMcpTools:
         _auth._agent_tokens.clear()
         _auth._session_tokens.clear()
         _auth._token_to_agent.clear()
+        _registry._agents.clear()
         yield
 
     def _parse(self, result_str: str) -> dict:

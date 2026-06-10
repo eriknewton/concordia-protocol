@@ -22,6 +22,7 @@ from concordia.mcp_server import (
     mcp,
     _store,
     _auth,
+    _registry,
 )
 from concordia.types import SessionState
 
@@ -72,11 +73,13 @@ COUNTER_TERMS = {
 def clean_store():
     """Reset the global session store and auth tokens between tests."""
     _store._sessions.clear()
+    _registry._agents.clear()
     _auth._agent_tokens.clear()
     _auth._session_tokens.clear()
     _auth._token_to_agent.clear()
     yield
     _store._sessions.clear()
+    _registry._agents.clear()
     _auth._agent_tokens.clear()
     _auth._session_tokens.clear()
     _auth._token_to_agent.clear()

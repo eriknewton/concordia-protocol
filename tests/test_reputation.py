@@ -900,7 +900,7 @@ class TestReputationMcpTools:
     def reset_stores(self):
         """Reset both stores and auth tokens between tests."""
         from concordia.mcp_server import (
-            _store, _attestation_store, _scorer, _query_handler, _auth,
+            _store, _attestation_store, _scorer, _query_handler, _auth, _registry,
         )
         _store._sessions.clear()
         _attestation_store._by_id.clear()
@@ -910,6 +910,7 @@ class TestReputationMcpTools:
         _auth._agent_tokens.clear()
         _auth._session_tokens.clear()
         _auth._token_to_agent.clear()
+        _registry._agents.clear()
         yield
 
     def _parse(self, result_str: str) -> dict:
