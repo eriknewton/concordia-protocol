@@ -141,8 +141,14 @@ class RegisteredAgent:
             "type": "concordia.preferred",
             "version": PROTOCOL_VERSION,
             "agent_id": self.agent_id,
+            # Honesty (H4): a registration is a self-asserted claim, not a
+            # cryptographic guarantee. `registered` says "this agent enrolled
+            # and speaks Concordia"; `verified` is reserved for signed
+            # capability records, which do not exist yet — so it stays False
+            # until a record is actually signed.
+            "registered": True,
             "signed": False,
-            "verified": True,
+            "verified": False,
             "registered_at": self.registered_at,
             "capabilities": {
                 "roles": self.capabilities.roles,

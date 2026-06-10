@@ -576,7 +576,11 @@ class TestDiscoveryMcpTools:
         badge = result["badge"]
         assert badge["type"] == "concordia.preferred"
         assert badge["agent_id"] == "badge_agent"
-        assert badge["verified"] is True
+        # Honesty: a self-asserted, unsigned registration is `registered`, NOT
+        # `verified`. `verified` is reserved for cryptographically signed records.
+        assert badge["registered"] is True
+        assert badge["signed"] is False
+        assert badge["verified"] is False
         assert badge["capabilities"]["roles"] == ["seller"]
         assert badge["capabilities"]["categories"] == ["electronics"]
         assert badge["features"]["structured_offers"] is True
@@ -590,6 +594,24 @@ class TestDiscoveryMcpTools:
         result = self._parse(tool_concordia_preferred_badge(agent_id="nobody"))
         assert result["found"] is False
         assert result["concordia_preferred"] is False
+
+    def test_preferred_badge_unsigned_is_not_verified(self):
+        """An unsigned, self-asserted registration must never claim `verified: true`.
+
+        Regression for H4: the badge surfaced unsigned self-asserted capabilities
+        as `verified: true`, which a consumer could mistake for a cryptographic
+        guarantee. Until signed capability records exist, an ordinary registration
+        is `registered: true` / `signed: false` / `verified: false`.
+        """
+        from concordia.mcp_server import tool_register_agent, tool_concordia_preferred_badge
+        tool_register_agent(
+            agent_id="unsigned_agent",
+            roles=["buyer"],
+        )
+        badge = self._parse(tool_concordia_preferred_badge(agent_id="unsigned_agent"))["badge"]
+        assert badge["registered"] is True
+        assert badge["signed"] is False
+        assert badge["verified"] is False
 
     def test_preferred_badge_sanctuary_flag(self):
         from concordia.mcp_server import _registry, tool_concordia_preferred_badge
