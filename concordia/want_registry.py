@@ -35,6 +35,59 @@ EARTH_RADIUS_KM = 6_371.0
 
 
 # ---------------------------------------------------------------------------
+# Input validation helpers
+# ---------------------------------------------------------------------------
+
+def _is_number(value: Any) -> bool:
+    """True for a real JSON number (int or float), excluding bool."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _validate_location(location: Any) -> None:
+    """Reject a structurally malformed ``location`` at ingest (fail closed).
+
+    ``location`` is counterparty-controlled and was previously stored
+    unvalidated. A Want/Have whose coordinates are non-numeric
+    (e.g. ``{"coordinates": {"lat": "x", "lng": "y"}}``) would be accepted,
+    then crash the Haversine math (``math.radians("x")`` -> ``TypeError``) for
+    EVERY later agent whose category- and term-compatible post reaches the
+    location step. That is a persistent poison-pill denial-of-service of the
+    whole matching engine, not a one-shot. Rejecting here means the malformed
+    entry is never stored. (The matching path is also hardened defensively, so
+    any pre-existing bad data degrades to "no location constraint" rather than
+    crashing.)
+    """
+    if location is None:
+        return
+    if not isinstance(location, dict):
+        raise ValueError("location must be an object")
+    for container in ("coordinates", "of"):
+        if container in location:
+            inner = location[container]
+            if not isinstance(inner, dict):
+                raise ValueError(f"location.{container} must be an object")
+            for coord in ("lat", "lng"):
+                if (
+                    coord in inner
+                    and inner[coord] is not None
+                    and not _is_number(inner[coord])
+                ):
+                    raise ValueError(
+                        f"location.{container}.{coord} must be a number"
+                    )
+    for coord in ("lat", "lng"):
+        if (
+            coord in location
+            and location[coord] is not None
+            and not _is_number(location[coord])
+        ):
+            raise ValueError(f"location.{coord} must be a number")
+    within_km = location.get("within_km")
+    if within_km is not None and not _is_number(within_km):
+        raise ValueError("location.within_km must be a number")
+
+
+# ---------------------------------------------------------------------------
 # Data models
 # ---------------------------------------------------------------------------
 
@@ -177,15 +230,26 @@ def categories_compatible(want_cat: str, have_cat: str) -> bool:
 
 
 def _extract_coords(loc: dict[str, Any]) -> tuple[float, float] | None:
-    """Pull (lat, lng) out of either want-style or have-style location."""
+    """Pull (lat, lng) out of either want-style or have-style location.
+
+    Returns ``None`` when coordinates are absent, incomplete, or not both real
+    numbers, so a malformed location is treated as "no constraint" rather than
+    crashing the distance math. ``_validate_location`` rejects malformed input
+    at ingest; this is the defensive second line for any value built directly.
+    """
+    candidate: Any = None
     if "coordinates" in loc:
-        c = loc["coordinates"]
-        return (c.get("lat"), c.get("lng"))
-    if "of" in loc:
-        c = loc["of"]
-        return (c.get("lat"), c.get("lng"))
-    if "lat" in loc and "lng" in loc:
-        return (loc["lat"], loc["lng"])
+        candidate = loc["coordinates"]
+    elif "of" in loc:
+        candidate = loc["of"]
+    elif "lat" in loc and "lng" in loc:
+        candidate = loc
+    if not isinstance(candidate, dict):
+        return None
+    lat = candidate.get("lat")
+    lng = candidate.get("lng")
+    if _is_number(lat) and _is_number(lng):
+        return (float(lat), float(lng))
     return None
 
 
@@ -204,7 +268,7 @@ def locations_compatible(
 
     dist = _haversine_km(want_coords[0], want_coords[1], have_coords[0], have_coords[1])
     radius = want_loc.get("within_km")
-    if radius is not None:
+    if _is_number(radius):
         return dist <= radius, dist
     return True, dist
 
@@ -249,8 +313,13 @@ def compute_term_overlap(
             w_min = wt.get("min")
             h_max = ht.get("max")
 
-            # Standard price: want.max vs have.min
-            if w_max is not None and h_min is not None:
+            # Standard price: want.max vs have.min.
+            # Guard with _is_number so a counterparty that sends a string where
+            # a numeric bound is expected (e.g. {"max": "abc"}) falls through to
+            # the categorical branches instead of crashing the `>=` comparison
+            # (TypeError: '>=' not supported between str and int) for every
+            # matching peer — the term-side analogue of the location poison pill.
+            if _is_number(w_max) and _is_number(h_min):
                 if w_max >= h_min:
                     lo = h_min
                     hi = w_max
@@ -353,7 +422,7 @@ def compute_match(want: Want, have: Have) -> Match | None:
     # Adjust score based on location proximity
     if distance_km is not None:
         radius = (want.location or {}).get("within_km")
-        if radius and radius > 0:
+        if _is_number(radius) and radius > 0:
             proximity = 1.0 - (distance_km / radius)
             score = score * 0.8 + proximity * 0.2
         if distance_km is not None:
@@ -410,6 +479,9 @@ class WantRegistry:
 
         Returns (want, list_of_matches).
         """
+        # Reject a malformed location before it can be stored (poison-pill DoS).
+        _validate_location(location)
+
         # Check want registry limit
         if len(self._wants) >= self.MAX_WANTS:
             raise ValueError("Want registry limit reached")
@@ -479,6 +551,9 @@ class WantRegistry:
 
         Returns (have, list_of_matches).
         """
+        # Reject a malformed location before it can be stored (poison-pill DoS).
+        _validate_location(location)
+
         # Check have registry limit
         if len(self._haves) >= self.MAX_HAVES:
             raise ValueError("Have registry limit reached")

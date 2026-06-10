@@ -119,6 +119,93 @@ class TestLocationCompatibility:
 
 
 # ===================================================================
+# Malformed-location poison-pill DoS (audit 2026-06-09 / H2)
+# ===================================================================
+
+class TestMalformedLocationRejected:
+    """A Want/Have with a non-numeric location must be rejected at ingest so it
+    can never be stored and later crash the Haversine math for matching peers.
+    The matching path is also hardened to degrade malformed locations to "no
+    constraint" rather than crash.
+    """
+
+    def test_post_have_rejects_non_numeric_coordinates(self):
+        reg = WantRegistry()
+        with pytest.raises(ValueError, match="must be a number"):
+            reg.post_have(
+                agent_id="attacker", category="electronics", terms={},
+                location={"coordinates": {"lat": "x", "lng": "y"}},
+            )
+        assert reg.list_haves() == []  # nothing stored
+
+    def test_post_want_rejects_non_numeric_within_km(self):
+        reg = WantRegistry()
+        with pytest.raises(ValueError, match="within_km must be a number"):
+            reg.post_want(
+                agent_id="buyer", category="electronics", terms={},
+                location={"lat": 1.0, "lng": 2.0, "within_km": "50"},
+            )
+
+    def test_post_rejects_non_dict_location(self):
+        reg = WantRegistry()
+        with pytest.raises(ValueError, match="location must be an object"):
+            reg.post_have(
+                agent_id="a", category="electronics", terms={},
+                location=["not", "a", "dict"],  # type: ignore[arg-type]
+            )
+
+    def test_stored_bad_location_does_not_crash_matching(self):
+        # Defense-in-depth: even if a malformed Have bypassed ingest validation
+        # (e.g. built directly / legacy data), a victim's post must not crash.
+        reg = WantRegistry()
+        terms = {"price": {"value": 100}}
+        bad = Have(
+            id="h_bad", agent_id="atk", category="electronics", terms=terms,
+            location={"coordinates": {"lat": "x", "lng": "y"}},
+        )
+        reg._haves["h_bad"] = bad
+        reg._agent_haves.setdefault("atk", set()).add("h_bad")
+        # Should not raise; bad location degrades to "no constraint".
+        want, matches = reg.post_want(
+            agent_id="victim", category="electronics", terms=terms,
+            location={"lat": 1.0, "lng": 2.0, "within_km": 50},
+        )
+        assert len(matches) == 1
+
+    def test_non_numeric_term_bounds_do_not_crash_matching(self):
+        # The term-side analogue: a non-numeric min/max must fall through, not
+        # crash the `>=` comparison.
+        reg = WantRegistry()
+        bad = Have(
+            id="h2", agent_id="atk", category="electronics",
+            terms={"price": {"min": "abc"}},
+        )
+        reg._haves["h2"] = bad
+        reg._agent_haves.setdefault("atk", set()).add("h2")
+        want, matches = reg.post_want(
+            agent_id="v", category="electronics", terms={"price": {"max": 500}},
+        )
+        # No crash; the malformed numeric term simply does not produce a price
+        # overlap. (Match may or may not form on other grounds; the invariant
+        # under test is "no exception".)
+        assert isinstance(matches, list)
+
+    def test_valid_location_still_matches(self):
+        # Regression guard: the validation must not break legitimate locations.
+        reg = WantRegistry()
+        terms = {"price": {"value": 100}}
+        reg.post_have(
+            agent_id="seller", category="electronics", terms=terms,
+            location={"coordinates": {"lat": 37.77, "lng": -122.42}},
+        )
+        want, matches = reg.post_want(
+            agent_id="buyer", category="electronics", terms=terms,
+            location={"of": {"lat": 37.78, "lng": -122.41}, "within_km": 50},
+        )
+        assert len(matches) == 1
+
+
+# ===================================================================
 # Condition ranking
 # ===================================================================
 
