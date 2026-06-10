@@ -148,6 +148,13 @@ describe('Ed25519 signing - round-trip and key generation', () => {
     expect(verify({ a: 1 }, '', kp.publicKey)).toBe(false);
   });
 
+  it('returns false (does not throw) for a lone surrogate in the payload', () => {
+    // Parity with Python verify_signature: non-canonical input (a lone UTF-16
+    // surrogate) is a verification failure, not an accept and not a throw.
+    const kp = generateKeyPair();
+    expect(verify({ x: '\uD834' }, 'AAAA', kp.publicKey)).toBe(false);
+  });
+
   it('returns false for a well-formed signature of the wrong byte length', () => {
     const kp = generateKeyPair();
     // 32 bytes (valid base64url, padded) is not a 64-byte Ed25519 signature.

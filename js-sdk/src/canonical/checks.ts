@@ -5,6 +5,42 @@ export class CanonicalizationError extends Error {
   }
 }
 
+/**
+ * Reject a string containing an unpaired UTF-16 surrogate.
+ *
+ * `JSON.stringify` happily emits the `\udXXX` escape for a lone surrogate, so
+ * without this guard the JS SDK would ACCEPT input that the Python reference
+ * (`json.dumps(...).encode("utf-8")`) cannot serialize at all — a canonical
+ * parity break and a verify divergence (JS over-accepts, Python crashes).
+ * Both sides now fail closed identically: a lone surrogate is non-canonical.
+ */
+export function checkLoneSurrogates(s: string): void {
+  for (let i = 0; i < s.length; i++) {
+    const code = s.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      // High surrogate: must be immediately followed by a low surrogate.
+      const next = i + 1 < s.length ? s.charCodeAt(i + 1) : 0;
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        i++; // valid pair, consume both units
+        continue;
+      }
+      throw new CanonicalizationError(
+        `Cannot canonicalize string with unpaired UTF-16 high surrogate ` +
+          `U+${code.toString(16).toUpperCase().padStart(4, '0')}; surrogates ` +
+          `are non-canonical and diverge across language implementations.`,
+      );
+    }
+    if (code >= 0xdc00 && code <= 0xdfff) {
+      // Low surrogate with no preceding high surrogate.
+      throw new CanonicalizationError(
+        `Cannot canonicalize string with unpaired UTF-16 low surrogate ` +
+          `U+${code.toString(16).toUpperCase().padStart(4, '0')}; surrogates ` +
+          `are non-canonical and diverge across language implementations.`,
+      );
+    }
+  }
+}
+
 export function checkNoSpecialFloats(value: unknown): void {
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) {

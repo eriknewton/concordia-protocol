@@ -58,6 +58,34 @@ describe('canonicalizeJcs - special-float rejection', () => {
   });
 });
 
+describe('canonicalizeJcs - lone-surrogate rejection (Python parity)', () => {
+  // JSON.stringify happily emits \udXXX for a lone surrogate, so without an
+  // explicit guard JS would ACCEPT input the Python reference cannot serialize
+  // (UnicodeEncodeError) — a canonical parity break + verify divergence. Both
+  // sides must fail closed identically.
+  it('rejects a lone high surrogate in a value', () => {
+    expect(() => canonicalizeJcs({ x: '\uD834' })).toThrow(
+      CanonicalizationError,
+    );
+  });
+  it('rejects a lone low surrogate in a value', () => {
+    expect(() => canonicalizeJcs({ x: 'ab\uDD1Ecd' })).toThrow(
+      CanonicalizationError,
+    );
+  });
+  it('rejects a lone surrogate in an object key', () => {
+    expect(() => canonicalizeJcs({ '\uD834': 'v' })).toThrow(
+      CanonicalizationError,
+    );
+  });
+  it('accepts a valid astral surrogate pair', () => {
+    // U+1D11E (musical G-clef) is a real character: high+low surrogate pair.
+    expect(canonicalizeJcs({ s: '𝄞' }).toString('utf8')).toBe(
+      '{"s":"𝄞"}',
+    );
+  });
+});
+
 describe('canonicalizeJcs - large-integer fail-closed (Python parity)', () => {
   // Python's canonical_json formats integers with str(value), preserving full
   // precision. A JS number cannot represent integers beyond
