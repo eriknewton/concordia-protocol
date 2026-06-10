@@ -479,6 +479,53 @@ class TestVerificationEdgeCases:
         # Still valid (unknown key is a warning), but bundle sig check must pass
         assert any("cannot resolve key" in w.lower() for w in result.warnings)
 
+    def test_unresolved_counterparty_not_credited(self):
+        """M1: a counterparty whose signature can't be resolved is NOT credited.
+
+        Reputation gaming: an attacker fabricates attestations naming
+        counterparties whose keys nobody can resolve, then carries a bundle that
+        self-asserts ``unique_counterparties: N``. The bundle's own signature is
+        valid, so it reports ``valid: true`` — but the verifier must not pass
+        that unverified counterparty through as trusted reputation. It is
+        credited to ``verified_counterparties`` only if its signature actually
+        verified.
+        """
+        att = _make_attestation(agent_b="ghost_cp")
+        kp = _get_key("agent_a")
+        bundle = ReceiptBundle.create("agent_a", [att], kp)
+        d = bundle.to_dict()
+        # The bundle self-asserts one counterparty.
+        assert d["summary"]["unique_counterparties"] == 1
+
+        def resolver(aid: str) -> Ed25519PublicKey | None:
+            if aid == "ghost_cp":
+                return None  # cannot resolve the counterparty's key
+            return _test_resolver(aid)
+
+        result = verify_bundle(d, resolver)
+        # The offline single-signed flow is NOT broken: the bundle's own
+        # signature checks out, so it stays valid (a stranger legitimately may
+        # not hold every counterparty's key).
+        assert result.valid, f"Errors: {result.errors}"
+        # But the trusted count credits ZERO counterparties, the unresolved
+        # party is named, and the gap between claim and proof is flagged.
+        assert result.verified_counterparties == 0
+        assert "ghost_cp" in result.unverified_counterparties
+        assert any(
+            "counterpart" in w.lower() and "verif" in w.lower()
+            for w in result.warnings
+        ), f"Expected an unverified-counterparty warning, got: {result.warnings}"
+
+    def test_resolvable_counterparties_are_credited(self):
+        """When every counterparty's signature verifies, all are credited."""
+        atts = [_make_attestation(agent_b="b1"), _make_attestation(agent_b="b2")]
+        kp = _get_key("agent_a")
+        bundle = ReceiptBundle.create("agent_a", atts, kp)
+        result = verify_bundle(bundle.to_dict(), _test_resolver)
+        assert result.valid, f"Errors: {result.errors}"
+        assert result.verified_counterparties == 2
+        assert result.unverified_counterparties == []
+
     def test_unresolvable_bundle_agent_key(self):
         """Cannot verify if the bundle agent's key is unknown."""
         att = _make_attestation()
@@ -751,6 +798,12 @@ class TestMcpToolIntegration:
             "bundle": bundle_dict,
         })
         assert verify_result["valid"], f"Errors: {verify_result.get('errors')}"
+        # The tool surfaces the trustworthy counterparty count. In this in-process
+        # negotiation both parties' keys resolve from the session, so the one
+        # counterparty (buyer_01) is credited and matches the claimed total.
+        assert verify_result["verified_counterparties"] == 1
+        assert verify_result["unverified_counterparties"] == []
+        assert verify_result["claimed_counterparties"] == verify_result["verified_counterparties"]
 
     def test_create_bundle_auth_required(self):
         """Bundle creation requires valid auth token."""
