@@ -30,6 +30,8 @@ Use Concordia tools whenever your work involves:
 
 ## Tool categories
 
+Concordia exposes 59 MCP tools: 55 from `concordia.mcp_server` plus 4 agent-profile discovery tools.
+
 ### Negotiation (8 tools)
 | Tool | Purpose |
 |------|---------|
@@ -109,6 +111,29 @@ Use Concordia tools whenever your work involves:
 | `concordia_sanctuary_bridge_commit` | Create a cryptographic commitment binding a negotiation outcome |
 | `concordia_sanctuary_bridge_attest` | Record a negotiation as a Sanctuary L4 reputation attestation |
 | `concordia_sanctuary_bridge_status` | Check bridge configuration and status |
+
+### Session Receipts & Competence Proofs (4 tools)
+| Tool | Purpose |
+|------|---------|
+| `concordia_session_public_view` | Read-only public view of a session — non-sensitive metadata and transcript summary, no auth required |
+| `concordia_session_receipt_envelope` | Export a concluded session as an interoperable trust-evidence-format v1.0.0 signed envelope |
+| `concordia_competence_proof` | Generate a privacy-preserving proof of negotiation competence without revealing deal terms |
+| `concordia_verify_competence_proof` | Verify a counterparty's competence proof (signature, Merkle root, revealed claims) |
+
+### Agent Profiles (4 tools)
+| Tool | Purpose |
+|------|---------|
+| `agent_profile_publish` | Register or update an agent's capability profile (capabilities, trust signals, endpoints, location) |
+| `agent_profile_get` | Retrieve an agent's capability profile by agent_id |
+| `agent_discovery_search` | Search for agents by category, Verascore tier/score, offer types, or jurisdiction |
+| `agent_discovery_recommend` | Find agents matching a Want's category by looking up the Want by ID |
+
+### Verification & Reporting (3 tools)
+| Tool | Purpose |
+|------|---------|
+| `concordia_verascore_report` | Report a completed negotiation to Verascore for reputation scoring (behavioral metadata only, never raw terms) |
+| `concordia_verify_mandate` | Verify a signed mandate credential (issuer signature, three-mode temporal validity window) |
+| `concordia_verify_approval_receipt` | Verify a signed ApprovalReceipt (schema, Ed25519 signature, expiry, canonical offer-hash binding) |
 
 ## Common workflows
 

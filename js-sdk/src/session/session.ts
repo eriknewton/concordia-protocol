@@ -636,11 +636,14 @@ function describeJsonType(value: unknown): string {
   return typeof value;
 }
 
-/** Eight lowercase hex chars, matching Python `uuid.uuid4().hex[:8]`. */
+/**
+ * Eight lowercase hex chars, matching Python `uuid.uuid4().hex[:8]`.
+ *
+ * Backed by the platform CSPRNG (`crypto.randomUUID`, a global in Node >= 20 —
+ * the SDK's engine floor — and a Web standard) rather than `Math.random()`,
+ * which is not cryptographically random and only 32-bit. The first group of a
+ * v4 UUID is eight lowercase hex chars.
+ */
 function randomHex8(): string {
-  let out = '';
-  for (let i = 0; i < 8; i += 1) {
-    out += Math.floor(Math.random() * 16).toString(16);
-  }
-  return out;
+  return crypto.randomUUID().slice(0, 8);
 }
