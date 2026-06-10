@@ -35,6 +35,16 @@ class InvalidSignatureError(Exception):
     """Raised when a message has an invalid, missing, or unverifiable signature."""
 
 
+class SessionBindingError(Exception):
+    """Raised when a message's ``session_id`` does not match the session it is
+    applied to (cross-session replay)."""
+
+
+class ChainIntegrityError(Exception):
+    """Raised when a message's ``prev_hash`` does not chain to the current
+    transcript tip (out-of-order, forked, or replayed message)."""
+
+
 # §5.2 — Transition table encoded as {(from_state, message_type): to_state}.
 # Transitions to the *same* state (e.g. ACTIVE → ACTIVE) are also listed.
 _TRANSITIONS: dict[tuple[SessionState, MessageType], SessionState] = {
@@ -199,6 +209,34 @@ class Session:
             raise InvalidSignatureError(
                 f"Invalid signature for agent '{agent_id}' — "
                 "message content does not match signature"
+            )
+
+        # --- Session binding (cross-session replay defense) ---
+        # A message's signature covers its session_id, so a validly-signed
+        # message captured from session A still verifies here. Bind it to THIS
+        # session explicitly so it cannot be replayed into a different Session
+        # object between the same parties (which share Ed25519 keys across
+        # sessions) to force an illegitimate transition / attestation.
+        msg_session_id = message.get("session_id")
+        if msg_session_id is not None and msg_session_id != self.session_id:
+            raise SessionBindingError(
+                "Message session_id does not match this session — "
+                "cross-session replay rejected"
+            )
+
+        # --- Chain-tip binding (transcript integrity at append time) ---
+        # prev_hash is signed but was never compared to the live chain tip, so
+        # a caller feeding received/relayed messages could append entries that
+        # do not chain (genesis-pointing, forked, out-of-order). Enforce the
+        # link here, making the hash chain load-bearing at append time rather
+        # than only advisory in validate_chain(). self.prev_hash is GENESIS_HASH
+        # when the transcript is empty, so the first message must reference
+        # genesis — matching how legitimate senders build it.
+        msg_prev_hash = message.get("prev_hash")
+        if msg_prev_hash is not None and msg_prev_hash != self.prev_hash:
+            raise ChainIntegrityError(
+                "Message prev_hash does not chain to the current transcript "
+                "tip — out-of-order, forked, or replayed message rejected"
             )
 
         # --- State transition validation ---

@@ -16,8 +16,10 @@ import pytest
 from concordia import (
     Agent,
     BasicOffer,
+    ChainIntegrityError,
     InvalidSignatureError,
     Session,
+    SessionBindingError,
     SessionState,
 )
 from concordia.message import GENESIS_HASH, build_envelope
@@ -284,3 +286,97 @@ class TestStateUnchangedOnRejection:
 
         assert session.state == state_before
         assert len(session.transcript) == transcript_len_before
+
+
+class TestCrossSessionReplayRejected:
+    """H3: a validly-signed message bound to session A must not be replayable
+    into a different Session object between the same parties."""
+
+    def test_cross_session_replay_rejected(self, keys):
+        key_a, key_b = keys
+
+        def make_session():
+            s = Session()
+            s.add_party("agent_a", PartyRole.INITIATOR, key_a.public_key)
+            s.add_party("agent_b", PartyRole.RESPONDER, key_b.public_key)
+            return s
+
+        session_a = make_session()
+        session_b = make_session()
+        assert session_a.session_id != session_b.session_id
+        resolver_b = lambda agent_id: session_b._party_keys.get(agent_id)
+
+        # A genuinely valid OPEN message for session_a.
+        msg = build_envelope(
+            message_type=MessageType.OPEN,
+            session_id=session_a.session_id,
+            sender=AgentIdentity(agent_id="agent_a"),
+            body={"terms": {"price": {"value": 50}}},
+            key_pair=key_a,
+            prev_hash=GENESIS_HASH,
+        )
+
+        # Signature is valid and agent_a is a party of B — but the message is
+        # bound to session_a, so applying it to session_b must be rejected.
+        with pytest.raises(SessionBindingError):
+            session_b.apply_message(msg, resolver_b)
+        assert len(session_b.transcript) == 0  # nothing appended
+
+
+class TestChainTipBinding:
+    """H3: prev_hash must chain to the live transcript tip at append time, not
+    merely be advisory in validate_chain()."""
+
+    def test_stale_prev_hash_rejected(self, session_with_parties):
+        session, key_a, key_b, resolver = session_with_parties
+
+        open_msg = build_envelope(
+            message_type=MessageType.OPEN,
+            session_id=session.session_id,
+            sender=AgentIdentity(agent_id="agent_a"),
+            body={"terms": {}},
+            key_pair=key_a,
+            prev_hash=GENESIS_HASH,
+        )
+        session.apply_message(open_msg, resolver)
+        assert len(session.transcript) == 1
+
+        # A validly-signed ACCEPT_SESSION whose prev_hash still points at
+        # genesis (not the OPEN message tip) — a forked / out-of-order link.
+        bad = build_envelope(
+            message_type=MessageType.ACCEPT_SESSION,
+            session_id=session.session_id,
+            sender=AgentIdentity(agent_id="agent_b"),
+            body={},
+            key_pair=key_b,
+            prev_hash=GENESIS_HASH,  # WRONG: should be hash of open_msg
+        )
+        with pytest.raises(ChainIntegrityError):
+            session.apply_message(bad, resolver)
+        assert session.state == SessionState.PROPOSED  # unchanged
+        assert len(session.transcript) == 1  # not appended
+
+    def test_correctly_chained_message_accepted(self, session_with_parties):
+        session, key_a, key_b, resolver = session_with_parties
+
+        open_msg = build_envelope(
+            message_type=MessageType.OPEN,
+            session_id=session.session_id,
+            sender=AgentIdentity(agent_id="agent_a"),
+            body={"terms": {}},
+            key_pair=key_a,
+            prev_hash=GENESIS_HASH,
+        )
+        session.apply_message(open_msg, resolver)
+
+        accept = build_envelope(
+            message_type=MessageType.ACCEPT_SESSION,
+            session_id=session.session_id,
+            sender=AgentIdentity(agent_id="agent_b"),
+            body={},
+            key_pair=key_b,
+            prev_hash=session.prev_hash,  # correct tip
+        )
+        state = session.apply_message(accept, resolver)
+        assert state == SessionState.ACTIVE
+        assert len(session.transcript) == 2
