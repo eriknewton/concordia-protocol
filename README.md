@@ -268,7 +268,7 @@ They work independently, but together they're more powerful.
 Concordia defines:
 
 - **A universal offer schema** — machine-readable deal proposals with any number of attributes
-- **A negotiation state machine** — six states (open → counter → accept → commit → executed → closed) governing how offers flow
+- **A negotiation state machine** — six states (proposed → active → agreed / rejected / expired → dormant) governing how offers flow
 - **Resolution mechanisms** — from simple split-the-difference to Pareto-optimal optimization
 - **Binding commitments** — cryptographic signatures that bridge to any settlement protocol
 - **Reputation attestations** — signed behavioral records that feed portable trust scores

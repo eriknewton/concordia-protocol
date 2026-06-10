@@ -2,8 +2,8 @@
 
 ### An Open Standard for Structured Negotiation Between Autonomous Agents
 
-**Version:** 0.5.0-draft  
-**Status:** Draft (v0.5 ratification of v0.4.0 references[] shape; see §11.5)  
+**Version:** 0.7.0-draft  
+**Status:** Draft (v0.7 adds cross-mandate revocation records, §9.6.4c; v0.6 added the predicate primitive)  
 **License:** Apache 2.0  
 **Authors:** Erik Newton
 **Date:** May 2026
