@@ -107,6 +107,6 @@ Looking for:
 Repo: https://github.com/eriknewton/concordia-protocol
 Site: https://concordiaprotocol.dev
 
-Built at @ciaboratory. We'd love to hear from teams at @AnthropicAI @OpenAI @Shopify @stripe working on agentic commerce.
+We'd love to hear from teams at @AnthropicAI @OpenAI @Shopify @stripe working on agentic commerce.
 
 *Concordia* — Latin for harmony. Literally, "hearts together."
