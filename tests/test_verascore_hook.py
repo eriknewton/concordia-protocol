@@ -36,9 +36,15 @@ class _StubClient:
         self.result = result or {"status": "ok"}
         self.raise_on_call = raise_on_call
 
-    def report_concordia_receipt(self, session_data, key_pair, agent_did):
+    def report_concordia_receipt(
+        self, session_data, key_pair, agent_did, *, counterparty_signer=None
+    ):
         self.calls.append(
-            {"session_data": session_data, "agent_did": agent_did}
+            {
+                "session_data": session_data,
+                "agent_did": agent_did,
+                "counterparty_signer": counterparty_signer,
+            }
         )
         if self.raise_on_call is not None:
             raise self.raise_on_call
