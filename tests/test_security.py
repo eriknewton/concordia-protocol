@@ -694,4 +694,7 @@ class TestRegistryPublicKey:
         assert badge is not None
         assert badge["public_key"] == "test_key_123"
         assert badge["type"] == "concordia.preferred"
-        assert badge["verified"] is True
+        # A bare public_key is not a signed capability record: still unverified.
+        assert badge["registered"] is True
+        assert badge["signed"] is False
+        assert badge["verified"] is False
