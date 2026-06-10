@@ -19,6 +19,7 @@ import urllib.error
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable
 
+from .cosign import CounterpartySigner, build_cosigned_receipt
 from .signing import KeyPair, canonical_json
 
 if TYPE_CHECKING:
@@ -79,6 +80,8 @@ class VerascoreClient:
         session_data: dict[str, Any],
         key_pair: KeyPair,
         agent_did: str,
+        *,
+        counterparty_signer: CounterpartySigner | None = None,
     ) -> dict[str, Any]:
         """Sign and POST a Concordia receipt to Verascore.
 
@@ -89,6 +92,14 @@ class VerascoreClient:
                 fulfillment_status, negotiation_competence.
             key_pair: The agent's Ed25519 key pair for signing.
             agent_did: The agent's DID (e.g. "did:key:z6Mk...").
+            counterparty_signer: Optional collector for the counterparty's
+                Ed25519 co-signature (see ``concordia.cosign``). When supplied
+                and the counterparty signs, the emitted ``receipt`` carries the
+                counterparty signature on its ``parties[]`` entry, so Verascore
+                can verify it as bilateral (cryptographic-tier) evidence.
+                FAIL CLOSED: if omitted, or the counterparty is unavailable, the
+                receipt is emitted clearly single-signed — never with an empty or
+                fabricated co-signature (CLAUDE.md rule #5).
 
         Returns:
             The parsed JSON response from Verascore, or an error dict.
@@ -108,6 +119,16 @@ class VerascoreClient:
             "negotiation_competence": session_data["negotiation_competence"],
         }
 
+        # Bilateral receipt (parties[] with the counterparty co-signature when
+        # available). This is the H1/H2 producer half: Verascore counts a
+        # receipt toward a trust-bearing score only if the named counterparty
+        # cryptographically co-signed it. Fail-closed to single-signed.
+        receipt = build_cosigned_receipt(
+            session_data,
+            agent_did,
+            counterparty_signer=counterparty_signer,
+        )
+
         # Sign the canonical JSON of the payload
         payload_bytes = canonical_json(payload)
         raw_sig = key_pair.private_key.sign(payload_bytes)
@@ -121,6 +142,7 @@ class VerascoreClient:
             "timestamp": timestamp,
             "signature": signature_hex,
             "payload": payload,
+            "receipt": receipt,
         }
 
         body_bytes = json.dumps(body).encode("utf-8")
@@ -209,6 +231,7 @@ def make_verascore_auto_hook(
     report_on: tuple[str, ...] = ("agreed",),
     endpoint: str | None = None,
     client: VerascoreClient | None = None,
+    counterparty_signer: CounterpartySigner | None = None,
 ) -> Callable[["Session"], None]:
     """Return a terminal-state callback that auto-reports to Verascore.
 
@@ -233,6 +256,11 @@ def make_verascore_auto_hook(
         endpoint: Optional base URL override. If provided, takes
             precedence over the ``VERASCORE_ENDPOINT`` env var.
         client: Optional injected ``VerascoreClient`` (for testing).
+        counterparty_signer: Optional collector for the counterparty's
+            Ed25519 co-signature (see ``concordia.cosign``). When supplied,
+            the auto-reported receipt is bilateral (counterparty-co-signed) and
+            can earn Verascore's cryptographic trust tier. Fail-closed to a
+            single-signed receipt when absent or the counterparty is unavailable.
 
     Returns:
         A ``Callable[[Session], None]`` suitable for ``Session.on_terminal``.
@@ -262,6 +290,7 @@ def make_verascore_auto_hook(
                 session_data=session_data,
                 key_pair=key_pair,
                 agent_did=agent_did,
+                counterparty_signer=counterparty_signer,
             )
         except Exception as exc:
             _logger.warning(
