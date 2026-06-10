@@ -7,6 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Attribution
+- Credited the three-mode `validity_temporal` / `ValidityWindow` shape
+  (sequence / windowed / state_bound) to its originators: the framing was
+  proposed by @nanookclaw (with @douglasborthwick-crypto) in A2A discussion
+  #1734 (April 2026) and adopted here. Overdue provenance note; no behavior
+  change.
+
 ## [0.7.0a1] - 2026-06-DD
 
 ### Added
