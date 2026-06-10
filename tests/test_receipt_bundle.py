@@ -632,10 +632,11 @@ class TestMcpToolIntegration:
 
     def _setup_negotiation(self):
         """Run a complete negotiation and return context for bundle testing."""
-        from concordia.mcp_server import handle_tool_call, _store, _auth, _attestation_store, _key_registry, _bundle_store
+        from concordia.mcp_server import handle_tool_call, _store, _auth, _attestation_store, _key_registry, _bundle_store, _registry
 
         # Reset state
         _store._sessions.clear()
+        _registry._agents.clear()
         _auth._agent_tokens.clear()
         _auth._token_to_agent.clear()
         _auth._session_tokens.clear()

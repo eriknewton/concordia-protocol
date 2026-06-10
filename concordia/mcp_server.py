@@ -1442,8 +1442,22 @@ def tool_register_agent(
     resolution_mechanisms: Annotated[list[str] | None, "Supported resolution mechanisms (default: ['split', 'foa', 'tradeoff'])"] = None,
     endpoint: Annotated[str | None, "Optional agent endpoint URL for direct contact"] = None,
     description: Annotated[str | None, "Optional human-readable description of the agent"] = None,
+    auth_token: Annotated[str | None, "Agent-scoped auth token. Required ONLY to re-register (update) an agent_id that already exists; omit for first-time registration."] = None,
 ) -> str:
-    """Register an agent in the discovery registry."""
+    """Register an agent in the discovery registry.
+
+    First registration of a new ``agent_id`` is an open bootstrap and issues a
+    fresh auth token. Re-registering an ``agent_id`` that already exists is an
+    *update* and requires the current ``auth_token`` for that agent — otherwise
+    a second client could overwrite the record and rotate the token, hijacking
+    the identity and locking out the owner (SEC: identity-takeover gate).
+    """
+    # Ownership gate: an existing agent_id may only be re-registered by the
+    # holder of its current token. New agent_ids register freely (bootstrap).
+    if _registry.get(agent_id) is not None:
+        if auth_token is None or not _auth.validate_agent_token(agent_id, auth_token):
+            return _auth_error(agent_id, context="concordia_register_agent")
+
     # SEC-ADD-02: Sanitize counterparty-controlled inputs
     description = _sanitize_description(description)
 
