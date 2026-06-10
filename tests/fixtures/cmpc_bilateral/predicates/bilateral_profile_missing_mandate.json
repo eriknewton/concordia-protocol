@@ -1,0 +1,19 @@
+{
+  "predicate": {
+    "predicate_id": "urn:concordia:predicate:bilateral-missing-mandate",
+    "type_urn": "urn:concordia:predicate-type:bilateral_chain_closure:v1",
+    "parameters": {
+      "expected_participants": ["did:web:r.test", "did:web:w.test"],
+      "aggregate_quantity_required": 100,
+      "match_tolerance": 0,
+      "activation_deadline_iso": "2099-01-01T00:00:00Z",
+      "mandate_check_required": true
+    }
+  },
+  "commitments": [
+    {"commitment_id": "cc-r", "committer_did": "did:web:r.test", "mandate_proof_id": "mp-r", "commitment_terms": {"quantity": 50, "unit_price": 25, "delivery_date": "2026-05-20T00:00:00Z"}},
+    {"commitment_id": "cc-w", "committer_did": "did:web:w.test", "mandate_proof_id": null, "commitment_terms": {"quantity": 50, "unit_price": 25, "delivery_date": "2026-05-21T00:00:00Z"}}
+  ],
+  "expected_result": "unsatisfied",
+  "expected_reason": "missing_mandate_proof"
+}

@@ -1,0 +1,8 @@
+{
+  "predicate": {"predicate_id": "urn:concordia:predicate:agg-sum", "type_urn": "urn:concordia:predicate-type:closure_language:v1", "parameters": {"expression": {"op": "==", "left": {"op": "sum", "field": "commitment_terms.quantity"}, "value": 100}}},
+  "commitments": [
+    {"commitment_id": "cc-r", "committer_did": "did:web:r.test", "mandate_proof_id": "mp-r", "commitment_terms": {"quantity": 50, "unit_price": 25, "delivery_date": "2026-05-20T00:00:00Z"}},
+    {"commitment_id": "cc-w", "committer_did": "did:web:w.test", "mandate_proof_id": "mp-w", "commitment_terms": {"quantity": 50, "unit_price": 25, "delivery_date": "2026-05-21T00:00:00Z"}}
+  ],
+  "expected_result": "satisfied"
+}
