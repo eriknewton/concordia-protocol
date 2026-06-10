@@ -1,0 +1,73 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "verascore/api/publish#concordia-receipt",
+  "title": "Verascore POST /api/publish — concordia-receipt envelope (accepted contract)",
+  "description": "Committed copy of the body Verascore's /api/publish route accepts for a concordia-receipt. Bound to Verascore src/app/api/publish/route.ts and src/lib/concordia-receipts.ts on branch at commit a3e6090 (#63, 'require counterparty co-signature for trust-bearing Concordia receipts'). The route destructures {signature, publicKey, type, data}; agentId is NOT trusted (derived from the verified publicKey via deriveAgentId). The publisher-envelope signature is raw Ed25519 over JSON.stringify(data), base64url-encoded (route.ts: base64urlToBuffer + verifyEd25519). data.receipt is extracted (extractConcordiaReceiptPayload) and must carry session_id, counterparty_did, outcome, and concordia (protocol version); parties[] carries the counterparty co-signature (concordia-cosignature.ts).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "publicKey", "signature", "data"],
+  "properties": {
+    "type": {
+      "const": "concordia-receipt",
+      "description": "validTypes in route.ts includes concordia-receipt."
+    },
+    "publicKey": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "description": "base64url raw 32-byte Ed25519 public key; route requires length 32 after decode."
+    },
+    "signature": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "description": "base64url raw 64-byte Ed25519 signature over JSON.stringify(data); route requires length 64 after decode."
+    },
+    "data": {
+      "type": "object",
+      "required": ["did", "receipt"],
+      "properties": {
+        "did": {
+          "type": "string",
+          "pattern": "^did:key:",
+          "description": "Publisher did:key; route rejects (403) if it does not match publicKey (publicKeyMatchesDid)."
+        },
+        "receipt": {
+          "type": "object",
+          "required": ["concordia", "session_id", "counterparty_did", "outcome", "parties"],
+          "properties": {
+            "concordia": {
+              "type": "string",
+              "description": "Protocol version; normalizeConcordiaReceipt reads receipt.concordia and rejects when absent."
+            },
+            "session_id": { "type": "string", "minLength": 1 },
+            "counterparty_did": { "type": "string", "minLength": 1 },
+            "outcome": {
+              "type": "object",
+              "required": ["status"],
+              "properties": {
+                "status": {
+                  "enum": ["agreed", "rejected", "expired", "withdrawn", "fulfilled_with_mediation"],
+                  "description": "VALID_OUTCOMES in concordia-receipts.ts."
+                }
+              }
+            },
+            "parties": {
+              "type": "array",
+              "minItems": 2,
+              "items": {
+                "type": "object",
+                "required": ["agent_id"],
+                "properties": {
+                  "agent_id": { "type": "string" },
+                  "signature": {
+                    "type": "string",
+                    "description": "base64url Ed25519 counterparty co-signature; present only on the counterparty_did party (findCounterpartySignature)."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
