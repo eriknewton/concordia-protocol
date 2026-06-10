@@ -54,7 +54,11 @@ concordia-mcp-server = "concordia.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["concordia"]
-force-include = { "concordia/py.typed" = "concordia/py.typed" }
+# Ship the JSON schemas INSIDE the package (concordia/schemas) so schema-backed
+# validators work in an installed wheel. Without this, schemas/ lived only at
+# the repo root and every pip user hit FileNotFoundError. See
+# concordia/schema_validator.py for the packaged-or-repo-root resolution.
+force-include = { "concordia/py.typed" = "concordia/py.typed", "schemas" = "concordia/schemas" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
