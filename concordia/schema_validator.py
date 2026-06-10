@@ -18,8 +18,20 @@ import jsonschema
 
 from .attestation import REFERENCE_RELATIONSHIPS, REFERENCE_TYPES
 
-# Path to the bundled schemas directory
-_SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
+# Path to the bundled schemas directory.
+#
+# In an installed wheel the schemas are force-included INSIDE the package at
+# ``concordia/schemas`` (see pyproject ``[tool.hatch.build.targets.wheel]``),
+# so they resolve next to this module. In a source checkout that packaged copy
+# does not exist on disk, so we fall back to the repo-root ``schemas/`` tree.
+# Without the packaged copy, every schema-backed validator (attestation,
+# approval-receipt, fulfillment, message) raised FileNotFoundError for pip
+# users while passing in dev — a silent product-breaking gap.
+_PACKAGED_SCHEMAS_DIR = Path(__file__).resolve().parent / "schemas"
+_REPO_SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
+_SCHEMAS_DIR = (
+    _PACKAGED_SCHEMAS_DIR if _PACKAGED_SCHEMAS_DIR.is_dir() else _REPO_SCHEMAS_DIR
+)
 _FORMAT_CHECKER = jsonschema.FormatChecker()
 _FREE_TEXT_TERM_ERROR = (
     "free-text field must not contain obvious raw deal terms"

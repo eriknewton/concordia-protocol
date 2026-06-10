@@ -37,3 +37,41 @@ jobs:
 
       - name: Run tests
         run: pytest -v
+
+  wheel-install-smoke:
+    # Catches the schema-packaging class of bug: the editable install used by
+    # the `test` job runs from the source tree, where repo-root schemas/ always
+    # exists, so it cannot detect a wheel that ships without its schemas. This
+    # job builds the wheel, installs it into a CLEAN venv, and loads schemas
+    # from a directory with no repo-root schemas/ on the resolution path.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2 (resolved 2026-05-18)
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0 (resolved 2026-05-18)
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel
+
+      - name: Install wheel into a clean venv and load schemas from outside the tree
+        run: |
+          python -m venv /tmp/cleanenv
+          /tmp/cleanenv/bin/pip install dist/*.whl
+          cd /tmp  # no repo-root schemas/ on the path here
+          /tmp/cleanenv/bin/python - <<'PY'
+          import concordia.schema_validator as sv
+          for fn in (
+              "attestation.schema.json", "approval_receipt.schema.json",
+              "fulfillment_attestation.schema.json", "receipt_bundle.schema.json",
+              "reference.schema.json", "revocation_record.schema.json", "predicate.json",
+          ):
+              assert isinstance(sv._load_schema(fn), dict), fn
+          from concordia.adapters.a2cn import dispute_resolved as dr
+          assert isinstance(dr.DISPUTE_RESOLVED_SCHEMA, dict)
+          print("wheel-install-smoke PASS:", sv._SCHEMAS_DIR)
+          PY
