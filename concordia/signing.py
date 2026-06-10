@@ -214,6 +214,26 @@ def _format_number_ecmascript(value: int | float) -> str:
     return sign + result
 
 
+def _reject_lone_surrogates(value: str) -> None:
+    """Reject strings containing an unpaired UTF-16 surrogate.
+
+    Python ``str`` can hold lone surrogates (code points U+D800-U+DFFF that
+    are not part of a valid pair). ``json.dumps(...).encode("utf-8")`` then
+    raises ``UnicodeEncodeError`` at the very end of canonicalization — which,
+    on the verify path, would crash instead of returning ``False`` and which
+    diverges from the JS SDK (whose ``JSON.stringify`` happily emits the
+    ``\\udXXX`` escape, so JS would *accept* the same input). Reject up front
+    with a clean ``ValueError`` so both languages fail closed identically.
+    """
+    for ch in value:
+        if 0xD800 <= ord(ch) <= 0xDFFF:
+            raise ValueError(
+                "Cannot canonicalize string with unpaired UTF-16 surrogate "
+                f"U+{ord(ch):04X}; surrogates are not serializable to UTF-8 "
+                "and diverge across language implementations."
+            )
+
+
 def _utf16_sort_key(value: str) -> bytes:
     """Return RFC 8785 object-key sort bytes for a property name."""
     # RFC 8785 §3.2.3 sorts raw property names as UTF-16 code units.
@@ -245,11 +265,15 @@ def _stable_stringify(value: Any) -> str:
         # string escaping: control chars U+0000-U+001F are \uXXXX-escaped,
         # quote and backslash are escaped, all other characters (including
         # non-ASCII) are emitted as raw UTF-8.
+        _reject_lone_surrogates(value)
         return json.dumps(value, ensure_ascii=False)
     if isinstance(value, (list, tuple)):
         return "[" + ",".join(_stable_stringify(v) for v in value) + "]"
     if isinstance(value, dict):
         keys = sorted(value.keys(), key=_utf16_sort_key)
+        for k in keys:
+            if isinstance(k, str):
+                _reject_lone_surrogates(k)
         pairs = (
             json.dumps(k, ensure_ascii=False) + ":" + _stable_stringify(value[k])
             for k in keys
@@ -321,9 +345,13 @@ def verify_signature(
     Returns True if valid, False if the signature does not match.
     """
     signable = {k: v for k, v in data.items() if k != "signature"}
-    payload = canonical_json(signable)
-    raw_sig = base64.urlsafe_b64decode(signature)
     try:
+        # Canonicalization (special-float / lone-surrogate rejection) and
+        # base64 decoding are done INSIDE the try so malformed input yields a
+        # clean False rather than propagating ValueError / binascii.Error /
+        # UnicodeEncodeError out of a function documented to return a bool.
+        payload = canonical_json(signable)
+        raw_sig = base64.urlsafe_b64decode(signature)
         if alg == "ES256":
             if not isinstance(public_key, EllipticCurvePublicKey):
                 return False

@@ -154,6 +154,50 @@ class TestCrossLanguageCanonicalJSON:
         with pytest.raises(ValueError, match="special float"):
             canonical_json({"v": float("-inf")})
 
+    def test_rejects_lone_high_surrogate_value(self):
+        import pytest
+        from concordia.signing import canonical_json
+        # A lone surrogate cannot encode to UTF-8 and diverges from the JS SDK
+        # (whose JSON.stringify happily emits \udXXX). Reject with ValueError,
+        # NOT the bare UnicodeEncodeError that .encode("utf-8") would raise.
+        with pytest.raises(ValueError, match="surrogate"):
+            canonical_json({"v": "\ud834"})
+
+    def test_rejects_lone_low_surrogate_value(self):
+        import pytest
+        from concordia.signing import canonical_json
+        with pytest.raises(ValueError, match="surrogate"):
+            canonical_json({"v": "ab\udd1ecd"})
+
+    def test_rejects_lone_surrogate_in_key(self):
+        import pytest
+        from concordia.signing import canonical_json
+        with pytest.raises(ValueError, match="surrogate"):
+            canonical_json({"\ud834": "v"})
+
+    def test_accepts_valid_astral_pair(self):
+        # A properly paired surrogate (e.g. U+1D11E, emoji) is a real character
+        # and must still canonicalize cleanly.
+        from concordia.signing import canonical_json
+        out = canonical_json({"s": "\U0001D11E"})  # musical G-clef
+        assert out == '{"s":"\U0001D11E"}'.encode("utf-8")
+
+
+class TestVerifyFailsClosed:
+    """verify_signature must return False (never raise) on malformed input."""
+
+    def test_verify_returns_false_on_lone_surrogate(self):
+        from concordia.signing import KeyPair, verify_signature
+        kp = KeyPair.generate()
+        # Must not propagate UnicodeEncodeError — returns False instead.
+        assert verify_signature({"v": "\ud834"}, "AAAA", kp.public_key) is False
+
+    def test_verify_returns_false_on_malformed_base64(self):
+        from concordia.signing import KeyPair, verify_signature
+        kp = KeyPair.generate()
+        # Must not propagate binascii.Error — returns False instead.
+        assert verify_signature({"v": 1}, "not-base64!!!", kp.public_key) is False
+
     def test_shared_cross_language_vectors(self):
         """Exact byte-level vectors matching TypeScript test suite."""
         from concordia.signing import canonical_json

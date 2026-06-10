@@ -1,4 +1,8 @@
-import { CanonicalizationError, checkNoSpecialFloats } from './checks.js';
+import {
+  CanonicalizationError,
+  checkLoneSurrogates,
+  checkNoSpecialFloats,
+} from './checks.js';
 
 /**
  * Canonicalize a JSON-serializable value per RFC 8785 (JCS).
@@ -26,7 +30,10 @@ function stableStringify(value: unknown): string {
   const t = typeof value;
   if (t === 'boolean') return value ? 'true' : 'false';
   if (t === 'number') return JSON.stringify(value);
-  if (t === 'string') return JSON.stringify(value as string);
+  if (t === 'string') {
+    checkLoneSurrogates(value as string);
+    return JSON.stringify(value as string);
+  }
   if (Array.isArray(value)) {
     return '[' + value.map(stableStringify).join(',') + ']';
   }
@@ -36,7 +43,10 @@ function stableStringify(value: unknown): string {
     return (
       '{' +
       keys
-        .map((k) => JSON.stringify(k) + ':' + stableStringify(obj[k]))
+        .map((k) => {
+          checkLoneSurrogates(k);
+          return JSON.stringify(k) + ':' + stableStringify(obj[k]);
+        })
         .join(',') +
       '}'
     );
