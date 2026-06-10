@@ -26,7 +26,13 @@ from .schema_validator import (
     validate_attestation,
     validate_message,
 )
-from .session import InvalidSignatureError, InvalidTransitionError, Session
+from .session import (
+    ChainIntegrityError,
+    InvalidSignatureError,
+    InvalidTransitionError,
+    SessionBindingError,
+    Session,
+)
 from .receipt_bundle import BundleSummary, ReceiptBundle, verify_bundle, screen_bundle
 from .signing import KeyPair, ES256KeyPair, sign_message, verify_signature
 from .envelope import build_trust_evidence_envelope, verify_envelope_signature
@@ -75,6 +81,8 @@ __all__ = [
     "Session",
     "InvalidSignatureError",
     "InvalidTransitionError",
+    "SessionBindingError",
+    "ChainIntegrityError",
     # Offers
     "BasicOffer",
     "PartialOffer",
