@@ -2935,25 +2935,48 @@ def tool_verify_receipt_bundle(
             if agent_id not in party_ids:
                 errors.append(f"Agent '{agent_id}' not a party in attestation {i}")
 
-        # Verify attestation signatures using session-scoped keys
+        # Verify attestation signatures using session-scoped keys.
+        # Credit a counterparty as reputation only if its co-signature verifies.
+        verified_cp: set[str] = set()
+        unverified_cp: set[str] = set()
         for i, att in enumerate(attestations):
             sess_id = att.get("session_id", "")
             sess_keys = _session_keys.get(sess_id, {})
             for j, party in enumerate(att.get("parties", [])):
                 pid = party.get("agent_id", "")
+                is_counterparty = pid != agent_id
                 sig = party.get("signature", "")
                 if not sig:
                     errors.append(f"Attestation {i}, party {j} ('{pid}'): empty signature")
+                    if is_counterparty:
+                        unverified_cp.add(pid)
                     continue
                 # Try session-scoped key first, then global
                 party_key = sess_keys.get(pid) or resolve_key(pid)
                 if party_key is None:
                     warnings.append(f"Attestation {i}, party {j} ('{pid}'): cannot resolve key")
+                    if is_counterparty:
+                        unverified_cp.add(pid)
                     continue
                 from concordia.signing import verify_signature as _vsig
                 signable_party = {k: v for k, v in party.items() if k != "signature"}
-                if not _vsig(signable_party, sig, party_key):
+                if _vsig(signable_party, sig, party_key):
+                    if is_counterparty:
+                        verified_cp.add(pid)
+                else:
                     errors.append(f"Attestation {i}, party {j} ('{pid}'): invalid signature")
+                    if is_counterparty:
+                        unverified_cp.add(pid)
+
+        unverified_cp -= verified_cp
+        verified_counterparties = len(verified_cp)
+        claimed_cp = bdict.get("summary", {}).get("unique_counterparties", 0)
+        if isinstance(claimed_cp, int) and claimed_cp > verified_counterparties:
+            warnings.append(
+                f"Summary claims {claimed_cp} unique counterpart"
+                f"{'y' if claimed_cp == 1 else 'ies'} but only {verified_counterparties} "
+                f"had a verifiable co-signature; reputation must credit only the verified count."
+            )
 
         # Dedup
         att_ids = [a.get("attestation_id", "") for a in attestations]
@@ -2991,6 +3014,8 @@ def tool_verify_receipt_bundle(
         return BundleVerificationResult(
             valid=len(errors) == 0, errors=errors, warnings=warnings,
             summary_accurate=summary_accurate, sybil_flags=sybil_flags,
+            verified_counterparties=verified_counterparties,
+            unverified_counterparties=sorted(unverified_cp),
         )
 
     result = _verify_with_sessions(bundle)
@@ -3005,6 +3030,12 @@ def tool_verify_receipt_bundle(
         "warnings": result.warnings,
         "summary_accurate": result.summary_accurate,
         "sybil_flags": result.sybil_flags,
+        # Trustworthy counterparty count: distinct counterparties whose
+        # co-signature verified. Reputation consumers must use this rather than
+        # the bundle's self-asserted summary.unique_counterparties.
+        "verified_counterparties": result.verified_counterparties,
+        "unverified_counterparties": result.unverified_counterparties,
+        "claimed_counterparties": bundle.get("summary", {}).get("unique_counterparties", 0),
         "freshness": {"fresh": is_fresh, "message": freshness_msg},
         "attestation_count": len(bundle.get("attestations", [])),
         "agent_id": bundle.get("agent_id", ""),

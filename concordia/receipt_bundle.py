@@ -258,12 +258,23 @@ class ReceiptBundle:
 
 @dataclass
 class BundleVerificationResult:
-    """Result of verifying a receipt bundle."""
+    """Result of verifying a receipt bundle.
+
+    ``verified_counterparties`` is the trustworthy counterparty count: the
+    number of distinct counterparties whose co-signature actually verified.
+    Reputation consumers must use this, NOT the bundle's self-asserted
+    ``summary.unique_counterparties`` — the latter counts every party the
+    bundle *claims*, including ones whose signature could not be resolved.
+    ``unverified_counterparties`` names the parties the verifier could not
+    cryptographically confirm.
+    """
     valid: bool
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     summary_accurate: bool = True
     sybil_flags: dict[str, Any] = field(default_factory=dict)
+    verified_counterparties: int = 0
+    unverified_counterparties: list[str] = field(default_factory=list)
 
 
 def verify_bundle(
@@ -321,26 +332,54 @@ def verify_bundle(
                 f"Agent '{agent_id}' not a party in attestation {i}"
             )
 
-    # (b) Verify each attestation's party signatures
+    # (b) Verify each attestation's party signatures.
+    # Track which counterparties (non-self parties) have a co-signature that
+    # actually verifies — only those may be credited as reputation.
+    verified_cp: set[str] = set()
+    unverified_cp: set[str] = set()
     for i, att in enumerate(attestations):
         parties = att.get("parties", [])
         for j, party in enumerate(parties):
             pid = party.get("agent_id", "")
+            is_counterparty = pid != agent_id
             sig = party.get("signature", "")
             if not sig:
                 errors.append(f"Attestation {i}, party {j} ('{pid}'): empty signature")
+                if is_counterparty:
+                    unverified_cp.add(pid)
                 continue
             party_key = resolve_key(pid)
             if party_key is None:
                 warnings.append(
                     f"Attestation {i}, party {j} ('{pid}'): cannot resolve key, signature not verified"
                 )
+                if is_counterparty:
+                    unverified_cp.add(pid)
                 continue
             signable_party = {k: v for k, v in party.items() if k != "signature"}
-            if not verify_signature(signable_party, sig, party_key):
+            if verify_signature(signable_party, sig, party_key):
+                if is_counterparty:
+                    verified_cp.add(pid)
+            else:
                 errors.append(
                     f"Attestation {i}, party {j} ('{pid}'): invalid signature"
                 )
+                if is_counterparty:
+                    unverified_cp.add(pid)
+
+    # A party that verified in one attestation is a real counterparty even if a
+    # later (malformed) attestation reuses its id; don't double-count it as
+    # unverified.
+    unverified_cp -= verified_cp
+    verified_counterparties = len(verified_cp)
+    claimed_cp = bundle_dict.get("summary", {}).get("unique_counterparties", 0)
+    if isinstance(claimed_cp, int) and claimed_cp > verified_counterparties:
+        warnings.append(
+            f"Summary claims {claimed_cp} unique counterpart"
+            f"{'y' if claimed_cp == 1 else 'ies'} but only {verified_counterparties} "
+            f"had a verifiable co-signature; reputation must credit only the verified "
+            f"count, not the self-asserted total."
+        )
 
     # (e) Check for duplicated attestations
     att_ids = [a.get("attestation_id", "") for a in attestations]
@@ -391,6 +430,8 @@ def verify_bundle(
         warnings=warnings,
         summary_accurate=summary_accurate,
         sybil_flags=sybil_flags,
+        verified_counterparties=verified_counterparties,
+        unverified_counterparties=sorted(unverified_cp),
     )
 
 
