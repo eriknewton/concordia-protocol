@@ -17,6 +17,7 @@ from concordia.approval_receipt import (
     SIGNATURE_INVALID,
     _has_approves_reference,
     _parse_datetime,
+    _public_key_from_bytes,
     verify_approval_receipt,
 )
 from concordia.cmpc.types import RevocationRecord, RevocationScope
@@ -295,6 +296,10 @@ def test_invalid_public_key_bytes_are_rejected():
     assert result.errors == ["Missing or invalid Ed25519 issuer public key"]
 
 
+def test_public_key_helper_returns_none_for_missing_key():
+    assert _public_key_from_bytes(None) is None
+
+
 def test_bad_signature_is_rejected():
     key_pair = KeyPair.generate()
     offer = _offer()
@@ -305,6 +310,41 @@ def test_bad_signature_is_rejected():
 
     assert result.valid is False
     assert result.failure_reason == SIGNATURE_INVALID
+
+
+def test_nonmatching_revocation_records_mark_check_as_true():
+    key_pair = KeyPair.generate()
+    offer = _offer()
+    receipt = _receipt(key_pair, offer, expires_at="2099-05-14T13:00:00Z")
+    revocation = RevocationRecord(
+        revocation_id="urn:concordia:revocation:approval-002",
+        revoked_artifact_id="a2cn:session:not-this-one",
+        revoked_artifact_type="approval_receipt",
+        revocation_scope=RevocationScope.SINGLE_ARTIFACT.value,
+        issuer_did="did:web:principal.example",
+        issued_at="2026-05-14T11:00:00Z",
+        effective_at="2026-05-14T11:30:00Z",
+        reason="principal_revoked",
+        references=[
+            {
+                "id": "a2cn:session:not-this-one",
+                "type": "approval_receipt",
+                "relationship": "revokes",
+            }
+        ],
+        signature={"alg": "EdDSA", "value": "placeholder"},
+    )
+
+    result = verify_approval_receipt(
+        receipt,
+        offer,
+        now=NOW,
+        issuer_public_key=key_pair.public_key_bytes(),
+        revocation_records={"a2cn:session:not-this-one": revocation},
+    )
+
+    assert result.valid is True
+    assert result.checks["revocation_records"] is True
 
 
 def test_missing_offer_hash_is_schema_invalid():
