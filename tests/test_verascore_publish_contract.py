@@ -139,3 +139,24 @@ def test_counterparty_cosignature_matches_anchor() -> None:
     )
     sig = _b64url_decode(cp_entry["signature"])
     cap["counterparty"].public_key.verify(sig, cosign.canonical_cosign_bytes(receipt))
+
+
+def test_committed_envelope_fixture_matches_generator() -> None:
+    """The committed cross-repo transport-envelope fixture is exactly what
+    ``build_publish_body`` produces today (deterministic seed keys), and it
+    validates against the committed copy of Verascore's route schema.
+
+    Verascore's test suite consumes this same fixture with its REAL
+    route-layer functions; this test guarantees the committed bytes never
+    drift from the producer code.
+    """
+    from tests.generate_cosign_fixture import (
+        ENVELOPE_FIXTURE_PATH,
+        build_envelope_fixture,
+    )
+
+    committed = json.loads(ENVELOPE_FIXTURE_PATH.read_text(encoding="utf-8"))
+    assert committed == build_envelope_fixture()
+
+    schema = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
+    jsonschema.validate(committed["body"], schema)

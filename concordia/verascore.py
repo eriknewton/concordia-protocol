@@ -72,6 +72,84 @@ def compute_negotiation_competence(
     return max(0, min(100, score))
 
 
+def build_publish_body(
+    session_data: dict[str, Any],
+    key_pair: KeyPair,
+    agent_did: str,
+    *,
+    counterparty_signer: CounterpartySigner | None = None,
+) -> dict[str, Any]:
+    """Build the complete signed ``/api/publish`` envelope (pure, no I/O).
+
+    This is the single source of truth for the Concordia→Verascore transport
+    envelope shape. ``VerascoreClient.report_concordia_receipt`` POSTs exactly
+    this object; the cross-repo fixture generator emits exactly this object so
+    Verascore's test suite can verify it with the real route-layer functions.
+
+    Raises:
+        ValueError: If the envelope cannot be built completely — e.g.
+            ``agent_did`` does not match the signing key's ``did:key``, or
+            the receipt is not canonicalizable. A partial or unverifiable
+            envelope is never produced (CLAUDE.md rule #5, fail closed).
+    """
+    # ── Publisher identity must equal the signing key's did:key ──────────
+    # Verascore's /api/publish IGNORES any caller-supplied agentId and
+    # derives the publisher identity from the verified Ed25519 publicKey
+    # (deriveAgentId -> did:key:z<base64url(0xed01||pubkey)>, see
+    # src/lib/crypto.ts). The receipt's publisher party, the envelope's
+    # publicKey, and data.did must all resolve to that same identity or the
+    # publish is unverifiable. Fail closed if the caller passed a DID that
+    # is not this key's did:key.
+    expected_did = did_key_for(key_pair)
+    if agent_did != expected_did:
+        raise ValueError(
+            "agent_did does not match the signing key's did:key; Verascore "
+            "derives the publisher identity from the publicKey, so they must "
+            f"be identical (expected {expected_did!r}, got {agent_did!r})"
+        )
+
+    # Bilateral receipt (parties[] with the counterparty co-signature when
+    # available). This is the H1/H2 producer half: Verascore counts a
+    # receipt toward a trust-bearing score only if the named counterparty
+    # cryptographically co-signed it. Fail-closed to single-signed.
+    receipt = build_cosigned_receipt(
+        session_data,
+        agent_did,
+        counterparty_signer=counterparty_signer,
+    )
+
+    # ── Build the signed `data` object Verascore consumes ───────────────
+    # The route extracts the receipt from data.receipt (extractConcordia-
+    # ReceiptPayload) and canonicalizes THAT object for the co-signature
+    # check, so the receipt must be nested untouched (no sibling keys mixed
+    # in). data.did lets the route bind the publish to this publicKey and
+    # reject DID squatting.
+    data = {
+        "did": agent_did,
+        "receipt": receipt,
+    }
+
+    # The route verifies the publisher-envelope signature over
+    # JSON.stringify(data) (route.ts: `Buffer.from(JSON.stringify(data))`).
+    # canonical_json is byte-identical to ECMAScript JSON.stringify with
+    # sorted keys; because the route re-stringifies the object it parsed
+    # (preserving wire key order) and we send `data` with those same sorted
+    # keys, the server reproduces these exact bytes. Signature is base64url
+    # raw Ed25519 (NOT hex) and publicKey is base64url raw 32-byte key, both
+    # matching the route's base64urlToBuffer decode.
+    data_bytes = canonical_json(data)
+    raw_sig = key_pair.private_key.sign(data_bytes)
+    signature_b64url = _b64url(raw_sig)
+    public_key_b64url = _b64url(key_pair.public_key_bytes())
+
+    return {
+        "type": "concordia-receipt",
+        "publicKey": public_key_b64url,
+        "signature": signature_b64url,
+        "data": data,
+    }
+
+
 class VerascoreClient:
     """HTTP client for the Verascore transaction ingestion API.
 
@@ -116,62 +194,15 @@ class VerascoreClient:
                 the receipt is not canonicalizable. A partial or unverifiable
                 envelope is never transmitted (CLAUDE.md rule #5, fail closed).
         """
-        # ── Publisher identity must equal the signing key's did:key ──────────
-        # Verascore's /api/publish IGNORES any caller-supplied agentId and
-        # derives the publisher identity from the verified Ed25519 publicKey
-        # (deriveAgentId -> did:key:z<base64url(0xed01||pubkey)>, see
-        # src/lib/crypto.ts). The receipt's publisher party, the envelope's
-        # publicKey, and data.did must all resolve to that same identity or the
-        # publish is unverifiable. Fail closed if the caller passed a DID that
-        # is not this key's did:key.
-        expected_did = did_key_for(key_pair)
-        if agent_did != expected_did:
-            raise ValueError(
-                "agent_did does not match the signing key's did:key; Verascore "
-                "derives the publisher identity from the publicKey, so they must "
-                f"be identical (expected {expected_did!r}, got {agent_did!r})"
-            )
-
-        # Bilateral receipt (parties[] with the counterparty co-signature when
-        # available). This is the H1/H2 producer half: Verascore counts a
-        # receipt toward a trust-bearing score only if the named counterparty
-        # cryptographically co-signed it. Fail-closed to single-signed.
-        receipt = build_cosigned_receipt(
+        # Envelope construction (identity check, co-signed receipt, signed
+        # data object) lives in build_publish_body — the single source of
+        # truth shared with the cross-repo fixture generator.
+        body = build_publish_body(
             session_data,
+            key_pair,
             agent_did,
             counterparty_signer=counterparty_signer,
         )
-
-        # ── Build the signed `data` object Verascore consumes ───────────────
-        # The route extracts the receipt from data.receipt (extractConcordia-
-        # ReceiptPayload) and canonicalizes THAT object for the co-signature
-        # check, so the receipt must be nested untouched (no sibling keys mixed
-        # in). data.did lets the route bind the publish to this publicKey and
-        # reject DID squatting.
-        data = {
-            "did": agent_did,
-            "receipt": receipt,
-        }
-
-        # The route verifies the publisher-envelope signature over
-        # JSON.stringify(data) (route.ts: `Buffer.from(JSON.stringify(data))`).
-        # canonical_json is byte-identical to ECMAScript JSON.stringify with
-        # sorted keys; because the route re-stringifies the object it parsed
-        # (preserving wire key order) and we send `data` with those same sorted
-        # keys, the server reproduces these exact bytes. Signature is base64url
-        # raw Ed25519 (NOT hex) and publicKey is base64url raw 32-byte key, both
-        # matching the route's base64urlToBuffer decode.
-        data_bytes = canonical_json(data)
-        raw_sig = key_pair.private_key.sign(data_bytes)
-        signature_b64url = _b64url(raw_sig)
-        public_key_b64url = _b64url(key_pair.public_key_bytes())
-
-        body = {
-            "type": "concordia-receipt",
-            "publicKey": public_key_b64url,
-            "signature": signature_b64url,
-            "data": data,
-        }
 
         # Serialize with the same canonical serializer so the on-wire `data`
         # sub-object is byte-identical to the signed `data_bytes` (sorted keys
