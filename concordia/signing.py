@@ -3,6 +3,10 @@
 Concordia messages are signed with Ed25519 (default) or ES256 (ECDSA P-256).
 The signature covers the canonical JSON serialization of all fields except
 the signature itself.
+
+ES256 signatures are normalized to low-S and high-S signatures are rejected
+because the transcript chain hashes over the signature field, making ECDSA
+malleability (RFC 6979/BIP-62-style canonicalization) transcript-visible.
 """
 
 from __future__ import annotations
@@ -17,6 +21,14 @@ from typing import Any
 SUPPORTED_JWS_ALGORITHMS = ("EdDSA", "ES256")
 JWS_ALG_ENV_VAR = "CONCORDIA_JWS_ALG"
 DEFAULT_JWS_ALGORITHM = "EdDSA"
+
+# SEC 2 P-256 / secp256r1 group order. ES256 ECDSA signatures must use
+# low-S form so the alternate valid signature (r, n-s) is rejected.
+P256_ORDER = int(
+    "FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551",
+    16,
+)
+P256_HALF_ORDER = P256_ORDER // 2
 
 
 def resolve_algorithm(explicit: str | None = None) -> str:
@@ -46,6 +58,10 @@ from cryptography.hazmat.primitives.asymmetric.ec import (
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
     Ed25519PublicKey,
+)
+from cryptography.hazmat.primitives.asymmetric.utils import (
+    decode_dss_signature,
+    encode_dss_signature,
 )
 from cryptography.hazmat.primitives.hashes import SHA256
 from cryptography.hazmat.primitives.serialization import (
@@ -112,6 +128,20 @@ class ES256KeyPair:
         return self.private_key.private_bytes(
             Encoding.DER, PrivateFormat.PKCS8, NoEncryption()
         )
+
+
+def _normalize_es256_der_signature(raw_sig: bytes) -> bytes:
+    """Return a DER-encoded ES256 signature in canonical low-S form."""
+    r, s = decode_dss_signature(raw_sig)
+    if s > P256_HALF_ORDER:
+        s = P256_ORDER - s
+    return encode_dss_signature(r, s)
+
+
+def _is_low_s_es256_der_signature(raw_sig: bytes) -> bool:
+    """Return True only for well-formed DER ES256 signatures with low-S."""
+    r, s = decode_dss_signature(raw_sig)
+    return 0 < r < P256_ORDER and 0 < s <= P256_HALF_ORDER
 
 
 def _check_no_special_floats(data: Any) -> None:
@@ -318,6 +348,7 @@ def sign_message(
         if not isinstance(key_pair, ES256KeyPair):
             raise TypeError("ES256 requires an ES256KeyPair")
         raw_sig = key_pair.private_key.sign(payload, ECDSA(SHA256()))
+        raw_sig = _normalize_es256_der_signature(raw_sig)
     elif alg == "EdDSA":
         if not isinstance(key_pair, KeyPair):
             raise TypeError("EdDSA requires an Ed25519 KeyPair")
@@ -354,6 +385,8 @@ def verify_signature(
         raw_sig = base64.urlsafe_b64decode(signature)
         if alg == "ES256":
             if not isinstance(public_key, EllipticCurvePublicKey):
+                return False
+            if not _is_low_s_es256_der_signature(raw_sig):
                 return False
             public_key.verify(raw_sig, payload, ECDSA(SHA256()))
         elif alg == "EdDSA":
