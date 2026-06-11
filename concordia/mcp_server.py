@@ -159,11 +159,9 @@ MAX_MESSAGE_TYPE_LENGTH = 128
 # sanitizers recursed without a depth guard — a deeply nested object drove
 # Python toward its recursion limit and raised RecursionError, which the tools'
 # `except ValueError` does not catch (uncaught error / DoS). Beyond this depth
-# the substructure is replaced with a marker (fail closed by truncation, never
-# raises) so a malicious nesting bomb cannot crash the handler. 32 is far deeper
-# than any legitimate terms/metadata/payload structure.
+# the sanitizer rejects the payload before Python reaches its recursion limit.
+# 32 is far deeper than any legitimate terms/metadata/payload structure.
 MAX_SANITIZE_DEPTH = 32
-_DEPTH_TRUNCATED = "[MAX_DEPTH_EXCEEDED]"
 
 # Unicode control characters to strip (preserving \n \r \t)
 _CONTROL_CHAR_RE = re.compile(
@@ -231,30 +229,39 @@ def _sanitize_reasoning(reasoning: str | None) -> str | None:
     return _sanitize_string(reasoning, MAX_REASONING_LENGTH)
 
 
+def _check_sanitize_depth(depth: int) -> None:
+    if depth >= MAX_SANITIZE_DEPTH:
+        raise ValueError(f"input nesting exceeds max depth {MAX_SANITIZE_DEPTH}")
+
+
+def _sanitize_nested_value(value: object, max_string_length: int, depth: int) -> object:
+    """Sanitize strings recursively through dicts and lists with a depth cap."""
+    _check_sanitize_depth(depth)
+    if isinstance(value, str):
+        return _sanitize_string(value, max_string_length)
+    if isinstance(value, dict):
+        return {
+            _sanitize_string(str(k), max_string_length): _sanitize_nested_value(
+                v, max_string_length, depth + 1
+            )
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [
+            _sanitize_nested_value(item, max_string_length, depth + 1)
+            for item in value
+        ]
+    return value
+
+
 def _sanitize_terms(terms: dict, _depth: int = 0) -> dict:
     """Recursively sanitize string values in a terms dict (SEC-ADD-02).
 
-    Truncates beyond ``MAX_SANITIZE_DEPTH`` (fail closed) so a deeply nested
+    Rejects beyond ``MAX_SANITIZE_DEPTH`` (fail closed) so a deeply nested
     counterparty object cannot exhaust the recursion stack.
     """
-    if _depth >= MAX_SANITIZE_DEPTH:
-        return {"_truncated": _DEPTH_TRUNCATED}
-    sanitized: dict = {}
-    for k, v in terms.items():
-        k = _sanitize_string(str(k), MAX_TERM_STRING_LENGTH)
-        if isinstance(v, str):
-            sanitized[k] = _sanitize_string(v, MAX_TERM_STRING_LENGTH)
-        elif isinstance(v, dict):
-            sanitized[k] = _sanitize_terms(v, _depth + 1)
-        elif isinstance(v, list):
-            sanitized[k] = [
-                _sanitize_string(item, MAX_TERM_STRING_LENGTH) if isinstance(item, str)
-                else _sanitize_terms(item, _depth + 1) if isinstance(item, dict)
-                else item
-                for item in v
-            ]
-        else:
-            sanitized[k] = v
+    sanitized = _sanitize_nested_value(terms, MAX_TERM_STRING_LENGTH, _depth)
+    assert isinstance(sanitized, dict)
     return sanitized
 
 
@@ -268,45 +275,22 @@ def _sanitize_description(desc: str | None) -> str | None:
 def _sanitize_metadata(metadata: dict | None, _depth: int = 0) -> dict | None:
     """Sanitize string values in a metadata dict (SEC-ADD-02).
 
-    Truncates beyond ``MAX_SANITIZE_DEPTH`` (fail closed) against deep nesting.
+    Rejects beyond ``MAX_SANITIZE_DEPTH`` (fail closed) against deep nesting.
     """
     if metadata is None:
         return None
-    if _depth >= MAX_SANITIZE_DEPTH:
-        return {"_truncated": _DEPTH_TRUNCATED}
-    sanitized: dict = {}
-    for k, v in metadata.items():
-        if isinstance(v, str):
-            sanitized[k] = _sanitize_string(v, MAX_METADATA_STRING_LENGTH)
-        elif isinstance(v, dict):
-            sanitized[k] = _sanitize_metadata(v, _depth + 1)
-        else:
-            sanitized[k] = v
+    sanitized = _sanitize_nested_value(metadata, MAX_METADATA_STRING_LENGTH, _depth)
+    assert isinstance(sanitized, dict)
     return sanitized
 
 
 def _sanitize_payload(payload: dict, _depth: int = 0) -> dict:
     """Sanitize string values in a relay payload dict (SEC-ADD-02).
 
-    Truncates beyond ``MAX_SANITIZE_DEPTH`` (fail closed) against deep nesting.
+    Rejects beyond ``MAX_SANITIZE_DEPTH`` (fail closed) against deep nesting.
     """
-    if _depth >= MAX_SANITIZE_DEPTH:
-        return {"_truncated": _DEPTH_TRUNCATED}
-    sanitized: dict = {}
-    for k, v in payload.items():
-        if isinstance(v, str):
-            sanitized[k] = _sanitize_string(v, MAX_RELAY_PAYLOAD_STRING_LENGTH)
-        elif isinstance(v, dict):
-            sanitized[k] = _sanitize_payload(v, _depth + 1)
-        elif isinstance(v, list):
-            sanitized[k] = [
-                _sanitize_string(item, MAX_RELAY_PAYLOAD_STRING_LENGTH) if isinstance(item, str)
-                else _sanitize_payload(item, _depth + 1) if isinstance(item, dict)
-                else item
-                for item in v
-            ]
-        else:
-            sanitized[k] = v
+    sanitized = _sanitize_nested_value(payload, MAX_RELAY_PAYLOAD_STRING_LENGTH, _depth)
+    assert isinstance(sanitized, dict)
     return sanitized
 
 
