@@ -24,6 +24,7 @@ from concordia.want_registry import (
     Have,
     Match,
     WantRegistry,
+    MAX_TTL_SECONDS,
     categories_compatible,
     locations_compatible,
     compute_term_overlap,
@@ -722,6 +723,107 @@ class TestWantRegistry:
         assert len(matches) == 2
         assert len(reg.find_matches(want_id=want.id)) == 1
         assert reg.stats()["total_matches"] == 1
+
+
+class TestWantRegistryQuotas:
+
+    def test_want_quota_rejects_at_cap(self, monkeypatch):
+        import concordia.want_registry as want_registry
+
+        monkeypatch.setattr(want_registry, "MAX_ACTIVE_WANTS_PER_AGENT", 2)
+        reg = WantRegistry()
+        reg.post_want(agent_id="buyer", category="electronics", terms={})
+        reg.post_want(agent_id="buyer", category="books", terms={})
+
+        with pytest.raises(ValueError, match="Want registry limit reached"):
+            reg.post_want(agent_id="buyer", category="furniture", terms={})
+
+    def test_want_quota_does_not_count_expired_entries(self, monkeypatch):
+        import concordia.want_registry as want_registry
+
+        monkeypatch.setattr(want_registry, "MAX_ACTIVE_WANTS_PER_AGENT", 1)
+        reg = WantRegistry()
+        want, _ = reg.post_want(
+            agent_id="buyer", category="electronics", terms={}, ttl=1,
+        )
+        want.expires_at = time.time() - 1
+
+        replacement, _ = reg.post_want(
+            agent_id="buyer", category="books", terms={},
+        )
+
+        assert replacement.agent_id == "buyer"
+        assert reg.list_wants(agent_id="buyer") == [replacement]
+
+    def test_want_quota_isolated_by_agent(self, monkeypatch):
+        import concordia.want_registry as want_registry
+
+        monkeypatch.setattr(want_registry, "MAX_ACTIVE_WANTS_PER_AGENT", 1)
+        reg = WantRegistry()
+        reg.post_want(agent_id="buyer_a", category="electronics", terms={})
+
+        want, _ = reg.post_want(
+            agent_id="buyer_b", category="electronics", terms={},
+        )
+
+        assert want.agent_id == "buyer_b"
+
+    def test_have_quota_rejects_at_cap(self, monkeypatch):
+        import concordia.want_registry as want_registry
+
+        monkeypatch.setattr(want_registry, "MAX_ACTIVE_HAVES_PER_AGENT", 2)
+        reg = WantRegistry()
+        reg.post_have(agent_id="seller", category="electronics", terms={})
+        reg.post_have(agent_id="seller", category="books", terms={})
+
+        with pytest.raises(ValueError, match="Have registry limit reached"):
+            reg.post_have(agent_id="seller", category="furniture", terms={})
+
+    def test_have_quota_does_not_count_expired_entries(self, monkeypatch):
+        import concordia.want_registry as want_registry
+
+        monkeypatch.setattr(want_registry, "MAX_ACTIVE_HAVES_PER_AGENT", 1)
+        reg = WantRegistry()
+        have, _ = reg.post_have(
+            agent_id="seller", category="electronics", terms={}, ttl=1,
+        )
+        have.expires_at = time.time() - 1
+
+        replacement, _ = reg.post_have(
+            agent_id="seller", category="books", terms={},
+        )
+
+        assert replacement.agent_id == "seller"
+        assert reg.list_haves(agent_id="seller") == [replacement]
+
+    def test_ttl_above_max_rejected(self):
+        reg = WantRegistry()
+
+        with pytest.raises(ValueError, match="TTL exceeds maximum"):
+            reg.post_want(
+                agent_id="buyer", category="electronics", terms={},
+                ttl=MAX_TTL_SECONDS + 1,
+            )
+        with pytest.raises(ValueError, match="TTL exceeds maximum"):
+            reg.post_have(
+                agent_id="seller", category="electronics", terms={},
+                ttl=MAX_TTL_SECONDS + 1,
+            )
+
+    def test_ttl_at_max_accepted(self):
+        reg = WantRegistry()
+
+        want, _ = reg.post_want(
+            agent_id="buyer", category="electronics", terms={},
+            ttl=MAX_TTL_SECONDS,
+        )
+        have, _ = reg.post_have(
+            agent_id="seller", category="electronics", terms={},
+            ttl=MAX_TTL_SECONDS,
+        )
+
+        assert want.ttl == MAX_TTL_SECONDS
+        assert have.ttl == MAX_TTL_SECONDS
 
 
 # ===================================================================

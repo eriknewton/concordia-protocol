@@ -154,6 +154,11 @@ MAX_AGENT_ID_LENGTH = 128
 MAX_CATEGORY_LENGTH = 256
 MAX_MESSAGE_TYPE_LENGTH = 128
 
+# Audit M4 hardening: cap per-initiator live negotiation sessions and reject
+# overlong caller TTLs without changing canonical protocol bytes.
+MAX_ACTIVE_NEGOTIATION_SESSIONS_PER_INITIATOR = 100
+MAX_TTL_SECONDS = 7 * 24 * 60 * 60
+
 # Maximum nesting depth the recursive sanitizers will descend. Counterparty
 # input (terms / metadata / relay payload) is attacker-controlled JSON, and the
 # sanitizers recursed without a depth guard — a deeply nested object drove
@@ -367,7 +372,14 @@ class SessionStore:
 
         Raises ValueError if initiator and responder are the same agent.
         """
+        if timing and timing.session_ttl > MAX_TTL_SECONDS:
+            raise ValueError("TTL exceeds maximum")
         if len(self._sessions) >= self.MAX_SESSIONS:
+            raise ValueError("Session store capacity reached")
+        if (
+            self._active_session_count_for_initiator(initiator_id)
+            >= MAX_ACTIVE_NEGOTIATION_SESSIONS_PER_INITIATOR
+        ):
             raise ValueError("Session store capacity reached")
 
         if initiator_id == responder_id:
@@ -400,6 +412,20 @@ class SessionStore:
 
     def get(self, session_id: str) -> SessionContext | None:
         return self._sessions.get(session_id)
+
+    def _active_session_count_for_initiator(self, initiator_id: str) -> int:
+        return sum(
+            1 for ctx in self._sessions.values()
+            if (
+                ctx.initiator.agent_id == initiator_id
+                and ctx.session.state in (SessionState.PROPOSED, SessionState.ACTIVE)
+                and not self._is_ttl_elapsed(ctx)
+            )
+        )
+
+    def _is_ttl_elapsed(self, ctx: SessionContext) -> bool:
+        age = (datetime.now(timezone.utc) - ctx.session.created_at).total_seconds()
+        return age > ctx.session.timing.session_ttl
 
     def list_sessions(self) -> list[dict[str, Any]]:
         """Return a summary of all sessions."""
@@ -1969,7 +1995,7 @@ def tool_post_have(
     category: Annotated[str, "Hierarchical category (e.g. 'electronics.cameras.mirrorless')"],
     terms: Annotated[dict, "Term values — e.g. {price: {min: 1800, currency: 'USD'}, condition: {value: 'like_new'}}"],
     location: Annotated[dict | None, "Location — {coordinates: {lat: 37.78, lng: -122.41}}"] = None,
-    ttl: Annotated[int, "Time-to-live in seconds (default: 2592000 = 30 days)"] = 2_592_000,
+    ttl: Annotated[int, "Time-to-live in seconds (default: 604800 = 7 days)"] = 604_800,
     metadata: Annotated[dict | None, "Optional metadata"] = None,
 ) -> str:
     """Post a Have and get immediate matches."""
