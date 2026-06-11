@@ -9,6 +9,7 @@ import pytest
 
 from concordia.mcp_server import (
     SessionStore,
+    MAX_TTL_SECONDS,
     handle_tool_call,
     get_tool_definitions,
     tool_open_session,
@@ -169,6 +170,73 @@ class TestSessionStore:
                 store.create("agent_e", "agent_f", SAMPLE_TERMS)
         finally:
             store.MAX_SESSIONS = original_max
+
+    def test_create_rejects_when_initiator_at_quota(self, monkeypatch):
+        import concordia.mcp_server as mcp_server
+
+        monkeypatch.setattr(
+            mcp_server, "MAX_ACTIVE_NEGOTIATION_SESSIONS_PER_INITIATOR", 2,
+        )
+        store = SessionStore()
+        store.create("agent_a", "agent_b", SAMPLE_TERMS)
+        store.create("agent_a", "agent_c", SAMPLE_TERMS)
+
+        with pytest.raises(ValueError, match="Session store capacity reached"):
+            store.create("agent_a", "agent_d", SAMPLE_TERMS)
+
+    def test_create_quota_does_not_count_ttl_elapsed_sessions(self, monkeypatch):
+        import concordia.mcp_server as mcp_server
+        from concordia.types import TimingConfig
+
+        monkeypatch.setattr(
+            mcp_server, "MAX_ACTIVE_NEGOTIATION_SESSIONS_PER_INITIATOR", 1,
+        )
+        store = SessionStore()
+        old = store.create(
+            "agent_a", "agent_b", SAMPLE_TERMS,
+            timing=TimingConfig(session_ttl=1),
+        )
+        old.session.created_at = old.session.created_at.replace(year=1970)
+
+        ctx = store.create("agent_a", "agent_c", SAMPLE_TERMS)
+
+        assert ctx.initiator.agent_id == "agent_a"
+
+    def test_create_quota_isolated_by_initiator(self, monkeypatch):
+        import concordia.mcp_server as mcp_server
+
+        monkeypatch.setattr(
+            mcp_server, "MAX_ACTIVE_NEGOTIATION_SESSIONS_PER_INITIATOR", 1,
+        )
+        store = SessionStore()
+        store.create("agent_a", "agent_b", SAMPLE_TERMS)
+
+        ctx = store.create("agent_b", "agent_a", SAMPLE_TERMS)
+
+        assert ctx.initiator.agent_id == "agent_b"
+
+    def test_create_rejects_session_ttl_above_max(self):
+        from concordia.types import TimingConfig
+
+        store = SessionStore()
+
+        with pytest.raises(ValueError, match="TTL exceeds maximum"):
+            store.create(
+                "agent_a", "agent_b", SAMPLE_TERMS,
+                timing=TimingConfig(session_ttl=MAX_TTL_SECONDS + 1),
+            )
+
+    def test_create_accepts_session_ttl_at_max(self):
+        from concordia.types import TimingConfig
+
+        store = SessionStore()
+
+        ctx = store.create(
+            "agent_a", "agent_b", SAMPLE_TERMS,
+            timing=TimingConfig(session_ttl=MAX_TTL_SECONDS),
+        )
+
+        assert ctx.session.timing.session_ttl == MAX_TTL_SECONDS
 
 
 # ---------------------------------------------------------------------------

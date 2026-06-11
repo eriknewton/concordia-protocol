@@ -31,6 +31,12 @@ from enum import Enum
 from typing import Any
 
 
+# Audit M4 hardening: keep one initiator from monopolizing relay sessions while
+# preserving the existing global relay caps.
+MAX_ACTIVE_RELAY_SESSIONS_PER_INITIATOR = 100
+MAX_TTL_SECONDS = 7 * 24 * 60 * 60
+
+
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
@@ -235,9 +241,17 @@ class NegotiationRelay:
         # Prevent self-sessions
         if responder_id and initiator_id == responder_id:
             raise ValueError("Cannot create relay session with same agent as both initiator and responder")
+        if session_ttl > MAX_TTL_SECONDS:
+            raise ValueError("TTL exceeds maximum")
 
         # Check session limit
+        self._expire_timed_out_sessions()
         if len(self._sessions) >= self.MAX_SESSIONS:
+            raise ValueError("Relay session limit reached")
+        if (
+            self._active_session_count_for_initiator(initiator_id)
+            >= MAX_ACTIVE_RELAY_SESSIONS_PER_INITIATOR
+        ):
             raise ValueError("Relay session limit reached")
 
         relay_id = f"relay_{uuid.uuid4().hex[:12]}"
@@ -477,6 +491,27 @@ class NegotiationRelay:
         session.state = RelaySessionState.TIMED_OUT
         session.concluded_at = datetime.now(timezone.utc).isoformat()
         session.conclusion_reason = "session_timeout"
+
+    def _expire_timed_out_sessions(self) -> None:
+        for session in self._sessions.values():
+            if (
+                session.state in (RelaySessionState.PENDING, RelaySessionState.ACTIVE)
+                and session.is_timed_out
+            ):
+                self._timeout_session(session)
+
+    def _active_session_count_for_initiator(self, initiator_id: str) -> int:
+        return sum(
+            1 for session in self._sessions.values()
+            if (
+                session.initiator.agent_id == initiator_id
+                and session.state in (
+                    RelaySessionState.PENDING,
+                    RelaySessionState.ACTIVE,
+                )
+                and not session.is_timed_out
+            )
+        )
 
     # -- Archival ------------------------------------------------------------
 

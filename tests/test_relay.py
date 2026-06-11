@@ -26,6 +26,7 @@ from concordia.relay import (
     RelayParticipant,
     DeliveryStatus,
     TranscriptArchive,
+    MAX_TTL_SECONDS,
 )
 
 
@@ -213,6 +214,66 @@ class TestRelaySessionLifecycle:
         relay.conclude_session(session.relay_session_id, "agreed")
         result = relay.conclude_session(session.relay_session_id, "again")
         assert result.state == RelaySessionState.CONCLUDED  # no error, idempotent
+
+    def test_per_initiator_quota_rejects_at_cap(self, monkeypatch):
+        import concordia.relay as relay_module
+
+        monkeypatch.setattr(
+            relay_module, "MAX_ACTIVE_RELAY_SESSIONS_PER_INITIATOR", 2,
+        )
+        relay = NegotiationRelay()
+        relay.create_session("agent_a", "agent_b")
+        relay.create_session("agent_a", "agent_c")
+
+        with pytest.raises(ValueError, match="Relay session limit reached"):
+            relay.create_session("agent_a", "agent_d")
+
+    def test_per_initiator_quota_does_not_count_timed_out_sessions(
+        self, monkeypatch,
+    ):
+        import concordia.relay as relay_module
+
+        monkeypatch.setattr(
+            relay_module, "MAX_ACTIVE_RELAY_SESSIONS_PER_INITIATOR", 1,
+        )
+        relay = NegotiationRelay()
+        old = relay.create_session("agent_a", "agent_b", session_ttl=1)
+        old.created_at = "1970-01-01T00:00:00+00:00"
+
+        session = relay.create_session("agent_a", "agent_c")
+
+        assert old.state == RelaySessionState.TIMED_OUT
+        assert session.initiator.agent_id == "agent_a"
+
+    def test_per_initiator_quota_isolated_by_agent(self, monkeypatch):
+        import concordia.relay as relay_module
+
+        monkeypatch.setattr(
+            relay_module, "MAX_ACTIVE_RELAY_SESSIONS_PER_INITIATOR", 1,
+        )
+        relay = NegotiationRelay()
+        relay.create_session("agent_a", "agent_b")
+
+        session = relay.create_session("agent_b", "agent_a")
+
+        assert session.initiator.agent_id == "agent_b"
+
+    def test_session_ttl_above_max_rejected(self):
+        relay = NegotiationRelay()
+
+        with pytest.raises(ValueError, match="TTL exceeds maximum"):
+            relay.create_session(
+                "agent_a", "agent_b", session_ttl=MAX_TTL_SECONDS + 1,
+            )
+
+    def test_session_ttl_at_max_accepted(self):
+        relay = NegotiationRelay()
+
+        session = relay.create_session(
+            "agent_a", "agent_b", session_ttl=MAX_TTL_SECONDS,
+        )
+
+        assert session.session_ttl == MAX_TTL_SECONDS
 
 
 # ===================================================================

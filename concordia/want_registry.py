@@ -33,6 +33,12 @@ from typing import Any
 
 EARTH_RADIUS_KM = 6_371.0
 
+# Audit M4 hardening: keep one principal from monopolizing the shared in-memory
+# discovery store while preserving the existing global store caps.
+MAX_ACTIVE_WANTS_PER_AGENT = 100
+MAX_ACTIVE_HAVES_PER_AGENT = 100
+MAX_TTL_SECONDS = 7 * 24 * 60 * 60
+
 
 # ---------------------------------------------------------------------------
 # Input validation helpers
@@ -85,6 +91,12 @@ def _validate_location(location: Any) -> None:
     within_km = location.get("within_km")
     if within_km is not None and not _is_number(within_km):
         raise ValueError("location.within_km must be a number")
+
+
+def _validate_ttl(ttl: int) -> None:
+    """Reject caller TTLs above the protocol service maximum."""
+    if ttl > MAX_TTL_SECONDS:
+        raise ValueError("TTL exceeds maximum")
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +153,7 @@ class Have:
     category: str
     terms: dict[str, Any]
     location: dict[str, Any] | None = None
-    ttl: int = 2_592_000  # 30 days default
+    ttl: int = MAX_TTL_SECONDS  # 7 days default
     metadata: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     expires_at: float = 0.0
@@ -481,9 +493,13 @@ class WantRegistry:
         """
         # Reject a malformed location before it can be stored (poison-pill DoS).
         _validate_location(location)
+        _validate_ttl(ttl)
+        self._expire_wants()
 
         # Check want registry limit
         if len(self._wants) >= self.MAX_WANTS:
+            raise ValueError("Want registry limit reached")
+        if self._active_want_count(agent_id) >= MAX_ACTIVE_WANTS_PER_AGENT:
             raise ValueError("Want registry limit reached")
 
         want_id = f"want_{uuid.uuid4().hex[:12]}"
@@ -536,6 +552,13 @@ class WantRegistry:
         for wid in expired:
             self._remove_want(wid)
 
+    def _active_want_count(self, agent_id: str) -> int:
+        ids = self._agent_wants.get(agent_id, set())
+        return sum(
+            1 for wid in ids
+            if wid in self._wants and not self._wants[wid].is_expired
+        )
+
     # -- Haves ---------------------------------------------------------------
 
     def post_have(
@@ -544,7 +567,7 @@ class WantRegistry:
         category: str,
         terms: dict[str, Any],
         location: dict[str, Any] | None = None,
-        ttl: int = 2_592_000,
+        ttl: int = MAX_TTL_SECONDS,
         metadata: dict[str, Any] | None = None,
     ) -> tuple[Have, list[Match]]:
         """Post a Have and immediately match against existing Wants.
@@ -553,9 +576,13 @@ class WantRegistry:
         """
         # Reject a malformed location before it can be stored (poison-pill DoS).
         _validate_location(location)
+        _validate_ttl(ttl)
+        self._expire_haves()
 
         # Check have registry limit
         if len(self._haves) >= self.MAX_HAVES:
+            raise ValueError("Have registry limit reached")
+        if self._active_have_count(agent_id) >= MAX_ACTIVE_HAVES_PER_AGENT:
             raise ValueError("Have registry limit reached")
 
         have_id = f"have_{uuid.uuid4().hex[:12]}"
@@ -606,6 +633,13 @@ class WantRegistry:
         expired = [hid for hid, h in self._haves.items() if h.is_expired]
         for hid in expired:
             self._remove_have(hid)
+
+    def _active_have_count(self, agent_id: str) -> int:
+        ids = self._agent_haves.get(agent_id, set())
+        return sum(
+            1 for hid in ids
+            if hid in self._haves and not self._haves[hid].is_expired
+        )
 
     # -- Matching ------------------------------------------------------------
 
