@@ -10,6 +10,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 import pytest
@@ -283,13 +284,36 @@ class TestAgentRegistry:
         assert [agent.agent_id for agent in active] == ["active_agent"]
         assert "old_agent" not in reg._agents
 
-    def test_invalid_last_seen_is_treated_as_not_expired(self):
+    def test_invalid_last_seen_is_treated_as_expired_with_warning(self, caplog):
+        caplog.set_level(logging.WARNING, logger="concordia.registry")
         reg = AgentRegistry()
         agent = reg.register("agent_1", ttl=1)
         agent.last_seen = "not-a-timestamp"
 
-        assert agent.is_expired() is False
-        assert reg.get("agent_1") is agent
+        assert agent.is_expired() is True
+        assert reg.get("agent_1") is None
+        assert "agent_1" not in reg._agents
+
+        record = next(
+            r
+            for r in caplog.records
+            if r.message == "agent_registry_invalid_last_seen_fail_closed"
+        )
+        assert record.agent_id == "agent_1"
+        assert record.last_seen == "not-a-timestamp"
+        assert record.error_type == "ValueError"
+
+    def test_corrupt_last_seen_cannot_keep_agent_alive_in_registry(self):
+        reg = AgentRegistry()
+        corrupt = reg.register("corrupt_agent", roles=["seller"], ttl=1)
+        corrupt.last_seen = "not-a-timestamp"
+        reg.register("active_agent", roles=["seller"])
+
+        assert [agent.agent_id for agent in reg.search(role="seller")] == [
+            "active_agent"
+        ]
+        assert "corrupt_agent" not in reg._agents
+        assert reg.count() == 1
 
     def test_badge_and_public_key_helpers(self):
         reg = AgentRegistry()

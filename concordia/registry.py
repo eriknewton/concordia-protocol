@@ -17,6 +17,7 @@ negotiate with, and what do they support?"
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -29,6 +30,8 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 PROTOCOL_VERSION = "0.1.0"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -99,8 +102,16 @@ class RegisteredAgent:
             )
             age = (datetime.now(timezone.utc) - last).total_seconds()
             return age > self.ttl
-        except (ValueError, TypeError):
-            return False
+        except (ValueError, TypeError) as exc:
+            logger.warning(
+                "agent_registry_invalid_last_seen_fail_closed",
+                extra={
+                    "agent_id": self.agent_id,
+                    "last_seen": self.last_seen,
+                    "error_type": type(exc).__name__,
+                },
+            )
+            return True
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
