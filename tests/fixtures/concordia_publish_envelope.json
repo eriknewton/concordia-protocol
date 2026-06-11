@@ -5,41 +5,41 @@
   "expected_counterparty_verified": true,
   "expected_outcome": "agreed",
   "body": {
-    "type": "concordia-receipt",
-    "publicKey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
-    "signature": "iuuMymo3rkZE5XIP8WUgYgC3SLlfPlw19dmrcocElskx-2eJ57OXI8l1Ibx00tDWIP2tq3xyfEKbazEwdNFgBw",
     "data": {
       "did": "did:key:z7QGKiOPddAnxlf1S2y08ul1yymcJvx2UEhvzdIgBtA9vXA",
       "receipt": {
         "concordia": "0.5",
-        "session_id": "concordia:session:cosign-fixture-0001",
         "counterparty_did": "did:key:z7QGBOXcOqH0XX1ajVGbDTH7My42KkbTuN6Jd9g9bj8mzlA",
+        "fulfillment": {
+          "status": "fulfilled"
+        },
+        "graceful_degradation": false,
         "outcome": {
-          "status": "agreed",
-          "rounds": 4,
           "duration_seconds": 312,
+          "rounds": 4,
+          "status": "agreed",
           "terms_count": 3
         },
         "parties": [
           {
             "agent_id": "did:key:z7QGKiOPddAnxlf1S2y08ul1yymcJvx2UEhvzdIgBtA9vXA",
-            "role": "initiator",
             "behavior": {
               "concessions": 2
-            }
+            },
+            "role": "initiator"
           },
           {
             "agent_id": "did:key:z7QGBOXcOqH0XX1ajVGbDTH7My42KkbTuN6Jd9g9bj8mzlA",
-            "role": "responder",
             "behavior": {},
+            "role": "responder",
             "signature": "Eo84J5C4dq-UYEjiOhYumKuarVnEQ-QVhB6k-_YIoQaPQJgud8ZUWYaFtI1cDQrcg2yt4ZFSUlpVSI3yBqjRBA"
           }
         ],
-        "fulfillment": {
-          "status": "fulfilled"
-        },
-        "graceful_degradation": false
+        "session_id": "concordia:session:cosign-fixture-0001"
       }
-    }
+    },
+    "publicKey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+    "signature": "iuuMymo3rkZE5XIP8WUgYgC3SLlfPlw19dmrcocElskx-2eJ57OXI8l1Ibx00tDWIP2tq3xyfEKbazEwdNFgBw",
+    "type": "concordia-receipt"
   }
 }

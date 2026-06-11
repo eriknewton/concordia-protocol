@@ -124,6 +124,16 @@ def build_envelope_fixture() -> dict:
         counterparty_signer=cosign.keypair_signer(counterparty),
     )
 
+    # The client transmits canonical_json(body) (sorted keys at every level),
+    # and the publisher signature is over canonical_json(data). Verascore's
+    # route verifies over JSON.stringify of the PARSED wire object, so the
+    # fixture must carry the body in exactly that canonical wire form —
+    # round-trip through canonical_json so key order in the committed JSON
+    # matches the bytes the signature covers.
+    from concordia.signing import canonical_json
+
+    body = json.loads(canonical_json(body).decode("utf-8"))
+
     return {
         "_comment": (
             "Concordia-produced /api/publish transport envelope (the complete "
