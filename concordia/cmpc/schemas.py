@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from jsonschema import Draft202012Validator, ValidationError  # type: ignore[import-untyped]
+from jsonschema import Draft202012Validator, ValidationError
 
 from .errors import SchemaValidationError
 

@@ -11,7 +11,7 @@ import re
 from datetime import datetime
 import warnings
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import jsonschema
@@ -66,7 +66,7 @@ def _load_schema(name: str) -> dict[str, Any]:
     """Load a JSON schema from the schemas directory."""
     path = _SCHEMAS_DIR / name
     with open(path) as f:
-        return json.load(f)
+        return cast(dict[str, Any], json.load(f))
 
 
 # ---------------------------------------------------------------------------

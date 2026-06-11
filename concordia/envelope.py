@@ -214,7 +214,7 @@ def build_trust_evidence_envelope(
     _check_no_special_floats(envelope)
     sig_payload = canonical_json(envelope)
 
-    if alg == "ES256":
+    if isinstance(key_pair, ES256KeyPair):
         from cryptography.hazmat.primitives.asymmetric.ec import ECDSA
         from cryptography.hazmat.primitives.hashes import SHA256
 
