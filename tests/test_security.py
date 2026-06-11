@@ -302,6 +302,7 @@ class TestRelayAccessControl:
             initiator_id="agent_a",
             responder_id="agent_b",
         )
+        relay.join_session(session.relay_session_id, "agent_b")
 
         # Send a message from A to B
         relay.send_message(
@@ -325,6 +326,7 @@ class TestRelayAccessControl:
             initiator_id="agent_a",
             responder_id="agent_b",
         )
+        relay.join_session(session.relay_session_id, "agent_b")
 
         relay.send_message(
             relay_session_id=session.relay_session_id,
@@ -348,6 +350,7 @@ class TestRelayAccessControl:
             initiator_id="agent_a",
             responder_id="agent_b",
         )
+        relay.join_session(session.relay_session_id, "agent_b")
 
         # Try to send as non-participant (agent_c)
         msg = relay.send_message(
@@ -365,6 +368,7 @@ class TestRelayAccessControl:
             initiator_id="agent_a",
             responder_id="agent_b",
         )
+        relay.join_session(session.relay_session_id, "agent_b")
 
         # Agent A (participant) can send
         msg = relay.send_message(
@@ -419,6 +423,7 @@ class TestRelayLimits:
                 initiator_id="agent_a",
                 responder_id="agent_b",
             )
+            relay.join_session(session.relay_session_id, "agent_b")
 
             # Send 5 messages successfully
             for i in range(5):
@@ -452,6 +457,7 @@ class TestRelayLimits:
                 initiator_id="agent_a",
                 responder_id="agent_b",
             )
+            relay.join_session(session.relay_session_id, "agent_b")
 
             # Send 3 messages to agent_b's mailbox (don't receive them)
             for i in range(3):

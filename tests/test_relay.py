@@ -30,6 +30,18 @@ from concordia.relay import (
 )
 
 
+def _create_active_session(
+    relay: NegotiationRelay,
+    initiator_id: str = "a",
+    responder_id: str = "b",
+    **kwargs: Any,
+) -> RelaySession:
+    session = relay.create_session(initiator_id, responder_id, **kwargs)
+    joined = relay.join_session(session.relay_session_id, responder_id)
+    assert joined is session
+    return session
+
+
 # ===================================================================
 # RelayedMessage tests
 # ===================================================================
@@ -68,7 +80,21 @@ class TestRelayParticipant:
         assert d["agent_id"] == "agent_a"
         assert d["endpoint"] == "https://a.example.com"
         assert d["connected"] is True
+        assert d["confirmed"] is True
         assert d["messages_sent"] == 0
+
+    def test_from_dict_round_trips_confirmed(self):
+        p = RelayParticipant.from_dict({
+            "agent_id": "agent_b",
+            "endpoint": None,
+            "connected": False,
+            "confirmed": False,
+            "messages_sent": 2,
+            "messages_received": 3,
+        })
+
+        assert p.to_dict()["confirmed"] is False
+        assert p.messages_sent == 2
 
 
 class TestRelaySession:
@@ -119,12 +145,15 @@ class TestRelaySession:
 
 class TestRelaySessionLifecycle:
 
-    def test_create_with_both_parties(self):
+    def test_create_with_responder_reserves_pending_slot(self):
         relay = NegotiationRelay()
         session = relay.create_session("agent_a", "agent_b")
-        assert session.state == RelaySessionState.ACTIVE
+        assert session.state == RelaySessionState.PENDING
         assert session.initiator.agent_id == "agent_a"
+        assert session.initiator.confirmed is True
         assert session.responder.agent_id == "agent_b"
+        assert session.responder.confirmed is False
+        assert session.responder.connected is False
 
     def test_create_pending(self):
         relay = NegotiationRelay()
@@ -139,6 +168,29 @@ class TestRelaySessionLifecycle:
         assert result is not None
         assert result.state == RelaySessionState.ACTIVE
         assert result.responder.agent_id == "agent_b"
+        assert result.responder.confirmed is True
+
+    def test_reserved_responder_join_activates_session(self):
+        relay = NegotiationRelay()
+        session = relay.create_session("agent_a", "agent_b")
+
+        result = relay.join_session(session.relay_session_id, "agent_b", "https://b.example")
+
+        assert result is session
+        assert session.state == RelaySessionState.ACTIVE
+        assert session.responder.agent_id == "agent_b"
+        assert session.responder.endpoint == "https://b.example"
+        assert session.responder.connected is True
+        assert session.responder.confirmed is True
+
+    def test_different_agent_cannot_claim_reserved_responder_slot(self):
+        relay = NegotiationRelay()
+        session = relay.create_session("agent_a", "agent_b")
+
+        assert relay.join_session(session.relay_session_id, "agent_c") is None
+        assert session.state == RelaySessionState.PENDING
+        assert session.responder.agent_id == "agent_b"
+        assert session.responder.confirmed is False
 
     def test_join_nonexistent(self):
         relay = NegotiationRelay()
@@ -147,12 +199,12 @@ class TestRelaySessionLifecycle:
     def test_join_already_active(self):
         relay = NegotiationRelay()
         session = relay.create_session("a", "b")
+        relay.join_session(session.relay_session_id, "b")
         assert relay.join_session(session.relay_session_id, "c") is None
 
-    def test_join_pending_session_with_existing_responder_is_rejected(self):
+    def test_join_pending_session_with_reserved_responder_rejects_other_agent(self):
         relay = NegotiationRelay()
-        session = relay.create_session("a")
-        session.responder = RelayParticipant(agent_id="b")
+        session = relay.create_session("a", "b")
 
         assert relay.join_session(session.relay_session_id, "c") is None
         assert session.responder.agent_id == "b"
@@ -169,7 +221,7 @@ class TestRelaySessionLifecycle:
         relay = NegotiationRelay()
         assert relay.get_session("fake") is None
 
-    def test_get_session_times_out_active_session(self):
+    def test_get_session_times_out_pending_reserved_session(self):
         relay = NegotiationRelay()
         session = relay.create_session("a", "b", session_ttl=1)
         session.created_at = "1970-01-01T00:00:00+00:00"
@@ -183,6 +235,7 @@ class TestRelaySessionLifecycle:
     def test_link_concordia_session(self):
         relay = NegotiationRelay()
         session = relay.create_session("a", "b")
+        relay.join_session(session.relay_session_id, "b")
         assert relay.link_concordia_session(session.relay_session_id, "ses_123") is True
         found = relay.get_by_concordia_id("ses_123")
         assert found is not None
@@ -284,7 +337,7 @@ class TestMessageRouting:
 
     def test_send_message(self):
         relay = NegotiationRelay()
-        session = relay.create_session("a", "b")
+        session = _create_active_session(relay)
         msg = relay.send_message(
             session.relay_session_id, "a",
             "negotiate.offer", {"price": 1000},
@@ -296,7 +349,7 @@ class TestMessageRouting:
 
     def test_send_updates_stats(self):
         relay = NegotiationRelay()
-        session = relay.create_session("a", "b")
+        session = _create_active_session(relay)
         relay.send_message(session.relay_session_id, "a", "offer", {"x": 1})
         assert session.initiator.messages_sent == 1
 
@@ -306,18 +359,18 @@ class TestMessageRouting:
 
     def test_send_to_concluded_session(self):
         relay = NegotiationRelay()
-        session = relay.create_session("a", "b")
+        session = _create_active_session(relay)
         relay.conclude_session(session.relay_session_id)
         assert relay.send_message(session.relay_session_id, "a", "offer", {}) is None
 
     def test_send_from_non_participant_fails(self):
         relay = NegotiationRelay()
-        session = relay.create_session("a", "b")
+        session = _create_active_session(relay)
         assert relay.send_message(session.relay_session_id, "c", "offer", {}) is None
 
     def test_send_to_timed_out_session_fails_and_marks_timeout(self):
         relay = NegotiationRelay()
-        session = relay.create_session("a", "b", session_ttl=1)
+        session = _create_active_session(relay, session_ttl=1)
         session.created_at = "1970-01-01T00:00:00+00:00"
 
         assert relay.send_message(session.relay_session_id, "a", "offer", {}) is None
@@ -329,9 +382,17 @@ class TestMessageRouting:
         session = relay.create_session("a")  # pending, no responder
         assert relay.send_message(session.relay_session_id, "a", "offer", {}) is None
 
-    def test_receive_messages(self):
+    def test_send_to_reserved_unconfirmed_responder_fails(self):
         relay = NegotiationRelay()
         session = relay.create_session("a", "b")
+
+        assert relay.send_message(session.relay_session_id, "a", "offer", {}) is None
+        assert session.message_count == 0
+        assert relay.receive_messages("b") == []
+
+    def test_receive_messages(self):
+        relay = NegotiationRelay()
+        session = _create_active_session(relay)
         relay.send_message(session.relay_session_id, "a", "offer", {"price": 1000})
         relay.send_message(session.relay_session_id, "a", "info", {"note": "hello"})
 
@@ -343,7 +404,7 @@ class TestMessageRouting:
 
     def test_receive_updates_stats(self):
         relay = NegotiationRelay()
-        session = relay.create_session("a", "b")
+        session = _create_active_session(relay)
         relay.send_message(session.relay_session_id, "a", "offer", {})
         relay.receive_messages("b")
         assert session.responder.messages_received == 1
@@ -355,8 +416,8 @@ class TestMessageRouting:
 
     def test_receive_filtered_by_session(self):
         relay = NegotiationRelay()
-        s1 = relay.create_session("a", "b")
-        s2 = relay.create_session("a", "b")
+        s1 = _create_active_session(relay)
+        s2 = _create_active_session(relay)
         relay.send_message(s1.relay_session_id, "a", "offer", {"from": "s1"})
         relay.send_message(s2.relay_session_id, "a", "offer", {"from": "s2"})
 
@@ -371,7 +432,7 @@ class TestMessageRouting:
 
     def test_receive_limit(self):
         relay = NegotiationRelay()
-        session = relay.create_session("a", "b")
+        session = _create_active_session(relay)
         for i in range(10):
             relay.send_message(session.relay_session_id, "a", "msg", {"i": i})
         received = relay.receive_messages("b", limit=3)
@@ -379,7 +440,7 @@ class TestMessageRouting:
 
     def test_receive_drops_expired_messages(self):
         relay = NegotiationRelay()
-        session = relay.create_session("a", "b")
+        session = _create_active_session(relay)
         msg = relay.send_message(session.relay_session_id, "a", "offer", {}, ttl=1)
         msg.created_at = "1970-01-01T00:00:00+00:00"
 
@@ -389,7 +450,7 @@ class TestMessageRouting:
 
     def test_terminal_message_concludes_session(self):
         relay = NegotiationRelay()
-        session = relay.create_session("a", "b")
+        session = _create_active_session(relay)
         relay.send_message(session.relay_session_id, "a", "negotiate.offer", {"price": 1000})
         relay.send_message(session.relay_session_id, "b", "negotiate.accept", {})
         assert session.state == RelaySessionState.CONCLUDED
@@ -397,7 +458,7 @@ class TestMessageRouting:
 
     def test_bidirectional_exchange(self):
         relay = NegotiationRelay()
-        session = relay.create_session("seller", "buyer")
+        session = _create_active_session(relay, "seller", "buyer")
 
         relay.send_message(session.relay_session_id, "seller", "negotiate.offer", {"price": 1200})
         relay.send_message(session.relay_session_id, "buyer", "negotiate.counter", {"price": 900})
@@ -424,7 +485,7 @@ class TestTranscriptAndArchival:
 
     def test_get_transcript(self):
         relay = NegotiationRelay()
-        session = relay.create_session("a", "b")
+        session = _create_active_session(relay)
         relay.send_message(session.relay_session_id, "a", "offer", {"x": 1})
         relay.send_message(session.relay_session_id, "b", "counter", {"x": 2})
 
@@ -436,7 +497,7 @@ class TestTranscriptAndArchival:
 
     def test_get_transcript_with_limit(self):
         relay = NegotiationRelay()
-        session = relay.create_session("a", "b")
+        session = _create_active_session(relay)
         for i in range(10):
             relay.send_message(session.relay_session_id, "a", "msg", {"i": i})
         transcript = relay.get_transcript(session.relay_session_id, limit=3)
@@ -448,7 +509,7 @@ class TestTranscriptAndArchival:
 
     def test_archive_concluded_session(self):
         relay = NegotiationRelay()
-        session = relay.create_session("a", "b")
+        session = _create_active_session(relay)
         relay.send_message(session.relay_session_id, "a", "offer", {"x": 1})
         relay.conclude_session(session.relay_session_id, "agreed")
 
@@ -459,14 +520,53 @@ class TestTranscriptAndArchival:
         assert archive.conclusion_reason == "agreed"
         assert session.state == RelaySessionState.ARCHIVED
 
+    def test_archive_never_joined_reservation_serializes_unconfirmed_responder(self):
+        relay = NegotiationRelay()
+        session = relay.create_session("a", "b")
+        relay.conclude_session(session.relay_session_id, "manual")
+
+        archive = relay.archive_session(session.relay_session_id)
+
+        assert archive is not None
+        archive_dict = archive.to_dict()
+        assert archive_dict["initiator"]["agent_id"] == "a"
+        assert archive_dict["initiator"]["confirmed"] is True
+        assert archive_dict["responder"]["agent_id"] == "b"
+        assert archive_dict["responder"]["confirmed"] is False
+
+        round_tripped = TranscriptArchive.from_dict(archive_dict)
+        assert round_tripped.to_dict()["responder"]["confirmed"] is False
+
+    def test_auto_attest_skips_unconfirmed_responder_on_conclude(self, caplog):
+        relay = NegotiationRelay()
+        session = relay.create_session("a", "b", auto_attest=True)
+
+        relay.conclude_session(session.relay_session_id, "manual")
+
+        assert "auto_attest_skipped" in session.metadata
+        assert "has not confirmed" in session.metadata["auto_attest_skipped"]
+        assert "Skipping relay auto-attest" in caplog.text
+
+    def test_auto_attest_not_skipped_after_reserved_responder_confirms(self):
+        relay = NegotiationRelay()
+        session = relay.create_session("a", "b", auto_attest=True)
+        relay.join_session(session.relay_session_id, "b")
+
+        relay.conclude_session(session.relay_session_id, "manual")
+
+        assert "auto_attest_skipped" not in session.metadata
+
     def test_archive_active_session_fails(self):
         relay = NegotiationRelay()
         session = relay.create_session("a", "b")
+        relay.join_session(session.relay_session_id, "b")
         assert relay.archive_session(session.relay_session_id) is None
 
     def test_archive_timed_out_session(self):
         relay = NegotiationRelay()
-        session = relay.create_session("a", "b", concordia_session_id="ses_123")
+        session = _create_active_session(
+            relay, concordia_session_id="ses_123",
+        )
         relay._timeout_session(session)
 
         archive = relay.archive_session(session.relay_session_id)
@@ -479,8 +579,8 @@ class TestTranscriptAndArchival:
     def test_archive_limit_raises(self):
         relay = NegotiationRelay()
         relay.MAX_ARCHIVES = 1
-        first = relay.create_session("a", "b")
-        second = relay.create_session("c", "d")
+        first = _create_active_session(relay, "a", "b")
+        second = _create_active_session(relay, "c", "d")
         relay.conclude_session(first.relay_session_id)
         relay.conclude_session(second.relay_session_id)
         relay.archive_session(first.relay_session_id)
@@ -494,7 +594,7 @@ class TestTranscriptAndArchival:
 
     def test_get_archive(self):
         relay = NegotiationRelay()
-        session = relay.create_session("a", "b")
+        session = _create_active_session(relay)
         relay.conclude_session(session.relay_session_id)
         archive = relay.archive_session(session.relay_session_id)
         retrieved = relay.get_archive(archive.archive_id)
@@ -504,16 +604,16 @@ class TestTranscriptAndArchival:
     def test_list_archives(self):
         relay = NegotiationRelay()
         for i in range(3):
-            s = relay.create_session(f"a{i}", f"b{i}")
+            s = _create_active_session(relay, f"a{i}", f"b{i}")
             relay.conclude_session(s.relay_session_id)
             relay.archive_session(s.relay_session_id)
         assert len(relay.list_archives()) == 3
 
     def test_list_archives_by_agent(self):
         relay = NegotiationRelay()
-        s1 = relay.create_session("alice", "bob")
-        s2 = relay.create_session("alice", "carol")
-        s3 = relay.create_session("bob", "carol")
+        s1 = _create_active_session(relay, "alice", "bob")
+        s2 = _create_active_session(relay, "alice", "carol")
+        s3 = _create_active_session(relay, "bob", "carol")
         for s in [s1, s2, s3]:
             relay.conclude_session(s.relay_session_id)
             relay.archive_session(s.relay_session_id)
@@ -525,7 +625,7 @@ class TestTranscriptAndArchival:
 
     def test_archive_has_messages(self):
         relay = NegotiationRelay()
-        session = relay.create_session("a", "b")
+        session = _create_active_session(relay)
         relay.send_message(session.relay_session_id, "a", "offer", {"price": 100})
         relay.send_message(session.relay_session_id, "b", "accept", {})
         relay.conclude_session(session.relay_session_id)
@@ -534,7 +634,7 @@ class TestTranscriptAndArchival:
 
     def test_archive_retention_days(self):
         relay = NegotiationRelay()
-        session = relay.create_session("a", "b")
+        session = _create_active_session(relay)
         relay.conclude_session(session.relay_session_id)
         archive = relay.archive_session(session.relay_session_id, retention_days=90)
         assert archive.retention_days == 90
@@ -556,6 +656,7 @@ class TestRelayStats:
     def test_stats_with_activity(self):
         relay = NegotiationRelay()
         s1 = relay.create_session("a", "b")
+        relay.join_session(s1.relay_session_id, "b")
         relay.send_message(s1.relay_session_id, "a", "offer", {})
         relay.send_message(s1.relay_session_id, "b", "counter", {})
         s2 = relay.create_session("c")  # pending
@@ -585,6 +686,7 @@ class TestRelayStats:
     def test_list_sessions_by_state(self):
         relay = NegotiationRelay()
         s1 = relay.create_session("a", "b")
+        relay.join_session(s1.relay_session_id, "b")
         relay.create_session("c")  # pending
         relay.conclude_session(s1.relay_session_id)
 
@@ -642,8 +744,11 @@ class TestRelayMcpTools:
             auth_token=auth_token,
             responder_id="buyer_42",
         ))
-        assert result["session"]["state"] == "active"
+        assert result["session"]["state"] == "pending"
         assert result["session"]["initiator"]["agent_id"] == "seller_01"
+        assert result["session"]["initiator"]["confirmed"] is True
+        assert result["session"]["responder"]["agent_id"] == "buyer_42"
+        assert result["session"]["responder"]["confirmed"] is False
 
     def test_relay_create_pending(self):
         from concordia.mcp_server import tool_relay_create, tool_register_agent
@@ -679,15 +784,21 @@ class TestRelayMcpTools:
         assert "error" in result
 
     def test_relay_send(self):
-        from concordia.mcp_server import tool_relay_create, tool_relay_send, tool_register_agent
+        from concordia.mcp_server import (
+            tool_relay_create, tool_relay_join, tool_relay_send,
+            tool_register_agent,
+        )
         # Register agents
         reg_a = self._parse(tool_register_agent(agent_id="a"))
         token_a = reg_a["auth_token"]
+        reg_b = self._parse(tool_register_agent(agent_id="b"))
+        token_b = reg_b["auth_token"]
 
         created = self._parse(tool_relay_create(
             initiator_id="a", auth_token=token_a, responder_id="b",
         ))
         rid = created["session"]["relay_session_id"]
+        self._parse(tool_relay_join(relay_session_id=rid, agent_id="b", auth_token=token_b))
 
         result = self._parse(tool_relay_send(
             relay_session_id=rid,
@@ -700,7 +811,7 @@ class TestRelayMcpTools:
         assert result["message"]["from_agent"] == "a"
 
     def test_relay_receive(self):
-        from concordia.mcp_server import tool_relay_create, tool_relay_send, tool_relay_receive, tool_register_agent
+        from concordia.mcp_server import tool_relay_create, tool_relay_join, tool_relay_send, tool_relay_receive, tool_register_agent
         # Register agents
         reg_a = self._parse(tool_register_agent(agent_id="a"))
         token_a = reg_a["auth_token"]
@@ -709,6 +820,7 @@ class TestRelayMcpTools:
 
         created = self._parse(tool_relay_create(initiator_id="a", auth_token=token_a, responder_id="b"))
         rid = created["session"]["relay_session_id"]
+        self._parse(tool_relay_join(relay_session_id=rid, agent_id="b", auth_token=token_b))
 
         tool_relay_send(relay_session_id=rid, from_agent="a", auth_token=token_a,
                         message_type="offer", payload={"price": 1000})
@@ -718,13 +830,15 @@ class TestRelayMcpTools:
         assert result["payloads"][0] == {"price": 1000}
 
     def test_relay_status(self):
-        from concordia.mcp_server import tool_relay_create, tool_relay_status, tool_register_agent
+        from concordia.mcp_server import tool_relay_create, tool_relay_join, tool_relay_status, tool_register_agent
         # Register agents
         reg_a = self._parse(tool_register_agent(agent_id="a"))
         token_a = reg_a["auth_token"]
 
         created = self._parse(tool_relay_create(initiator_id="a", auth_token=token_a, responder_id="b"))
         rid = created["session"]["relay_session_id"]
+        reg_b = self._parse(tool_register_agent(agent_id="b"))
+        self._parse(tool_relay_join(relay_session_id=rid, agent_id="b", auth_token=reg_b["auth_token"]))
 
         result = self._parse(tool_relay_status(relay_session_id=rid, agent_id="a", auth_token=token_a))
         assert result["session"]["state"] == "active"
@@ -750,7 +864,10 @@ class TestRelayMcpTools:
         assert result["session"]["state"] == "concluded"
 
     def test_relay_transcript(self):
-        from concordia.mcp_server import tool_relay_create, tool_relay_send, tool_relay_transcript, tool_register_agent
+        from concordia.mcp_server import (
+            tool_relay_create, tool_relay_join, tool_relay_send,
+            tool_relay_transcript, tool_register_agent,
+        )
         # Register agents
         reg_a = self._parse(tool_register_agent(agent_id="a"))
         token_a = reg_a["auth_token"]
@@ -759,6 +876,7 @@ class TestRelayMcpTools:
 
         created = self._parse(tool_relay_create(initiator_id="a", auth_token=token_a, responder_id="b"))
         rid = created["session"]["relay_session_id"]
+        self._parse(tool_relay_join(relay_session_id=rid, agent_id="b", auth_token=token_b))
 
         tool_relay_send(relay_session_id=rid, from_agent="a", auth_token=token_a, message_type="offer", payload={"x": 1})
         tool_relay_send(relay_session_id=rid, from_agent="b", auth_token=token_b, message_type="counter", payload={"x": 2})
@@ -855,13 +973,19 @@ class TestRelayMcpTools:
         assert "error" in result
 
     def test_relay_stats(self):
-        from concordia.mcp_server import tool_relay_create, tool_relay_send, tool_relay_stats, tool_register_agent
+        from concordia.mcp_server import (
+            tool_relay_create, tool_relay_join, tool_relay_send,
+            tool_relay_stats, tool_register_agent,
+        )
         # Register agents
         reg_a = self._parse(tool_register_agent(agent_id="a"))
         token_a = reg_a["auth_token"]
+        reg_b = self._parse(tool_register_agent(agent_id="b"))
+        token_b = reg_b["auth_token"]
 
         created = self._parse(tool_relay_create(initiator_id="a", auth_token=token_a, responder_id="b"))
         rid = created["session"]["relay_session_id"]
+        self._parse(tool_relay_join(relay_session_id=rid, agent_id="b", auth_token=token_b))
         tool_relay_send(relay_session_id=rid, from_agent="a", auth_token=token_a, message_type="offer", payload={})
 
         result = self._parse(tool_relay_stats())

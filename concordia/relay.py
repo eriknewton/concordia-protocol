@@ -28,6 +28,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+import logging
 from typing import Any
 
 
@@ -35,6 +36,8 @@ from typing import Any
 # preserving the existing global relay caps.
 MAX_ACTIVE_RELAY_SESSIONS_PER_INITIATOR = 100
 MAX_TTL_SECONDS = 7 * 24 * 60 * 60
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +107,7 @@ class RelayParticipant:
     agent_id: str
     endpoint: str | None = None
     connected: bool = True
+    confirmed: bool = True
     last_seen: float = field(default_factory=time.time)
     messages_sent: int = 0
     messages_received: int = 0
@@ -113,9 +117,21 @@ class RelayParticipant:
             "agent_id": self.agent_id,
             "endpoint": self.endpoint,
             "connected": self.connected,
+            "confirmed": self.confirmed,
             "messages_sent": self.messages_sent,
             "messages_received": self.messages_received,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "RelayParticipant":
+        return cls(
+            agent_id=data["agent_id"],
+            endpoint=data.get("endpoint"),
+            connected=data.get("connected", True),
+            confirmed=data.get("confirmed", True),
+            messages_sent=data.get("messages_sent", 0),
+            messages_received=data.get("messages_received", 0),
+        )
 
 
 @dataclass
@@ -180,11 +196,13 @@ class TranscriptArchive:
     message_count: int
     conclusion_reason: str | None
     messages: list[dict[str, Any]]
+    initiator: dict[str, Any] | None = None
+    responder: dict[str, Any] | None = None
     archived_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     retention_days: int = 365  # 1 year default
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d = {
             "archive_id": self.archive_id,
             "relay_session_id": self.relay_session_id,
             "concordia_session_id": self.concordia_session_id,
@@ -194,6 +212,27 @@ class TranscriptArchive:
             "archived_at": self.archived_at,
             "retention_days": self.retention_days,
         }
+        if self.initiator is not None:
+            d["initiator"] = self.initiator
+        if self.responder is not None:
+            d["responder"] = self.responder
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "TranscriptArchive":
+        return cls(
+            archive_id=data["archive_id"],
+            relay_session_id=data["relay_session_id"],
+            concordia_session_id=data.get("concordia_session_id"),
+            parties=list(data["parties"]),
+            message_count=data["message_count"],
+            conclusion_reason=data.get("conclusion_reason"),
+            messages=list(data.get("messages", [])),
+            initiator=data.get("initiator"),
+            responder=data.get("responder"),
+            archived_at=data.get("archived_at", datetime.now(timezone.utc).isoformat()),
+            retention_days=data.get("retention_days", 365),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +276,10 @@ class NegotiationRelay:
         initiator_endpoint: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> RelaySession:
-        """Create a relay session. Responder can join later if not specified."""
+        """Create a relay session.
+
+        A pre-named responder is a reservation until that exact responder joins.
+        """
         # Prevent self-sessions
         if responder_id and initiator_id == responder_id:
             raise ValueError("Cannot create relay session with same agent as both initiator and responder")
@@ -258,12 +300,16 @@ class NegotiationRelay:
         initiator = RelayParticipant(
             agent_id=initiator_id,
             endpoint=initiator_endpoint,
+            confirmed=True,
         )
         responder = None
         state = RelaySessionState.PENDING
         if responder_id:
-            responder = RelayParticipant(agent_id=responder_id)
-            state = RelaySessionState.ACTIVE
+            responder = RelayParticipant(
+                agent_id=responder_id,
+                connected=False,
+                confirmed=False,
+            )
 
         session = RelaySession(
             relay_session_id=relay_id,
@@ -293,18 +339,30 @@ class NegotiationRelay:
         if session.state != RelaySessionState.PENDING:
             return None
         if session.responder is not None:
-            return None  # already has a responder
+            if session.responder.agent_id != agent_id:
+                return None
+            session.responder.endpoint = endpoint
+            session.responder.connected = True
+            session.responder.confirmed = True
+            session.responder.last_seen = time.time()
+            session.state = RelaySessionState.ACTIVE
+            return session
 
         session.responder = RelayParticipant(
             agent_id=agent_id,
             endpoint=endpoint,
+            confirmed=True,
         )
         session.state = RelaySessionState.ACTIVE
         return session
 
     def get_session(self, relay_session_id: str) -> RelaySession | None:
         session = self._sessions.get(relay_session_id)
-        if session and session.is_timed_out and session.state == RelaySessionState.ACTIVE:
+        if (
+            session
+            and session.is_timed_out
+            and session.state in (RelaySessionState.PENDING, RelaySessionState.ACTIVE)
+        ):
             self._timeout_session(session)
         return session
 
@@ -347,7 +405,8 @@ class NegotiationRelay:
             return None
 
         # Verify sender is a participant
-        if self._get_participant(session, from_agent) is None:
+        sender = self._get_participant(session, from_agent)
+        if sender is None or not sender.confirmed:
             return None
 
         # Check session is active
@@ -485,12 +544,31 @@ class NegotiationRelay:
         session.state = RelaySessionState.CONCLUDED
         session.concluded_at = datetime.now(timezone.utc).isoformat()
         session.conclusion_reason = reason
+        self._record_auto_attest_skip_if_unconfirmed(session)
 
     def _timeout_session(self, session: RelaySession) -> None:
         """Internal: mark a session as timed out."""
         session.state = RelaySessionState.TIMED_OUT
         session.concluded_at = datetime.now(timezone.utc).isoformat()
         session.conclusion_reason = "session_timeout"
+        self._record_auto_attest_skip_if_unconfirmed(session)
+
+    def _record_auto_attest_skip_if_unconfirmed(self, session: RelaySession) -> None:
+        """Fail closed before any auto-attest path can name a reservation."""
+        if not session.auto_attest:
+            return
+        if session.responder is None or session.responder.confirmed:
+            return
+        reason = (
+            "auto_attest skipped: responder "
+            f"'{session.responder.agent_id}' has not confirmed by joining"
+        )
+        session.metadata["auto_attest_skipped"] = reason
+        logger.warning(
+            "Skipping relay auto-attest for %s: responder %s is unconfirmed",
+            session.relay_session_id,
+            session.responder.agent_id,
+        )
 
     def _expire_timed_out_sessions(self) -> None:
         for session in self._sessions.values():
@@ -546,6 +624,8 @@ class NegotiationRelay:
             message_count=session.message_count,
             conclusion_reason=session.conclusion_reason,
             messages=[m.to_dict() for m in session.transcript],
+            initiator=session.initiator.to_dict(),
+            responder=session.responder.to_dict() if session.responder else None,
             retention_days=retention_days,
         )
         self._archives[archive.archive_id] = archive
@@ -574,8 +654,12 @@ class NegotiationRelay:
     def _get_counterparty(self, session: RelaySession, agent_id: str) -> str | None:
         """Find the other party in a session."""
         if session.initiator.agent_id == agent_id:
-            return session.responder.agent_id if session.responder else None
+            if session.responder and session.responder.confirmed:
+                return session.responder.agent_id
+            return None
         if session.responder and session.responder.agent_id == agent_id:
+            if not session.responder.confirmed:
+                return None
             return session.initiator.agent_id
         return None
 
