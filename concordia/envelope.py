@@ -16,6 +16,8 @@ from .signing import (
     KeyPair,
     canonical_json,
     _check_no_special_floats,
+    _is_low_s_es256_der_signature,
+    _normalize_es256_der_signature,
 )
 
 import base64
@@ -219,6 +221,7 @@ def build_trust_evidence_envelope(
         from cryptography.hazmat.primitives.hashes import SHA256
 
         raw_sig = key_pair.private_key.sign(sig_payload, ECDSA(SHA256()))
+        raw_sig = _normalize_es256_der_signature(raw_sig)
     else:
         raw_sig = key_pair.private_key.sign(sig_payload)
 
@@ -254,14 +257,16 @@ def verify_envelope_signature(
 
     # Reconstruct the signed payload (envelope without signature)
     signable = {k: v for k, v in envelope.items() if k != "signature"}
-    payload = canonical_json(signable)
-    raw_sig = base64.urlsafe_b64decode(sig_block["value"])
 
     try:
+        payload = canonical_json(signable)
+        raw_sig = base64.urlsafe_b64decode(sig_block["value"])
         if alg == "ES256":
             from cryptography.hazmat.primitives.asymmetric.ec import ECDSA
             from cryptography.hazmat.primitives.hashes import SHA256
 
+            if not _is_low_s_es256_der_signature(raw_sig):
+                return False
             public_key.verify(raw_sig, payload, ECDSA(SHA256()))
         else:
             public_key.verify(raw_sig, payload)
