@@ -67,7 +67,7 @@ def _validate_validity_temporal(vt: Any) -> dict[str, Any]:
             f"validity_temporal.mode {mode!r} not in {VALIDITY_TEMPORAL_MODES}"
         )
     if mode == "absolute":
-        required = ("from", "until")
+        required: tuple[str, ...] = ("from", "until")
         missing = [k for k in required if k not in vt]
         if missing:
             raise ValueError(f"validity_temporal[absolute] missing: {missing}")

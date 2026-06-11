@@ -17,7 +17,7 @@ import logging
 import os
 import urllib.request
 import urllib.error
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 from .cosign import CounterpartySigner, build_cosigned_receipt, did_key_for
 from .signing import KeyPair, canonical_json
@@ -190,7 +190,7 @@ class VerascoreClient:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 resp_body = resp.read().decode("utf-8")
                 try:
-                    return json.loads(resp_body)
+                    return cast(dict[str, Any], json.loads(resp_body))
                 except json.JSONDecodeError:
                     return {"status": "ok", "raw_response": resp_body}
         except urllib.error.HTTPError as e:
