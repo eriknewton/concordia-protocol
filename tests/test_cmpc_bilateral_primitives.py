@@ -8,7 +8,9 @@ import pytest
 from concordia.cmpc import (
     AtomicActivationProof,
     ChainSession,
+    ClosurePredicate,
     ConditionalCommitment,
+    RevocationRecord,
     UnwindRecord,
     canonicalize_atomic_activation_proof,
     canonicalize_chain_session,
@@ -49,6 +51,15 @@ def test_conditional_commitment_sign_verify_roundtrip():
     assert verify_conditional_commitment(signed, kp.public_key)
 
 
+def test_conditional_commitment_from_dict_preserves_values():
+    data = json.loads((FIXTURES / "conditional_commitment.json").read_text())
+
+    commitment = ConditionalCommitment.from_dict(data)
+
+    assert commitment.commitment_id == data["commitment_id"]
+    assert commitment.to_dict() == data
+
+
 def test_atomic_activation_proof_sign_verify_roundtrip():
     from concordia.cmpc.schemas import validate_atomic_activation_proof
 
@@ -61,6 +72,22 @@ def test_atomic_activation_proof_sign_verify_roundtrip():
     assert verify_atomic_activation_proof(signed, kp.public_key)
 
 
+def test_closure_predicate_to_dict_includes_optional_fields_when_present():
+    data = json.loads((FIXTURES / "closure_predicate.json").read_text())
+    data.update({
+        "validity": {"mode": "windowed"},
+        "constraints": {"type": "object"},
+        "delegation_chain": [{"delegator": "did:web:root.example"}],
+        "revocation_endpoint": "https://issuer.example/revocations.json",
+        "revoked_at": "2026-05-18T00:00:00Z",
+        "metadata": {"profile": "bilateral_chain_closure"},
+    })
+
+    predicate = ClosurePredicate.from_dict(data)
+
+    assert predicate.to_dict() == data
+
+
 def test_unwind_record_sign_verify_roundtrip():
     from concordia.cmpc.schemas import validate_unwind_record
 
@@ -71,6 +98,49 @@ def test_unwind_record_sign_verify_roundtrip():
     kp = KeyPair.generate()
     signed = sign_unwind_record(record, kp)
     assert verify_unwind_record(signed, kp.public_key)
+
+
+def test_revocation_record_to_dict_supplies_default_signature():
+    data = {
+        "revocation_id": "urn:concordia:revocation:cmpc-001",
+        "revoked_artifact_id": "urn:concordia:commitment:cmpc-001",
+        "revoked_artifact_type": "conditional_commitment",
+        "revocation_scope": "single_artifact",
+        "issuer_did": "did:web:issuer.example",
+        "issued_at": "2026-05-17T10:00:00Z",
+        "effective_at": "2026-05-17T10:05:00Z",
+        "reason": "issuer_cancelled",
+        "references": [],
+    }
+
+    record = RevocationRecord.from_dict(data)
+    serialized = record.to_dict()
+
+    assert serialized["signature"] == {"alg": "EdDSA", "value": ""}
+    assert "supersedes" not in serialized
+    assert "extensions" not in serialized
+
+
+def test_revocation_record_to_dict_includes_optional_fields():
+    data = {
+        "revocation_id": "urn:concordia:revocation:cmpc-002",
+        "revoked_artifact_id": "urn:concordia:commitment:cmpc-002",
+        "revoked_artifact_type": "conditional_commitment",
+        "revocation_scope": "cascade_to_dependents",
+        "issuer_did": "did:web:issuer.example",
+        "issued_at": "2026-05-17T10:00:00Z",
+        "effective_at": "2026-05-17T10:05:00Z",
+        "reason": "issuer_cancelled",
+        "references": [{"id": "urn:concordia:commitment:cmpc-002"}],
+        "cascade_depth": 2,
+        "signature": {"alg": "EdDSA", "value": "sig"},
+        "supersedes": "urn:concordia:revocation:cmpc-001",
+        "extensions": {"operator": "night-shift"},
+    }
+
+    record = RevocationRecord.from_dict(data)
+
+    assert record.to_dict() == data
 
 
 def test_closure_predicate_canonicalization():
