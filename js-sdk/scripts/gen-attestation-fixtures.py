@@ -391,15 +391,31 @@ def main() -> None:
     _ref_case("nonempty_dict", {"a": 1, "b": 2})
     # truthy non-list string -> iterated by CHARS (strings) -> got str.
     _ref_case("string", "abc")
-    # truthy non-iterable int -> enumerate RAISES TypeError 'int' not iterable.
+    # truthy non-sized int -> the L3 count cap's len() RAISES TypeError
+    # "object of type 'int' has no len()" BEFORE enumerate is reached.
     _ref_case("int", 5)
-    # truthy non-iterable float -> 'float' object is not iterable.
+    # truthy non-sized float -> "object of type 'float' has no len()".
     _ref_case("float", 1.5)
-    # truthy non-iterable bool -> 'bool' object is not iterable.
+    # truthy non-sized bool -> "object of type 'bool' has no len()".
     _ref_case("bool_true", True)
     # a list whose element is a non-dict -> _validate_reference RAISES got <type>.
     _ref_case("list_of_int", [7])
     _ref_case("list_of_str", ["x"])
+    # --- L3 hardening (Python PR #95): MAX_REFERENCES count cap, checked via
+    # len() BEFORE any per-element validation or iteration.
+    _ref_case(
+        "count_at_cap",
+        [{"type": "receipt", "id": f"att_{i:08x}", "relationship": "references"}
+         for i in range(32)],
+    )
+    _ref_case(
+        "count_over_cap",
+        [{"type": "receipt", "id": f"att_{i:08x}", "relationship": "references"}
+         for i in range(33)],
+    )
+    # A 33-KEY dict: Python len(dict) is its key count, so the COUNT CAP fires
+    # before the per-element "got str" rejection -- pins len-before-iteration.
+    _ref_case("dict_over_cap", {f"k{i}": i for i in range(33)})
 
     # FINDING 3 -- terms_count. Python `if session.terms: terms_count =
     # len(session.terms)`. `session.terms` is `body.get("terms")` from the OPEN
@@ -471,6 +487,128 @@ def main() -> None:
     _terms_case("float", {"terms": 2.5})
     # truthy bool -> 'bool' has no len().
     _terms_case("bool_true", {"terms": True})
+
+    # ------------------------------------------------------------------
+    # L3 meta hardening (Python PR #95): value_range is an enumerated bucket
+    # vocabulary + shape-validated currency; category is a capped dotted
+    # taxonomy path. Both validated fail-closed at issuance, gated by Python
+    # truthiness (falsy -> omitted, not rejected). Errors NEVER echo the
+    # invalid input. Each case captures Python's exact accept (meta) or
+    # reject (error text) for byte-identical TS replay.
+    # ------------------------------------------------------------------
+    l3_meta_cases = []
+    _OMIT = object()
+
+    def _meta_case(name, *, category=_OMIT, value_range=_OMIT):
+        s_local = _build_concluded_session(
+            f"l3meta_{name}",
+            [
+                {"sender": AGENT_A, "type": MessageType.OPEN, "body": OPEN_BODY},
+                {"sender": AGENT_B, "type": MessageType.ACCEPT_SESSION, "body": {}},
+                {"sender": AGENT_A, "type": MessageType.OFFER, "body": OFFER_BODY_1},
+                {"sender": AGENT_B, "type": MessageType.ACCEPT, "body": {}},
+            ],
+        )
+        kwargs = {}
+        # `kwargs` carries ONLY the supplied keys, so the JS replay can
+        # distinguish "omitted" from "passed None/null" ('category' in kwargs).
+        if category is not _OMIT:
+            kwargs["category"] = category
+        if value_range is not _OMIT:
+            kwargs["value_range"] = value_range
+        entry = {
+            "name": name,
+            "session": {
+                "session_id": s_local.session_id,
+                "parties": [
+                    {"agent_id": aid, "role": role.value}
+                    for aid, role in s_local.parties.items()
+                ],
+                "transcript": s_local.transcript,
+                "created_at_ms": int(T0.timestamp() * 1000),
+                "concluded_at_ms": (
+                    int(s_local.concluded_at.timestamp() * 1000)
+                    if s_local.concluded_at is not None
+                    else None
+                ),
+                "state": s_local.state.value,
+            },
+            "kwargs": kwargs,
+        }
+        try:
+            r = att.generate_attestation(
+                s_local, {AGENT_A: KP_A, AGENT_B: KP_B}, **kwargs
+            )
+            entry["expected_meta"] = r["meta"]
+            entry["expected_error"] = None
+        except (ValueError, TypeError) as e:
+            entry["expected_meta"] = None
+            entry["expected_error"] = str(e)
+            entry["expected_error_type"] = type(e).__name__
+        l3_meta_cases.append(entry)
+
+    # Every bucket accepted (with USD), pinning the full vocabulary.
+    for bucket in att.VALUE_RANGE_BUCKETS:
+        _meta_case(f"bucket_{bucket}", value_range=f"{bucket}_USD")
+    # Currency codes are shape-validated, not enumerated.
+    for ccy in ("EUR", "JPY", "GBP"):
+        _meta_case(f"currency_{ccy}", value_range=f"1000-5000_{ccy}")
+    # Free-text deal terms: the L3 exploit itself.
+    _meta_case("vr_free_text", value_range="I will pay $4,350 for the camera")
+    _meta_case("vr_prose_terms", value_range="price=4350 USD, qty=1, ship to 90210")
+    # Exact-price encoding through a range-shaped string.
+    _meta_case("vr_exact_price_range", value_range="4350-4351_USD")
+    # Non-vocabulary band (previously accepted).
+    _meta_case("vr_non_vocab_band", value_range="500-1500_USD")
+    # Currency shape violations.
+    _meta_case("vr_lowercase_ccy", value_range="1000-5000_usd")
+    _meta_case("vr_four_letter_ccy", value_range="1000-5000_USDT")
+    _meta_case("vr_no_ccy", value_range="1000-5000")
+    _meta_case("vr_space_before_ccy", value_range="1000-5000 USD")
+    # Structure violations, incl. the trailing-newline anchor probe: Python
+    # uses \Z; the TS port's non-multiline $ must reject identically.
+    _meta_case("vr_trailing_newline", value_range="1000-5000_USD\n")
+    _meta_case("vr_trailing_space", value_range="1000-5000_USD ")
+    _meta_case("vr_leading_space", value_range=" 1000-5000_USD")
+    _meta_case("vr_bucket_only", value_range="_USD")
+    # Non-string truthy values are REJECTED (no coercion)...
+    _meta_case("vr_int", value_range=123)
+    _meta_case("vr_list", value_range=["1000-5000_USD"])
+    _meta_case("vr_true", value_range=True)
+    # ...but FALSY values are SKIPPED by Python's `if value_range:` gate.
+    _meta_case("vr_empty_string_skipped", value_range="")
+    _meta_case("vr_zero_skipped", value_range=0)
+    _meta_case("vr_empty_list_skipped", value_range=[])
+    _meta_case("vr_none_skipped", value_range=None)
+    # category: taxonomy paths accepted.
+    _meta_case("cat_single", category="electronics")
+    _meta_case("cat_dotted", category="electronics.cameras.mirrorless")
+    _meta_case("cat_hyphen_underscore", category="a_b.c-d.e2")
+    _meta_case("cat_at_cap", category="x" * att.MAX_CATEGORY_LENGTH)
+    # category: prose and malformed rejected.
+    _meta_case("cat_prose", category="Selling 4 units at $1200 each")
+    _meta_case("cat_space", category="electronics cameras")
+    _meta_case("cat_uppercase", category="Electronics")
+    _meta_case("cat_double_dot", category="electronics..cameras")
+    _meta_case("cat_leading_dot", category=".electronics")
+    _meta_case("cat_trailing_dot", category="electronics.")
+    _meta_case("cat_over_cap", category="x" * (att.MAX_CATEGORY_LENGTH + 1))
+    _meta_case("cat_trailing_newline", category="electronics\n")
+    _meta_case("cat_non_string", category={"a": 1})
+    _meta_case("cat_empty_skipped", category="")
+    # Both supplied and valid together.
+    _meta_case(
+        "both_valid",
+        category="electronics.cameras",
+        value_range="1000-5000_USD",
+    )
+    # category is validated FIRST (meta build order), so when both are bad
+    # the category error text is the one raised -- pins validation order.
+    _meta_case(
+        "both_invalid_category_first",
+        category="Bad Category",
+        value_range="bad range",
+    )
 
     # ------------------------------------------------------------------
     # validate_validity_temporal: normalization + error text.
@@ -924,6 +1062,9 @@ def main() -> None:
         # findings where TS was more lenient than Python.
         "reference_strictness_cases": reference_strictness_cases,
         "terms_count_cases": terms_count_cases,
+        # L3 meta hardening (Python PR #95): value_range bucket vocabulary +
+        # category taxonomy, captured accept/reject from the Python reference.
+        "l3_meta_cases": l3_meta_cases,
     }
 
     json.dump(doc, sys.stdout, ensure_ascii=False, indent=2)

@@ -1,6 +1,9 @@
 export {
   ATTESTATION_VERSION,
   VALIDITY_TEMPORAL_MODES,
+  VALUE_RANGE_BUCKETS,
+  MAX_CATEGORY_LENGTH,
+  MAX_REFERENCES,
   AttestationError,
   generateAttestation,
   generateReceiptSummary,

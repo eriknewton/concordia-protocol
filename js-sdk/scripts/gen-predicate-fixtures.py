@@ -530,6 +530,13 @@ def main() -> None:
         except ValueError as exc:
             return {"name": name, "ref": ref, "index": index, "normalized": None, "error": str(exc)}
 
+    def _nested_chain(n_dicts: int):
+        """n_dicts nested single-key dicts; the innermost holds a scalar."""
+        value = 0
+        for _ in range(n_dicts):
+            value = {"a": value}
+        return value
+
     reference_cases = [
         _ref_case(
             "minimal_valid",
@@ -578,6 +585,181 @@ def main() -> None:
         _ref_case("not_a_dict_bool", True, 0),
         _ref_case("not_a_dict_none", None, 0),
         _ref_case("not_a_dict_list", [1, 2], 3),
+        # --- L3 hardening (Python PR #95): length caps, whitespace ban, and
+        # extensions structure/byte caps on every reference field. Each case
+        # captures Python's exact accept (normalized) or reject (error text)
+        # so the TS `validateReference` port stays byte-identical.
+        # Length caps: at-cap accepted, over-cap rejected, per field.
+        _ref_case(
+            "l3_type_at_cap",
+            {"type": "t" * 64, "id": "urn:x", "relationship": "extends"},
+            0,
+        ),
+        _ref_case(
+            "l3_type_over_cap",
+            {"type": "t" * 65, "id": "urn:x", "relationship": "extends"},
+            0,
+        ),
+        _ref_case(
+            "l3_id_at_cap",
+            {"type": "receipt", "id": "i" * 256, "relationship": "extends"},
+            0,
+        ),
+        _ref_case(
+            "l3_id_over_cap",
+            {"type": "receipt", "id": "i" * 257, "relationship": "extends"},
+            0,
+        ),
+        _ref_case(
+            "l3_relationship_over_cap",
+            {"type": "receipt", "id": "urn:x", "relationship": "r" * 65},
+            0,
+        ),
+        _ref_case(
+            "l3_version_at_cap",
+            {"type": "receipt", "id": "urn:x", "relationship": "extends",
+             "version": "v" * 256},
+            0,
+        ),
+        _ref_case(
+            "l3_version_over_cap",
+            {"type": "receipt", "id": "urn:x", "relationship": "extends",
+             "version": "v" * 257},
+            0,
+        ),
+        _ref_case(
+            "l3_signer_did_over_cap",
+            {"type": "receipt", "id": "urn:x", "relationship": "extends",
+             "signer_did": "d" * 257},
+            1,
+        ),
+        # Whitespace ban (finding 1): prose deal terms in identifier fields.
+        _ref_case(
+            "l3_ws_in_id_prose",
+            {"type": "receipt", "id": "price=4350 USD qty=1",
+             "relationship": "references"},
+            0,
+        ),
+        _ref_case(
+            "l3_ws_in_type",
+            {"type": "re ceipt", "id": "urn:x", "relationship": "extends"},
+            0,
+        ),
+        _ref_case(
+            "l3_tab_in_relationship",
+            {"type": "receipt", "id": "urn:x", "relationship": "ext\tends"},
+            0,
+        ),
+        _ref_case(
+            "l3_trailing_newline_id",
+            {"type": "receipt", "id": "urn:x\n", "relationship": "extends"},
+            0,
+        ),
+        _ref_case(
+            "l3_nbsp_in_signed_at",
+            # signed_at carries a real U+00A0 NO-BREAK SPACE: matched by BOTH
+            # Python unicode \s and JS \s, so the ban is parity-exact here.
+            {"type": "receipt", "id": "urn:x", "relationship": "extends",
+             "signed_at": "2026 05"},
+            0,
+        ),
+        _ref_case(
+            "l3_newline_in_version",
+            {"type": "receipt", "id": "urn:x", "relationship": "extends",
+             "version": "1.0\n2"},
+            0,
+        ),
+        # Empty / non-string optional values are rejected (no silent coercion).
+        _ref_case(
+            "l3_empty_optional_version",
+            {"type": "receipt", "id": "urn:x", "relationship": "extends",
+             "version": ""},
+            0,
+        ),
+        _ref_case(
+            "l3_non_string_signed_at",
+            {"type": "receipt", "id": "urn:x", "relationship": "extends",
+             "signed_at": 123},
+            0,
+        ),
+        # Legitimate identifier shapes stay accepted.
+        _ref_case(
+            "l3_legit_identifiers",
+            {"type": "receipt",
+             "id": "urn:concordia:attestation:att_0f9b2c1a",
+             "relationship": "references",
+             "version": "1.2.3-rc.1+build.5",
+             "signed_at": "2026-05-07T18:30:00Z",
+             "signer_did": "did:web:log.example.dev:agent-7"},
+            0,
+        ),
+        # extensions: non-object rejected; structure bounds (depth/nodes)
+        # checked BEFORE canonicalization (finding 4); canonical-JSON BYTE cap
+        # (UTF-8 bytes, not UTF-16 units) enforced after.
+        _ref_case(
+            "l3_extensions_non_dict",
+            {"type": "receipt", "id": "urn:x", "relationship": "extends",
+             "extensions": "free text deal terms: $4,350"},
+            0,
+        ),
+        _ref_case(
+            "l3_extensions_small_ok",
+            {"type": "receipt", "id": "urn:x", "relationship": "extends",
+             "extensions": {"chain_depth": 2}},
+            0,
+        ),
+        _ref_case(
+            "l3_extensions_depth_at_bound",
+            {"type": "receipt", "id": "urn:x", "relationship": "extends",
+             # Dicts at depths 1..7, scalar leaf at depth 8: within the bound.
+             "extensions": _nested_chain(7)},
+            0,
+        ),
+        _ref_case(
+            "l3_extensions_depth_over_bound",
+            {"type": "receipt", "id": "urn:x", "relationship": "extends",
+             # Dicts at depths 1..8, scalar leaf at depth 9: over the bound.
+             "extensions": _nested_chain(8)},
+            0,
+        ),
+        _ref_case(
+            "l3_extensions_nodes_at_bound",
+            {"type": "receipt", "id": "urn:x", "relationship": "extends",
+             # Nodes: extensions dict (1) + list (1) + 254 scalars = 256.
+             "extensions": {"a": [0] * 254}},
+            0,
+        ),
+        _ref_case(
+            "l3_extensions_nodes_over_bound",
+            {"type": "receipt", "id": "urn:x", "relationship": "extends",
+             # Nodes: extensions dict (1) + list (1) + 255 scalars = 257.
+             "extensions": {"a": [0] * 255}},
+            0,
+        ),
+        _ref_case(
+            "l3_extensions_byte_cap_ascii",
+            {"type": "receipt", "id": "urn:x", "relationship": "extends",
+             # {"blob":"xxx...x"} = 10 + 2049 + 2 chars > 2048 bytes.
+             "extensions": {"blob": "x" * 2049}},
+            0,
+        ),
+        _ref_case(
+            "l3_extensions_byte_cap_multibyte",
+            {"type": "receipt", "id": "urn:x", "relationship": "extends",
+             # 1200 x U+00E9 (2 UTF-8 bytes each) -> canonical JSON is
+             # ~1211 UTF-16 units (UNDER 2048) but ~2411 UTF-8 bytes (OVER
+             # 2048). Pins that the cap counts UTF-8 BYTES of canonical JSON,
+             # never the string length.
+             "extensions": {"blob": "é" * 1200}},
+            0,
+        ),
+        _ref_case(
+            "l3_extensions_byte_cap_multibyte_under",
+            {"type": "receipt", "id": "urn:x", "relationship": "extends",
+             # 1000 x U+00E9 -> ~2011 UTF-8 bytes: UNDER the cap, accepted.
+             "extensions": {"blob": "é" * 1000}},
+            0,
+        ),
     ]
 
     # ------------------------------------------------------------------

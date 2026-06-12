@@ -53,6 +53,13 @@ export {
   type PredicateTypeProfile,
   ReferenceValidationError,
   validateReference,
+  MAX_REFERENCE_TYPE_LENGTH,
+  MAX_REFERENCE_RELATIONSHIP_LENGTH,
+  MAX_REFERENCE_ID_LENGTH,
+  MAX_REFERENCE_OPTIONAL_STRING_LENGTH,
+  MAX_REFERENCE_EXTENSIONS_BYTES,
+  MAX_REFERENCE_EXTENSIONS_DEPTH,
+  MAX_REFERENCE_EXTENSIONS_NODES,
 } from './predicate/index.js';
 export {
   TemporalMode,
@@ -106,6 +113,9 @@ export {
 export {
   ATTESTATION_VERSION,
   VALIDITY_TEMPORAL_MODES,
+  VALUE_RANGE_BUCKETS,
+  MAX_CATEGORY_LENGTH,
+  MAX_REFERENCES,
   AttestationError,
   generateAttestation,
   generateReceiptSummary,

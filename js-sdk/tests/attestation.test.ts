@@ -120,6 +120,17 @@ interface AttestationFixtures {
     expected_error: string | null;
     expected_error_type?: string;
   }>;
+  // L3 meta hardening (Python PR #95): value_range bucket vocabulary +
+  // category taxonomy validation at issuance. `kwargs` carries ONLY the
+  // supplied keys so an omitted argument is distinguishable from null.
+  l3_meta_cases: Array<{
+    name: string;
+    session: SessionFixture;
+    kwargs: { category?: unknown; value_range?: unknown };
+    expected_meta: Record<string, unknown> | null;
+    expected_error: string | null;
+    expected_error_type?: string;
+  }>;
 }
 
 const fixtures = JSON.parse(
@@ -517,6 +528,56 @@ describe('generateAttestation references strictness parity (Finding 1)', () => {
         } catch (e) {
           captured = (e as Error).message;
         }
+        expect(captured).toBe(c.expected_error);
+      }
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// L3 META HARDENING parity (Python PR #95). Python validates caller-supplied
+// `category` / `value_range` fail-closed at issuance: value_range against an
+// ENUMERATED logarithmic bucket vocabulary plus a shape-validated 3-letter
+// currency code, category as a capped dotted lowercase taxonomy path. Both
+// are gated by Python truthiness (falsy -> omitted, NOT rejected). Every
+// accept captures Python's exact normalized meta; every reject captures
+// Python's exact ValueError text (which never echoes the invalid input).
+// Includes the anchor probe: Python's \Z vs the TS non-multiline $ must both
+// reject a trailing newline.
+// ---------------------------------------------------------------------------
+describe('generateAttestation L3 meta hardening parity (value_range/category)', () => {
+  for (const c of fixtures.l3_meta_cases) {
+    it(`matches Python accept/reject for meta="${c.name}"`, () => {
+      const run = (): Record<string, unknown> => {
+        const session = rebuildSession(c.session);
+        const opts: GenerateAttestationOptions = {};
+        // Pass through ONLY the kwargs Python received -- including
+        // Python-malformed non-string values the TS type would forbid; the
+        // whole point is asserting the runtime matches Python.
+        if ('category' in c.kwargs) {
+          opts.category = c.kwargs.category as string | null;
+        }
+        if ('value_range' in c.kwargs) {
+          opts.valueRange = c.kwargs.value_range as string | null;
+        }
+        return generateAttestation(session, KP_BY_AGENT, opts);
+      };
+      if (c.expected_error === null) {
+        const attestation = run();
+        // Whole-meta parity: validated values are stored verbatim, falsy
+        // inputs are omitted, and the static keys are unchanged.
+        expect(attestation.meta).toEqual(c.expected_meta);
+      } else {
+        expect(run).toThrow(AttestationError);
+        let captured = '';
+        try {
+          run();
+        } catch (e) {
+          captured = (e as Error).message;
+        }
+        // Byte-identical to Python's ValueError text. (The no-echo invariant
+        // is implied -- the Python text is a fixed template -- and is pinned
+        // explicitly with injected markers in attestation-l3.test.ts.)
         expect(captured).toBe(c.expected_error);
       }
     });
