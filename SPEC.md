@@ -650,7 +650,11 @@ The negotiation transcript is a hash chain. Each message includes the hash of th
 
 ### 9.4 Confidentiality
 
-Negotiation messages MAY be encrypted end-to-end using X25519 key exchange + XChaCha20-Poly1305. This is RECOMMENDED for negotiations involving sensitive terms (financial, medical, legal) and OPTIONAL for general commerce. Agents operating under a sovereignty framework or on behalf of principals with heightened privacy requirements SHOULD default to encrypted channels for all negotiations.
+Concordia messages are signed, not encrypted. Signing (§9.2) provides integrity, authenticity, and non-repudiation: a message cannot be altered without detection, and the sender cannot deny having sent it. Signing does not provide confidentiality. Any system that carries or stores a Concordia message, including a relay, a mailbox service, or any other transport intermediary, can read its full content. The only confidentiality protection in place today is transport-layer security (TLS) on each network hop, which protects against on-path observers between hops but not against the intermediaries themselves.
+
+Agents and implementers SHOULD therefore treat every message field, including offer terms and the `reasoning` field, as visible to the infrastructure that delivers it. Negotiations involving sensitive terms (financial, medical, legal) SHOULD be conducted only over transport whose operators the parties trust. The Privacy by Default principle (§1.5) applies at authoring time: do not place content in a message that must remain hidden from the delivery path.
+
+End-to-end payload encryption, with X25519 key exchange and XChaCha20-Poly1305 as the candidate construction, is a planned future extension of this specification. It is not specified in this version, and no current reference implementation provides it; in particular, traffic through the reference server's relay is not end-to-end encrypted today. Until payload encryption is specified and implemented, Concordia deployments MUST NOT be described as end-to-end encrypted.
 
 ### 9.5 Anti-Abuse
 
