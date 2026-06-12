@@ -13,8 +13,11 @@
  *        (`allErrors`) groups and orders errors by its own internal compilation,
  *        which does not match.
  *     2. The `json_path` shape (`$`, `$.scope.decision`, `$.references[1]`).
- *     3. CPython jsonschema's exact message templates, including the value
- *        rendered with CPython `repr()` (shared via {@link pyRepr}).
+ *     3. CPython jsonschema's `validator` / `validator_value` stamping (the
+ *        post-#95 no-echo error format renders the violated CONSTRAINT, so
+ *        each error must carry its keyword and schema-side value), plus the
+ *        exact `required` message template, value rendered with CPython
+ *        `repr()` (shared via {@link pyRepr}).
  *   The mandate engine only needed the single best-match error + `"Schema: "`
  *   prefix, so ajv-translate sufficed there. Here the ordered list is the
  *   load-bearing contract, so this module re-implements the traversal directly.
@@ -38,8 +41,28 @@ import { pyRepr } from './py-repr.js';
 export interface SchemaError {
   /** The `error.json_path` ("$", "$.a", "$.a[0].b"). */
   jsonPath: string;
-  /** The `error.message` (CPython template, value rendered via `pyRepr`). */
+  /**
+   * The `error.message` (CPython template, value rendered via `pyRepr`).
+   *
+   * SECURITY (post-#95 error-echo hardening): for every keyword EXCEPT
+   * `required`, this template embeds the rejected INSTANCE value, so consumers
+   * MUST NOT surface it. The public formatting layer
+   * (`validation/schema-validator.ts`) renders `keyword` + `validatorValue`
+   * instead, exactly like Python's `_format_validation_error`. The field is
+   * kept because (a) Python's `ValidationError.message` keeps it too, and
+   * (b) `required` messages (schema-side property names only) still use it.
+   */
   message: string;
+  /**
+   * The CPython `error.validator`: the schema keyword that failed. `null`
+   * mirrors CPython's `validator=None` (a boolean `false` schema), which the
+   * formatter renders as the generic `'schema'` keyword.
+   */
+  keyword?: string | null;
+  /** The CPython `error.validator_value`: the schema-side value of `keyword`. */
+  validatorValue?: unknown;
+  /** The CPython `error.schema`: the (sub)schema whose keyword failed. */
+  schema?: unknown;
 }
 
 /**
@@ -97,10 +120,19 @@ function validateNode(
   ctx: ValidationContext,
 ): void {
   // Boolean schemas (Draft 2020-12). `false` rejects any instance; `true`
-  // accepts. CPython's `false` message is the generic one below.
+  // accepts. CPython's `false` message is the generic one below; CPython sets
+  // `validator=None` / `validator_value=None` on it, mirrored here as
+  // `keyword: null` / `validatorValue: null` (stamped eagerly so the keyword
+  // loop of an ANCESTOR schema never claims this error as its own).
   if (schema === true) return;
   if (schema === false) {
-    errors.push({ jsonPath: path, message: `${pyRepr(instance)} is not allowed` });
+    errors.push({
+      jsonPath: path,
+      message: `${pyRepr(instance)} is not allowed`,
+      keyword: null,
+      validatorValue: null,
+      schema: false,
+    });
     return;
   }
   if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) {
@@ -114,6 +146,7 @@ function validateNode(
   // keys, and `JSON.parse` preserves source order).
   for (const keyword of Object.keys(s)) {
     const value = s[keyword];
+    const errorCountBefore = errors.length;
     switch (keyword) {
       case 'type':
         checkType(value, instance, path, errors);
@@ -193,6 +226,20 @@ function validateNode(
         // keywords). `$schema`, `$id`, `title`, `description`, `examples`,
         // `$comment` fall here, matching jsonschema's no-op handling.
         break;
+    }
+    // Stamp CPython's `error._set(validator=k, validator_value=v, schema=s)`:
+    // every error a keyword check pushed DIRECTLY (no `keyword` field yet)
+    // belongs to this keyword. Errors that bubbled up from a DESCENDED
+    // validateNode were already stamped by their own (innermost) keyword loop
+    // — exactly CPython's behavior, where `descend` preserves the leaf
+    // validator and only extends the paths.
+    for (let i = errorCountBefore; i < errors.length; i += 1) {
+      const error = errors[i];
+      if (error !== undefined && !('keyword' in error)) {
+        error.keyword = keyword;
+        error.validatorValue = value;
+        error.schema = s;
+      }
     }
   }
 }

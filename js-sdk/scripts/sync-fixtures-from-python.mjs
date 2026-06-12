@@ -370,6 +370,7 @@ try {
       `${parsed.verify_cases.length} approval-receipt verify, ` +
       `${parsed.datetime_format_cases.length} date-time format, ` +
       `${parsed.datetime_parse_cases.length} date-time parse, ` +
+      `${parsed.attestation_constraint_cases.length} constraint-render, ` +
       `1 deferred-attestation boundary.`,
   );
 } catch (err) {

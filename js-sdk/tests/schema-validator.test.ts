@@ -59,6 +59,11 @@ interface DeferredAttestation {
   bad_oneof_attestation: Record<string, unknown>;
   bad_oneof_expected: string[];
 }
+interface AttestationConstraintCase {
+  name: string;
+  attestation: Record<string, unknown>;
+  expected: string[];
+}
 interface DateTimeFormatCase {
   name: string;
   value: string;
@@ -79,6 +84,7 @@ interface Fixtures {
   datetime_format_cases: DateTimeFormatCase[];
   datetime_parse_cases: DateTimeParseCase[];
   deferred_attestation: DeferredAttestation;
+  attestation_constraint_cases: AttestationConstraintCase[];
 }
 
 const fixtures: Fixtures = JSON.parse(
@@ -336,19 +342,21 @@ describe('date-time expiry parse — epoch-ms parity (Date.parse NaN fix)', () =
 
 describe('schema validators — robustness on malformed top-level input', () => {
   it('a non-object message reports the type error, never throws', () => {
-    // CPython: `$: '...' is not of type 'object'` (the root `type` keyword).
+    // Post-#95 no-echo rendering: the violated CONSTRAINT, never the instance.
     expect(validateMessage('not-an-object')).toEqual([
-      "$: 'not-an-object' is not of type 'object'",
+      '$: violates \'type\' constraint: "object"',
     ]);
-    expect(validateMessage(null)).toEqual(["$: None is not of type 'object'"]);
+    expect(validateMessage(null)).toEqual([
+      '$: violates \'type\' constraint: "object"',
+    ]);
     expect(validateMessage([1, 2])).toEqual([
-      '$: [1, 2] is not of type \'object\'',
+      '$: violates \'type\' constraint: "object"',
     ]);
   });
 
   it('a non-object approval receipt reports the type error', () => {
     expect(validateApprovalReceipt(42)).toEqual([
-      "$: 42 is not of type 'object'",
+      '$: violates \'type\' constraint: "object"',
     ]);
   });
 
@@ -449,7 +457,7 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
 
   it('rejects malformed and unknown attestations instead of failing open', () => {
     expect(validateAttestation(null)).toEqual([
-      "$: None is not of type 'object'",
+      '$: violates \'type\' constraint: "object"',
     ]);
     expect(validateAttestation({})).toEqual([
       "$: 'concordia_attestation' is a required property",
@@ -466,16 +474,25 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
   it('rejects invalid date-time formats with the Python format checker', () => {
     const attestation = validAttestation();
     attestation.timestamp = '2026-05-10T14:22:08';
+    // The constraint (the format NAME) is reported; the rejected timestamp
+    // string is not echoed (mirrors Python post-#95).
     expect(validateAttestation(attestation)).toEqual([
-      "$.timestamp: '2026-05-10T14:22:08' is not a 'date-time'",
+      '$.timestamp: violates \'format\' constraint: "date-time"',
     ]);
   });
 
+  // The next four mirror Python test_schema.py's hardened assertions: the
+  // additionalProperties violation is reported WITHOUT naming the
+  // attacker-chosen keys or echoing their values.
   it('rejects raw deal terms carried as extra attestation fields', () => {
     const attestation = validAttestation();
     attestation.price = { value: 1900, currency: 'USD' };
-    expect(validateAttestation(attestation)).toContain(
-      "$: Additional properties are not allowed ('price' was unexpected)",
+    const errors = validateAttestation(attestation);
+    expect(errors).toContain(
+      "$: violates 'additionalProperties' constraint: false",
+    );
+    expect(errors.some((e) => e.includes('price') || e.includes('1900'))).toBe(
+      false,
     );
   });
 
@@ -485,9 +502,13 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
       price: { value: 1900, currency: 'USD' },
       quantity: 2,
     };
-    expect(validateAttestation(attestation)).toContain(
-      "$.outcome: Additional properties are not allowed ('agreed_terms' was unexpected)",
+    const errors = validateAttestation(attestation);
+    expect(errors).toContain(
+      "$.outcome: violates 'additionalProperties' constraint: false",
     );
+    expect(
+      errors.some((e) => e.includes('agreed_terms') || e.includes('1900')),
+    ).toBe(false);
   });
 
   it('rejects raw price fields carried under party behavior', () => {
@@ -496,9 +517,16 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
     const behavior = parties[0].behavior as Record<string, unknown>;
     behavior.price_floor = 1750;
     behavior.accepted_price = 1900;
-    expect(validateAttestation(attestation)).toContain(
-      "$.parties[0].behavior: Additional properties are not allowed ('accepted_price', 'price_floor' were unexpected)",
+    const errors = validateAttestation(attestation);
+    expect(errors).toContain(
+      "$.parties[0].behavior: violates 'additionalProperties' constraint: false",
     );
+    expect(
+      errors.some(
+        (e) =>
+          e.includes('price_floor') || e.includes('1750') || e.includes('1900'),
+      ),
+    ).toBe(false);
   });
 
   it('rejects raw term payloads carried under reference extensions', () => {
@@ -514,9 +542,13 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
         },
       },
     ];
-    expect(validateAttestation(attestation)).toContain(
-      "$.references[0].extensions: Additional properties are not allowed ('price', 'quantity' were unexpected)",
+    const errors = validateAttestation(attestation);
+    expect(errors).toContain(
+      "$.references[0].extensions: violates 'additionalProperties' constraint: false",
     );
+    expect(
+      errors.some((e) => e.includes('1900') || e.includes('quantity')),
+    ).toBe(false);
   });
 
   it('accepts a legitimate behavioral summary', () => {
@@ -530,13 +562,16 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
     expect(validateAttestation(attestation)).toEqual([]);
   });
 
-  it('rejects overlong attestation free text', () => {
+  it('rejects overlong attestation free text without echoing it', () => {
     const attestation = validAttestation();
     attestation.summary = 'x'.repeat(1025);
     const errors = validateAttestation(attestation);
-    expect(errors.some((e) => e.startsWith('$.summary:') && e.includes('is too long'))).toBe(
-      true,
-    );
+    expect(errors).toEqual([
+      "$.summary: violates 'maxLength' constraint: 1024",
+    ]);
+    // Non-echo: the oversized instance string never rides in the error
+    // (mirrors Python test_rejects_overlong_attestation_free_text).
+    expect(errors.some((e) => e.includes('xxxx'))).toBe(false);
   });
 
   it('rejects obvious raw terms in attestation free text without echoing them', () => {
@@ -582,25 +617,133 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
   it('rejects invalid $ref targets under references[]', () => {
     const attestation = validAttestation();
     attestation.references = [{ id: '', type: '', relationship: '' }];
+    // The post-#95 canonical schema also carries the `^\S+$` whitespace ban
+    // on every reference string field (the previous stripped bundle predated
+    // it), so each empty field violates BOTH constraints, exactly as Python
+    // reports them.
     expect(validateAttestation(attestation)).toEqual([
-      "$.references[0].id: '' should be non-empty",
-      "$.references[0].type: '' should be non-empty",
-      "$.references[0].relationship: '' should be non-empty",
+      "$.references[0].id: violates 'minLength' constraint: 1",
+      '$.references[0].id: violates \'pattern\' constraint: "^\\\\S+$"',
+      "$.references[0].type: violates 'minLength' constraint: 1",
+      '$.references[0].type: violates \'pattern\' constraint: "^\\\\S+$"',
+      "$.references[0].relationship: violates 'minLength' constraint: 1",
+      '$.references[0].relationship: violates \'pattern\' constraint: "^\\\\S+$"',
     ]);
   });
 
   it('rejects invalid oneOf temporal and fulfillment variants', () => {
     const badTemporal = validAttestation();
     badTemporal.validity_temporal = { mode: 'absolute' };
+    // The oneOf constraint rendering is schema-side only (branch subschemas,
+    // sorted keys) and hits Python's 120-character truncation cap.
     expect(validateAttestation(badTemporal)).toEqual([
-      "$.validity_temporal: {'mode': 'absolute'} is not valid under any of the given schemas",
+      "$.validity_temporal: violates 'oneOf' constraint: " +
+        '[{"additionalProperties": false, "description": "Absolute ' +
+        'clock-bounded validity. Added in v0.4.0 (WP3).", "properties":...',
     ]);
 
     const badFulfillment = validAttestation();
     badFulfillment.fulfillment = { status: 'fulfilled' };
     expect(validateAttestation(badFulfillment)).toEqual([
-      "$.fulfillment: {'status': 'fulfilled'} is not valid under any of the given schemas",
+      "$.fulfillment: violates 'oneOf' constraint: " +
+        '[{"type": "null"}, {"$ref": "#/$defs/fulfillment_attestation"}]',
     ]);
+  });
+});
+
+// ===========================================================================
+// Error-echo hardening — Python #95 finding 5 parity (no instance echo)
+// ===========================================================================
+
+describe('schema-validation errors never echo the instance (Python #95 parity)', () => {
+  // Python-generated fixtures: every expected list comes straight from the
+  // hardened _format_validation_error path, including the FLOAT-SOURCED
+  // bounds ("0.0" / "1.0") JS numbers cannot represent natively.
+  for (const c of fixtures.attestation_constraint_cases) {
+    it(`constraint render: ${c.name}`, () => {
+      const errors = validateAttestation(c.attestation);
+      expect(errors).toEqual(c.expected);
+      // The hostile markers planted in the violating instances must never
+      // ride in ANY error string (free-text errors report a fixed sentence).
+      expect(
+        errors.some((e) => e.includes('SECRET') || e.includes('4350')),
+      ).toBe(false);
+    });
+  }
+
+  it('renders float-sourced bounds Python-style across all four surfaces', () => {
+    // Direct pin of the int/float distinction: the schema source `0.0` must
+    // render "0.0" (Python json.dumps of the loaded float), while the int
+    // sources elsewhere render bare ("1024", "1", "0").
+    const c = fixtures.attestation_constraint_cases.find(
+      (x) => x.name === 'concession_magnitude_below_float_minimum',
+    );
+    expect(c).toBeDefined();
+    expect(c?.expected).toEqual([
+      "$.parties[0].behavior.concession_magnitude: violates 'minimum' constraint: 0.0",
+    ]);
+  });
+
+  it('truncates long constraint renderings at 120 characters + "..."', () => {
+    // The message `type` enum rendering exceeds the cap; Python slices the
+    // RENDERED schema-side text at 120 code points and appends "...".
+    const msg: Record<string, unknown> = {
+      concordia: '0.5.0',
+      type: 'negotiate.SECRET_TERMS price=4350',
+      id: 'm1',
+      session_id: 's1',
+      timestamp: '2026-05-10T14:22:08Z',
+      from: { agent_id: 'agent-a' },
+      body: {},
+      signature: 'sig',
+    };
+    const errors = validateMessage(msg);
+    expect(errors).toHaveLength(1);
+    const [error] = errors;
+    const prefix = "$.type: violates 'enum' constraint: ";
+    expect(error?.startsWith(prefix)).toBe(true);
+    expect(error?.endsWith('...')).toBe(true);
+    expect(error).toHaveLength(prefix.length + 120 + 3);
+    expect(error?.includes('SECRET') || error?.includes('4350')).toBe(false);
+  });
+
+  it('keeps the upstream message for required (schema-side names only)', () => {
+    // Python preserves `'x' is a required property` because it names only
+    // schema-side property names; everything else is constraint-rendered.
+    expect(validateMessage({})).toEqual([
+      "$: 'concordia' is a required property",
+      "$: 'type' is a required property",
+      "$: 'id' is a required property",
+      "$: 'session_id' is a required property",
+      "$: 'timestamp' is a required property",
+      "$: 'from' is a required property",
+      "$: 'body' is a required property",
+      "$: 'signature' is a required property",
+    ]);
+  });
+
+  it('hostile instance strings never surface through any validator', () => {
+    const probe = 'SECRET_TERMS price=4350 qty=2';
+    const surfaces: Array<(v: unknown) => string[]> = [
+      validateMessage,
+      validateAttestation,
+      validateApprovalReceipt,
+      validateFulfillmentAttestation,
+    ];
+    for (const validate of surfaces) {
+      for (const instance of [
+        probe,
+        { [probe]: probe },
+        { artifact_type: probe, scope: probe, timestamp: probe },
+        [probe],
+      ]) {
+        const errors = validate(instance);
+        expect(errors.length).toBeGreaterThan(0);
+        expect(
+          errors.some((e) => e.includes('SECRET') || e.includes('4350')),
+        ).toBe(false);
+      }
+    }
   });
 });
 
@@ -621,21 +764,57 @@ describe('internal jsonschema $ref/oneOf support', () => {
   it('resolves intra-document refs while evaluating oneOf', () => {
     expect(iterErrors(schema, { choice: 'ok' })).toEqual([]);
     expect(iterErrors(schema, { choice: 2 })).toEqual([]);
-    expect(iterErrors(schema, { choice: 0 })).toEqual([
+    // toMatchObject: the error also carries the CPython validator stamping
+    // (keyword / validatorValue / schema), pinned separately below.
+    expect(iterErrors(schema, { choice: 0 })).toMatchObject([
       {
         jsonPath: '$.choice',
         message: '0 is not valid under any of the given schemas',
+        keyword: 'oneOf',
       },
     ]);
   });
 
   it('rejects oneOf values that match multiple branches', () => {
-    expect(iterErrors({ oneOf: [{ type: 'number' }, { minimum: 0 }] }, 1)).toEqual([
+    expect(iterErrors({ oneOf: [{ type: 'number' }, { minimum: 0 }] }, 1)).toMatchObject([
       {
         jsonPath: '$',
         message: "1 is valid under each of {'type': 'number'}, {'minimum': 0}",
+        keyword: 'oneOf',
       },
     ]);
+  });
+
+  it('stamps CPython validator / validator_value / schema on each error', () => {
+    // Leaf keyword error: stamped with ITS OWN keyword, not an ancestor's
+    // (CPython `descend` preserves the leaf validator).
+    const node = { type: 'object', properties: { n: { minimum: 3 } } };
+    const [minErr] = iterErrors(node, { n: 1 });
+    expect(minErr).toMatchObject({
+      jsonPath: '$.n',
+      keyword: 'minimum',
+      validatorValue: 3,
+      schema: { minimum: 3 },
+    });
+
+    // `required` error: keyword 'required', validator_value the schema list
+    // (the public formatter keeps the upstream message for this keyword only).
+    const [reqErr] = iterErrors({ required: ['a', 'b'] }, {});
+    expect(reqErr).toMatchObject({
+      keyword: 'required',
+      validatorValue: ['a', 'b'],
+      message: "'a' is a required property",
+    });
+
+    // Boolean `false` schema: CPython yields validator=None / validator_value=
+    // None, mirrored as null (rendered by the formatter as 'schema').
+    const [falseErr] = iterErrors({ properties: { x: false } }, { x: 1 });
+    expect(falseErr).toMatchObject({
+      jsonPath: '$.x',
+      keyword: null,
+      validatorValue: null,
+      schema: false,
+    });
   });
 
   it('throws for missing $ref targets', () => {

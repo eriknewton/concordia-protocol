@@ -584,7 +584,188 @@ def _deferred_attestation_case() -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Constraint-render parity: post-#95 no-echo error formatting
+# ---------------------------------------------------------------------------
+
+# A FULLY schema-valid attestation (unlike VALID_ATTESTATION above, which pins a
+# historical boundary including its errors) so each mutation below isolates ONE
+# constraint violation. Mirrors validAttestation() in
+# tests/schema-validator.test.ts.
+def _fully_valid_attestation() -> dict:
+    behavior = {
+        "offers_made": 1,
+        "concessions": 0,
+        "concession_magnitude": 0,
+        "signals_shared": 0,
+        "constraints_declared": 0,
+        "constraints_violated": 0,
+        "reasoning_provided": True,
+        "withdrawal": False,
+    }
+    return {
+        "concordia_attestation": "0.1.0",
+        "attestation_id": "att_valid",
+        "session_id": "ses_valid",
+        "timestamp": "2026-05-10T14:22:08Z",
+        "outcome": {
+            "status": "agreed",
+            "rounds": 2,
+            "duration_seconds": 60,
+            "terms_count": 3,
+            "resolution_mechanism": "direct",
+        },
+        "parties": [
+            {"agent_id": "agent_a", "role": "initiator",
+             "behavior": copy.deepcopy(behavior), "signature": "sig_a"},
+            {"agent_id": "agent_b", "role": "responder",
+             "behavior": copy.deepcopy(behavior), "signature": "sig_b"},
+        ],
+        "meta": {
+            "category": "electronics.cameras",
+            "value_range": "1000-5000_USD",
+            "extensions_used": [],
+            "mediator_invoked": False,
+        },
+        "transcript_hash": "sha256:" + "a" * 64,
+        "fulfillment": None,
+    }
+
+
+def _attestation_constraint_cases() -> list[dict]:
+    """Pin the post-#95 no-echo constraint rendering on validate_attestation.
+
+    Every `expected` list comes straight from Python's hardened
+    _format_validation_error path. The hostile marker values (SECRET_TERMS /
+    4350) let the JS suite ALSO assert the instance text never rides in any
+    error string. Includes the FLOAT-SOURCED bounds (concession_magnitude
+    minimum 0.0 / maximum 1.0): Python's json.load keeps the schema literals
+    as float, so json.dumps renders "0.0" / "1.0", which the JS formatter must
+    reproduce even though JS numbers cannot carry the int/float distinction.
+    """
+    cases: list[dict] = []
+
+    def add(name, mutate):
+        att = _fully_valid_attestation()
+        mutate(att)
+        cases.append(
+            {"name": name, "attestation": att,
+             "expected": validate_attestation(att)}
+        )
+
+    add("fully_valid_accepts", lambda a: None)
+    add("concession_magnitude_below_float_minimum",
+        lambda a: a["parties"][0]["behavior"].__setitem__(
+            "concession_magnitude", -0.5))
+    add("concession_magnitude_above_float_maximum",
+        lambda a: a["parties"][1]["behavior"].__setitem__(
+            "concession_magnitude", 1.5))
+    add("summary_over_cap_not_echoed",
+        lambda a: a.__setitem__(
+            "summary", "SECRET_TERMS price=4350 " + "x" * 1024))
+    add("raw_term_extra_field_not_echoed",
+        lambda a: a.__setitem__("price", {"value": 4350, "currency": "USD"}))
+    add("outcome_agreed_terms_not_echoed",
+        lambda a: a["outcome"].__setitem__(
+            "agreed_terms", {"price": 4350, "quantity": 2}))
+    add("role_enum_violation_not_echoed",
+        lambda a: a["parties"][0].__setitem__(
+            "role", "SECRET_ROLE price=4350"))
+    add("timestamp_type_violation_not_echoed",
+        lambda a: a.__setitem__(
+            "timestamp", {"leak": "SECRET_TERMS price=4350"}))
+    add("transcript_hash_pattern_violation_not_echoed",
+        lambda a: a.__setitem__(
+            "transcript_hash", "SECRET_TERMS price=4350"))
+    return cases
+
+
+# ---------------------------------------------------------------------------
+# schemas.ts emit step (--emit-schemas-ts)
+# ---------------------------------------------------------------------------
+
+_SCHEMAS_TS_HEADER = '''/**
+ * The Concordia JSON Schemas this layer validates against, bundled as typed
+ * constants so the JS package is self-contained (the Python reference loads the
+ * same documents from the repo `schemas/` directory).
+ *
+ * These are BYTE-FAITHFUL COPIES of the schema objects the Python reference
+ * actually validates with: the inline message envelope schema
+ * (`concordia/schema_validator.py` `_MESSAGE_SCHEMA`, derived from SPEC
+ * section 4.1) and the canonical `schemas/approval_receipt.schema.json`,
+ * `schemas/fulfillment_attestation.schema.json`, and
+ * `schemas/attestation.schema.json` documents, ANNOTATIONS INCLUDED. The
+ * pure-annotation keys (`description` / `title` / `examples` / `$comment`)
+ * used to be stripped as behavior-neutral, but the post-#95 error rendering
+ * reports the violated constraint via `json.dumps(error.validator_value,
+ * sort_keys=True)`, and a validator_value SUBSCHEMA (oneOf branches, contains)
+ * carries its annotation keys into the rendered error text, so stripping them
+ * now breaks byte parity.
+ *
+ * GENERATED, do not hand-edit: produced by
+ * `scripts/gen-schema-validator-fixtures.py --emit-schemas-ts` (run from the
+ * repo root under the repo venv). Re-run it after any SPEC schema change.
+ *
+ * `FLOAT_CONSTRAINT_PATHS` records the schema numbers whose CANONICAL JSON
+ * SOURCE is a float literal (e.g. `0.0`): Python's json.load keeps those as
+ * float and the post-#95 constraint rendering emits "0.0", but JSON.parse / a
+ * JS number literal cannot carry the int/float distinction, so the error
+ * formatter consumes this generated registry to reproduce Python's rendering.
+ */
+'''
+
+
+def _emit_schemas_ts() -> None:
+    from concordia.schema_validator import _MESSAGE_SCHEMA, _load_schema
+
+    schemas = {
+        "MESSAGE_SCHEMA": _MESSAGE_SCHEMA,
+        "ATTESTATION_SCHEMA": _load_schema("attestation.schema.json"),
+        "APPROVAL_RECEIPT_SCHEMA": _load_schema(
+            "approval_receipt.schema.json"),
+        "FULFILLMENT_ATTESTATION_SCHEMA": _load_schema(
+            "fulfillment_attestation.schema.json"),
+    }
+
+    def float_paths(node, path, out):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if isinstance(v, float):
+                    out.append(path + [k])
+                float_paths(v, path + [k], out)
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                float_paths(v, path + [str(i)], out)
+
+    out = [_SCHEMAS_TS_HEADER]
+    registry: dict[str, list[list[str]]] = {}
+    for name, schema in schemas.items():
+        out.append(
+            f"\nexport const {name} = "
+            f"{json.dumps(schema, ensure_ascii=False, indent=2)} as const;\n"
+        )
+        paths: list[list[str]] = []
+        float_paths(schema, [], paths)
+        registry[name] = paths
+
+    out.append(
+        "\n/**\n"
+        " * Float-sourced numeric constraints per schema constant (see module\n"
+        " * header). Each path walks from the schema root to the keyword whose\n"
+        " * JSON source is a float literal; the error formatter renders those\n"
+        " * integral values Python-style (\"0.0\", not \"0\").\n"
+        " */\n"
+        "export const FLOAT_CONSTRAINT_PATHS: Readonly<\n"
+        "  Record<string, ReadonlyArray<ReadonlyArray<string>>>\n"
+        f"> = {json.dumps(registry, indent=2)};\n"
+    )
+    sys.stdout.write("".join(out))
+
+
 def main() -> None:
+    if "--emit-schemas-ts" in sys.argv[1:]:
+        _emit_schemas_ts()
+        return
     doc = {
         "_comment": (
             "Generated by js-sdk/scripts/gen-schema-validator-fixtures.py from "
@@ -600,6 +781,7 @@ def main() -> None:
         "datetime_format_cases": _datetime_format_cases(),
         "datetime_parse_cases": _datetime_parse_cases(),
         "deferred_attestation": _deferred_attestation_case(),
+        "attestation_constraint_cases": _attestation_constraint_cases(),
     }
     json.dump(doc, sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")

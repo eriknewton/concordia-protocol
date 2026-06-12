@@ -61,7 +61,7 @@
         "signature": "sig"
       },
       "expected": [
-        "$.type: 'negotiate.foo' is not one of ['negotiate.open', 'negotiate.accept_session', 'negotiate.decline_session', 'negotiate.offer', 'negotiate.counter', 'negotiate.accept', 'negotiate.reject', 'negotiate.inquire', 'negotiate.constrain', 'negotiate.signal', 'negotiate.withdraw', 'negotiate.propose_mediator', 'negotiate.resolve', 'negotiate.commit']"
+        "$.type: violates 'enum' constraint: [\"negotiate.open\", \"negotiate.accept_session\", \"negotiate.decline_session\", \"negotiate.offer\", \"negotiate.counter\", \"neg..."
       ]
     },
     {
@@ -79,7 +79,7 @@
         "signature": "sig"
       },
       "expected": [
-        "$.concordia: 'bad' does not match '^\\\\d+\\\\.\\\\d+\\\\.\\\\d+$'"
+        "$.concordia: violates 'pattern' constraint: \"^\\\\d+\\\\.\\\\d+\\\\.\\\\d+$\""
       ]
     },
     {
@@ -172,7 +172,7 @@
         "signature": "sig"
       },
       "expected": [
-        "$.from.principal_id: 5 is not of type 'string', 'null'"
+        "$.from.principal_id: violates 'type' constraint: [\"string\", \"null\"]"
       ]
     },
     {
@@ -190,7 +190,7 @@
         "signature": "sig"
       },
       "expected": [
-        "$.id: '' should be non-empty"
+        "$.id: violates 'minLength' constraint: 1"
       ]
     },
     {
@@ -209,7 +209,7 @@
         "ttl": -1
       },
       "expected": [
-        "$.ttl: -1 is less than the minimum of 0"
+        "$.ttl: violates 'minimum' constraint: 0"
       ]
     },
     {
@@ -228,7 +228,7 @@
         "ttl": 1.5
       },
       "expected": [
-        "$.ttl: 1.5 is not of type 'integer'"
+        "$.ttl: violates 'type' constraint: \"integer\""
       ]
     },
     {
@@ -246,7 +246,7 @@
         "signature": "sig"
       },
       "expected": [
-        "$.timestamp: 'nope' is not a 'date-time'"
+        "$.timestamp: violates 'format' constraint: \"date-time\""
       ]
     },
     {
@@ -264,7 +264,7 @@
         "signature": "sig"
       },
       "expected": [
-        "$.timestamp: '2026-05-10T14:22:08' is not a 'date-time'"
+        "$.timestamp: violates 'format' constraint: \"date-time\""
       ]
     },
     {
@@ -282,7 +282,7 @@
         "signature": "sig"
       },
       "expected": [
-        "$.timestamp: 12345 is not of type 'string'"
+        "$.timestamp: violates 'type' constraint: \"string\""
       ]
     },
     {
@@ -300,8 +300,8 @@
         "signature": "sig"
       },
       "expected": [
-        "$.type: 5 is not of type 'string'",
-        "$.type: 5 is not one of ['negotiate.open', 'negotiate.accept_session', 'negotiate.decline_session', 'negotiate.offer', 'negotiate.counter', 'negotiate.accept', 'negotiate.reject', 'negotiate.inquire', 'negotiate.constrain', 'negotiate.signal', 'negotiate.withdraw', 'negotiate.propose_mediator', 'negotiate.resolve', 'negotiate.commit']"
+        "$.type: violates 'type' constraint: \"string\"",
+        "$.type: violates 'enum' constraint: [\"negotiate.open\", \"negotiate.accept_session\", \"negotiate.decline_session\", \"negotiate.offer\", \"negotiate.counter\", \"neg..."
       ]
     },
     {
@@ -319,7 +319,7 @@
         "signature": "sig"
       },
       "expected": [
-        "$.body: 'x' is not of type 'object'"
+        "$.body: violates 'type' constraint: \"object\""
       ]
     },
     {
@@ -335,7 +335,7 @@
         "signature": "sig"
       },
       "expected": [
-        "$.from: 'x' is not of type 'object'"
+        "$.from: violates 'type' constraint: \"object\""
       ]
     },
     {
@@ -354,7 +354,7 @@
         "to": "x"
       },
       "expected": [
-        "$.to: 'x' is not of type 'array'"
+        "$.to: violates 'type' constraint: \"array\""
       ]
     },
     {
@@ -373,9 +373,9 @@
         "ttl": -1
       },
       "expected": [
-        "$.concordia: 'bad' does not match '^\\\\d+\\\\.\\\\d+\\\\.\\\\d+$'",
-        "$.type: 'negotiate.foo' is not one of ['negotiate.open', 'negotiate.accept_session', 'negotiate.decline_session', 'negotiate.offer', 'negotiate.counter', 'negotiate.accept', 'negotiate.reject', 'negotiate.inquire', 'negotiate.constrain', 'negotiate.signal', 'negotiate.withdraw', 'negotiate.propose_mediator', 'negotiate.resolve', 'negotiate.commit']",
-        "$.ttl: -1 is less than the minimum of 0"
+        "$.concordia: violates 'pattern' constraint: \"^\\\\d+\\\\.\\\\d+\\\\.\\\\d+$\"",
+        "$.type: violates 'enum' constraint: [\"negotiate.open\", \"negotiate.accept_session\", \"negotiate.decline_session\", \"negotiate.offer\", \"negotiate.counter\", \"neg...",
+        "$.ttl: violates 'minimum' constraint: 0"
       ]
     },
     {
@@ -455,7 +455,7 @@
         }
       },
       "expected": [
-        "$.artifact_type: 'ApprovalReceipt' was expected"
+        "$.artifact_type: violates 'const' constraint: \"ApprovalReceipt\""
       ]
     },
     {
@@ -488,7 +488,7 @@
         }
       },
       "expected": [
-        "$.scope.decision: 'maybe' is not one of ['approve', 'deny']"
+        "$.scope.decision: violates 'enum' constraint: [\"approve\", \"deny\"]"
       ]
     },
     {
@@ -521,7 +521,7 @@
         }
       },
       "expected": [
-        "$.scope.offer_hash: 'notahash' does not match '^sha256:[a-fA-F0-9]{64}$'"
+        "$.scope.offer_hash: violates 'pattern' constraint: \"^sha256:[a-fA-F0-9]{64}$\""
       ]
     },
     {
@@ -554,7 +554,7 @@
         }
       },
       "expected": [
-        "$.scope.offer_hash: 'sha256:abc' does not match '^sha256:[a-fA-F0-9]{64}$'"
+        "$.scope.offer_hash: violates 'pattern' constraint: \"^sha256:[a-fA-F0-9]{64}$\""
       ]
     },
     {
@@ -645,7 +645,7 @@
         }
       },
       "expected": [
-        "$.issued_at: 'not-a-date' is not a 'date-time'"
+        "$.issued_at: violates 'format' constraint: \"date-time\""
       ]
     },
     {
@@ -678,7 +678,7 @@
         }
       },
       "expected": [
-        "$.issued_at: 12345 is not of type 'string'"
+        "$.issued_at: violates 'type' constraint: \"string\""
       ]
     },
     {
@@ -711,7 +711,7 @@
         }
       },
       "expected": [
-        "$.references: [{'type': 'mandate', 'id': 'x', 'relationship': 'fulfills'}] does not contain items matching the given schema"
+        "$.references: violates 'contains' constraint: {\"properties\": {\"relationship\": {\"const\": \"approves\"}, \"type\": {\"enum\": [\"negotiation_session\", \"a2cn:negotiation_sessio..."
       ]
     },
     {
@@ -738,8 +738,8 @@
         }
       },
       "expected": [
-        "$.references: [] should be non-empty",
-        "$.references: [] does not contain items matching the given schema"
+        "$.references: violates 'minItems' constraint: 1",
+        "$.references: violates 'contains' constraint: {\"properties\": {\"relationship\": {\"const\": \"approves\"}, \"type\": {\"enum\": [\"negotiation_session\", \"a2cn:negotiation_sessio..."
       ]
     },
     {
@@ -766,7 +766,7 @@
         }
       },
       "expected": [
-        "$.references: 'x' is not of type 'array'"
+        "$.references: violates 'type' constraint: \"array\""
       ]
     },
     {
@@ -794,7 +794,7 @@
         }
       },
       "expected": [
-        "$.scope: 'x' is not of type 'object'"
+        "$.scope: violates 'type' constraint: \"object\""
       ]
     },
     {
@@ -891,7 +891,7 @@
         }
       },
       "expected": [
-        "$.signature.alg: 'RS256' is not one of ['Ed25519']"
+        "$.signature.alg: violates 'enum' constraint: [\"Ed25519\"]"
       ]
     },
     {
@@ -956,7 +956,7 @@
         }
       },
       "expected": [
-        "$.approver.identity: '' should be non-empty"
+        "$.approver.identity: violates 'minLength' constraint: 1"
       ]
     },
     {
@@ -1149,7 +1149,7 @@
         }
       },
       "expected": [
-        "$.attestation_type: 'FulfillmentAttestation' was expected"
+        "$.attestation_type: violates 'const' constraint: \"FulfillmentAttestation\""
       ]
     },
     {
@@ -1175,7 +1175,7 @@
         }
       },
       "expected": [
-        "$.fulfillment.status: 'nope' is not one of ['fulfilled_clean', 'fulfilled_with_mediation', 'failed', 'disputed_unresolved']"
+        "$.fulfillment.status: violates 'enum' constraint: [\"fulfilled_clean\", \"fulfilled_with_mediation\", \"failed\", \"disputed_unresolved\"]"
       ]
     },
     {
@@ -1217,8 +1217,8 @@
         }
       },
       "expected": [
-        "$.references: [] should be non-empty",
-        "$.references: [] does not contain items matching the given schema"
+        "$.references: violates 'minItems' constraint: 1",
+        "$.references: violates 'contains' constraint: {\"properties\": {\"relationship\": {\"const\": \"fulfills\"}}, \"required\": [\"relationship\"], \"type\": \"object\"}"
       ]
     },
     {
@@ -1244,7 +1244,7 @@
         }
       },
       "expected": [
-        "$.references: [{'id': 'x', 'type': 'attestation', 'relationship': 'relates'}] does not contain items matching the given schema"
+        "$.references: violates 'contains' constraint: {\"properties\": {\"relationship\": {\"const\": \"fulfills\"}}, \"required\": [\"relationship\"], \"type\": \"object\"}"
       ]
     },
     {
@@ -1381,7 +1381,7 @@
         }
       },
       "expected": [
-        "$.meta.mediator_invoked: True was expected"
+        "$.meta.mediator_invoked: violates 'const' constraint: true"
       ]
     },
     {
@@ -1407,7 +1407,7 @@
         }
       },
       "expected": [
-        "$.agreement_attestation_id: 5 is not of type 'string'"
+        "$.agreement_attestation_id: violates 'type' constraint: \"string\""
       ]
     },
     {
@@ -1885,7 +1885,7 @@
           "schema": false
         },
         "errors": [
-          "$.scope.offer_hash: 'not-a-hash' does not match '^sha256:[a-fA-F0-9]{64}$'"
+          "$.scope.offer_hash: violates 'pattern' constraint: \"^sha256:[a-fA-F0-9]{64}$\""
         ]
       }
     },
@@ -1942,8 +1942,8 @@
           "approves_reference": false
         },
         "errors": [
-          "$.scope.offer_hash: 'bad' does not match '^sha256:[a-fA-F0-9]{64}$'",
-          "$.references: [{'type': 'mandate', 'id': 'm', 'relationship': 'fulfills'}] does not contain items matching the given schema"
+          "$.scope.offer_hash: violates 'pattern' constraint: \"^sha256:[a-fA-F0-9]{64}$\"",
+          "$.references: violates 'contains' constraint: {\"properties\": {\"relationship\": {\"const\": \"approves\"}, \"type\": {\"enum\": [\"negotiation_session\", \"a2cn:negotiation_sessio..."
         ]
       }
     },
@@ -2000,7 +2000,7 @@
           "approves_reference": false
         },
         "errors": [
-          "$.references: [{'type': 'mandate', 'id': 'm', 'relationship': 'fulfills'}] does not contain items matching the given schema"
+          "$.references: violates 'contains' constraint: {\"properties\": {\"relationship\": {\"const\": \"approves\"}, \"type\": {\"enum\": [\"negotiation_session\", \"a2cn:negotiation_sessio..."
         ]
       }
     },
@@ -2397,8 +2397,8 @@
       "transcript_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     },
     "valid_expected": [
-      "$.parties: [{'agent_id': 'a', 'role': 'buyer', 'behavior': {}, 'signature': ''}] is too short",
-      "$.parties[0].role: 'buyer' is not one of ['initiator', 'responder', 'mediator', 'witness']"
+      "$.parties: violates 'minItems' constraint: 2",
+      "$.parties[0].role: violates 'enum' constraint: [\"initiator\", \"responder\", \"mediator\", \"witness\"]"
     ],
     "bad_oneof_attestation": {
       "concordia_attestation": "0.1.0",
@@ -2429,9 +2429,551 @@
       }
     },
     "bad_oneof_expected": [
-      "$.parties: [{'agent_id': 'a', 'role': 'buyer', 'behavior': {}, 'signature': ''}] is too short",
-      "$.parties[0].role: 'buyer' is not one of ['initiator', 'responder', 'mediator', 'witness']",
-      "$.validity_temporal: {'mode': 'absolute'} is not valid under any of the given schemas"
+      "$.parties: violates 'minItems' constraint: 2",
+      "$.parties[0].role: violates 'enum' constraint: [\"initiator\", \"responder\", \"mediator\", \"witness\"]",
+      "$.validity_temporal: violates 'oneOf' constraint: [{\"additionalProperties\": false, \"description\": \"Absolute clock-bounded validity. Added in v0.4.0 (WP3).\", \"properties\":..."
     ]
-  }
+  },
+  "attestation_constraint_cases": [
+    {
+      "name": "fully_valid_accepts",
+      "attestation": {
+        "concordia_attestation": "0.1.0",
+        "attestation_id": "att_valid",
+        "session_id": "ses_valid",
+        "timestamp": "2026-05-10T14:22:08Z",
+        "outcome": {
+          "status": "agreed",
+          "rounds": 2,
+          "duration_seconds": 60,
+          "terms_count": 3,
+          "resolution_mechanism": "direct"
+        },
+        "parties": [
+          {
+            "agent_id": "agent_a",
+            "role": "initiator",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_a"
+          },
+          {
+            "agent_id": "agent_b",
+            "role": "responder",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_b"
+          }
+        ],
+        "meta": {
+          "category": "electronics.cameras",
+          "value_range": "1000-5000_USD",
+          "extensions_used": [],
+          "mediator_invoked": false
+        },
+        "transcript_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "fulfillment": null
+      },
+      "expected": []
+    },
+    {
+      "name": "concession_magnitude_below_float_minimum",
+      "attestation": {
+        "concordia_attestation": "0.1.0",
+        "attestation_id": "att_valid",
+        "session_id": "ses_valid",
+        "timestamp": "2026-05-10T14:22:08Z",
+        "outcome": {
+          "status": "agreed",
+          "rounds": 2,
+          "duration_seconds": 60,
+          "terms_count": 3,
+          "resolution_mechanism": "direct"
+        },
+        "parties": [
+          {
+            "agent_id": "agent_a",
+            "role": "initiator",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": -0.5,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_a"
+          },
+          {
+            "agent_id": "agent_b",
+            "role": "responder",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_b"
+          }
+        ],
+        "meta": {
+          "category": "electronics.cameras",
+          "value_range": "1000-5000_USD",
+          "extensions_used": [],
+          "mediator_invoked": false
+        },
+        "transcript_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "fulfillment": null
+      },
+      "expected": [
+        "$.parties[0].behavior.concession_magnitude: violates 'minimum' constraint: 0.0"
+      ]
+    },
+    {
+      "name": "concession_magnitude_above_float_maximum",
+      "attestation": {
+        "concordia_attestation": "0.1.0",
+        "attestation_id": "att_valid",
+        "session_id": "ses_valid",
+        "timestamp": "2026-05-10T14:22:08Z",
+        "outcome": {
+          "status": "agreed",
+          "rounds": 2,
+          "duration_seconds": 60,
+          "terms_count": 3,
+          "resolution_mechanism": "direct"
+        },
+        "parties": [
+          {
+            "agent_id": "agent_a",
+            "role": "initiator",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_a"
+          },
+          {
+            "agent_id": "agent_b",
+            "role": "responder",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 1.5,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_b"
+          }
+        ],
+        "meta": {
+          "category": "electronics.cameras",
+          "value_range": "1000-5000_USD",
+          "extensions_used": [],
+          "mediator_invoked": false
+        },
+        "transcript_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "fulfillment": null
+      },
+      "expected": [
+        "$.parties[1].behavior.concession_magnitude: violates 'maximum' constraint: 1.0"
+      ]
+    },
+    {
+      "name": "summary_over_cap_not_echoed",
+      "attestation": {
+        "concordia_attestation": "0.1.0",
+        "attestation_id": "att_valid",
+        "session_id": "ses_valid",
+        "timestamp": "2026-05-10T14:22:08Z",
+        "outcome": {
+          "status": "agreed",
+          "rounds": 2,
+          "duration_seconds": 60,
+          "terms_count": 3,
+          "resolution_mechanism": "direct"
+        },
+        "parties": [
+          {
+            "agent_id": "agent_a",
+            "role": "initiator",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_a"
+          },
+          {
+            "agent_id": "agent_b",
+            "role": "responder",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_b"
+          }
+        ],
+        "meta": {
+          "category": "electronics.cameras",
+          "value_range": "1000-5000_USD",
+          "extensions_used": [],
+          "mediator_invoked": false
+        },
+        "transcript_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "fulfillment": null,
+        "summary": "SECRET_TERMS price=4350 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "expected": [
+        "$.summary: violates 'maxLength' constraint: 1024"
+      ]
+    },
+    {
+      "name": "raw_term_extra_field_not_echoed",
+      "attestation": {
+        "concordia_attestation": "0.1.0",
+        "attestation_id": "att_valid",
+        "session_id": "ses_valid",
+        "timestamp": "2026-05-10T14:22:08Z",
+        "outcome": {
+          "status": "agreed",
+          "rounds": 2,
+          "duration_seconds": 60,
+          "terms_count": 3,
+          "resolution_mechanism": "direct"
+        },
+        "parties": [
+          {
+            "agent_id": "agent_a",
+            "role": "initiator",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_a"
+          },
+          {
+            "agent_id": "agent_b",
+            "role": "responder",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_b"
+          }
+        ],
+        "meta": {
+          "category": "electronics.cameras",
+          "value_range": "1000-5000_USD",
+          "extensions_used": [],
+          "mediator_invoked": false
+        },
+        "transcript_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "fulfillment": null,
+        "price": {
+          "value": 4350,
+          "currency": "USD"
+        }
+      },
+      "expected": [
+        "$: violates 'additionalProperties' constraint: false"
+      ]
+    },
+    {
+      "name": "outcome_agreed_terms_not_echoed",
+      "attestation": {
+        "concordia_attestation": "0.1.0",
+        "attestation_id": "att_valid",
+        "session_id": "ses_valid",
+        "timestamp": "2026-05-10T14:22:08Z",
+        "outcome": {
+          "status": "agreed",
+          "rounds": 2,
+          "duration_seconds": 60,
+          "terms_count": 3,
+          "resolution_mechanism": "direct",
+          "agreed_terms": {
+            "price": 4350,
+            "quantity": 2
+          }
+        },
+        "parties": [
+          {
+            "agent_id": "agent_a",
+            "role": "initiator",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_a"
+          },
+          {
+            "agent_id": "agent_b",
+            "role": "responder",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_b"
+          }
+        ],
+        "meta": {
+          "category": "electronics.cameras",
+          "value_range": "1000-5000_USD",
+          "extensions_used": [],
+          "mediator_invoked": false
+        },
+        "transcript_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "fulfillment": null
+      },
+      "expected": [
+        "$.outcome: violates 'additionalProperties' constraint: false"
+      ]
+    },
+    {
+      "name": "role_enum_violation_not_echoed",
+      "attestation": {
+        "concordia_attestation": "0.1.0",
+        "attestation_id": "att_valid",
+        "session_id": "ses_valid",
+        "timestamp": "2026-05-10T14:22:08Z",
+        "outcome": {
+          "status": "agreed",
+          "rounds": 2,
+          "duration_seconds": 60,
+          "terms_count": 3,
+          "resolution_mechanism": "direct"
+        },
+        "parties": [
+          {
+            "agent_id": "agent_a",
+            "role": "SECRET_ROLE price=4350",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_a"
+          },
+          {
+            "agent_id": "agent_b",
+            "role": "responder",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_b"
+          }
+        ],
+        "meta": {
+          "category": "electronics.cameras",
+          "value_range": "1000-5000_USD",
+          "extensions_used": [],
+          "mediator_invoked": false
+        },
+        "transcript_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "fulfillment": null
+      },
+      "expected": [
+        "$.parties[0].role: violates 'enum' constraint: [\"initiator\", \"responder\", \"mediator\", \"witness\"]"
+      ]
+    },
+    {
+      "name": "timestamp_type_violation_not_echoed",
+      "attestation": {
+        "concordia_attestation": "0.1.0",
+        "attestation_id": "att_valid",
+        "session_id": "ses_valid",
+        "timestamp": {
+          "leak": "SECRET_TERMS price=4350"
+        },
+        "outcome": {
+          "status": "agreed",
+          "rounds": 2,
+          "duration_seconds": 60,
+          "terms_count": 3,
+          "resolution_mechanism": "direct"
+        },
+        "parties": [
+          {
+            "agent_id": "agent_a",
+            "role": "initiator",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_a"
+          },
+          {
+            "agent_id": "agent_b",
+            "role": "responder",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_b"
+          }
+        ],
+        "meta": {
+          "category": "electronics.cameras",
+          "value_range": "1000-5000_USD",
+          "extensions_used": [],
+          "mediator_invoked": false
+        },
+        "transcript_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "fulfillment": null
+      },
+      "expected": [
+        "$.timestamp: violates 'type' constraint: \"string\""
+      ]
+    },
+    {
+      "name": "transcript_hash_pattern_violation_not_echoed",
+      "attestation": {
+        "concordia_attestation": "0.1.0",
+        "attestation_id": "att_valid",
+        "session_id": "ses_valid",
+        "timestamp": "2026-05-10T14:22:08Z",
+        "outcome": {
+          "status": "agreed",
+          "rounds": 2,
+          "duration_seconds": 60,
+          "terms_count": 3,
+          "resolution_mechanism": "direct"
+        },
+        "parties": [
+          {
+            "agent_id": "agent_a",
+            "role": "initiator",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_a"
+          },
+          {
+            "agent_id": "agent_b",
+            "role": "responder",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_b"
+          }
+        ],
+        "meta": {
+          "category": "electronics.cameras",
+          "value_range": "1000-5000_USD",
+          "extensions_used": [],
+          "mediator_invoked": false
+        },
+        "transcript_hash": "SECRET_TERMS price=4350",
+        "fulfillment": null
+      },
+      "expected": [
+        "$.transcript_hash: violates 'pattern' constraint: \"^sha256:[a-f0-9]{64}$\""
+      ]
+    }
+  ]
 }
