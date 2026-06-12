@@ -624,3 +624,140 @@ describe('Predicate - resolver-based reference binding', () => {
     expect(result.checks.signature).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// fromDict snapshot semantics (codex re-verification residual, 2026-06-12):
+// the old `{ ...data }` spread performed [[Get]] on every own enumerable
+// property, so a hostile getter EXECUTED during parse and its thrown text
+// (probe: `throw Error("SECRET_TERMS price=4350")`) escaped to the caller
+// verbatim -- the no-echo violation the rest of the branch closed for
+// validateReference. fromDict now takes a descriptor-walk deep snapshot via
+// the SAME helper (snapshotPlainData): accessors are rejected unexecuted,
+// foreign throws are sanitized, and post-construction mutation of the
+// caller's tree cannot reach the predicate's serialized form.
+// ---------------------------------------------------------------------------
+describe('Predicate - fromDict snapshot semantics (no getters, no echo, no TOCTOU)', () => {
+  const SECRET = 'SECRET_TERMS price=4350';
+  const baseCase = fixtures.sign_cases[0];
+
+  function baseDict(): Record<string, unknown> {
+    return structuredClone(baseCase.signed_predicate);
+  }
+
+  function captureFromDictError(data: Record<string, unknown>): Error {
+    try {
+      Predicate.fromDict(data);
+    } catch (err) {
+      return err as Error;
+    }
+    throw new Error('expected Predicate.fromDict to throw');
+  }
+
+  function expectSanitized(err: Error): void {
+    expect(err).toBeInstanceOf(PredicateValidationError);
+    expect(err.message).not.toContain('SECRET_TERMS');
+    expect(err.message).not.toContain('4350');
+  }
+
+  it('a throwing getter on a top-level field is rejected without ever running', () => {
+    let invoked = false;
+    const data = baseDict();
+    Object.defineProperty(data, 'condition', {
+      enumerable: true,
+      configurable: true,
+      get(): never {
+        invoked = true;
+        throw new Error(SECRET);
+      },
+    });
+    const err = captureFromDictError(data);
+    expectSanitized(err);
+    expect(err.message).toBe(
+      'predicate data must contain only plain enumerable data properties',
+    );
+    // The descriptor walk never performs [[Get]], so the hostile getter (and
+    // therefore its throw) cannot execute at all.
+    expect(invoked).toBe(false);
+  });
+
+  it('a throwing getter NESTED inside condition is rejected without running', () => {
+    let invoked = false;
+    const data = baseDict();
+    const condition = data.condition as Record<string, unknown>;
+    Object.defineProperty(condition, 'leak', {
+      enumerable: true,
+      configurable: true,
+      get(): never {
+        invoked = true;
+        throw new Error(SECRET);
+      },
+    });
+    const err = captureFromDictError(data);
+    expectSanitized(err);
+    expect(invoked).toBe(false);
+  });
+
+  it('an accessor TOCTOU probe is rejected, never sampled', () => {
+    // Answer benignly on the first read, smuggle deal terms on every later
+    // read. Rejecting accessors outright means the probe never runs once.
+    let reads = 0;
+    const data = baseDict();
+    Object.defineProperty(data, 'subject', {
+      enumerable: true,
+      configurable: true,
+      get(): string {
+        reads += 1;
+        return reads === 1 ? 'did:web:buyer.example#agent' : SECRET;
+      },
+    });
+    const err = captureFromDictError(data);
+    expectSanitized(err);
+    expect(reads).toBe(0);
+  });
+
+  it('a Proxy whose traps throw is sanitized (no echo of trap error text)', () => {
+    const hostile = new Proxy(baseDict(), {
+      ownKeys(): ArrayLike<string | symbol> {
+        throw new Error(SECRET);
+      },
+    });
+    const err = captureFromDictError(hostile);
+    expectSanitized(err);
+    expect(err.message).toBe('predicate data could not be safely inspected');
+  });
+
+  it('a Proxy whose getPrototypeOf trap throws is sanitized', () => {
+    const hostile = new Proxy(baseDict(), {
+      getPrototypeOf(): object | null {
+        throw new Error(SECRET);
+      },
+    });
+    const err = captureFromDictError(hostile);
+    expectSanitized(err);
+    expect(err.message).toBe('predicate data could not be safely inspected');
+  });
+
+  it('post-construction mutation of the input cannot reach the serialized form', () => {
+    const data = baseDict();
+    const predicate = Predicate.fromDict(data);
+    // The snapshot is detached at every level.
+    expect(predicate.condition).not.toBe(data.condition);
+    // Mutate every mutable layer of the caller's tree AFTER construction.
+    (data.condition as Record<string, unknown>).smuggled = SECRET;
+    (data.metadata as Record<string, unknown>).smuggled = SECRET;
+    data.subject = SECRET;
+    const serialized = JSON.stringify(predicate.toDict());
+    expect(serialized).not.toContain('SECRET_TERMS');
+    expect(serialized).not.toContain('4350');
+    // The canonical signing bytes still match the Python-generated fixture:
+    // the mutation reached neither the dict form nor the signed bytes.
+    expect(serializePredicateCanonical(predicate).toString('utf8')).toBe(
+      baseCase.expected_canonical,
+    );
+  });
+
+  it('plain JSON input round-trips exactly as before the snapshot hardening', () => {
+    const predicate = Predicate.fromDict(baseDict());
+    expect(predicate.toDict()).toEqual(baseCase.signed_predicate);
+  });
+});

@@ -84,6 +84,138 @@ export class AttestationError extends Error {
   }
 }
 
+// ---------------------------------------------------------------------------
+// L3 hardening (security audit 2026-06-09; port of Python PR #95): attestation
+// meta context is constrained at issuance so a party cannot stuff its own raw
+// deal terms into the exported record (SPEC §9.6.6 privacy invariant:
+// behavioral signals only, never deal terms).
+// ---------------------------------------------------------------------------
+
+/**
+ * The enumerated value_range bucket vocabulary, value-identical to Python
+ * `VALUE_RANGE_BUCKETS` and the shared `schemas/attestation.schema.json`.
+ *
+ * value_range is an ENUMERATED bucket vocabulary, not a free grammar. A regex
+ * that merely enforced "<low>-<high>_<CCY>" would still let an issuer encode
+ * the exact price (e.g. "4350-4351_USD"); fixing the bands to a 1-5-10
+ * logarithmic scale caps the channel at order-of-magnitude granularity, which
+ * is exactly what SPEC §9.6.6 promises ("logarithmic buckets ... rather than
+ * exact amounts"). The full value is "<bucket>_<CURRENCY>" where CURRENCY is
+ * an ISO 4217-shaped 3-letter uppercase code (shape-validated, not
+ * enumerated).
+ */
+export const VALUE_RANGE_BUCKETS = [
+  '0-100',
+  '100-500',
+  '500-1000',
+  '1000-5000',
+  '5000-10000',
+  '10000-50000',
+  '50000-100000',
+  '100000-500000',
+  '500000-1000000',
+  '1000000+',
+] as const;
+
+/** Escape a literal for embedding in a RegExp (Python `re.escape` analog). */
+function escapeRegExp(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Python anchors with `\Z` (not `$`) so a trailing newline cannot smuggle
+ * past the anchor: Python's `$` matches BEFORE a trailing `\n`, while `\Z`
+ * matches only at the absolute end of the string. JS has no `\Z`; a
+ * NON-multiline JS `$` already matches only at the absolute end (JS `$` has
+ * no trailing-newline allowance), so `$` without the `m` flag IS the `\Z`
+ * equivalent. Pinned by a trailing-newline rejection test.
+ */
+const VALUE_RANGE_PATTERN = new RegExp(
+  '^(?:' +
+    VALUE_RANGE_BUCKETS.map((b) => escapeRegExp(b)).join('|') +
+    ')_[A-Z]{3}$',
+);
+
+/**
+ * category is a coarse dotted taxonomy path (e.g. "electronics.cameras"). The
+ * character class excludes whitespace and punctuation so prose deal terms
+ * ("selling at $1200/unit") cannot ride in it; the length cap bounds the
+ * residual channel. Same `$`-as-`\Z` anchoring note as
+ * {@link VALUE_RANGE_PATTERN} (the character class also excludes `\n`, so the
+ * anchor is belt-and-suspenders here).
+ */
+export const MAX_CATEGORY_LENGTH = 64;
+const CATEGORY_PATTERN = /^[a-z0-9_-]+(?:\.[a-z0-9_-]+)*$/;
+
+/** references[] count cap (L3 + exhaustion lens), identical to Python. */
+export const MAX_REFERENCES = 32;
+
+/**
+ * Python `len(str)` semantics: Unicode CODE POINTS, not UTF-16 code units, so
+ * cap boundaries behave identically in both languages even for astral
+ * characters. Early-bails on the UTF-16 length (a code point is at most 2
+ * units, so `.length > 2 * cap` already proves more than `cap` code points)
+ * to keep pathological multi-megabyte inputs cheap to reject.
+ */
+function pyStrLen(s: string, capHint: number): number {
+  if (s.length > 2 * capHint) return s.length; // already > capHint code points
+  let n = 0;
+  for (const _cp of s) n += 1;
+  return n;
+}
+
+/**
+ * Validate value_range against the enumerated bucket vocabulary. Port of
+ * Python `_validate_value_range`.
+ *
+ * Fail-closed: anything outside "<bucket>_<CCY>" throws
+ * {@link AttestationError} with Python's exact ValueError text. The invalid
+ * input is deliberately NOT echoed back in the error (content-injection lens:
+ * attestation errors can land in logs and MCP responses), and nothing is ever
+ * silently coerced -- on bad input no attestation object is produced.
+ */
+function validateValueRange(valueRange: unknown): string {
+  if (
+    typeof valueRange !== 'string' ||
+    pyStrLen(valueRange, 32) > 32 ||
+    !VALUE_RANGE_PATTERN.test(valueRange)
+  ) {
+    const buckets = `(${VALUE_RANGE_BUCKETS.map((b) => `'${b}'`).join(', ')})`;
+    throw new AttestationError(
+      `value_range must be '<bucket>_<CURRENCY>' where bucket is one ` +
+        `of ${buckets} and CURRENCY is a 3-letter uppercase ` +
+        `code (e.g. '1000-5000_USD'); free-text values are rejected ` +
+        `per SPEC §9.6.6 (attestations carry bucketed context, never ` +
+        `raw deal terms)`,
+    );
+  }
+  return valueRange;
+}
+
+/**
+ * Validate category as a coarse dotted taxonomy path. Port of Python
+ * `_validate_category`.
+ *
+ * Fail-closed: prose or oversized input throws {@link AttestationError} with
+ * Python's exact ValueError text. The invalid input is deliberately NOT
+ * echoed back in the error, and nothing is silently coerced.
+ */
+function validateCategory(category: unknown): string {
+  if (
+    typeof category !== 'string' ||
+    pyStrLen(category, MAX_CATEGORY_LENGTH) > MAX_CATEGORY_LENGTH ||
+    !CATEGORY_PATTERN.test(category)
+  ) {
+    throw new AttestationError(
+      `category must be a dotted lowercase taxonomy path of at most ` +
+        `${MAX_CATEGORY_LENGTH} chars matching ` +
+        `'[a-z0-9_-]+(.[a-z0-9_-]+)*' (e.g. 'electronics.cameras'); ` +
+        `free-text values are rejected per SPEC §9.6.6`,
+    );
+  }
+  return category;
+}
+
 /**
  * Parse an ISO 8601 UTC timestamp string, mirroring Python `_parse_iso8601`.
  *
@@ -304,48 +436,114 @@ function pyTermsCount(value: unknown): number {
 
 /**
  * Normalize the `references` argument with Python-identical strictness,
- * mirroring `generate_attestation`'s `if references: [_validate_reference(ref, i)
- * for i, ref in enumerate(references)] else []`.
+ * mirroring `generate_attestation`'s post-L3 shape:
+ *
+ * ```python
+ * if references:
+ *     if len(references) > MAX_REFERENCES:
+ *         raise ValueError(...)
+ *     normalized_refs = [_validate_reference(ref, i) for i, ref in enumerate(references)]
+ * ```
  *
  * - A FALSY `references` (`null`/`undefined`, `[]`, `{}`, `""`, `0`, `false`) ->
  *   `[]` (Python's `if references:` is false). NOTE an empty object `{}` is
  *   falsy in BOTH languages, so it yields `[]` -- only a NON-empty non-array is
  *   rejected.
- * - A TRUTHY ARRAY -> each element validated via {@link validateReference}
- *   (which raises {@link ReferenceValidationError} with Python's exact text).
- * - A TRUTHY ITERABLE non-array that Python iterates as strings (a plain object
- *   iterates its KEYS; a string iterates its CHARS) -> the first element is a
- *   string, so {@link validateReference} raises
- *   `references[0] must be a dict, got str per SPEC §11.5.6`, exactly as Python.
- * - A TRUTHY NON-iterable (`number`, `boolean`) -> Python's `enumerate(...)`
- *   raises `TypeError: '<pytype>' object is not iterable`; we throw
- *   {@link AttestationError} with that exact text.
+ * - The COUNT CAP runs FIRST (L3 hardening, exhaustion lens), using Python
+ *   `len()` semantics: an array's element count, a plain object's KEY count, a
+ *   string's CODE-POINT count. A truthy non-sized value (`number`, `boolean`)
+ *   makes Python's `len(...)` raise `TypeError: object of type '<pytype>' has
+ *   no len()` BEFORE any iteration; we throw {@link AttestationError} with
+ *   that exact text. (Pre-L3, those inputs reached `enumerate(...)` and raised
+ *   `'<pytype>' object is not iterable`; the `len()` gate now fires first in
+ *   BOTH languages.)
+ * - Over the cap -> `references[] exceeds the maximum of 32 entries`,
+ *   fail-closed, regardless of element validity. This applies to a 33-KEY
+ *   plain object too (Python `len(dict)` is its key count), pinning that the
+ *   cap is checked before any per-element validation.
+ * - Within the cap, a TRUTHY ARRAY -> each element validated via
+ *   {@link validateReference} (which raises {@link ReferenceValidationError}
+ *   with Python's exact text, including the L3 length/whitespace/extensions
+ *   caps).
+ * - Within the cap, a TRUTHY ITERABLE non-array that Python iterates as
+ *   strings (a plain object iterates its KEYS; a string iterates its CHARS)
+ *   -> the first element is a string, so {@link validateReference} raises
+ *   `references[0] must be a dict, got str per SPEC §11.5.6`, exactly as
+ *   Python.
  *
- * The prior `references && references.length > 0 ? ... : []` silently treated a
- * truthy non-array (e.g. `{"a":1}`) as `[]`, over-accepting where Python raises.
+ * DEFENSIVE EXTRACTION (adversarial-review follow-up, same lens as
+ * validateReference's snapshot semantics): array elements are read via
+ * `Object.getOwnPropertyDescriptor(...).value`, never `[[Get]]`, so an index
+ * GETTER (or Proxy `get` trap) is never executed -- a throwing getter's
+ * attacker-controlled error text cannot escape verbatim through
+ * `generateAttestation`, and an accessor cannot answer differently between
+ * validation and later reads. Accessor-backed indices are REJECTED without
+ * being invoked; a hole surfaces as `undefined` and is rejected by
+ * {@link validateReference} as `NoneType` (like Python `None`). Any OTHER
+ * foreign throw during inspection (a Proxy trap, a revoked proxy) is
+ * converted to a sanitized {@link AttestationError} that includes neither the
+ * caught error text nor any input value.
  */
 function normalizeReferences(
   references: unknown,
 ): Array<Record<string, unknown>> {
-  if (!pyTruthy(references)) {
-    return [];
+  let elements: unknown[] = [];
+  try {
+    if (!pyTruthy(references)) {
+      return [];
+    }
+    // Python `len(references)` -- raises for non-sized values BEFORE
+    // enumerate.
+    let count: number;
+    let isArrayInput = false;
+    if (Array.isArray(references)) {
+      count = references.length;
+      isArrayInput = true;
+    } else if (typeof references === 'string') {
+      // Python len() and iteration are both by code points for a str.
+      elements = Array.from(references);
+      count = elements.length;
+    } else if (isPlainObject(references)) {
+      // Python len(dict) is the key count; iteration is by KEYS (strings).
+      elements = Object.keys(references);
+      count = elements.length;
+    } else {
+      // number, boolean, or any non-sized value: Python's len(...) raises.
+      throw new AttestationError(
+        `object of type '${pyTypeName(references)}' has no len()`,
+      );
+    }
+    if (count > MAX_REFERENCES) {
+      throw new AttestationError(
+        `references[] exceeds the maximum of ${MAX_REFERENCES} entries`,
+      );
+    }
+    if (isArrayInput) {
+      // Cap already checked, so this loop is bounded. Descriptor reads keep
+      // index getters from ever running (see DEFENSIVE EXTRACTION above).
+      const arr = references as unknown[];
+      elements = new Array<unknown>(count);
+      for (let i = 0; i < count; i += 1) {
+        const desc = Object.getOwnPropertyDescriptor(arr, i);
+        if (desc !== undefined && !('value' in desc)) {
+          throw new AttestationError(
+            'references[] must contain only plain enumerable data elements',
+          );
+        }
+        elements[i] = desc === undefined ? undefined : desc.value;
+      }
+    }
+  } catch (err) {
+    if (err instanceof AttestationError) {
+      throw err;
+    }
+    // A Proxy trap (or revoked proxy) threw during inspection. Never echo the
+    // caught error text: it is attacker-controlled content.
+    throw new AttestationError('references[] could not be safely inspected');
   }
-  // Determine the Python iteration order of "elements" the comprehension sees.
-  let elements: unknown[];
-  if (Array.isArray(references)) {
-    elements = references;
-  } else if (typeof references === 'string') {
-    // Python iterates a string by characters.
-    elements = Array.from(references);
-  } else if (isPlainObject(references)) {
-    // Python iterates a dict by KEYS (strings).
-    elements = Object.keys(references);
-  } else {
-    // number, boolean, or any non-iterable: Python's enumerate(...) raises.
-    throw new AttestationError(
-      `'${pyTypeName(references)}' object is not iterable`,
-    );
-  }
+  // OUTSIDE the sanitizing wrapper: per-element validation errors
+  // (ReferenceValidationError) carry Python-identical text and must propagate
+  // unchanged. They never echo input either.
   return elements.map((ref, i) => validateReference(ref, i));
 }
 
@@ -648,16 +846,21 @@ export function generateAttestation(
   // Compute the whole-transcript hash (distinct from the per-message hash).
   const transcriptHash = computeTranscriptHash(session.transcript);
 
-  // Build meta.
+  // Build meta. L3 hardening (security audit 2026-06-09): caller-supplied
+  // context is validated fail-closed at issuance so raw deal terms can never
+  // ride in an exported attestation (§9.6.6). Python gates with `if category:`
+  // / `if value_range:` (truthiness), so a falsy value ('' / 0 / [] / {}) is
+  // SKIPPED, not rejected -- pyTruthy mirrors that exactly (a bare JS truthy
+  // check would over-reject [] and over-accept nothing, but [] is Python-falsy).
   const meta: Record<string, unknown> = {
     extensions_used: [],
     mediator_invoked: false,
   };
-  if (category) {
-    meta.category = category;
+  if (pyTruthy(category)) {
+    meta.category = validateCategory(category);
   }
-  if (valueRange) {
-    meta.value_range = valueRange;
+  if (pyTruthy(valueRange)) {
+    meta.value_range = validateValueRange(valueRange);
   }
 
   // Validate + normalize references[] with Python-identical strictness. Python:
@@ -826,8 +1029,8 @@ function pyListRepr(keys: string[]): string {
 /**
  * Eight lowercase hex chars, matching Python `uuid.uuid4().hex[:8]`.
  *
- * Backed by the platform CSPRNG (`crypto.randomUUID`, a global in Node >= 20 —
- * the SDK's engine floor — and a Web standard) rather than `Math.random()`,
+ * Backed by the platform CSPRNG (`crypto.randomUUID`, a global in Node >= 20 --
+ * the SDK's engine floor -- and a Web standard) rather than `Math.random()`,
  * which is not cryptographically random and only 32-bit. The first group of a
  * v4 UUID is eight lowercase hex chars.
  */

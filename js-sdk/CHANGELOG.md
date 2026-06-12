@@ -1,5 +1,54 @@
 # Changelog
 
+## Unreleased
+
+L3 attestation-input hardening (port of Python PR #95; security audit
+2026-06-09 finding L3). `generateAttestation` previously emitted
+caller-supplied `category` / `value_range` free text verbatim and passed
+`references[]` strings through uncapped, letting an issuer stuff raw deal
+terms into a signed attestation (SPEC 9.6.6 privacy invariant: behavioral
+signals only, never deal terms). BREAKING for issuers that passed free-form
+values; validation is issuance-side only, so verification and reads of
+previously issued attestations are unchanged.
+
+- **value_range bucket vocabulary.** Enumerated 1-5-10 logarithmic buckets
+  (`0-100` ... `1000000+`) suffixed with a shape-validated 3-letter uppercase
+  currency code. Anchored so a trailing newline cannot slip past (Python `\Z`
+  == JS non-multiline `$`, pinned by test).
+- **category taxonomy grammar.** Dotted lowercase taxonomy path, max 64 chars.
+- **references[] caps.** Max 32 entries (count-capped via Python `len()`
+  semantics BEFORE iteration); `type`/`relationship` capped at 64 chars, `id`
+  at 256, `version`/`signed_at`/`signer_did` at 256; every string field bans
+  whitespace; `extensions` is depth/node pre-checked (max depth 8, max 256
+  nodes) BEFORE canonicalization, then capped at 2048 canonical-JSON UTF-8
+  BYTES (never UTF-16 length).
+- **Fail-closed, no-echo errors.** Invalid input throws (`AttestationError` /
+  `ReferenceValidationError`) with Python-byte-identical text; nothing is
+  coerced and the rejected value is never echoed back.
+- **Documented JS/Python strictness decisions.** Whitespace ban is the UNION
+  of Python `\s` and JS `\s` (adds U+001C..U+001F and U+0085 beyond JS;
+  U+FEFF beyond Python); length caps count code points (Python `len`);
+  exotic objects (`Date`/`Map`) inside `extensions` are rejected instead of
+  silently serializing as `{}`. All in the stricter, fail-closed direction.
+- **Snapshot semantics for reference validation** (adversarial-review fix).
+  `validateReference` (and `generateAttestation`'s `references[]` handling)
+  now reads input via property descriptors and validates a detached
+  plain-data SNAPSHOT, which is what callers get back. Getters are NEVER
+  executed (a throwing getter previously leaked its attacker-controlled
+  error text verbatim, violating the no-echo invariant); accessor
+  properties, non-enumerable own properties, symbol keys, array holes,
+  non-index array properties, and array subclasses are rejected outright
+  (none is representable in Python's plain-dict model, closing the TOCTOU
+  where an accessor-backed object validated as one value and serialized as
+  another); any foreign throw (Proxy traps, revoked proxies) is converted
+  to a sanitized error carrying neither the caught text nor any input. The
+  canonical byte cap is measured over the snapshot, i.e. over exactly the
+  bytes a later serialization emits. Frozen plain data remains accepted.
+
+Pinned by regenerated Python-generated parity fixtures (48 `l3_meta_cases`,
+count-cap strictness cases, 26 new shared-reference cases) plus a dedicated
+rejection-class suite (`tests/attestation-l3.test.ts`, 98 tests).
+
 ## 0.0.1-alpha.10 -- 2026-06-01
 
 Python-parity hardening: three fail-open fixes discovered during cross-language
