@@ -2272,7 +2272,7 @@ def tool_relay_create(
             "session": session.to_dict(),
             "message": (
                 f"Relay session '{session.relay_session_id}' created. "
-                + ("Responder can join with concordia_relay_join." if not responder_id else "Both parties connected.")
+                + "Responder can join with concordia_relay_join."
             ),
         }, indent=2, default=str)
     except ValueError as e:
@@ -2298,7 +2298,12 @@ def tool_relay_join(
         return _auth_error(agent_id, context="concordia_relay_join")
     session = _relay.join_session(relay_session_id, agent_id, endpoint)
     if session is None:
-        return json.dumps({"error": f"Cannot join relay session '{relay_session_id}'. Not found or not pending."})
+        return json.dumps({
+            "error": (
+                f"Cannot join relay session '{relay_session_id}'. "
+                "Not found, not pending, or reserved for a different responder."
+            ),
+        })
     return json.dumps({
         "joined": True,
         "session": session.to_dict(),

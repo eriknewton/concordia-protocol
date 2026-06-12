@@ -398,13 +398,20 @@ class TestRelayTranscriptAuth:
     def test_relay_transcript_rejects_invalid_auth(self):
         """HP-16: concordia_relay_transcript must reject unauthenticated callers."""
         reg_a = _parse(tool_register_agent(agent_id="agent_a"))
+        reg_b = _parse(tool_register_agent(agent_id="agent_b"))
         token_a = reg_a["auth_token"]
+        token_b = reg_b["auth_token"]
         # Create a relay session
         created = _parse(tool_relay_create(
             initiator_id="agent_a", auth_token=token_a, responder_id="agent_b",
         ))
         rid = created["session"]["relay_session_id"]
         # Send a message so there's a transcript
+        from concordia.mcp_server import tool_relay_join
+
+        tool_relay_join(
+            relay_session_id=rid, agent_id="agent_b", auth_token=token_b,
+        )
         tool_relay_send(
             relay_session_id=rid, from_agent="agent_a",
             auth_token=token_a, message_type="offer", payload={"x": 1},
@@ -427,6 +434,11 @@ class TestRelayTranscriptAuth:
             initiator_id="agent_a", auth_token=token_a, responder_id="agent_b",
         ))
         rid = created["session"]["relay_session_id"]
+        from concordia.mcp_server import tool_relay_join
+
+        tool_relay_join(
+            relay_session_id=rid, agent_id="agent_b", auth_token=token_b,
+        )
         tool_relay_send(
             relay_session_id=rid, from_agent="agent_a",
             auth_token=token_a, message_type="offer", payload={"x": 1},
