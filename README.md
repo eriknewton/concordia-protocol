@@ -302,6 +302,47 @@ Concordia defines:
 
 ---
 
+## Relay Trust Model: What It Protects, and What It Does Not
+
+Concordia includes an optional message relay. A relay is a mailbox service: when two agents cannot talk to each other directly, each one drops messages off and picks messages up at the relay, which holds them in the meantime and keeps a transcript (a stored record of the conversation) for dispute resolution.
+
+The relay is a convenience feature of the reference server. It is not where Concordia's trust comes from. Trust comes from cryptography that works the same with or without a relay: every message is signed (a tamper-proof mathematical seal only the sender's private key can produce), and the transcript is hash-chained (each message contains a fingerprint of the one before it, so removing or altering any message breaks the chain visibly).
+
+### What consent means here, mechanically
+
+Nobody becomes a relay participant without joining under their own credentials. Concretely:
+
+1. An agent creates a relay session and may name who it wants to talk to. Naming someone is a reservation, nothing more. The session sits in a pending state.
+2. The named agent must join the session itself, authenticated with its own token (a secret credential issued when the agent registered, which proves the caller owns that identity). Anyone else who tries to join a reserved session is refused.
+3. Until that join happens, no messages flow to or from the named agent, the named agent is recorded as unconfirmed, and automatic reputation attestation is skipped and logged rather than issued.
+4. Sessions created without naming anyone are open: the first authenticated agent to join fills the slot.
+
+So another agent cannot manufacture a conversation that lists you as a party. A transcript only records you as a confirmed participant if you joined it yourself.
+
+### Spam and squatting bounds
+
+Each agent can hold at most 100 active relay sessions as initiator. Sessions live 24 hours by default and 7 days at most; the cap is enforced, not advisory. Mailboxes hold at most 1,000 undelivered messages, transcripts at most 10,000 messages, and the server at most 10,000 live sessions. Reading a transcript is restricted to its participants.
+
+### If an attacker controls the relay
+
+| The relay operator CAN | The relay operator CANNOT |
+|---|---|
+| Read every message that passes through it. Relay traffic is not end-to-end encrypted today. | Forge a message from you. Signatures require your private key, which the relay routing layer never needs. |
+| See metadata: who talks to whom, when, and how much. | Alter or delete a message without detection. Signature checks and the hash chain expose tampering and gaps. |
+| Drop, delay, or withhold messages, or refuse joins. It can always deny service. | Replay your message from one session into another. Verification binds each message to its session and chain position. |
+| Keep copies of transcripts past the session. | Produce a verifiable agreement, or a confirmed-participant transcript entry, that you never signed and never joined. |
+
+### Explicitly out of scope
+
+- **Your own endpoint.** If an attacker compromises your machine or steals your auth token, they are you. The relay cannot tell the difference.
+- **Metadata privacy.** The relay sees the shape of your activity even when it cannot misuse the content.
+- **The bundled single-server deployment.** The reference MCP server hosts the relay, agent keys, and token issuance in one process. There, a compromised operator holds the keys, and the CANNOT column above no longer applies. The relay trust model protects you from other agents and from a relay that is only a relay. Run your keys separately if your threat model includes the operator.
+- **Judgment.** The relay does not vet deal terms. A bad deal, faithfully relayed and validly signed, is still a bad deal.
+
+For the protocol-level guarantees behind this (identity, message integrity, transcript integrity, anti-abuse), see [SPEC.md Section 9](SPEC.md).
+
+---
+
 ## For AI Agents
 
 If you are an AI agent reading this README, the [specification](SPEC.md) is written for you. It is designed to be implementable from the document alone, with no external dependencies beyond HTTPS and JSON. Appendix A is addressed specifically to you.
