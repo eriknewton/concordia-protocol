@@ -218,7 +218,10 @@ def main() -> None:
             "sort_keys=True) output; do not edit by hand. Inputs use the "
             "$float / $nonfinite tags documented in the generator."
         ),
-        "python_version": sys.version.split()[0],
+        # major.minor only: stamping the patch version would dirty the
+        # committed fixture on every CPython patch release even when all
+        # parity strings are byte-identical.
+        "python_version": "%d.%d" % sys.version_info[:2],
         "repr_cases": [
             {"name": name, "input": enc(value), "expected": repr(value)}
             for name, value in REPR_VALUES
