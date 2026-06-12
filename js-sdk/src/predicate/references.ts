@@ -262,66 +262,109 @@ function snapshotOwnData(
   return out;
 }
 
-/** Result of {@link snapshotExtensionsTree}. */
-interface ExtensionsSnapshot {
+/** Result of {@link snapshotPlainData} / {@link snapshotExtensionsTree}. */
+export interface PlainDataSnapshot {
   /** Fresh plain-data deep copy; shares no object identity with the input. */
   snapshot: Record<string, unknown>;
   /**
    * True when the walk saw a value canonical JSON cannot represent (a `Date`,
    * `Map`, class instance, function, bigint, `undefined`, array hole, or
-   * array subclass). The CALLER rejects those as not canonically serializable
-   * AFTER the structural bounds pass, matching Python's error ordering
-   * (Python's walk treats such values as opaque scalar leaves and its
-   * `canonical_json` then raises TypeError). JS's `stableStringify` would
-   * instead serialize a `Date` as `{}` -- a silent fail-open this flag closes.
+   * array subclass) under `nonJson: 'flag'`. The CALLER rejects those as not
+   * canonically serializable AFTER the structural bounds pass, matching
+   * Python's error ordering (Python's walk treats such values as opaque
+   * scalar leaves and its `canonical_json` then raises TypeError). JS's
+   * `stableStringify` would instead serialize a `Date` as `{}` -- a silent
+   * fail-open this flag closes. Always `false` under `nonJson: 'pass'`.
    */
   sawNonJson: boolean;
 }
 
+/** Options for {@link snapshotPlainData}. */
+export interface PlainDataSnapshotOptions {
+  /**
+   * Diagnostic prefix for every rejection message. Never joined with input
+   * content: the no-echo invariant requires error text to stay content-free.
+   */
+  label: string;
+  /**
+   * Constructor for rejection errors. Defaults to
+   * {@link ReferenceValidationError}; predicate-level callers pass their own
+   * error type so rejections surface in the vocabulary their callers already
+   * catch.
+   */
+  makeError?: (message: string) => Error;
+  /** Reject nesting deeper than this many levels (the root object is 1). */
+  maxDepth?: number;
+  /** Reject trees with more than this many nodes (the root counts as 1). */
+  maxNodes?: number;
+  /**
+   * Handling for a leaf value canonical JSON cannot represent (a `Date`,
+   * `Map`, class instance, function, bigint, `undefined`, array hole, or
+   * array subclass):
+   * - `'flag'` (default): snapshot `undefined` in its place and set
+   *   `sawNonJson`, so the caller can reject AFTER the structural bounds pass
+   *   (Python error-ordering parity; see {@link PlainDataSnapshot}).
+   * - `'pass'`: carry the value through UNCHANGED, by reference. Used by
+   *   `Predicate.fromDict`, whose plain-data semantics must not change: such
+   *   a value was previously accepted by the `{ ...data }` spread and is
+   *   rejected (or not) downstream exactly as before. Exotic objects are
+   *   LEAVES -- their internals are never walked, so they cannot smuggle
+   *   accessor-backed properties into the snapshot, and they never survive
+   *   canonical serialization anyway.
+   */
+  nonJson?: 'flag' | 'pass';
+}
+
 /**
- * Single-pass defensive deep copy of `extensions` (adversarial-review fix;
- * supersedes the separate `checkExtensionsStructure` pre-walk, which read
- * values with `Object.values()` and therefore EXECUTED enumerable getters).
+ * Single-pass defensive deep copy of a plain-data tree (adversarial-review
+ * fix; supersedes the separate `checkExtensionsStructure` pre-walk, which
+ * read values with `Object.values()` and therefore EXECUTED enumerable
+ * getters). Shared by the reference `extensions` validator (via
+ * {@link snapshotExtensionsTree}) and by `Predicate.fromDict`, whose
+ * `{ ...data }` spread had the same accessor-execution / throw-echo exposure.
  *
  * In one descriptor-based walk this:
- * - enforces the structural bounds, rejecting nesting deeper than
- *   {@link MAX_REFERENCE_EXTENSIONS_DEPTH} and more than
- *   {@link MAX_REFERENCE_EXTENSIONS_NODES} nodes, bailing out as soon as
- *   either bound is crossed (the byte cap alone would only fire after a full
- *   canonical serialization -- DoS lens, Python `_check_extensions_structure`
- *   parity);
+ * - enforces the optional structural bounds (`maxDepth`, `maxNodes`),
+ *   bailing out as soon as either bound is crossed (a byte cap alone would
+ *   only fire after a full canonical serialization -- DoS lens, Python
+ *   `_check_extensions_structure` parity);
  * - rejects accessor properties, non-enumerable own properties, symbol keys,
  *   array holes, non-index array properties, and array subclasses WITHOUT
- *   invoking any of them (see {@link snapshotOwnData} for the rationale);
+ *   invoking any of them (see {@link snapshotOwnData} for the rationale;
+ *   holes and array subclasses are non-JSON LEAVES handled per `nonJson`
+ *   rather than shape rejections);
  * - copies every accepted value into a fresh plain-data tree, so the caller
  *   can canonicalize, byte-cap, and RETURN the snapshot with the guarantee
- *   that no later read can observe content that was not validated (TOCTOU
+ *   that no later read can observe content that was not validated, and that
+ *   no later MUTATION of the caller's tree can reach the snapshot (TOCTOU
  *   closure).
  *
  * Invalid input is never echoed back. Foreign throws are converted to a
  * sanitized error by the CALLER's wrapper, not here.
  */
-function snapshotExtensionsTree(
-  extensions: Record<string, unknown>,
-  index: number,
-): ExtensionsSnapshot {
-  const label = `references[${index}].extensions`;
-  let nodes = 1; // the extensions object itself
+export function snapshotPlainData(
+  source: Record<string, unknown>,
+  options: PlainDataSnapshotOptions,
+): PlainDataSnapshot {
+  const { label, maxDepth, maxNodes } = options;
+  const makeError =
+    options.makeError ?? ((m: string) => new ReferenceValidationError(m));
+  const passNonJson = options.nonJson === 'pass';
+  let nodes = 1; // the root object itself
   let sawNonJson = false;
 
+  const shapeRejection = (): Error =>
+    makeError(`${label} must contain only plain enumerable data properties`);
+
   const guardChild = (childDepth: number): void => {
-    if (childDepth > MAX_REFERENCE_EXTENSIONS_DEPTH) {
-      throw new ReferenceValidationError(
-        `references[${index}].extensions exceeds the maximum ` +
-          `nesting depth of ${MAX_REFERENCE_EXTENSIONS_DEPTH}`,
+    if (maxDepth !== undefined && childDepth > maxDepth) {
+      throw makeError(
+        `${label} exceeds the maximum nesting depth of ${maxDepth}`,
       );
     }
     nodes += 1;
-    if (nodes > MAX_REFERENCE_EXTENSIONS_NODES) {
-      throw new ReferenceValidationError(
-        `references[${index}].extensions exceeds the maximum ` +
-          `of ${MAX_REFERENCE_EXTENSIONS_NODES} nodes`,
-      );
+    if (maxNodes !== undefined && nodes > maxNodes) {
+      throw makeError(`${label} exceeds the maximum of ${maxNodes} nodes`);
     }
   };
 
@@ -338,7 +381,8 @@ function snapshotExtensionsTree(
     }
     if (Array.isArray(value)) {
       if (Object.getPrototypeOf(value) !== Array.prototype) {
-        // Array subclass: not a plain JSON array. Leaf; rejected after walk.
+        // Array subclass: not a plain JSON array. Non-JSON leaf.
+        if (passNonJson) return value;
         sawNonJson = true;
         return undefined;
       }
@@ -348,8 +392,10 @@ function snapshotExtensionsTree(
       return snapshotObject(value, depth);
     }
     // Date, Map, class instance, function, bigint, undefined, symbol: not
-    // representable in canonical JSON (nor in a Python dict). Counted as a
-    // leaf and rejected AFTER the structural walk (see ExtensionsSnapshot).
+    // representable in canonical JSON (nor in a Python dict). A non-JSON
+    // leaf: passed through under 'pass', otherwise counted and rejected
+    // AFTER the structural walk (see PlainDataSnapshot).
+    if (passNonJson) return value;
     sawNonJson = true;
     return undefined;
   };
@@ -362,11 +408,11 @@ function snapshotExtensionsTree(
     const childDepth = depth + 1;
     for (const key of Reflect.ownKeys(obj)) {
       if (typeof key !== 'string') {
-        throw shapeError(label);
+        throw shapeRejection();
       }
       const desc = Object.getOwnPropertyDescriptor(obj, key);
       if (desc === undefined || !desc.enumerable || !('value' in desc)) {
-        throw shapeError(label);
+        throw shapeRejection();
       }
       guardChild(childDepth);
       out[key] = snapshotValue(desc.value, childDepth);
@@ -388,7 +434,7 @@ function snapshotExtensionsTree(
     // naive consumer could still read it. Reject.
     for (const key of Reflect.ownKeys(arr)) {
       if (typeof key !== 'string') {
-        throw shapeError(label);
+        throw shapeRejection();
       }
       if (key === 'length') {
         continue;
@@ -397,27 +443,49 @@ function snapshotExtensionsTree(
       // String(n) === key pins the CANONICAL index spelling: '01' or '-0'
       // round-trips differently and is a string property, not an index.
       if (!Number.isInteger(n) || n < 0 || n >= length || String(n) !== key) {
-        throw shapeError(label);
+        throw shapeRejection();
       }
     }
     const out = new Array<unknown>(length);
     for (let i = 0; i < length; i += 1) {
       const desc = Object.getOwnPropertyDescriptor(arr, i);
       if (desc === undefined) {
-        // Hole: nothing canonical JSON can represent. Leaf; rejected after.
-        sawNonJson = true;
+        // Hole: nothing canonical JSON can represent. Non-JSON leaf; the
+        // snapshot slot stays undefined either way (there is no value to
+        // pass through), but only 'flag' mode marks it for rejection.
+        if (!passNonJson) {
+          sawNonJson = true;
+        }
         out[i] = undefined;
         continue;
       }
       if (!desc.enumerable || !('value' in desc)) {
-        throw shapeError(label);
+        throw shapeRejection();
       }
       out[i] = snapshotValue(desc.value, childDepth);
     }
     return out;
   };
 
-  return { snapshot: snapshotObject(extensions, 1), sawNonJson };
+  return { snapshot: snapshotObject(source, 1), sawNonJson };
+}
+
+/**
+ * Defensive deep copy of a reference's `extensions` tree: the
+ * {@link snapshotPlainData} walk under the L3 structural bounds
+ * ({@link MAX_REFERENCE_EXTENSIONS_DEPTH} / {@link MAX_REFERENCE_EXTENSIONS_NODES})
+ * with the reference-scoped error label. Kept as a named wrapper so
+ * `validateReference` reads at the same altitude as before.
+ */
+function snapshotExtensionsTree(
+  extensions: Record<string, unknown>,
+  index: number,
+): PlainDataSnapshot {
+  return snapshotPlainData(extensions, {
+    label: `references[${index}].extensions`,
+    maxDepth: MAX_REFERENCE_EXTENSIONS_DEPTH,
+    maxNodes: MAX_REFERENCE_EXTENSIONS_NODES,
+  });
 }
 
 /**
@@ -525,7 +593,7 @@ export function validateReference(
     // tree is still caller-owned (and possibly accessor-backed or a Proxy):
     // deep-copy it under the same sanitized wrapper before anything reads it.
     const extensions = snap.extensions;
-    let walked: ExtensionsSnapshot;
+    let walked: PlainDataSnapshot;
     try {
       if (!isPlainObject(extensions)) {
         throw new ReferenceValidationError(

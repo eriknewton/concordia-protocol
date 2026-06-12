@@ -35,7 +35,7 @@ import { canonicalizePredicate } from '../canonical/canonicalize.js';
 import { sign, verify, KeyPair } from '../crypto/signing.js';
 import { toBase64Url, fromBase64Url } from '../crypto/base64url.js';
 import { cpythonIsoDateTimeToEpochMs } from '../internal/iso-datetime.js';
-import { validateReference } from './references.js';
+import { validateReference, snapshotPlainData } from './references.js';
 import { validateConditionForProfile } from './profiles.js';
 
 /** Predicate lifecycle status values. Mirrors Python `PredicateStatus`. */
@@ -191,9 +191,49 @@ export class Predicate {
    * Parse predicate data, accepting `predicate_type` as a read-only alias for
    * `type`. Each entry in `references` is validated/normalized through
    * {@link validateReference}. Mirrors Python `Predicate.from_dict`.
+   *
+   * SNAPSHOT SEMANTICS (adversarial-review residual fix, 2026-06-12): parsing
+   * runs against a defensive plain-data deep SNAPSHOT of `data`, taken with
+   * the same descriptor-walk machinery `validateReference` uses
+   * ({@link snapshotPlainData}). The previous `{ ...data }` spread performed
+   * [[Get]] on every own enumerable property, so a hostile getter EXECUTED
+   * during parse and its thrown text (attacker-controlled; probe:
+   * `throw Error("SECRET_TERMS price=4350")`) escaped to the caller verbatim,
+   * violating the no-echo invariant references.ts enforces. The descriptor
+   * walk never performs [[Get]]: accessor properties, symbol keys, and
+   * non-enumerable own properties are rejected WITHOUT being invoked; any
+   * foreign throw (a Proxy trap, a revoked proxy, a hostile prototype) is
+   * converted to a content-free {@link PredicateValidationError} that echoes
+   * neither the caught error text nor any input value; and because every
+   * nested plain object/array is deep-copied, mutating the caller's tree
+   * after construction can never reach this predicate's serialized form
+   * (TOCTOU closure). Plain-data semantics are unchanged: non-JSON leaves
+   * (e.g. `undefined` optional fields) pass through exactly as the spread
+   * carried them, and validation/normalization below is untouched.
    */
   static fromDict(data: Record<string, unknown>): Predicate {
-    const normalized: Record<string, unknown> = { ...data };
+    let normalized: Record<string, unknown>;
+    try {
+      if (!isPlainObject(data)) {
+        throw new PredicateValidationError(
+          'predicate data must be a plain object',
+        );
+      }
+      normalized = snapshotPlainData(data, {
+        label: 'predicate data',
+        makeError: (m: string) => new PredicateValidationError(m),
+        nonJson: 'pass',
+      }).snapshot;
+    } catch (err) {
+      if (err instanceof PredicateValidationError) {
+        throw err;
+      }
+      // Foreign throw while inspecting hostile input. Never echo the caught
+      // error text: it is attacker-controlled content.
+      throw new PredicateValidationError(
+        'predicate data could not be safely inspected',
+      );
+    }
     if (!('type' in normalized) && 'predicate_type' in normalized) {
       normalized.type = normalized.predicate_type;
       delete normalized.predicate_type;
