@@ -12,40 +12,46 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 256,
-      "description": "Identifier of the referenced artifact. URN-shaped where possible (see SPEC §11.5.7). Free-form non-empty strings of at most 256 chars are accepted for backward-compatibility."
+      "pattern": "^\\S+$",
+      "description": "Identifier of the referenced artifact. URN-shaped where possible (see SPEC §11.5.7). Free-form non-empty whitespace-free strings of at most 256 chars are accepted for backward-compatibility; whitespace is rejected so prose deal terms cannot ride in identifier fields (SPEC §9.6.6)."
     },
 
     "type": {
       "type": "string",
       "minLength": 1,
       "maxLength": 64,
-      "description": "Kind of artifact referenced. Canonical emit vocabulary is receipt, chain_session, predicate, mandate. Read-side validators accept non-empty strings and MUST preserve unknown values as opaque strings per SPEC §11.5.5 and §11.5.8 forward-compat."
+      "pattern": "^\\S+$",
+      "description": "Kind of artifact referenced. Canonical emit vocabulary is receipt, chain_session, predicate, mandate. Read-side validators accept non-empty whitespace-free strings and MUST preserve unknown values as opaque strings per SPEC §11.5.5 and §11.5.8 forward-compat."
     },
 
     "relationship": {
       "type": "string",
       "minLength": 1,
       "maxLength": 64,
-      "description": "Semantic relationship per SPEC §11.5.5. Canonical emit vocabulary is supersedes, extends, fulfills, references. Read-side validators accept non-empty strings and MUST preserve unknown values as opaque strings per SPEC §11.5.8 forward-compat."
+      "pattern": "^\\S+$",
+      "description": "Semantic relationship per SPEC §11.5.5. Canonical emit vocabulary is supersedes, extends, fulfills, references. Read-side validators accept non-empty whitespace-free strings and MUST preserve unknown values as opaque strings per SPEC §11.5.8 forward-compat."
     },
 
     "version": {
       "type": "string",
       "maxLength": 256,
-      "description": "Optional. Version of the referenced artifact when known."
+      "pattern": "^\\S+$",
+      "description": "Optional. Version of the referenced artifact when known. Whitespace-free (semver-shaped identifiers never contain whitespace)."
     },
 
     "signed_at": {
       "type": "string",
       "format": "date-time",
       "maxLength": 256,
-      "description": "Optional. Timestamp of the referenced artifact's signature when known."
+      "pattern": "^\\S+$",
+      "description": "Optional. Timestamp of the referenced artifact's signature when known. Whitespace-free (ISO 8601 timestamps never contain whitespace)."
     },
 
     "signer_did": {
       "type": "string",
       "maxLength": 256,
-      "description": "Optional. DID of the signer of the referenced artifact when known."
+      "pattern": "^\\S+$",
+      "description": "Optional. DID of the signer of the referenced artifact when known. Whitespace-free (DIDs never contain whitespace)."
     },
 
     "extensions": {

@@ -33,7 +33,7 @@ def test_fulfillment_requires_fulfills_reference() -> None:
 
     errors = validate_fulfillment_attestation(artifact)
 
-    assert any("does not contain items matching" in error for error in errors)
+    assert any("violates 'contains' constraint" in error for error in errors)
 
 
 def test_fulfillment_requires_fulfills_target_to_match_agreement_id() -> None:
@@ -52,7 +52,7 @@ def test_mediated_fulfillment_requires_mediator_invoked_true() -> None:
 
     errors = validate_fulfillment_attestation(artifact)
 
-    assert any("True was expected" in error for error in errors)
+    assert any("violates 'const' constraint: true" in error for error in errors)
 
 
 def test_fulfillment_happy_path_passes() -> None:

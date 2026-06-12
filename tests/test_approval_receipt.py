@@ -422,7 +422,7 @@ def test_schema_validator_requires_approves_reference():
     errors = validate_approval_receipt(receipt)
 
     assert errors
-    assert any("does not contain items matching the given schema" in error for error in errors)
+    assert any("violates 'contains' constraint" in error for error in errors)
 
 
 def test_mcp_tool_returns_typed_decision():

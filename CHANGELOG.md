@@ -20,10 +20,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   path of at most 64 chars. Invalid values raise `ValueError` and are never
   coerced or echoed back. `references[]` entries are now capped at 32 per
   attestation with length caps on every string field and a 2048
-  canonical-JSON-byte cap on each `extensions` map. BREAKING for issuers
-  that previously passed free-form values; verification and scoring of
-  previously issued attestations is unchanged (validation is
-  issuance-side only).
+  canonical-JSON-byte cap on each `extensions` map. Reference string
+  fields (`type`, `id`, `relationship`, `version`, `signed_at`,
+  `signer_did`) additionally reject any whitespace, both at issuance and
+  in all three schema files, so identifier-shaped fields cannot carry
+  prose deal terms. `extensions` maps are structurally pre-checked
+  (nesting depth at most 8, at most 256 nodes) with an early-bailing
+  walk before canonicalization, so an oversized object is never fully
+  serialized just to be rejected by the byte cap. Schema validation
+  errors from `validate_message`, `validate_attestation`,
+  `validate_fulfillment_attestation`, and `validate_approval_receipt`
+  now report the JSON path and the violated constraint (validator
+  keyword plus schema-side limit) instead of jsonschema's default
+  message, which embedded the rejected instance value and could echo
+  raw deal text into logs and MCP responses.
+
+  BREAKING for issuers that previously passed free-form values, and for
+  schema validation of stored artifacts: `validate_attestation` /
+  `is_valid_attestation` now reject previously issued attestations whose
+  `meta.category` or `meta.value_range` carry legacy free-form values.
+  Signature verification of previously issued attestations is unchanged
+  (party signatures cover each party's own behavior record, not `meta`),
+  and the reputation read/ingest path (`AttestationStore.ingest`) is
+  also unchanged: it verifies signatures and structure but does not
+  schema-validate `meta`, so stored legacy attestations continue to
+  ingest and score.
 
 ### Attribution
 - Credited the three-mode `validity_temporal` / `ValidityWindow` shape

@@ -203,7 +203,8 @@
 
     "references": {
       "type": "array",
-      "description": "Generalized references to other signed artifacts (receipts or CMPC primitives) that this attestation relates to. Added in v0.4.0 (WP2). Forward-compatible with CMPC v0.5 primitive types.",
+      "maxItems": 32,
+      "description": "Generalized references to other signed artifacts (receipts or CMPC primitives) that this attestation relates to. Capped at 32 entries (SPEC §11.5.8). Added in v0.4.0 (WP2). Forward-compatible with CMPC v0.5 primitive types.",
       "items": { "$ref": "#/$defs/reference" }
     },
 
@@ -298,30 +299,42 @@
         "id": {
           "type": "string",
           "minLength": 1,
-          "description": "Identifier of the referenced artifact. URN-shaped where possible (SPEC §11.5.7)."
+          "maxLength": 256,
+          "pattern": "^\\S+$",
+          "description": "Identifier of the referenced artifact. URN-shaped where possible (SPEC §11.5.7). Max 256 chars, whitespace-free so prose deal terms cannot ride in identifier fields (SPEC §9.6.6)."
         },
         "type": {
           "type": "string",
           "minLength": 1,
-          "description": "Kind of artifact referenced. Canonical emit vocabulary is receipt, chain_session, predicate, mandate. Read-side validators accept non-empty strings and preserve unknown values per SPEC §11.5.5 and §11.5.8."
+          "maxLength": 64,
+          "pattern": "^\\S+$",
+          "description": "Kind of artifact referenced. Canonical emit vocabulary is receipt, chain_session, predicate, mandate. Read-side validators accept non-empty whitespace-free strings of at most 64 chars and preserve unknown values per SPEC §11.5.5 and §11.5.8."
         },
         "relationship": {
           "type": "string",
           "minLength": 1,
-          "description": "Semantic relationship per SPEC §11.5.5. Canonical emit vocabulary is supersedes, extends, fulfills, references. Read-side validators accept non-empty strings and preserve unknown values per SPEC §11.5.8."
+          "maxLength": 64,
+          "pattern": "^\\S+$",
+          "description": "Semantic relationship per SPEC §11.5.5. Canonical emit vocabulary is supersedes, extends, fulfills, references. Read-side validators accept non-empty whitespace-free strings of at most 64 chars and preserve unknown values per SPEC §11.5.8."
         },
         "version": {
           "type": "string",
-          "description": "Optional. Version of the referenced artifact when known."
+          "maxLength": 256,
+          "pattern": "^\\S+$",
+          "description": "Optional. Version of the referenced artifact when known. Whitespace-free, max 256 chars."
         },
         "signed_at": {
           "type": "string",
           "format": "date-time",
-          "description": "Optional. Timestamp of the referenced artifact's signature when known."
+          "maxLength": 256,
+          "pattern": "^\\S+$",
+          "description": "Optional. Timestamp of the referenced artifact's signature when known. Whitespace-free, max 256 chars."
         },
         "signer_did": {
           "type": "string",
-          "description": "Optional. DID of the signer of the referenced artifact when known."
+          "maxLength": 256,
+          "pattern": "^\\S+$",
+          "description": "Optional. DID of the signer of the referenced artifact when known. Whitespace-free, max 256 chars."
         },
         "extensions": {
           "type": "object",
@@ -343,7 +356,7 @@
             "tl_url": { "type": "string" }
           },
           "additionalProperties": false,
-          "description": "Optional. Forward-compatibility map for v0.x extension keys. Implementations SHOULD preserve unknown keys verbatim across roundtrips."
+          "description": "Optional. Forward-compatibility map for v0.x extension keys, capped at 2048 canonical-JSON bytes at issuance. Implementations SHOULD preserve unknown keys verbatim across roundtrips."
         }
       },
       "additionalProperties": false

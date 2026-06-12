@@ -995,7 +995,9 @@ Attestations are designed to reveal behavioral patterns without exposing deal sp
 - **Excluded:** Specific term values, actual prices, item descriptions, agent reasoning text, principal identities
 - The `value_range` field uses logarithmic buckets rather than exact amounts. The bucket vocabulary is normative and enumerated: `0-100`, `100-500`, `500-1000`, `1000-5000`, `5000-10000`, `10000-50000`, `50000-100000`, `100000-500000`, `500000-1000000`, `1000000+`, each suffixed with `_` and a 3-letter uppercase currency code (e.g., "100-500_USD", "1000-5000_USD"). Issuers MUST reject any other value rather than coerce it; an enumerated vocabulary (not a free range grammar) is required so an exact price cannot be encoded as a degenerate range such as "4350-4351_USD"
 - Category is included at a coarse level as a dotted lowercase taxonomy path of at most 64 chars (e.g., "electronics.cameras"); issuers MUST reject free text. Agents MAY omit it for additional privacy
-- Reference strings are length-capped at issuance (see 11.5.6) so the references surface cannot carry free-text deal terms either
+- Reference strings are length-capped and whitespace-free at issuance (see 11.5.6) so the references surface cannot carry free-text deal terms either
+
+**Known residual channel (bounded, accepted):** the `category` taxonomy grammar constrains shape, not meaning, so an issuer can still encode its own terms inside conforming segments (for example, `price_4350_usd` is a valid taxonomy path). This is a self-doxxing channel, not a counterparty privacy leak: each party signs only its own behavior record, so an issuer can leak only its OWN deal terms, never the counterparty's, and a counterparty's signature never endorses the issuer's `meta` content. Digit bans or segment allowlists are deliberately not applied because they would falsely reject legitimate taxonomies (e.g., "gpu.h100", "iso.9001"). A registered-taxonomy scheme, where conforming categories must come from a published vocabulary, is a possible future mitigation and is out of scope for this version.
 
 This means a reputation service can answer "this agent typically negotiates in good faith, makes reasonable concessions, and honors agreements" without knowing *what* the agent was buying or selling or *for how much*.
 
@@ -1281,35 +1283,41 @@ The attestation-level reference object normative JSON Schema fragment:
       "type": "string",
       "minLength": 1,
       "maxLength": 256,
-      "description": "Identifier of the referenced artifact. URN-shaped where possible (see 11.5.7)."
+      "pattern": "^\\S+$",
+      "description": "Identifier of the referenced artifact. URN-shaped where possible (see 11.5.7). Whitespace-free."
     },
     "type": {
       "type": "string",
       "minLength": 1,
       "maxLength": 64,
-      "description": "Kind of artifact referenced. Canonical emit vocabulary is receipt, chain_session, predicate, mandate. Read-side validators accept non-empty strings and preserve unknown values per 11.5.5 and 11.5.8."
+      "pattern": "^\\S+$",
+      "description": "Kind of artifact referenced. Canonical emit vocabulary is receipt, chain_session, predicate, mandate. Read-side validators accept non-empty whitespace-free strings and preserve unknown values per 11.5.5 and 11.5.8."
     },
     "relationship": {
       "type": "string",
       "minLength": 1,
       "maxLength": 64,
-      "description": "Semantic relationship per 11.5.5. Canonical emit vocabulary is supersedes, extends, fulfills, references, revokes. Read-side validators accept non-empty strings and preserve unknown values per 11.5.8."
+      "pattern": "^\\S+$",
+      "description": "Semantic relationship per 11.5.5. Canonical emit vocabulary is supersedes, extends, fulfills, references, revokes. Read-side validators accept non-empty whitespace-free strings and preserve unknown values per 11.5.8."
     },
     "version": {
       "type": "string",
       "maxLength": 256,
-      "description": "Optional. Version of the referenced artifact when known."
+      "pattern": "^\\S+$",
+      "description": "Optional. Version of the referenced artifact when known. Whitespace-free."
     },
     "signed_at": {
       "type": "string",
       "format": "date-time",
       "maxLength": 256,
-      "description": "Optional. Timestamp of the referenced artifact's signature when known."
+      "pattern": "^\\S+$",
+      "description": "Optional. Timestamp of the referenced artifact's signature when known. Whitespace-free."
     },
     "signer_did": {
       "type": "string",
       "maxLength": 256,
-      "description": "Optional. DID of the signer of the referenced artifact when known."
+      "pattern": "^\\S+$",
+      "description": "Optional. DID of the signer of the referenced artifact when known. Whitespace-free."
     },
     "extensions": {
       "type": "object",
@@ -1344,7 +1352,7 @@ For cross-protocol linkages (e.g., to A2A messages, AP2 mandates, x402 payment p
 | ERC-8004 | `urn:erc8004:reputation:<entry_id>` |
 | Foxbook | `urn:foxbook:leaf:<tl_host>:<leaf_index>` |
 
-Non-URN identifiers are accepted by the schema (the `id` field is a free-form non-empty string) but receive no protocol-level resolution support. Implementations MAY emit non-URN identifiers for backward-compatibility with existing artifact id formats; URN-shaping is RECOMMENDED for new emissions.
+Non-URN identifiers are accepted by the schema (the `id` field is a free-form non-empty whitespace-free string) but receive no protocol-level resolution support. Implementations MAY emit non-URN identifiers for backward-compatibility with existing artifact id formats; URN-shaping is RECOMMENDED for new emissions.
 
 ##### Worked example: Foxbook transparency-log typed reference
 
@@ -1380,7 +1388,7 @@ This reference validates against the §11.5.6 schema fragment: `id`, `type`, and
 A v0.5-conforming implementation:
 
 - MUST validate `references[]` per the schema fragment in 11.5.6 at attestation generation and at attestation verification.
-- MUST enforce the 11.5.6 string length caps and an issuance-side cap of 32 entries per `references[]` array and 2048 canonical-JSON bytes per `extensions` map, failing closed (reject, never truncate or coerce). The caps keep the opaque-string forward-compat clause from carrying free-text deal terms or unbounded payloads.
+- MUST enforce the 11.5.6 string length caps and whitespace bans (any whitespace character in `id`, `type`, `relationship`, `version`, `signed_at`, or `signer_did` is rejected; legitimate identifiers such as UUIDs, DIDs, URNs, ISO timestamps, and semver never contain whitespace) and an issuance-side cap of 32 entries per `references[]` array and 2048 canonical-JSON bytes per `extensions` map, failing closed (reject, never truncate or coerce). Implementations SHOULD structurally pre-check `extensions` (bounded nesting depth and node count) before canonical serialization so oversized objects are rejected without a full walk. The caps keep the opaque-string forward-compat clause from carrying free-text deal terms or unbounded payloads.
 - MUST emit clear error text for malformed entries that maps to the specific 11.5.x section that defines the violated invariant.
 - MUST preserve unknown relationship values as opaque strings rather than rejecting them, per 11.5.5 forward-compat.
 - MUST preserve unknown reference type values as opaque strings rather than rejecting them, per 11.5.3 forward-compat.
