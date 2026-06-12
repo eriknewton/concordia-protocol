@@ -6,17 +6,32 @@
  * `attestation.schema.json`, an ApprovalReceipt against
  * `approval_receipt.schema.json`, and a standalone FulfillmentAttestation
  * against `fulfillment_attestation.schema.json` — each returning a list of
- * `"{json_path}: {message}"` strings (empty when valid), byte-identical to the
- * Python reference for the supported schema surface.
+ * error strings (empty when valid), byte-identical to the Python reference for
+ * the supported schema surface.
+ *
+ * ERROR-ECHO HARDENING (Python #95 finding 5). jsonschema's default
+ * `error.message` embeds the rejected INSTANCE value for pattern / maxLength /
+ * enum / type / oneOf failures, so building errors from it can echo raw
+ * rejected deal text back through MCP responses and logs (parse-boundary
+ * posture: never echo attacker-controlled input). Python's
+ * `_format_validation_error` therefore reports the JSON path plus the violated
+ * CONSTRAINT — the validator keyword and its schema-side value rendered with
+ * `json.dumps(..., sort_keys=True)`, truncated at 120 characters — and keeps
+ * the upstream message ONLY for `required` (it names schema-side property
+ * names, never instance content). {@link formatValidationError} reproduces
+ * that formatting byte-for-byte (via {@link pyJsonDumps}); the truncation only
+ * ever drops schema-side text, never instance content, and a render failure
+ * falls back to Python's content-free `<unrenderable>` (fail closed, no echo).
  *
  * PARITY APPROACH. Python drives `jsonschema.Draft202012Validator(...,
- * format_checker=...).iter_errors(...)` and joins `f"{error.json_path}:
- * {error.message}"`. The mandate ENGINE (PR 6) reproduced jsonschema's
+ * format_checker=...).iter_errors(...)` and formats each error with
+ * `_format_validation_error`. The mandate ENGINE (PR 6) reproduced jsonschema's
  * SINGLE best-match message by translating ajv errors, but that does NOT
  * reproduce the FULL ORDERED error list this surface returns. So this layer uses
  * {@link iterErrors} — a hand-port of CPython jsonschema's `iter_errors`
  * traversal (in `src/internal/jsonschema.ts`) that yields the same ordered list
- * with the same `json_path` shape and the same CPython-`repr()`-rendered message
+ * with the same `json_path` shape, the same `validator` / `validator_value`
+ * stamping, and (for `required`) the same CPython-`repr()`-rendered message
  * text (sharing `pyRepr` with the engine via `src/internal/py-repr.ts`).
  *
  * FORMAT CHECKING. Python registers a CUSTOM `FormatChecker` asserting
@@ -40,13 +55,19 @@ import {
   iterErrors,
   assertSupportedSchema,
   type FormatChecker,
+  type SchemaError,
 } from '../internal/jsonschema.js';
 import { isCpythonIsoDateTime } from '../internal/iso-datetime.js';
+import {
+  pyJsonDumps,
+  type FloatConstraintMap,
+} from '../internal/py-json.js';
 import {
   MESSAGE_SCHEMA,
   ATTESTATION_SCHEMA,
   APPROVAL_RECEIPT_SCHEMA,
   FULFILLMENT_ATTESTATION_SCHEMA,
+  FLOAT_CONSTRAINT_PATHS,
 } from './schemas.js';
 
 // Fail fast at module load if a bundled schema introduces a keyword the internal
@@ -55,6 +76,108 @@ assertSupportedSchema(MESSAGE_SCHEMA, 'message');
 assertSupportedSchema(ATTESTATION_SCHEMA, 'attestation');
 assertSupportedSchema(APPROVAL_RECEIPT_SCHEMA, 'approval_receipt');
 assertSupportedSchema(FULFILLMENT_ATTESTATION_SCHEMA, 'fulfillment_attestation');
+
+// ---------------------------------------------------------------------------
+// Constraint rendering (mirrors `_format_validation_error` post-#95)
+// ---------------------------------------------------------------------------
+
+/**
+ * Python `_MAX_CONSTRAINT_RENDER_LENGTH`: schema-side constraint values
+ * (patterns, enum lists, subschemas) can be long; truncate the rendering so
+ * error strings stay log-friendly. The truncation only ever drops schema-side
+ * text, never instance content. Python counts CODE POINTS (`len(str)`); the
+ * rendering is pure ASCII (`ensure_ascii=True`), so `.length` / `.slice`
+ * count the same units here.
+ */
+const MAX_CONSTRAINT_RENDER_LENGTH = 120;
+
+/**
+ * Float-sourced schema constraints, resolved from the generated
+ * `FLOAT_CONSTRAINT_PATHS` registry into object-identity form (schema node ->
+ * float-valued key names) so {@link pyJsonDumps} can render Python's "0.0"
+ * for constraints whose JSON source is a float literal. Built once at module
+ * load; an unresolvable registry path is a generation bug and fails loudly
+ * rather than silently degrading the rendering.
+ */
+const FLOAT_CONSTRAINTS: FloatConstraintMap = new WeakMap();
+{
+  const roots: Record<string, unknown> = {
+    MESSAGE_SCHEMA,
+    ATTESTATION_SCHEMA,
+    APPROVAL_RECEIPT_SCHEMA,
+    FULFILLMENT_ATTESTATION_SCHEMA,
+  };
+  for (const [name, paths] of Object.entries(FLOAT_CONSTRAINT_PATHS)) {
+    const root = roots[name];
+    if (root === undefined) {
+      throw new Error(
+        `schema-validator: FLOAT_CONSTRAINT_PATHS names unknown schema '${name}'`,
+      );
+    }
+    for (const path of paths) {
+      let node: unknown = root;
+      for (const key of path.slice(0, -1)) {
+        node = (node as Record<string, unknown> | undefined)?.[key];
+      }
+      const leaf = path[path.length - 1];
+      if (
+        leaf === undefined ||
+        node === null ||
+        typeof node !== 'object' ||
+        typeof (node as Record<string, unknown>)[leaf] !== 'number'
+      ) {
+        throw new Error(
+          `schema-validator: FLOAT_CONSTRAINT_PATHS path ${JSON.stringify(path)} ` +
+            `does not resolve to a number in ${name}`,
+        );
+      }
+      let keys = FLOAT_CONSTRAINTS.get(node as object);
+      if (keys === undefined) {
+        keys = new Set<string>();
+        FLOAT_CONSTRAINTS.set(node as object, keys);
+      }
+      keys.add(leaf);
+    }
+  }
+}
+
+/**
+ * Format one schema error WITHOUT echoing the instance, byte-identical to
+ * Python `_format_validation_error`:
+ *
+ * - `required` keeps the upstream message (`'x' is a required property`): it
+ *   names only schema-side property names, and the missing property name is
+ *   the whole diagnostic.
+ * - Every other keyword renders
+ *   `{json_path}: violates '{keyword}' constraint: {json.dumps(validator_value,
+ *   sort_keys=True)}`, truncated at {@link MAX_CONSTRAINT_RENDER_LENGTH} with
+ *   a `...` suffix. CPython's `validator=None` (boolean `false` schema)
+ *   renders as the generic `'schema'` keyword.
+ * - A rendering failure produces Python's content-free `<unrenderable>`:
+ *   fail closed, never fall back to the instance-echoing message.
+ */
+function formatValidationError(error: SchemaError): string {
+  if (error.keyword === 'required') {
+    return `${error.jsonPath}: ${error.message}`;
+  }
+  const keyword = error.keyword ?? 'schema';
+  let rendered: string;
+  try {
+    const rootIsFloat =
+      typeof error.keyword === 'string' &&
+      error.schema !== null &&
+      typeof error.schema === 'object'
+        ? (FLOAT_CONSTRAINTS.get(error.schema)?.has(error.keyword) ?? false)
+        : false;
+    rendered = pyJsonDumps(error.validatorValue, FLOAT_CONSTRAINTS, rootIsFloat);
+  } catch {
+    rendered = '<unrenderable>';
+  }
+  if (rendered.length > MAX_CONSTRAINT_RENDER_LENGTH) {
+    rendered = `${rendered.slice(0, MAX_CONSTRAINT_RENDER_LENGTH)}...`;
+  }
+  return `${error.jsonPath}: violates '${keyword}' constraint: ${rendered}`;
+}
 
 const FREE_TEXT_TERM_ERROR =
   'free-text field must not contain obvious raw deal terms';
@@ -121,9 +244,9 @@ function isUuid(value: string): boolean {
 // Public validators (mirror schema_validator.py)
 // ---------------------------------------------------------------------------
 
-/** Join the internal errors into Python's `"{json_path}: {message}"` strings. */
+/** Format the internal errors with the no-echo constraint rendering. */
 function format(errors: ReturnType<typeof iterErrors>): string[] {
-  return errors.map((e) => `${e.jsonPath}: ${e.message}`);
+  return errors.map(formatValidationError);
 }
 
 /**
