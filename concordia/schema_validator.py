@@ -69,6 +69,38 @@ def _load_schema(name: str) -> dict[str, Any]:
         return cast(dict[str, Any], json.load(f))
 
 
+# Schema-side constraint values (patterns, enum lists, subschemas) can be
+# long; truncate the rendering so error strings stay log-friendly. The
+# truncation only ever drops schema-side text, never instance content.
+_MAX_CONSTRAINT_RENDER_LENGTH = 120
+
+
+def _format_validation_error(error: jsonschema.ValidationError) -> str:
+    """Format a jsonschema ValidationError without echoing the instance.
+
+    jsonschema's default ``error.message`` embeds the rejected instance
+    value for pattern / maxLength / enum / type / oneOf failures, so
+    building errors from it can echo raw rejected deal text back through
+    MCP responses and logs (parse-boundary posture: never echo
+    attacker-controlled input). Instead, report the JSON path plus the
+    violated constraint: the validator keyword and its schema-side value.
+
+    ``required`` failures keep the upstream message because it names only
+    schema-side property names, never instance content, and the missing
+    property name is the whole diagnostic.
+    """
+    if error.validator == "required":
+        return f"{error.json_path}: {error.message}"
+    keyword = error.validator if error.validator is not None else "schema"
+    try:
+        rendered = json.dumps(error.validator_value, sort_keys=True)
+    except (TypeError, ValueError):
+        rendered = "<unrenderable>"
+    if len(rendered) > _MAX_CONSTRAINT_RENDER_LENGTH:
+        rendered = rendered[:_MAX_CONSTRAINT_RENDER_LENGTH] + "..."
+    return f"{error.json_path}: violates '{keyword}' constraint: {rendered}"
+
+
 # ---------------------------------------------------------------------------
 # Message envelope schema (derived from §4.1)
 # ---------------------------------------------------------------------------
@@ -144,7 +176,7 @@ def validate_message(message: dict[str, Any]) -> list[str]:
         format_checker=_FORMAT_CHECKER,
     )
     for error in validator.iter_errors(message):
-        errors.append(f"{error.json_path}: {error.message}")
+        errors.append(_format_validation_error(error))
     return errors
 
 
@@ -160,7 +192,7 @@ def validate_attestation(attestation: dict[str, Any]) -> list[str]:
         format_checker=_FORMAT_CHECKER,
     )
     for error in validator.iter_errors(attestation):
-        errors.append(f"{error.json_path}: {error.message}")
+        errors.append(_format_validation_error(error))
     errors.extend(_validate_attestation_free_text(attestation))
     if not errors:
         _warn_on_noncanonical_references(attestation)
@@ -178,7 +210,7 @@ def validate_fulfillment_attestation(attestation: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     validator = jsonschema.Draft202012Validator(schema)
     for error in validator.iter_errors(attestation):
-        errors.append(f"{error.json_path}: {error.message}")
+        errors.append(_format_validation_error(error))
 
     agreement_id = attestation.get("agreement_attestation_id")
     references = attestation.get("references", [])
@@ -209,7 +241,7 @@ def validate_approval_receipt(receipt: dict[str, Any]) -> list[str]:
         format_checker=_FORMAT_CHECKER,
     )
     for error in validator.iter_errors(receipt):
-        errors.append(f"{error.json_path}: {error.message}")
+        errors.append(_format_validation_error(error))
     return errors
 
 

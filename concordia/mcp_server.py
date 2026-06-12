@@ -1047,8 +1047,8 @@ def tool_session_public_view(
 def tool_session_receipt(
     session_id: Annotated[str, "The concluded session to generate a receipt for"],
     auth_token: Annotated[str, "Session-scoped auth token (initiator or responder token from concordia_open_session)"],
-    category: Annotated[str | None, "Optional transaction category (e.g. 'electronics.cameras')"] = None,
-    value_range: Annotated[str | None, "Optional value bucket (e.g. '1000-5000_USD')"] = None,
+    category: Annotated[str | None, "Optional transaction category: dotted lowercase taxonomy path, max 64 chars (e.g. 'electronics.cameras'); free text is rejected"] = None,
+    value_range: Annotated[str | None, "Optional value bucket from the fixed logarithmic vocabulary '<bucket>_<CCY>' (e.g. '1000-5000_USD'); free text is rejected"] = None,
 ) -> str:
     """Generate a cryptographic receipt for a concluded session."""
     if _auth.get_any_session_role(session_id, auth_token) is None:

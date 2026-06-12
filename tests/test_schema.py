@@ -167,7 +167,9 @@ class TestAttestationValidation:
         att = self._valid_attestation()
         att["price"] = {"value": 1900, "currency": "USD"}
         errors = validate_attestation(att)
-        assert "$: Additional properties are not allowed ('price' was unexpected)" in errors
+        assert "$: violates 'additionalProperties' constraint: false" in errors
+        # Non-echo: neither the attacker-chosen key nor its value appears.
+        assert not any("price" in e or "1900" in e for e in errors)
 
     def test_rejects_outcome_agreed_terms(self):
         att = self._valid_attestation()
@@ -177,9 +179,9 @@ class TestAttestationValidation:
         }
         errors = validate_attestation(att)
         assert (
-            "$.outcome: Additional properties are not allowed "
-            "('agreed_terms' was unexpected)"
+            "$.outcome: violates 'additionalProperties' constraint: false"
         ) in errors
+        assert not any("agreed_terms" in e or "1900" in e for e in errors)
 
     def test_rejects_per_party_raw_price(self):
         att = self._valid_attestation()
@@ -187,9 +189,12 @@ class TestAttestationValidation:
         att["parties"][0]["behavior"]["accepted_price"] = 1900
         errors = validate_attestation(att)
         assert (
-            "$.parties[0].behavior: Additional properties are not allowed "
-            "('accepted_price', 'price_floor' were unexpected)"
+            "$.parties[0].behavior: violates 'additionalProperties' "
+            "constraint: false"
         ) in errors
+        assert not any(
+            "price_floor" in e or "1750" in e or "1900" in e for e in errors
+        )
 
     def test_rejects_reference_extensions_term_payload(self):
         att = self._valid_attestation()
@@ -206,9 +211,10 @@ class TestAttestationValidation:
         ]
         errors = validate_attestation(att)
         assert (
-            "$.references[0].extensions: Additional properties are not allowed "
-            "('price', 'quantity' were unexpected)"
+            "$.references[0].extensions: violates 'additionalProperties' "
+            "constraint: false"
         ) in errors
+        assert not any("1900" in e or "quantity" in e for e in errors)
 
     def test_accepts_legitimate_behavioral_summary(self):
         att = self._valid_attestation()
@@ -225,10 +231,9 @@ class TestAttestationValidation:
         att = self._valid_attestation()
         att["summary"] = "x" * 1025
         errors = validate_attestation(att)
-        assert any(
-            error.startswith("$.summary:") and "is too long" in error
-            for error in errors
-        )
+        assert "$.summary: violates 'maxLength' constraint: 1024" in errors
+        # Non-echo: the oversized instance string never rides in the error.
+        assert not any("xxxx" in error for error in errors)
 
     def test_rejects_obvious_raw_terms_in_attestation_free_text_without_echo(self):
         att = self._valid_attestation()

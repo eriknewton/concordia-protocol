@@ -150,7 +150,7 @@ class TestReferencesValidation:
     def test_empty_id_rejected(self, agreed_session):
         session, seller, buyer = agreed_session
         refs = [{"type": "receipt", "id": "", "relationship": "references"}]
-        with pytest.raises(ValueError, match="non-empty string"):
+        with pytest.raises(ValueError, match="non-empty whitespace-free string"):
             generate_attestation(
                 session, _key_pairs(seller, buyer), references=refs
             )

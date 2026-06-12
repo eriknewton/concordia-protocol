@@ -7,6 +7,7 @@ of what happened.
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
@@ -41,6 +42,109 @@ WEAK_RELATIONSHIP = "references"
 # the trust-evidence-format #1734 envelope shape. Unification across the two
 # is v0.5+ work. Build plan specifies these three modes explicitly.
 VALIDITY_TEMPORAL_MODES = ("absolute", "relative", "window")
+
+# L3 hardening (security audit 2026-06-09): attestation meta context is
+# constrained at issuance so a party cannot stuff its own raw deal terms
+# into the exported record (SPEC §9.6.6 privacy invariant: behavioral
+# signals only, never deal terms).
+#
+# value_range is an ENUMERATED bucket vocabulary, not a free grammar. A
+# regex that merely enforced "<low>-<high>_<CCY>" would still let an
+# issuer encode the exact price (e.g. "4350-4351_USD"); fixing the bands
+# to a 1-5-10 logarithmic scale caps the channel at order-of-magnitude
+# granularity, which is exactly what SPEC §9.6.6 promises ("logarithmic
+# buckets ... rather than exact amounts"). The full value is
+# "<bucket>_<CURRENCY>" where CURRENCY is an ISO 4217-shaped 3-letter
+# uppercase code (shape-validated, not enumerated).
+VALUE_RANGE_BUCKETS = (
+    "0-100",
+    "100-500",
+    "500-1000",
+    "1000-5000",
+    "5000-10000",
+    "10000-50000",
+    "50000-100000",
+    "100000-500000",
+    "500000-1000000",
+    "1000000+",
+)
+# \Z (not $) so a trailing newline cannot smuggle past the anchor.
+_VALUE_RANGE_PATTERN = re.compile(
+    r"^(?:" + "|".join(re.escape(b) for b in VALUE_RANGE_BUCKETS) + r")_[A-Z]{3}\Z"
+)
+
+# category is a coarse dotted taxonomy path (e.g. "electronics.cameras").
+# The character class excludes whitespace and punctuation so prose deal
+# terms ("selling at $1200/unit") cannot ride in it; the length cap bounds
+# the residual channel.
+MAX_CATEGORY_LENGTH = 64
+_CATEGORY_PATTERN = re.compile(r"^[a-z0-9_-]+(?:\.[a-z0-9_-]+)*\Z")
+
+# references[] caps (L3 + exhaustion lens): bound the count, each string
+# field, and the serialized size of the opaque extensions escape hatch.
+MAX_REFERENCES = 32
+MAX_REFERENCE_TYPE_LENGTH = 64
+MAX_REFERENCE_RELATIONSHIP_LENGTH = 64
+MAX_REFERENCE_ID_LENGTH = 256
+MAX_REFERENCE_OPTIONAL_STRING_LENGTH = 256
+MAX_REFERENCE_EXTENSIONS_BYTES = 2048
+
+# Structural pre-check bounds for extensions (review fix, finding 4): the
+# canonical-byte cap alone is enforced only AFTER full canonical
+# serialization, so a huge or deeply nested extensions object would be
+# fully walked before rejection (DoS lens). These bounds are checked with
+# a cheap early-bailing walk BEFORE canonicalization.
+MAX_REFERENCE_EXTENSIONS_DEPTH = 8
+MAX_REFERENCE_EXTENSIONS_NODES = 256
+
+# Reference string fields are identifier-shaped (UUIDs, DIDs, URNs, ISO
+# timestamps, semver); legitimate values never contain whitespace. Banning
+# any \s closes the residual prose channel ("price=4350 USD qty=1") that
+# length caps alone leave open (review fix, finding 1).
+_WHITESPACE_RE = re.compile(r"\s")
+
+
+def _validate_value_range(value_range: Any) -> str:
+    """Validate value_range against the enumerated bucket vocabulary.
+
+    Fail-closed: anything outside "<bucket>_<CCY>" raises ValueError.
+    The invalid input is deliberately NOT echoed back in the error
+    (content-injection lens: attestation errors can land in logs and
+    MCP responses).
+    """
+    if (
+        not isinstance(value_range, str)
+        or len(value_range) > 32
+        or not _VALUE_RANGE_PATTERN.match(value_range)
+    ):
+        raise ValueError(
+            "value_range must be '<bucket>_<CURRENCY>' where bucket is one "
+            f"of {VALUE_RANGE_BUCKETS} and CURRENCY is a 3-letter uppercase "
+            "code (e.g. '1000-5000_USD'); free-text values are rejected "
+            "per SPEC §9.6.6 (attestations carry bucketed context, never "
+            "raw deal terms)"
+        )
+    return value_range
+
+
+def _validate_category(category: Any) -> str:
+    """Validate category as a coarse dotted taxonomy path.
+
+    Fail-closed: prose or oversized input raises ValueError. The invalid
+    input is deliberately NOT echoed back in the error.
+    """
+    if (
+        not isinstance(category, str)
+        or len(category) > MAX_CATEGORY_LENGTH
+        or not _CATEGORY_PATTERN.match(category)
+    ):
+        raise ValueError(
+            "category must be a dotted lowercase taxonomy path of at most "
+            f"{MAX_CATEGORY_LENGTH} chars matching "
+            "'[a-z0-9_-]+(.[a-z0-9_-]+)*' (e.g. 'electronics.cameras'); "
+            "free-text values are rejected per SPEC §9.6.6"
+        )
+    return category
 
 
 def _parse_iso8601(ts: str, field_name: str) -> datetime:
@@ -157,6 +261,43 @@ def is_valid_now(
     return False
 
 
+def _check_extensions_structure(extensions: dict[str, Any], index: int) -> None:
+    """Cheap fail-closed structural pre-check before canonicalization.
+
+    Rejects extensions whose raw nesting depth exceeds
+    MAX_REFERENCE_EXTENSIONS_DEPTH or whose total node count exceeds
+    MAX_REFERENCE_EXTENSIONS_NODES, bailing out of the walk as soon as
+    either bound is crossed. This runs BEFORE canonical serialization so
+    a pathological object is never fully walked just to be rejected by
+    the byte cap afterwards (review fix, finding 4). Invalid input is
+    never echoed back.
+    """
+    nodes = 1  # the extensions object itself
+    stack: list[tuple[Any, int]] = [(extensions, 1)]
+    while stack:
+        value, depth = stack.pop()
+        if isinstance(value, dict):
+            children: Any = value.values()
+        elif isinstance(value, (list, tuple)):
+            children = value
+        else:
+            continue
+        child_depth = depth + 1
+        for child in children:
+            if child_depth > MAX_REFERENCE_EXTENSIONS_DEPTH:
+                raise ValueError(
+                    f"references[{index}].extensions exceeds the maximum "
+                    f"nesting depth of {MAX_REFERENCE_EXTENSIONS_DEPTH}"
+                )
+            nodes += 1
+            if nodes > MAX_REFERENCE_EXTENSIONS_NODES:
+                raise ValueError(
+                    f"references[{index}].extensions exceeds the maximum "
+                    f"of {MAX_REFERENCE_EXTENSIONS_NODES} nodes"
+                )
+            stack.append((child, child_depth))
+
+
 def _validate_reference(ref: Any, index: int) -> dict[str, Any]:
     """Validate a single attestation-level reference per SPEC §11.5.
 
@@ -167,8 +308,18 @@ def _validate_reference(ref: Any, index: int) -> dict[str, Any]:
     accept non-empty strings per §11.5.5 and §11.5.8; the canonical
     vocabulary remains the emit-side default. Optional keys (``version``,
     ``signed_at``, ``signer_did``, ``extensions``) are passed through
-    unchanged when present so callers can roundtrip extension data per
-    §11.5.6.
+    when present so callers can roundtrip extension data per §11.5.6.
+
+    L3 hardening (security audit 2026-06-09): every string field is
+    length-capped and whitespace-banned (legitimate identifiers such as
+    UUIDs, DIDs, URNs, ISO timestamps, and semver never contain
+    whitespace, so any \\s indicates prose), and ``extensions`` is
+    structure-capped (nesting depth, node count) before being size-capped
+    (canonical JSON bytes), so the §11.5.8 opaque-string forward-compat
+    clause cannot be used to smuggle free-text deal terms or unbounded
+    payloads into a signed attestation. Fail-closed: oversize or
+    wrongly-typed values raise ValueError; invalid values are never
+    echoed back.
     """
     if not isinstance(ref, dict):
         raise ValueError(
@@ -184,29 +335,79 @@ def _validate_reference(ref: Any, index: int) -> dict[str, Any]:
     ref_type = ref["type"]
     ref_id = ref["id"]
     relationship = ref["relationship"]
-    if not isinstance(ref_type, str) or not ref_type:
+    if (
+        not isinstance(ref_type, str)
+        or not ref_type
+        or len(ref_type) > MAX_REFERENCE_TYPE_LENGTH
+        or _WHITESPACE_RE.search(ref_type)
+    ):
         raise ValueError(
-            f"references[{index}].type must be a non-empty string "
+            f"references[{index}].type must be a non-empty whitespace-free "
+            f"string of at most {MAX_REFERENCE_TYPE_LENGTH} chars "
             f"per SPEC §11.5.6"
         )
-    if not isinstance(ref_id, str) or not ref_id:
+    if (
+        not isinstance(ref_id, str)
+        or not ref_id
+        or len(ref_id) > MAX_REFERENCE_ID_LENGTH
+        or _WHITESPACE_RE.search(ref_id)
+    ):
         raise ValueError(
-            f"references[{index}].id must be a non-empty string "
+            f"references[{index}].id must be a non-empty whitespace-free "
+            f"string of at most {MAX_REFERENCE_ID_LENGTH} chars "
             f"per SPEC §11.5.6"
         )
-    if not isinstance(relationship, str) or not relationship:
+    if (
+        not isinstance(relationship, str)
+        or not relationship
+        or len(relationship) > MAX_REFERENCE_RELATIONSHIP_LENGTH
+        or _WHITESPACE_RE.search(relationship)
+    ):
         raise ValueError(
-            f"references[{index}].relationship must be a non-empty string "
-            f"per SPEC §11.5.6"
+            f"references[{index}].relationship must be a non-empty "
+            f"whitespace-free string of at most "
+            f"{MAX_REFERENCE_RELATIONSHIP_LENGTH} chars per SPEC §11.5.6"
         )
     normalized: dict[str, Any] = {
         "type": ref_type,
         "id": ref_id,
         "relationship": relationship,
     }
-    for optional_key in ("version", "signed_at", "signer_did", "extensions"):
+    for optional_key in ("version", "signed_at", "signer_did"):
         if optional_key in ref:
-            normalized[optional_key] = ref[optional_key]
+            value = ref[optional_key]
+            if (
+                not isinstance(value, str)
+                or not value
+                or len(value) > MAX_REFERENCE_OPTIONAL_STRING_LENGTH
+                or _WHITESPACE_RE.search(value)
+            ):
+                raise ValueError(
+                    f"references[{index}].{optional_key} must be a "
+                    f"non-empty whitespace-free string of at most "
+                    f"{MAX_REFERENCE_OPTIONAL_STRING_LENGTH} chars"
+                )
+            normalized[optional_key] = value
+    if "extensions" in ref:
+        extensions = ref["extensions"]
+        if not isinstance(extensions, dict):
+            raise ValueError(
+                f"references[{index}].extensions must be an object"
+            )
+        _check_extensions_structure(extensions, index)
+        try:
+            extensions_bytes = len(canonical_json(extensions))
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"references[{index}].extensions is not canonically "
+                f"serializable"
+            )
+        if extensions_bytes > MAX_REFERENCE_EXTENSIONS_BYTES:
+            raise ValueError(
+                f"references[{index}].extensions exceeds "
+                f"{MAX_REFERENCE_EXTENSIONS_BYTES} canonical-JSON bytes"
+            )
+        normalized["extensions"] = extensions
     return normalized
 
 
@@ -235,8 +436,13 @@ def generate_attestation(
     Args:
         session: The concluded Session.
         key_pairs: Mapping of agent_id → KeyPair for signing.
-        category: Optional transaction category (e.g. 'electronics.cameras').
-        value_range: Optional value bucket (e.g. '1000-5000_USD').
+        category: Optional transaction category (e.g.
+            'electronics.cameras'). Must be a dotted lowercase taxonomy
+            path of at most 64 chars; free text is rejected (§9.6.6).
+        value_range: Optional value bucket (e.g. '1000-5000_USD'). Must
+            be '<bucket>_<CURRENCY>' where bucket is one of the
+            VALUE_RANGE_BUCKETS logarithmic bands and CURRENCY is a
+            3-letter uppercase code; free text is rejected (§9.6.6).
         resolution_mechanism: How agreement was reached.
         references: Optional list of attestation-level references per
             SPEC §11.5. Each entry is a dict with required keys
@@ -309,13 +515,21 @@ def generate_attestation(
         "extensions_used": [],
         "mediator_invoked": False,
     }
+    # L3 hardening (security audit 2026-06-09): caller-supplied context is
+    # validated fail-closed at issuance so raw deal terms can never ride
+    # in an exported attestation (§9.6.6).
     if category:
-        meta["category"] = category
+        meta["category"] = _validate_category(category)
     if value_range:
-        meta["value_range"] = value_range
+        meta["value_range"] = _validate_value_range(value_range)
 
     # WP2 v0.4.0: validate and normalize references[] if supplied
     if references:
+        if len(references) > MAX_REFERENCES:
+            raise ValueError(
+                f"references[] exceeds the maximum of {MAX_REFERENCES} "
+                f"entries"
+            )
         normalized_refs = [
             _validate_reference(ref, i) for i, ref in enumerate(references)
         ]
