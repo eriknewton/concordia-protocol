@@ -158,12 +158,15 @@
       "properties": {
         "category": {
           "type": "string",
-          "description": "Dot-separated category (e.g., 'electronics.cameras'). MAY be omitted for privacy."
+          "maxLength": 64,
+          "pattern": "^[a-z0-9_-]+(\\.[a-z0-9_-]+)*$",
+          "description": "Dot-separated lowercase taxonomy path (e.g., 'electronics.cameras'), max 64 chars. Free text is rejected so raw deal terms cannot ride in it (SPEC 9.6.6). MAY be omitted for privacy."
         },
         "value_range": {
           "type": "string",
-          "pattern": "^\\d+-\\d+_[A-Z]{3}$",
-          "description": "Logarithmic value bucket (e.g., '1000-5000_USD'). Preserves privacy while enabling size-weighted scoring."
+          "maxLength": 32,
+          "pattern": "^(0-100|100-500|500-1000|1000-5000|5000-10000|10000-50000|50000-100000|100000-500000|500000-1000000|1000000\\+)_[A-Z]{3}$",
+          "description": "Logarithmic value bucket from the fixed enumerated vocabulary, suffixed with a 3-letter uppercase currency code (e.g., '1000-5000_USD'). The bands are enumerated rather than free-form so an exact price cannot be encoded as a degenerate range (SPEC 9.6.6). Preserves privacy while enabling size-weighted scoring."
         },
         "extensions_used": {
           "type": "array",

@@ -7,6 +7,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Security
+
+- **Attestation context is validated fail-closed at issuance (audit
+  2026-06-09 finding L3).** `generate_attestation` previously persisted and
+  exported caller-supplied `value_range` and `category` free text verbatim,
+  letting a party stuff its own raw deal terms into a signed attestation in
+  violation of the SPEC 9.6.6 privacy invariant (behavioral signals only,
+  never deal terms). `value_range` is now restricted to an enumerated
+  logarithmic bucket vocabulary plus a 3-letter uppercase currency code
+  (e.g. `1000-5000_USD`); `category` must be a dotted lowercase taxonomy
+  path of at most 64 chars. Invalid values raise `ValueError` and are never
+  coerced or echoed back. `references[]` entries are now capped at 32 per
+  attestation with length caps on every string field and a 2048
+  canonical-JSON-byte cap on each `extensions` map. BREAKING for issuers
+  that previously passed free-form values; verification and scoring of
+  previously issued attestations is unchanged (validation is
+  issuance-side only).
+
 ### Attribution
 - Credited the three-mode `validity_temporal` / `ValidityWindow` shape
   (sequence / windowed / state_bound) to its originators: the framing was

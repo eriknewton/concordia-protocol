@@ -767,8 +767,8 @@ Every completed negotiation session (regardless of outcome) MUST produce an atte
 
 | Field | Description |
 |-------|-------------|
-| `category` | Transaction category (for domain-specific reputation) |
-| `value_range` | Bucketed transaction value (preserves privacy while enabling size-weighted scoring) |
+| `category` | Transaction category (for domain-specific reputation). Dotted lowercase taxonomy path, max 64 chars; free text is rejected at issuance (see 9.6.6) |
+| `value_range` | Bucketed transaction value (preserves privacy while enabling size-weighted scoring). Drawn from the fixed bucket vocabulary in 9.6.6; free text is rejected at issuance |
 | `extensions_used` | Protocol extensions active in this session |
 | `mediator_invoked` | Whether a mediator was used |
 
@@ -993,8 +993,9 @@ Attestations are designed to reveal behavioral patterns without exposing deal sp
 
 - **Included:** Outcome, timing, round count, concession patterns, behavioral signals
 - **Excluded:** Specific term values, actual prices, item descriptions, agent reasoning text, principal identities
-- The `value_range` field uses logarithmic buckets (e.g., "100-500_USD", "1000-5000_USD") rather than exact amounts
-- Category is included at a coarse level; agents MAY omit it for additional privacy
+- The `value_range` field uses logarithmic buckets rather than exact amounts. The bucket vocabulary is normative and enumerated: `0-100`, `100-500`, `500-1000`, `1000-5000`, `5000-10000`, `10000-50000`, `50000-100000`, `100000-500000`, `500000-1000000`, `1000000+`, each suffixed with `_` and a 3-letter uppercase currency code (e.g., "100-500_USD", "1000-5000_USD"). Issuers MUST reject any other value rather than coerce it; an enumerated vocabulary (not a free range grammar) is required so an exact price cannot be encoded as a degenerate range such as "4350-4351_USD"
+- Category is included at a coarse level as a dotted lowercase taxonomy path of at most 64 chars (e.g., "electronics.cameras"); issuers MUST reject free text. Agents MAY omit it for additional privacy
+- Reference strings are length-capped at issuance (see 11.5.6) so the references surface cannot carry free-text deal terms either
 
 This means a reputation service can answer "this agent typically negotiates in good faith, makes reasonable concessions, and honors agreements" without knowing *what* the agent was buying or selling or *for how much*.
 
@@ -1279,34 +1280,40 @@ The attestation-level reference object normative JSON Schema fragment:
     "id": {
       "type": "string",
       "minLength": 1,
+      "maxLength": 256,
       "description": "Identifier of the referenced artifact. URN-shaped where possible (see 11.5.7)."
     },
     "type": {
       "type": "string",
       "minLength": 1,
+      "maxLength": 64,
       "description": "Kind of artifact referenced. Canonical emit vocabulary is receipt, chain_session, predicate, mandate. Read-side validators accept non-empty strings and preserve unknown values per 11.5.5 and 11.5.8."
     },
     "relationship": {
       "type": "string",
       "minLength": 1,
+      "maxLength": 64,
       "description": "Semantic relationship per 11.5.5. Canonical emit vocabulary is supersedes, extends, fulfills, references, revokes. Read-side validators accept non-empty strings and preserve unknown values per 11.5.8."
     },
     "version": {
       "type": "string",
+      "maxLength": 256,
       "description": "Optional. Version of the referenced artifact when known."
     },
     "signed_at": {
       "type": "string",
       "format": "date-time",
+      "maxLength": 256,
       "description": "Optional. Timestamp of the referenced artifact's signature when known."
     },
     "signer_did": {
       "type": "string",
+      "maxLength": 256,
       "description": "Optional. DID of the signer of the referenced artifact when known."
     },
     "extensions": {
       "type": "object",
-      "description": "Optional. Forward-compatibility map for v0.x extension keys. Implementations SHOULD preserve unknown keys verbatim across roundtrips."
+      "description": "Optional. Forward-compatibility map for v0.x extension keys, capped at 2048 canonical-JSON bytes at issuance. Implementations SHOULD preserve unknown keys verbatim across roundtrips."
     }
   }
 }
@@ -1373,6 +1380,7 @@ This reference validates against the §11.5.6 schema fragment: `id`, `type`, and
 A v0.5-conforming implementation:
 
 - MUST validate `references[]` per the schema fragment in 11.5.6 at attestation generation and at attestation verification.
+- MUST enforce the 11.5.6 string length caps and an issuance-side cap of 32 entries per `references[]` array and 2048 canonical-JSON bytes per `extensions` map, failing closed (reject, never truncate or coerce). The caps keep the opaque-string forward-compat clause from carrying free-text deal terms or unbounded payloads.
 - MUST emit clear error text for malformed entries that maps to the specific 11.5.x section that defines the violated invariant.
 - MUST preserve unknown relationship values as opaque strings rather than rejecting them, per 11.5.5 forward-compat.
 - MUST preserve unknown reference type values as opaque strings rather than rejecting them, per 11.5.3 forward-compat.

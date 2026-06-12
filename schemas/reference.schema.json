@@ -11,40 +11,46 @@
     "id": {
       "type": "string",
       "minLength": 1,
-      "description": "Identifier of the referenced artifact. URN-shaped where possible (see SPEC §11.5.7). Free-form non-empty strings are accepted for backward-compatibility."
+      "maxLength": 256,
+      "description": "Identifier of the referenced artifact. URN-shaped where possible (see SPEC §11.5.7). Free-form non-empty strings of at most 256 chars are accepted for backward-compatibility."
     },
 
     "type": {
       "type": "string",
       "minLength": 1,
+      "maxLength": 64,
       "description": "Kind of artifact referenced. Canonical emit vocabulary is receipt, chain_session, predicate, mandate. Read-side validators accept non-empty strings and MUST preserve unknown values as opaque strings per SPEC §11.5.5 and §11.5.8 forward-compat."
     },
 
     "relationship": {
       "type": "string",
       "minLength": 1,
+      "maxLength": 64,
       "description": "Semantic relationship per SPEC §11.5.5. Canonical emit vocabulary is supersedes, extends, fulfills, references. Read-side validators accept non-empty strings and MUST preserve unknown values as opaque strings per SPEC §11.5.8 forward-compat."
     },
 
     "version": {
       "type": "string",
+      "maxLength": 256,
       "description": "Optional. Version of the referenced artifact when known."
     },
 
     "signed_at": {
       "type": "string",
       "format": "date-time",
+      "maxLength": 256,
       "description": "Optional. Timestamp of the referenced artifact's signature when known."
     },
 
     "signer_did": {
       "type": "string",
+      "maxLength": 256,
       "description": "Optional. DID of the signer of the referenced artifact when known."
     },
 
     "extensions": {
       "type": "object",
-      "description": "Optional. Forward-compatibility map for v0.x extension keys. Implementations SHOULD preserve unknown keys verbatim across roundtrips."
+      "description": "Optional. Forward-compatibility map for v0.x extension keys, capped at 2048 canonical-JSON bytes at issuance. Implementations SHOULD preserve unknown keys verbatim across roundtrips."
     }
   }
 }

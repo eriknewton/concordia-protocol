@@ -1224,7 +1224,7 @@ class TestReputationMcpTools:
             "session_id": session_id,
             "auth_token": initiator_token,
             "category": "electronics",
-            "value_range": "500-1500_USD",
+            "value_range": "500-1000_USD",
         })
         assert "receipt" in receipt_result
         attestation = receipt_result["receipt"]
