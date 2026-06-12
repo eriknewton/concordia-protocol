@@ -597,3 +597,265 @@ describe('L3 hardening leaves signatures and legacy reads unaffected', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Snapshot semantics (adversarial-review fix, 2026-06-12): accessor-backed
+// input is rejected WITHOUT being executed, any foreign throw is sanitized
+// (no echo of attacker-controlled error text), and the normalized reference
+// is a detached plain-data snapshot (no TOCTOU between validation and any
+// later serialization).
+// ---------------------------------------------------------------------------
+describe('L3 reference snapshot semantics (no getters, no echo, no TOCTOU)', () => {
+  const SECRET = 'SECRET_TERMS price=4350';
+
+  function expectSanitized(err: Error): void {
+    expect(err).toBeInstanceOf(ReferenceValidationError);
+    expect(err.message).not.toContain('SECRET_TERMS');
+    expect(err.message).not.toContain('4350');
+  }
+
+  it('a throwing getter inside extensions is rejected without ever running', () => {
+    let invoked = false;
+    const ext: Record<string, unknown> = {};
+    Object.defineProperty(ext, 'leak', {
+      enumerable: true,
+      configurable: true,
+      get(): string {
+        invoked = true;
+        throw new Error(SECRET);
+      },
+    });
+    const r = ref();
+    r.extensions = ext;
+    const err = captureError(() => validateReference(r, 0));
+    expectSanitized(err);
+    // The descriptor walk never performs [[Get]], so the hostile getter (and
+    // therefore its throw) cannot execute at all.
+    expect(invoked).toBe(false);
+  });
+
+  it('a throwing getter on a top-level reference field is rejected without running', () => {
+    let invoked = false;
+    const r = ref();
+    Object.defineProperty(r, 'id', {
+      enumerable: true,
+      configurable: true,
+      get(): string {
+        invoked = true;
+        throw new Error(SECRET);
+      },
+    });
+    const err = captureError(() => validateReference(r, 0));
+    expectSanitized(err);
+    expect(err.message).toMatch(/plain enumerable data properties/);
+    expect(invoked).toBe(false);
+  });
+
+  it('an accessor TOCTOU probe is rejected, never sampled', () => {
+    // The classic probe: answer benignly on the first read, smuggle deal
+    // terms on every later read. Rejecting accessors outright (instead of
+    // snapshotting their first answer) means the probe never runs once.
+    let reads = 0;
+    const ext: Record<string, unknown> = {};
+    Object.defineProperty(ext, 'note', {
+      enumerable: true,
+      configurable: true,
+      get(): string {
+        reads += 1;
+        return reads === 1 ? 'benign' : SECRET;
+      },
+    });
+    const r = ref();
+    r.extensions = ext;
+    const err = captureError(() => validateReference(r, 0));
+    expectSanitized(err);
+    expect(reads).toBe(0);
+  });
+
+  it('the normalized reference is detached: post-validation mutation cannot reach it', () => {
+    const inner = { a: 1 };
+    const ext: Record<string, unknown> = { inner, list: [1, 2] };
+    const r = ref();
+    r.extensions = ext;
+    const out = validateReference(r, 0);
+    expect(out).not.toBe(r);
+    expect(out.extensions).not.toBe(ext);
+    expect((out.extensions as Record<string, unknown>).inner).not.toBe(inner);
+    // Mutate every layer of the caller's tree AFTER validation.
+    inner.a = 999;
+    (ext.list as number[]).push(4350);
+    ext.smuggled = SECRET;
+    (r as Record<string, unknown>).id = SECRET;
+    const serialized = JSON.stringify(out);
+    expect(serialized).not.toContain('SECRET_TERMS');
+    expect(serialized).not.toContain('999');
+    expect(serialized).not.toContain('4350');
+    expect(out.extensions).toEqual({ inner: { a: 1 }, list: [1, 2] });
+  });
+
+  it('a Proxy whose traps throw is sanitized (extensions)', () => {
+    const hostile = new Proxy(
+      {},
+      {
+        ownKeys(): ArrayLike<string | symbol> {
+          throw new Error(SECRET);
+        },
+      },
+    );
+    const r = ref();
+    r.extensions = hostile;
+    const err = captureError(() => validateReference(r, 0));
+    expectSanitized(err);
+    expect(err.message).toBe(
+      'references[0].extensions could not be safely inspected',
+    );
+  });
+
+  it('a Proxy whose traps throw is sanitized (the reference itself)', () => {
+    const hostile = new Proxy(
+      {},
+      {
+        getPrototypeOf(): object | null {
+          throw new Error(SECRET);
+        },
+      },
+    );
+    const err = captureError(() => validateReference(hostile, 0));
+    expectSanitized(err);
+    expect(err.message).toBe('references[0] could not be safely inspected');
+  });
+
+  it('a revoked Proxy is sanitized', () => {
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    const err = captureError(() => validateReference(proxy, 0));
+    expectSanitized(err);
+    expect(err.message).toBe('references[0] could not be safely inspected');
+  });
+
+  it('symbol-keyed properties are rejected (reference and extensions)', () => {
+    const r1 = ref();
+    (r1 as Record<symbol | string, unknown>)[Symbol('smuggle')] = SECRET;
+    expectSanitized(captureError(() => validateReference(r1, 0)));
+
+    const r2 = ref();
+    r2.extensions = { [Symbol('smuggle')]: SECRET } as Record<string, unknown>;
+    expectSanitized(captureError(() => validateReference(r2, 0)));
+  });
+
+  it('non-enumerable own properties are rejected (reference and extensions)', () => {
+    const r1 = ref();
+    Object.defineProperty(r1, 'hidden', { enumerable: false, value: SECRET });
+    expectSanitized(captureError(() => validateReference(r1, 0)));
+
+    const ext: Record<string, unknown> = { ok: 1 };
+    Object.defineProperty(ext, 'hidden', { enumerable: false, value: SECRET });
+    const r2 = ref();
+    r2.extensions = ext;
+    expectSanitized(captureError(() => validateReference(r2, 0)));
+  });
+
+  it('an array hole inside extensions is rejected as not canonically serializable', () => {
+    const holey = new Array<number>(2);
+    holey[0] = 1; // index 1 stays a hole
+    const r = ref();
+    r.extensions = { list: holey };
+    expect(() => validateReference(r, 0)).toThrow(
+      /not canonically serializable/,
+    );
+  });
+
+  it('a non-index own property on an array inside extensions is rejected', () => {
+    const arr: number[] = [1, 2];
+    (arr as unknown as Record<string, unknown>).smuggle = SECRET;
+    const r = ref();
+    r.extensions = { list: arr };
+    expectSanitized(captureError(() => validateReference(r, 0)));
+  });
+
+  it('an accessor-backed array element inside extensions is rejected without running', () => {
+    let invoked = false;
+    const arr: unknown[] = [0];
+    Object.defineProperty(arr, 0, {
+      enumerable: true,
+      configurable: true,
+      get(): string {
+        invoked = true;
+        return SECRET;
+      },
+    });
+    const r = ref();
+    r.extensions = { list: arr };
+    expectSanitized(captureError(() => validateReference(r, 0)));
+    expect(invoked).toBe(false);
+  });
+
+  it('frozen plain data is still accepted (non-writable DATA props are fine)', () => {
+    const r = ref();
+    r.extensions = Object.freeze({
+      a: Object.freeze([1, 2]),
+      b: Object.freeze({ c: 'x' }),
+    });
+    Object.freeze(r);
+    const out = validateReference(r, 0);
+    expect(out.extensions).toEqual({ a: [1, 2], b: { c: 'x' } });
+  });
+
+  it('generateAttestation: a throwing index getter on references[] never runs and never echoes', () => {
+    let invoked = false;
+    const refs: unknown[] = [];
+    Object.defineProperty(refs, 0, {
+      enumerable: true,
+      configurable: true,
+      get(): unknown {
+        invoked = true;
+        throw new Error(SECRET);
+      },
+    });
+    const err = captureError(() => generate({ references: refs }));
+    expect(err).toBeInstanceOf(AttestationError);
+    expect(err.message).not.toContain('SECRET_TERMS');
+    expect(err.message).not.toContain('4350');
+    expect(err.message).toBe(
+      'references[] must contain only plain enumerable data elements',
+    );
+    expect(invoked).toBe(false);
+  });
+
+  it('generateAttestation: a hole in references[] rejects as NoneType (fail-closed)', () => {
+    const refs = new Array<unknown>(1); // [ <hole> ]
+    const err = captureError(() => generate({ references: refs }));
+    expect(err).toBeInstanceOf(ReferenceValidationError);
+    expect(err.message).toBe(
+      'references[0] must be a dict, got NoneType per SPEC §11.5.6',
+    );
+  });
+
+  it('generateAttestation: a Proxy references[] with throwing traps is sanitized', () => {
+    const hostile = new Proxy([] as unknown[], {
+      get(): unknown {
+        throw new Error(SECRET);
+      },
+      getOwnPropertyDescriptor(): PropertyDescriptor | undefined {
+        throw new Error(SECRET);
+      },
+    });
+    const err = captureError(() => generate({ references: hostile }));
+    expect(err).toBeInstanceOf(AttestationError);
+    expect(err.message).not.toContain('SECRET_TERMS');
+    expect(err.message).toBe('references[] could not be safely inspected');
+  });
+
+  it('the attested references carry the snapshot, not the caller objects', () => {
+    const ext: Record<string, unknown> = { chain_depth: 2 };
+    const r = ref();
+    r.extensions = ext;
+    const att = generate({ references: [r] });
+    const attRefs = att.references as Array<Record<string, unknown>>;
+    expect(attRefs[0]).not.toBe(r);
+    expect(attRefs[0]!.extensions).not.toBe(ext);
+    // Post-issuance mutation of the caller's object cannot alter the record.
+    ext.smuggled = SECRET;
+    expect(JSON.stringify(att)).not.toContain('SECRET_TERMS');
+  });
+});

@@ -470,38 +470,80 @@ function pyTermsCount(value: unknown): number {
  *   -> the first element is a string, so {@link validateReference} raises
  *   `references[0] must be a dict, got str per SPEC §11.5.6`, exactly as
  *   Python.
+ *
+ * DEFENSIVE EXTRACTION (adversarial-review follow-up, same lens as
+ * validateReference's snapshot semantics): array elements are read via
+ * `Object.getOwnPropertyDescriptor(...).value`, never `[[Get]]`, so an index
+ * GETTER (or Proxy `get` trap) is never executed -- a throwing getter's
+ * attacker-controlled error text cannot escape verbatim through
+ * `generateAttestation`, and an accessor cannot answer differently between
+ * validation and later reads. Accessor-backed indices are REJECTED without
+ * being invoked; a hole surfaces as `undefined` and is rejected by
+ * {@link validateReference} as `NoneType` (like Python `None`). Any OTHER
+ * foreign throw during inspection (a Proxy trap, a revoked proxy) is
+ * converted to a sanitized {@link AttestationError} that includes neither the
+ * caught error text nor any input value.
  */
 function normalizeReferences(
   references: unknown,
 ): Array<Record<string, unknown>> {
-  if (!pyTruthy(references)) {
-    return [];
+  let elements: unknown[] = [];
+  try {
+    if (!pyTruthy(references)) {
+      return [];
+    }
+    // Python `len(references)` -- raises for non-sized values BEFORE
+    // enumerate.
+    let count: number;
+    let isArrayInput = false;
+    if (Array.isArray(references)) {
+      count = references.length;
+      isArrayInput = true;
+    } else if (typeof references === 'string') {
+      // Python len() and iteration are both by code points for a str.
+      elements = Array.from(references);
+      count = elements.length;
+    } else if (isPlainObject(references)) {
+      // Python len(dict) is the key count; iteration is by KEYS (strings).
+      elements = Object.keys(references);
+      count = elements.length;
+    } else {
+      // number, boolean, or any non-sized value: Python's len(...) raises.
+      throw new AttestationError(
+        `object of type '${pyTypeName(references)}' has no len()`,
+      );
+    }
+    if (count > MAX_REFERENCES) {
+      throw new AttestationError(
+        `references[] exceeds the maximum of ${MAX_REFERENCES} entries`,
+      );
+    }
+    if (isArrayInput) {
+      // Cap already checked, so this loop is bounded. Descriptor reads keep
+      // index getters from ever running (see DEFENSIVE EXTRACTION above).
+      const arr = references as unknown[];
+      elements = new Array<unknown>(count);
+      for (let i = 0; i < count; i += 1) {
+        const desc = Object.getOwnPropertyDescriptor(arr, i);
+        if (desc !== undefined && !('value' in desc)) {
+          throw new AttestationError(
+            'references[] must contain only plain enumerable data elements',
+          );
+        }
+        elements[i] = desc === undefined ? undefined : desc.value;
+      }
+    }
+  } catch (err) {
+    if (err instanceof AttestationError) {
+      throw err;
+    }
+    // A Proxy trap (or revoked proxy) threw during inspection. Never echo the
+    // caught error text: it is attacker-controlled content.
+    throw new AttestationError('references[] could not be safely inspected');
   }
-  // Python `len(references)` -- raises for non-sized values BEFORE enumerate.
-  let count: number;
-  let elements: unknown[];
-  if (Array.isArray(references)) {
-    count = references.length;
-    elements = references;
-  } else if (typeof references === 'string') {
-    // Python len() and iteration are both by code points for a str.
-    elements = Array.from(references);
-    count = elements.length;
-  } else if (isPlainObject(references)) {
-    // Python len(dict) is the key count; iteration is by KEYS (strings).
-    elements = Object.keys(references);
-    count = elements.length;
-  } else {
-    // number, boolean, or any non-sized value: Python's len(...) raises.
-    throw new AttestationError(
-      `object of type '${pyTypeName(references)}' has no len()`,
-    );
-  }
-  if (count > MAX_REFERENCES) {
-    throw new AttestationError(
-      `references[] exceeds the maximum of ${MAX_REFERENCES} entries`,
-    );
-  }
+  // OUTSIDE the sanitizing wrapper: per-element validation errors
+  // (ReferenceValidationError) carry Python-identical text and must propagate
+  // unchanged. They never echo input either.
   return elements.map((ref, i) => validateReference(ref, i));
 }
 

@@ -37,6 +37,32 @@
  * in the error text (content-injection lens: these errors can land in logs and
  * MCP responses), and nothing is ever silently truncated or coerced.
  *
+ * SNAPSHOT SEMANTICS (adversarial-review fix, 2026-06-12): validation runs
+ * against a defensive plain-data SNAPSHOT of the input, never against the
+ * caller's live object, and the normalized result (including `extensions`) is
+ * that snapshot, never a reference to caller-owned data. Concretely:
+ * - Property values are read via `Object.getOwnPropertyDescriptor(...).value`,
+ *   so a GETTER IS NEVER EXECUTED. The previous walk used `Object.values()`,
+ *   which invokes enumerable getters; a getter that throws leaked its
+ *   attacker-controlled error text verbatim (no-echo violation), and a getter
+ *   that answers differently across reads could pass validation with one value
+ *   and serialize another later (TOCTOU). Accessor properties are REJECTED
+ *   outright rather than sampled: Python's plain-dict model cannot represent
+ *   an accessor, so nothing legitimate is lost, and rejecting (instead of
+ *   snapshotting the getter's current answer) means hostile code is never run
+ *   at all.
+ * - Symbol keys, non-enumerable own properties, array holes, non-index array
+ *   properties, and array subclasses are likewise rejected (none is
+ *   representable in canonical JSON or in a Python dict). Non-writable DATA
+ *   properties (e.g. a frozen input) remain accepted.
+ * - The ENTIRE inspection is wrapped so that ANY foreign throw (a Proxy trap,
+ *   a revoked proxy, a hostile prototype) is converted to a sanitized
+ *   {@link ReferenceValidationError} that includes NEITHER the caught error
+ *   text NOR any input value.
+ * - The canonical-byte cap is measured over the SNAPSHOT, and the snapshot is
+ *   what callers get back, so the bytes that were capped are exactly the bytes
+ *   any later serialization will emit.
+ *
  * JS/Python divergence decisions (each resolved in the STRICTER, fail-closed
  * direction, and each pinned by a test):
  * - WHITESPACE: Python's `\s` on `str` patterns matches Unicode whitespace
@@ -183,63 +209,215 @@ function isValidIdentifierString(value: unknown, cap: number): value is string {
 }
 
 /**
- * Cheap fail-closed structural pre-check before canonicalization. Port of
- * Python `_check_extensions_structure` (review fix, finding 4).
- *
- * Rejects extensions whose raw nesting depth exceeds
- * {@link MAX_REFERENCE_EXTENSIONS_DEPTH} or whose total node count exceeds
- * {@link MAX_REFERENCE_EXTENSIONS_NODES}, bailing out of the walk as soon as
- * either bound is crossed. This runs BEFORE canonical serialization so a
- * pathological object is never fully walked just to be rejected by the byte
- * cap afterwards. Invalid input is never echoed back.
- *
- * Returns `true` when the walk saw a non-JSON exotic object (a `Date`, `Map`,
- * class instance: `typeof === 'object'` but neither a plain object nor an
- * array). The CALLER rejects those as not canonically serializable AFTER the
- * structural bounds pass, matching Python's error ordering (Python's walk
- * treats such values as opaque scalar leaves and its `canonical_json` then
- * raises TypeError). JS's `stableStringify` would instead serialize a `Date`
- * as `{}` -- a silent fail-open this flag closes.
+ * Sanitized rejection for ANY error thrown by foreign code while the input is
+ * being inspected (a Proxy trap, a revoked proxy, a hostile prototype). The
+ * caught error's text is NEVER included: a thrown message is attacker-
+ * controlled content, and echoing it would reopen the no-echo invariant the
+ * rest of this module enforces (probe: a trap throwing
+ * `Error("SECRET_TERMS price=4350")` must not surface those bytes in logs or
+ * MCP responses).
  */
-function checkExtensionsStructure(
+function sanitizedInspectionError(label: string): ReferenceValidationError {
+  return new ReferenceValidationError(`${label} could not be safely inspected`);
+}
+
+/**
+ * Rejection for property shapes a Python dict (and canonical JSON) cannot
+ * represent: accessor properties, non-enumerable own properties, symbol keys,
+ * array holes, and non-index array properties. Deliberately content-free.
+ */
+function shapeError(label: string): ReferenceValidationError {
+  return new ReferenceValidationError(
+    `${label} must contain only plain enumerable data properties`,
+  );
+}
+
+/**
+ * Snapshot the own enumerable string-keyed DATA properties of an object into
+ * a fresh plain object WITHOUT executing any caller code.
+ *
+ * Values are read via `Object.getOwnPropertyDescriptor(...).value`, so a
+ * getter is never invoked: its side effects never run, its thrown errors
+ * never escape, and its answer can never differ between validation and later
+ * use. An accessor property, a non-enumerable own property, or a symbol key
+ * throws {@link shapeError} (fail-closed; Python's plain-dict model cannot
+ * represent any of those shapes, so nothing legitimate is lost). Non-writable
+ * data properties (e.g. a frozen input) are accepted.
+ */
+function snapshotOwnData(
+  source: object,
+  label: string,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of Reflect.ownKeys(source)) {
+    if (typeof key !== 'string') {
+      throw shapeError(label);
+    }
+    const desc = Object.getOwnPropertyDescriptor(source, key);
+    if (desc === undefined || !desc.enumerable || !('value' in desc)) {
+      throw shapeError(label);
+    }
+    out[key] = desc.value;
+  }
+  return out;
+}
+
+/** Result of {@link snapshotExtensionsTree}. */
+interface ExtensionsSnapshot {
+  /** Fresh plain-data deep copy; shares no object identity with the input. */
+  snapshot: Record<string, unknown>;
+  /**
+   * True when the walk saw a value canonical JSON cannot represent (a `Date`,
+   * `Map`, class instance, function, bigint, `undefined`, array hole, or
+   * array subclass). The CALLER rejects those as not canonically serializable
+   * AFTER the structural bounds pass, matching Python's error ordering
+   * (Python's walk treats such values as opaque scalar leaves and its
+   * `canonical_json` then raises TypeError). JS's `stableStringify` would
+   * instead serialize a `Date` as `{}` -- a silent fail-open this flag closes.
+   */
+  sawNonJson: boolean;
+}
+
+/**
+ * Single-pass defensive deep copy of `extensions` (adversarial-review fix;
+ * supersedes the separate `checkExtensionsStructure` pre-walk, which read
+ * values with `Object.values()` and therefore EXECUTED enumerable getters).
+ *
+ * In one descriptor-based walk this:
+ * - enforces the structural bounds, rejecting nesting deeper than
+ *   {@link MAX_REFERENCE_EXTENSIONS_DEPTH} and more than
+ *   {@link MAX_REFERENCE_EXTENSIONS_NODES} nodes, bailing out as soon as
+ *   either bound is crossed (the byte cap alone would only fire after a full
+ *   canonical serialization -- DoS lens, Python `_check_extensions_structure`
+ *   parity);
+ * - rejects accessor properties, non-enumerable own properties, symbol keys,
+ *   array holes, non-index array properties, and array subclasses WITHOUT
+ *   invoking any of them (see {@link snapshotOwnData} for the rationale);
+ * - copies every accepted value into a fresh plain-data tree, so the caller
+ *   can canonicalize, byte-cap, and RETURN the snapshot with the guarantee
+ *   that no later read can observe content that was not validated (TOCTOU
+ *   closure).
+ *
+ * Invalid input is never echoed back. Foreign throws are converted to a
+ * sanitized error by the CALLER's wrapper, not here.
+ */
+function snapshotExtensionsTree(
   extensions: Record<string, unknown>,
   index: number,
-): boolean {
+): ExtensionsSnapshot {
+  const label = `references[${index}].extensions`;
   let nodes = 1; // the extensions object itself
-  let sawExotic = false;
-  const stack: Array<[unknown, number]> = [[extensions, 1]];
-  while (stack.length > 0) {
-    const [value, depth] = stack.pop() as [unknown, number];
-    let children: unknown[];
+  let sawNonJson = false;
+
+  const guardChild = (childDepth: number): void => {
+    if (childDepth > MAX_REFERENCE_EXTENSIONS_DEPTH) {
+      throw new ReferenceValidationError(
+        `references[${index}].extensions exceeds the maximum ` +
+          `nesting depth of ${MAX_REFERENCE_EXTENSIONS_DEPTH}`,
+      );
+    }
+    nodes += 1;
+    if (nodes > MAX_REFERENCE_EXTENSIONS_NODES) {
+      throw new ReferenceValidationError(
+        `references[${index}].extensions exceeds the maximum ` +
+          `of ${MAX_REFERENCE_EXTENSIONS_NODES} nodes`,
+      );
+    }
+  };
+
+  const snapshotValue = (value: unknown, depth: number): unknown => {
+    if (
+      value === null ||
+      typeof value === 'boolean' ||
+      typeof value === 'number' ||
+      typeof value === 'string'
+    ) {
+      // NaN/Infinity and lone surrogates pass the walk and are rejected by
+      // the canonicalization step afterwards (Python error-ordering parity).
+      return value;
+    }
+    if (Array.isArray(value)) {
+      if (Object.getPrototypeOf(value) !== Array.prototype) {
+        // Array subclass: not a plain JSON array. Leaf; rejected after walk.
+        sawNonJson = true;
+        return undefined;
+      }
+      return snapshotArray(value, depth);
+    }
     if (isPlainObject(value)) {
-      children = Object.values(value);
-    } else if (Array.isArray(value)) {
-      children = value;
-    } else {
-      if (typeof value === 'object' && value !== null) {
-        sawExotic = true; // Date/Map/class instance: leaf here, rejected after
-      }
-      continue;
+      return snapshotObject(value, depth);
     }
+    // Date, Map, class instance, function, bigint, undefined, symbol: not
+    // representable in canonical JSON (nor in a Python dict). Counted as a
+    // leaf and rejected AFTER the structural walk (see ExtensionsSnapshot).
+    sawNonJson = true;
+    return undefined;
+  };
+
+  const snapshotObject = (
+    obj: Record<string, unknown>,
+    depth: number,
+  ): Record<string, unknown> => {
+    const out: Record<string, unknown> = {};
     const childDepth = depth + 1;
-    for (const child of children) {
-      if (childDepth > MAX_REFERENCE_EXTENSIONS_DEPTH) {
-        throw new ReferenceValidationError(
-          `references[${index}].extensions exceeds the maximum ` +
-            `nesting depth of ${MAX_REFERENCE_EXTENSIONS_DEPTH}`,
-        );
+    for (const key of Reflect.ownKeys(obj)) {
+      if (typeof key !== 'string') {
+        throw shapeError(label);
       }
-      nodes += 1;
-      if (nodes > MAX_REFERENCE_EXTENSIONS_NODES) {
-        throw new ReferenceValidationError(
-          `references[${index}].extensions exceeds the maximum ` +
-            `of ${MAX_REFERENCE_EXTENSIONS_NODES} nodes`,
-        );
+      const desc = Object.getOwnPropertyDescriptor(obj, key);
+      if (desc === undefined || !desc.enumerable || !('value' in desc)) {
+        throw shapeError(label);
       }
-      stack.push([child, childDepth]);
+      guardChild(childDepth);
+      out[key] = snapshotValue(desc.value, childDepth);
     }
-  }
-  return sawExotic;
+    return out;
+  };
+
+  const snapshotArray = (arr: unknown[], depth: number): unknown[] => {
+    const length = arr.length;
+    const childDepth = depth + 1;
+    // Count every element FIRST so a pathological length bails out at the
+    // node bound without walking (or allocating) anything proportional to it.
+    for (let i = 0; i < length; i += 1) {
+      guardChild(childDepth);
+    }
+    // A plain JSON array's own keys are exactly its indices plus the
+    // non-enumerable `length`; any other own property smuggles content the
+    // canonical serializer would silently DROP from the byte cap while a
+    // naive consumer could still read it. Reject.
+    for (const key of Reflect.ownKeys(arr)) {
+      if (typeof key !== 'string') {
+        throw shapeError(label);
+      }
+      if (key === 'length') {
+        continue;
+      }
+      const n = Number(key);
+      // String(n) === key pins the CANONICAL index spelling: '01' or '-0'
+      // round-trips differently and is a string property, not an index.
+      if (!Number.isInteger(n) || n < 0 || n >= length || String(n) !== key) {
+        throw shapeError(label);
+      }
+    }
+    const out = new Array<unknown>(length);
+    for (let i = 0; i < length; i += 1) {
+      const desc = Object.getOwnPropertyDescriptor(arr, i);
+      if (desc === undefined) {
+        // Hole: nothing canonical JSON can represent. Leaf; rejected after.
+        sawNonJson = true;
+        out[i] = undefined;
+        continue;
+      }
+      if (!desc.enumerable || !('value' in desc)) {
+        throw shapeError(label);
+      }
+      out[i] = snapshotValue(desc.value, childDepth);
+    }
+    return out;
+  };
+
+  return { snapshot: snapshotObject(extensions, 1), sawNonJson };
 }
 
 /**
@@ -249,24 +427,46 @@ function checkExtensionsStructure(
  * structure + canonical-byte caps). See the module header for the parity
  * contract and the JS/Python strictness decisions.
  *
+ * Validation runs against a defensive plain-data SNAPSHOT of `ref` (see the
+ * module header, SNAPSHOT SEMANTICS): getters are never executed, accessor /
+ * non-enumerable / symbol-keyed properties are rejected, any foreign throw is
+ * converted to a sanitized error, and the returned object (including its
+ * `extensions`) is the snapshot, never the caller's object.
+ *
  * @param ref The reference value (expected to be a plain object).
  * @param index The reference's position, used verbatim in error messages.
  * @returns A normalized reference object containing exactly the required keys
  *   plus any present optional keys, in the same insertion order Python emits.
+ *   Always a FRESH plain-data object: mutating the input afterwards cannot
+ *   change it, and it shares no object identity with the input.
  * @throws {ReferenceValidationError} with Python-identical text on any
- *   structural violation. The invalid value is NEVER echoed back.
+ *   structural violation. Neither the invalid value NOR any caught error text
+ *   is ever echoed back.
  */
 export function validateReference(
   ref: unknown,
   index: number,
 ): Record<string, unknown> {
-  if (!isPlainObject(ref)) {
-    throw new ReferenceValidationError(
-      `references[${index}] must be a dict, got ${pyTypeName(ref)} ` +
-        `per SPEC §11.5.6`,
-    );
+  // Snapshot first: everything BELOW this block touches only plain local
+  // data, so no caller code (getter, Proxy trap) can run during validation.
+  let snap: Record<string, unknown>;
+  try {
+    if (!isPlainObject(ref)) {
+      throw new ReferenceValidationError(
+        `references[${index}] must be a dict, got ${pyTypeName(ref)} ` +
+          `per SPEC §11.5.6`,
+      );
+    }
+    snap = snapshotOwnData(ref, `references[${index}]`);
+  } catch (err) {
+    if (err instanceof ReferenceValidationError) {
+      throw err;
+    }
+    // A Proxy trap (or revoked proxy / hostile prototype) threw. Never echo
+    // the caught error text: it is attacker-controlled content.
+    throw sanitizedInspectionError(`references[${index}]`);
   }
-  const missing = ['type', 'id', 'relationship'].filter((k) => !(k in ref));
+  const missing = ['type', 'id', 'relationship'].filter((k) => !(k in snap));
   if (missing.length > 0) {
     const list = '[' + missing.map((k) => `'${k}'`).join(', ') + ']';
     throw new ReferenceValidationError(
@@ -274,9 +474,9 @@ export function validateReference(
         `per SPEC §11.5.6 (id, type, relationship)`,
     );
   }
-  const refType = ref.type;
-  const refId = ref.id;
-  const relationship = ref.relationship;
+  const refType = snap.type;
+  const refId = snap.id;
+  const relationship = snap.relationship;
   if (!isValidIdentifierString(refType, MAX_REFERENCE_TYPE_LENGTH)) {
     throw new ReferenceValidationError(
       `references[${index}].type must be a non-empty whitespace-free ` +
@@ -306,8 +506,8 @@ export function validateReference(
     relationship,
   };
   for (const key of OPTIONAL_STRING_KEYS) {
-    if (key in ref) {
-      const value = ref[key];
+    if (key in snap) {
+      const value = snap[key];
       if (
         !isValidIdentifierString(value, MAX_REFERENCE_OPTIONAL_STRING_LENGTH)
       ) {
@@ -320,16 +520,26 @@ export function validateReference(
       normalized[key] = value;
     }
   }
-  if ('extensions' in ref) {
-    const extensions = ref.extensions;
-    if (!isPlainObject(extensions)) {
-      throw new ReferenceValidationError(
-        `references[${index}].extensions must be an object`,
-      );
+  if ('extensions' in snap) {
+    // The extensions VALUE came out of the top-level snapshot, but its own
+    // tree is still caller-owned (and possibly accessor-backed or a Proxy):
+    // deep-copy it under the same sanitized wrapper before anything reads it.
+    const extensions = snap.extensions;
+    let walked: ExtensionsSnapshot;
+    try {
+      if (!isPlainObject(extensions)) {
+        throw new ReferenceValidationError(
+          `references[${index}].extensions must be an object`,
+        );
+      }
+      walked = snapshotExtensionsTree(extensions, index);
+    } catch (err) {
+      if (err instanceof ReferenceValidationError) {
+        throw err;
+      }
+      throw sanitizedInspectionError(`references[${index}].extensions`);
     }
-    const sawExotic = checkExtensionsStructure(extensions, index);
-    let extensionsBytes: number;
-    if (sawExotic) {
+    if (walked.sawNonJson) {
       // Python's canonical_json raises TypeError on a non-JSON object; JS's
       // stableStringify would silently emit `{}` for a Date/Map (fail-open),
       // so reject explicitly with the same error Python's catch produces.
@@ -337,8 +547,11 @@ export function validateReference(
         `references[${index}].extensions is not canonically serializable`,
       );
     }
+    // From here on, only the plain-data snapshot is read: the byte cap is
+    // measured over EXACTLY the bytes a later serialization will emit.
+    let extensionsBytes: number;
     try {
-      extensionsBytes = canonicalizeJcs(extensions).length;
+      extensionsBytes = canonicalizeJcs(walked.snapshot).length;
     } catch {
       throw new ReferenceValidationError(
         `references[${index}].extensions is not canonically serializable`,
@@ -350,7 +563,7 @@ export function validateReference(
           `${MAX_REFERENCE_EXTENSIONS_BYTES} canonical-JSON bytes`,
       );
     }
-    normalized.extensions = extensions;
+    normalized.extensions = walked.snapshot;
   }
   return normalized;
 }

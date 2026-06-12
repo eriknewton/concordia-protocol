@@ -30,10 +30,24 @@ previously issued attestations are unchanged.
   U+FEFF beyond Python); length caps count code points (Python `len`);
   exotic objects (`Date`/`Map`) inside `extensions` are rejected instead of
   silently serializing as `{}`. All in the stricter, fail-closed direction.
+- **Snapshot semantics for reference validation** (adversarial-review fix).
+  `validateReference` (and `generateAttestation`'s `references[]` handling)
+  now reads input via property descriptors and validates a detached
+  plain-data SNAPSHOT, which is what callers get back. Getters are NEVER
+  executed (a throwing getter previously leaked its attacker-controlled
+  error text verbatim, violating the no-echo invariant); accessor
+  properties, non-enumerable own properties, symbol keys, array holes,
+  non-index array properties, and array subclasses are rejected outright
+  (none is representable in Python's plain-dict model, closing the TOCTOU
+  where an accessor-backed object validated as one value and serialized as
+  another); any foreign throw (Proxy traps, revoked proxies) is converted
+  to a sanitized error carrying neither the caught text nor any input. The
+  canonical byte cap is measured over the snapshot, i.e. over exactly the
+  bytes a later serialization emits. Frozen plain data remains accepted.
 
 Pinned by regenerated Python-generated parity fixtures (48 `l3_meta_cases`,
 count-cap strictness cases, 26 new shared-reference cases) plus a dedicated
-rejection-class suite (`tests/attestation-l3.test.ts`, 81 tests).
+rejection-class suite (`tests/attestation-l3.test.ts`, 98 tests).
 
 ## 0.0.1-alpha.10 -- 2026-06-01
 
