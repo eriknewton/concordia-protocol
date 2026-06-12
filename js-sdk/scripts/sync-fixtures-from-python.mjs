@@ -379,3 +379,36 @@ try {
   );
   process.exit(1);
 }
+
+// CPython repr() / json.dumps() rendering parity fixtures for the shared
+// internals (src/internal/py-repr.ts + src/internal/py-json.ts). Generated
+// FROM CPython via scripts/gen-pyrepr-fixtures.py so every expected string
+// comes straight from repr(value) / json.dumps(value, sort_keys=True), never
+// hand-authored. The generator is stdlib-only (no concordia import), so the
+// default python3 is fine; the vectors are Unicode-DB-stable (no unassigned
+// code points).
+const PYREPR_GEN = join(SDK_ROOT, 'scripts/gen-pyrepr-fixtures.py');
+const PYREPR_DST = join(
+  SDK_ROOT,
+  'tests/fixtures/internal/py_render_vectors.json',
+);
+try {
+  const out = execFileSync(pythonBin, [PYREPR_GEN], {
+    cwd: CONCORDIA_ROOT,
+    env: { ...process.env, PYTHONPATH: CONCORDIA_ROOT },
+    encoding: 'utf8',
+  });
+  mkdirSync(dirname(PYREPR_DST), { recursive: true });
+  writeFileSync(PYREPR_DST, out);
+  const parsed = JSON.parse(out);
+  console.log(
+    `Wrote py-repr/py-json parity fixtures from Python ` +
+      `${parsed.python_version}: ${parsed.repr_cases.length} repr cases, ` +
+      `${parsed.json_cases.length} json.dumps cases.`,
+  );
+} catch (err) {
+  console.error(
+    `Failed to generate py-repr/py-json fixtures from Python: ${err.message}`,
+  );
+  process.exit(1);
+}
