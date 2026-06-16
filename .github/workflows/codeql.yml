@@ -1,0 +1,46 @@
+name: CodeQL
+
+# Advanced CodeQL setup via a committed workflow (NOT the API "default setup",
+# which requires repo-admin scope we do not provision through automation).
+# Scans Python and TypeScript/JavaScript on every push and PR to main, plus a
+# weekly scheduled run to catch advisories published against unchanged code.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Mondays at 07:17 UTC (off the top of the hour to avoid scheduler contention)
+    - cron: "17 7 * * 1"
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: python
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2 (resolved 2026-05-18)
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e  # v4 (resolved 2026-06-16)
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e  # v4 (resolved 2026-06-16)
+        with:
+          category: "/language:${{ matrix.language }}"
