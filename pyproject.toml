@@ -41,6 +41,10 @@ dev = [
     "pytest-cov>=4.0",
     "rfc8785>=0.1.4",
     "ruff>=0.6",
+    # Type stubs for the `jsonschema` runtime dependency so `mypy concordia`
+    # type-checks the schema-validation modules instead of treating the import
+    # as untyped.
+    "types-jsonschema>=4.20",
     "tomli; python_version < '3.11'",
 ]
 
