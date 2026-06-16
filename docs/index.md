@@ -31,7 +31,7 @@ the spec, the governance files, and the contributor entry points.
 | --- | --- |
 | [SECURITY](../SECURITY.md) | How to report a vulnerability, the disclosure timeline, and supported versions. |
 | [Code of Conduct](../CODE_OF_CONDUCT.md) | Contributor Covenant 2.1 community standards and enforcement. |
-| [CODEOWNERS](../.github/CODEOWNERS) | Default reviewers for the required-review gate. |
+| [CODEOWNERS](../.github/CODEOWNERS) | Routes review requests and signals ownership; merges are gated on required status checks, not on required review. |
 | [LICENSE](../LICENSE) | Apache License, Version 2.0. |
 | [NOTICE](../NOTICE) | Apache-2.0 Section 4(d) attribution notice. |
 | [CHANGELOG](../CHANGELOG.md) | Release history for the Python SDK and MCP server. |

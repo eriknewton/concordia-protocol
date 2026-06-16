@@ -39,3 +39,11 @@ SPRINT_*.md
 MERGE_GATE_REPORT.md
 KNOWN_ISSUES.md
 COWORK_CONTEXT.md
+
+# Internal launch-marketing drafts and build-summary artifacts. These are
+# coordinator-workspace material, not product or spec documentation, and must
+# never re-enter the public repository.
+launch/
+review/
+*_BUILD_SUMMARY.md
+*_SUMMARY.md

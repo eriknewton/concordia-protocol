@@ -1,10 +1,13 @@
 # Code owners for the Concordia Protocol repository.
 #
-# GitHub uses this file to request review automatically. When branch
-# protection requires review from Code Owners, every pull request needs an
-# approval from an owner listed here before it can merge. As a single-owner
-# project, this makes the required-review gate meaningful: nothing lands
-# without the owner's sign-off.
+# GitHub uses this file to route review requests automatically and to signal
+# who owns each part of the tree. It does NOT, on its own, block a merge.
+#
+# Merges to main are gated on the required status checks configured in branch
+# protection (CI must be green). Required Code Owner review is NOT enforced:
+# this is a solo-maintainer project, so the maintainer self-merges once the
+# status checks pass. Treat the owner below as the review router and point of
+# contact, not as a mandatory approval gate.
 #
 # Syntax: https://docs.github.com/articles/about-code-owners
 # The last matching pattern wins.
