@@ -96,8 +96,9 @@ The public API surface (see `src/index.ts`) covers:
   receipt verifier.
 
 The mandate revocation-endpoint network fetch is deferred (an injectable hook
-covers the no-revocation outcome), and the attestation schema validator
-(`validateAttestation`) ships in a subsequent alpha release.
+covers the no-revocation outcome). The attestation schema validator
+(`validateAttestation`) is available now, with error output matching the
+Python reference.
 
 ## Parity with the Python SDK
 
