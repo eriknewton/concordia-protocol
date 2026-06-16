@@ -388,8 +388,15 @@ function pyIntCoerce(value: unknown): number {
     return Math.trunc(value);
   }
   if (typeof value === 'string') {
-    // Python strips ASCII whitespace, then requires an optional sign + digits.
-    const stripped = value.replace(/^[\s]+|[\s]+$/g, '');
+    // Python strips surrounding whitespace, then requires an optional sign +
+    // digits. `String.prototype.trim()` removes exactly the ECMAScript `\s` set
+    // (WhiteSpace + LineTerminator) from both ends, so it is byte-for-byte
+    // identical to the prior `/^[\s]+|[\s]+$/g` replace (verified across the
+    // entire code-point range) -- but it is a linear-time intrinsic with no
+    // alternation that could backtrack polynomially on an adversarial run of
+    // whitespace (clears CodeQL js/polynomial-redos). The digit/sign check below
+    // is an anchored, non-overlapping pattern and is not backtracking-prone.
+    const stripped = value.trim();
     if (/^[+-]?\d+$/.test(stripped)) {
       return parseInt(stripped, 10);
     }
