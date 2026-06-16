@@ -117,6 +117,10 @@ export const MAX_REFERENCE_EXTENSIONS_NODES = 256;
  * separators) and U+0085 (NEL). The union is stricter than either language
  * alone -- fail-closed.
  */
+// U+001C..U+001F are intentional: the cross-language whitespace ban must match
+// Python's file/group/record/unit separators to stay byte-for-byte fail-closed
+// (see the JSDoc above).
+// eslint-disable-next-line no-control-regex
 const WHITESPACE_RE = /[\s\u001c-\u001f\u0085]/;
 
 /**
@@ -244,10 +248,7 @@ function shapeError(label: string): ReferenceValidationError {
  * represent any of those shapes, so nothing legitimate is lost). Non-writable
  * data properties (e.g. a frozen input) are accepted.
  */
-function snapshotOwnData(
-  source: object,
-  label: string,
-): Record<string, unknown> {
+function snapshotOwnData(source: object, label: string): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const key of Reflect.ownKeys(source)) {
     if (typeof key !== 'string') {
@@ -347,8 +348,7 @@ export function snapshotPlainData(
   options: PlainDataSnapshotOptions,
 ): PlainDataSnapshot {
   const { label, maxDepth, maxNodes } = options;
-  const makeError =
-    options.makeError ?? ((m: string) => new ReferenceValidationError(m));
+  const makeError = options.makeError ?? ((m: string) => new ReferenceValidationError(m));
   const passNonJson = options.nonJson === 'pass';
   let nodes = 1; // the root object itself
   let sawNonJson = false;
@@ -358,9 +358,7 @@ export function snapshotPlainData(
 
   const guardChild = (childDepth: number): void => {
     if (maxDepth !== undefined && childDepth > maxDepth) {
-      throw makeError(
-        `${label} exceeds the maximum nesting depth of ${maxDepth}`,
-      );
+      throw makeError(`${label} exceeds the maximum nesting depth of ${maxDepth}`);
     }
     nodes += 1;
     if (maxNodes !== undefined && nodes > maxNodes) {
@@ -400,10 +398,7 @@ export function snapshotPlainData(
     return undefined;
   };
 
-  const snapshotObject = (
-    obj: Record<string, unknown>,
-    depth: number,
-  ): Record<string, unknown> => {
+  const snapshotObject = (obj: Record<string, unknown>, depth: number): Record<string, unknown> => {
     const out: Record<string, unknown> = {};
     const childDepth = depth + 1;
     for (const key of Reflect.ownKeys(obj)) {
@@ -511,18 +506,14 @@ function snapshotExtensionsTree(
  *   structural violation. Neither the invalid value NOR any caught error text
  *   is ever echoed back.
  */
-export function validateReference(
-  ref: unknown,
-  index: number,
-): Record<string, unknown> {
+export function validateReference(ref: unknown, index: number): Record<string, unknown> {
   // Snapshot first: everything BELOW this block touches only plain local
   // data, so no caller code (getter, Proxy trap) can run during validation.
   let snap: Record<string, unknown>;
   try {
     if (!isPlainObject(ref)) {
       throw new ReferenceValidationError(
-        `references[${index}] must be a dict, got ${pyTypeName(ref)} ` +
-          `per SPEC §11.5.6`,
+        `references[${index}] must be a dict, got ${pyTypeName(ref)} ` + `per SPEC §11.5.6`,
       );
     }
     snap = snapshotOwnData(ref, `references[${index}]`);
@@ -559,9 +550,7 @@ export function validateReference(
         `per SPEC §11.5.6`,
     );
   }
-  if (
-    !isValidIdentifierString(relationship, MAX_REFERENCE_RELATIONSHIP_LENGTH)
-  ) {
+  if (!isValidIdentifierString(relationship, MAX_REFERENCE_RELATIONSHIP_LENGTH)) {
     throw new ReferenceValidationError(
       `references[${index}].relationship must be a non-empty ` +
         `whitespace-free string of at most ` +
@@ -576,9 +565,7 @@ export function validateReference(
   for (const key of OPTIONAL_STRING_KEYS) {
     if (key in snap) {
       const value = snap[key];
-      if (
-        !isValidIdentifierString(value, MAX_REFERENCE_OPTIONAL_STRING_LENGTH)
-      ) {
+      if (!isValidIdentifierString(value, MAX_REFERENCE_OPTIONAL_STRING_LENGTH)) {
         throw new ReferenceValidationError(
           `references[${index}].${key} must be a ` +
             `non-empty whitespace-free string of at most ` +
@@ -596,9 +583,7 @@ export function validateReference(
     let walked: PlainDataSnapshot;
     try {
       if (!isPlainObject(extensions)) {
-        throw new ReferenceValidationError(
-          `references[${index}].extensions must be an object`,
-        );
+        throw new ReferenceValidationError(`references[${index}].extensions must be an object`);
       }
       walked = snapshotExtensionsTree(extensions, index);
     } catch (err) {

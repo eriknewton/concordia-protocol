@@ -10,11 +10,7 @@ export {
   verifyJson,
   generateKeyPair,
 } from './crypto/signing.js';
-export {
-  toBase64Url,
-  fromBase64Url,
-  Base64UrlError,
-} from './crypto/base64url.js';
+export { toBase64Url, fromBase64Url, Base64UrlError } from './crypto/base64url.js';
 export {
   SessionState,
   MessageType,

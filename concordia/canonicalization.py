@@ -40,9 +40,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from .signing import canonical_json
 from .models.mandate import Mandate
-
+from .signing import canonical_json
 
 # JCS specification identifier: surfaces in audit trails / debug output
 # so downstream consumers can confirm the canonicalization regime by
@@ -69,7 +68,7 @@ def canonicalize_jcs(data: Any) -> bytes:
         return canonical_json(data)
     # For non-dict roots, defer to the same underlying serializer by
     # importing the private helper. JCS roots may be any JSON value.
-    from .signing import _stable_stringify, _check_no_special_floats
+    from .signing import _check_no_special_floats, _stable_stringify
 
     _check_no_special_floats(data)
     return _stable_stringify(data).encode("utf-8")

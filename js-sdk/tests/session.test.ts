@@ -14,12 +14,7 @@ import {
   type Message,
   type PublicKeyResolver,
 } from '../src/session/index.js';
-import {
-  SessionState,
-  MessageType,
-  PartyRole,
-  behaviorRecordToDict,
-} from '../src/types/index.js';
+import { SessionState, MessageType, PartyRole, behaviorRecordToDict } from '../src/types/index.js';
 import { KeyPair, sign } from '../src/crypto/signing.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -157,9 +152,7 @@ describe('session transition table parity', () => {
   });
 
   it('rejects a sampling of illegal (from,type) pairs not in the table', () => {
-    const legal = new Set(
-      fixtures.transition_table.map((e) => `${e.from}|${e.type}`),
-    );
+    const legal = new Set(fixtures.transition_table.map((e) => `${e.from}|${e.type}`));
     // A representative grid of pairs; any pair absent from the Python table must
     // raise InvalidTransitionError (never silently transition).
     const states: SessionState[] = [
@@ -177,9 +170,7 @@ describe('session transition table parity', () => {
         if (legal.has(`${from}|${type}`)) continue;
         const session = makeSessionInState(from);
         const msg = buildSignedMessage(type, senderForState(from), session);
-        expect(() => session.applyMessage(msg, resolver)).toThrow(
-          InvalidTransitionError,
-        );
+        expect(() => session.applyMessage(msg, resolver)).toThrow(InvalidTransitionError);
         checked += 1;
       }
     }
@@ -229,17 +220,15 @@ describe('session run parity (Python-generated transcripts)', () => {
           expect(b.offersMade).toBe(block.raw.offers_made);
           expect(b.concessions).toBe(block.raw.concessions);
           // Raw magnitude must be bit-identical (Object.is catches any FP drift).
-          expect(Object.is(b.concessionMagnitude, block.raw.concession_magnitude)).toBe(
-            true,
-          );
+          expect(Object.is(b.concessionMagnitude, block.raw.concession_magnitude)).toBe(true);
           expect(b.signalsShared).toBe(block.raw.signals_shared);
           expect(b.constraintsDeclared).toBe(block.raw.constraints_declared);
           expect(b.constraintsViolated).toBe(block.raw.constraints_violated);
           expect(b.reasoningProvided).toBe(block.raw.reasoning_provided);
           expect(b.withdrawal).toBe(block.raw.withdrawal);
-          expect(
-            Object.is(b.responseTimeAvgSeconds, block.raw.response_time_avg_seconds),
-          ).toBe(true);
+          expect(Object.is(b.responseTimeAvgSeconds, block.raw.response_time_avg_seconds)).toBe(
+            true,
+          );
           expect(behaviorRecordToDict(b)).toEqual(block.to_dict);
         }
       }
@@ -270,11 +259,7 @@ describe('expire / make_dormant lifecycle parity', () => {
           terms: { price: { type: 'numeric', value: 1000 } },
         });
         session.applyMessage(open, resolver);
-        const accept = buildSignedMessage(
-          MessageType.ACCEPT_SESSION,
-          AGENT_B,
-          session,
-        );
+        const accept = buildSignedMessage(MessageType.ACCEPT_SESSION, AGENT_B, session);
         session.applyMessage(accept, resolver);
       }
       for (const op of lc.ops) {
@@ -310,9 +295,7 @@ describe('invalid-transition error parity', () => {
       const session = new Session({ sessionId: `ses_${lc.name}` });
       if (lc.state === 'expired') {
         session.expire();
-        expect(() => session.expire()).toThrowError(
-          new InvalidTransitionError(lc.expected_error),
-        );
+        expect(() => session.expire()).toThrowError(new InvalidTransitionError(lc.expected_error));
       } else if (lc.name === 'dormant_from_proposed') {
         expect(() => session.makeDormant()).toThrowError(
           new InvalidTransitionError(lc.expected_error),
@@ -349,9 +332,7 @@ describe('unknown MessageType coercion parity', () => {
       session.addParty(AGENT_B, PartyRole.RESPONDER, KP_B);
       // The message is validly signed, so signature passes and enum-coercion is
       // reached; the unknown type raises with the exact Python ValueError text.
-      expect(() => session.applyMessage(uc.message, resolver)).toThrowError(
-        uc.expected_error,
-      );
+      expect(() => session.applyMessage(uc.message, resolver)).toThrowError(uc.expected_error);
     });
   }
 
@@ -386,8 +367,7 @@ describe('message body-shape parity (reject non-object body)', () => {
       // OFFER/COUNTER/SIGNAL. applyMessage does NOT check prev_hash per-append
       // (intentional Python parity), so only the STATE must match for the
       // transition to be legal; the fixture message bytes are applied verbatim.
-      const startState =
-        bc.preface === 'active' ? SessionState.ACTIVE : SessionState.PROPOSED;
+      const startState = bc.preface === 'active' ? SessionState.ACTIVE : SessionState.PROPOSED;
       const session = makeSessionInState(startState);
 
       if (bc.accept) {
@@ -406,9 +386,7 @@ describe('message body-shape parity (reject non-object body)', () => {
       } else {
         // Fail closed: a present, non-mapping body must throw rather than
         // silently coerce to {} (which would accept inputs Python rejects).
-        expect(() => session.applyMessage(bc.message, resolver)).toThrow(
-          InvalidMessageError,
-        );
+        expect(() => session.applyMessage(bc.message, resolver)).toThrow(InvalidMessageError);
       }
     });
   }

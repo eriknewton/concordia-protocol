@@ -13,9 +13,9 @@ from concordia.adapters.a2cn.dispute_resolved import (
     DISPUTE_RESOLVED_SCHEMA,
     DisputeResolvedApplicationError,
     DisputeResolvedSchemaError,
-    parse_dispute_resolved,
     apply_dispute_resolved_to_attestation,
     build_fulfillment_from_dispute_resolved,
+    parse_dispute_resolved,
 )
 
 __all__ = [

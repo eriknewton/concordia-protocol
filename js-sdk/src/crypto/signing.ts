@@ -115,10 +115,7 @@ function signingPayload(data: Record<string, unknown>): Buffer {
  * @param data The message object to sign.
  * @param privateKey Raw 32-byte Ed25519 private key (seed), or a {@link KeyPair}.
  */
-export function sign(
-  data: Record<string, unknown>,
-  privateKey: Uint8Array | KeyPair,
-): string {
+export function sign(data: Record<string, unknown>, privateKey: Uint8Array | KeyPair): string {
   const seed = privateKey instanceof KeyPair ? privateKey.privateKey : privateKey;
   if (seed.length !== ED25519_KEY_LENGTH) {
     throw new SigningError(
@@ -203,15 +200,10 @@ export function generateKeyPair(): KeyPair {
  * @throws {SigningError} if `json` is valid JSON but not a top-level object, or
  *   the key is malformed.
  */
-export function signJson(
-  json: string,
-  privateKey: Uint8Array | KeyPair,
-): string {
+export function signJson(json: string, privateKey: Uint8Array | KeyPair): string {
   const data = parseJsonStrict(json);
   if (data === null || typeof data !== 'object' || Array.isArray(data)) {
-    throw new SigningError(
-      'signJson expects a JSON object at the top level',
-    );
+    throw new SigningError('signJson expects a JSON object at the top level');
   }
   return sign(data as Record<string, unknown>, privateKey);
 }

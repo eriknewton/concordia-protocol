@@ -100,9 +100,7 @@ export function makeDelegationLink(
  * `algorithm` defaults are supplied here so a partially-specified link
  * serializes identically to a Python dataclass with its field defaults.
  */
-export function delegationLinkToDict(
-  link: DelegationLink,
-): Record<string, unknown> {
+export function delegationLinkToDict(link: DelegationLink): Record<string, unknown> {
   // Python `to_dict` emits these three fields VERBATIM (`self.delegated_at`
   // etc.). The dataclass field can be `None` only when a present-null was read
   // by `from_dict`; in that case Python emits `null` and so must this. The
@@ -129,9 +127,7 @@ export function delegationLinkToDict(
  * the dataclass defaults (`scope_restriction=None`, `delegated_at=""`,
  * `signature=""`, `algorithm="EdDSA"`).
  */
-export function delegationLinkFromDict(
-  data: Record<string, unknown>,
-): DelegationLink {
+export function delegationLinkFromDict(data: Record<string, unknown>): DelegationLink {
   if (!('delegator' in data)) {
     throw new MandateValidationError("'delegator'");
   }
@@ -145,9 +141,7 @@ export function delegationLinkFromDict(
   return {
     delegator: data.delegator as string,
     delegate: data.delegate as string,
-    scopeRestriction: pyGet(data, 'scope_restriction', null) as
-      | Record<string, unknown>
-      | null,
+    scopeRestriction: pyGet(data, 'scope_restriction', null) as Record<string, unknown> | null,
     delegatedAt: pyGet(data, 'delegated_at', '') as string,
     signature: pyGet(data, 'signature', '') as string,
     algorithm: pyGet(data, 'algorithm', 'EdDSA') as string,
@@ -162,11 +156,7 @@ export function delegationLinkFromDict(
  * would wrongly do), because Python keeps the present `None` and serializes it
  * back out verbatim. Key-ABSENT alone triggers the default.
  */
-function pyGet(
-  data: Record<string, unknown>,
-  key: string,
-  fallback: unknown,
-): unknown {
+function pyGet(data: Record<string, unknown>, key: string, fallback: unknown): unknown {
   return key in data ? data[key] : fallback;
 }
 
@@ -218,9 +208,7 @@ export function makeValidityWindow(
  * `not_after`, `sequence_key`, `state_condition`, `max_uses`) ONLY when it is
  * non-null (Python guards each with `if self.x is not None`).
  */
-export function validityWindowToDict(
-  validity: ValidityWindow,
-): Record<string, unknown> {
+export function validityWindowToDict(validity: ValidityWindow): Record<string, unknown> {
   const d: Record<string, unknown> = { mode: validity.mode };
   if (validity.notBefore !== undefined && validity.notBefore !== null) {
     d.not_before = validity.notBefore;
@@ -231,10 +219,7 @@ export function validityWindowToDict(
   if (validity.sequenceKey !== undefined && validity.sequenceKey !== null) {
     d.sequence_key = validity.sequenceKey;
   }
-  if (
-    validity.stateCondition !== undefined &&
-    validity.stateCondition !== null
-  ) {
+  if (validity.stateCondition !== undefined && validity.stateCondition !== null) {
     d.state_condition = validity.stateCondition;
   }
   if (validity.maxUses !== undefined && validity.maxUses !== null) {
@@ -250,9 +235,7 @@ export function validityWindowToDict(
  * `TemporalMode(data["mode"])` raises `ValueError`); the rest fall back to
  * `None`.
  */
-export function validityWindowFromDict(
-  data: Record<string, unknown>,
-): ValidityWindow {
+export function validityWindowFromDict(data: Record<string, unknown>): ValidityWindow {
   if (!('mode' in data)) {
     throw new MandateValidationError("'mode'");
   }
@@ -260,9 +243,7 @@ export function validityWindowFromDict(
   if (!isTemporalMode(modeValue)) {
     // Mirror Python `TemporalMode(value)` raising ValueError on an unknown
     // member value.
-    throw new MandateValidationError(
-      `${pyRepr(modeValue)} is not a valid TemporalMode`,
-    );
+    throw new MandateValidationError(`${pyRepr(modeValue)} is not a valid TemporalMode`);
   }
   return {
     mode: modeValue,
@@ -404,10 +385,7 @@ export function mandateToDict(mandate: Mandate): Record<string, unknown> {
   if (mandate.delegationChain.length > 0) {
     d.delegation_chain = mandate.delegationChain.map(delegationLinkToDict);
   }
-  if (
-    mandate.revocationEndpoint !== undefined &&
-    mandate.revocationEndpoint !== null
-  ) {
+  if (mandate.revocationEndpoint !== undefined && mandate.revocationEndpoint !== null) {
     d.revocation_endpoint = mandate.revocationEndpoint;
   }
   if (mandate.revokedAt !== undefined && mandate.revokedAt !== null) {
@@ -451,16 +429,12 @@ function isNonEmptyObject(value: Record<string, unknown> | null): boolean {
 export function mandateFromDict(data: Record<string, unknown>): Mandate {
   let validity: ValidityWindow | null = null;
   if ('validity' in data) {
-    validity = validityWindowFromDict(
-      data.validity as Record<string, unknown>,
-    );
+    validity = validityWindowFromDict(data.validity as Record<string, unknown>);
   }
 
   let chain: DelegationLink[] = [];
   if ('delegation_chain' in data) {
-    chain = (data.delegation_chain as Record<string, unknown>[]).map(
-      delegationLinkFromDict,
-    );
+    chain = (data.delegation_chain as Record<string, unknown>[]).map(delegationLinkFromDict);
   }
 
   // Python: try MandateStatus(data["status"]) except ValueError -> ACTIVE.
@@ -486,9 +460,7 @@ export function mandateFromDict(data: Record<string, unknown>): Mandate {
     validity,
     constraints: pyGet(data, 'constraints', {}) as Record<string, unknown>,
     delegationChain: chain,
-    revocationEndpoint: pyGet(data, 'revocation_endpoint', null) as
-      | string
-      | null,
+    revocationEndpoint: pyGet(data, 'revocation_endpoint', null) as string | null,
     revokedAt: pyGet(data, 'revoked_at', null) as string | null,
     metadata: pyGet(data, 'metadata', {}) as Record<string, unknown>,
     signature: pyGet(data, 'signature', '') as string,
@@ -691,8 +663,7 @@ export const MANDATE_JSON_SCHEMA: Record<string, unknown> = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
   $id: 'urn:concordia:schema:mandate:v1',
   title: 'Concordia Mandate Credential',
-  description:
-    'A signed credential authorizing an agent to act within constraints.',
+  description: 'A signed credential authorizing an agent to act within constraints.',
   type: 'object',
   required: [
     'mandate_id',
@@ -772,13 +743,7 @@ export const MANDATE_JSON_SCHEMA: Record<string, unknown> = {
       type: 'array',
       items: {
         type: 'object',
-        required: [
-          'delegator',
-          'delegate',
-          'delegated_at',
-          'signature',
-          'algorithm',
-        ],
+        required: ['delegator', 'delegate', 'delegated_at', 'signature', 'algorithm'],
         properties: {
           delegator: { type: 'string', minLength: 1 },
           delegate: { type: 'string', minLength: 1 },

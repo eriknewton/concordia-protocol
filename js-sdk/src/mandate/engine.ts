@@ -99,10 +99,7 @@ export function signMandate(mandate: Mandate, keyPair: KeyPair): Mandate {
  * Mirrors Python `sign_delegation`: signs over the link `to_dict()` with
  * `signature` removed, using the link's `algorithm` (default `EdDSA`).
  */
-export function signDelegation(
-  link: DelegationLink,
-  keyPair: KeyPair,
-): DelegationLink {
+export function signDelegation(link: DelegationLink, keyPair: KeyPair): DelegationLink {
   assertEdDSA(link.algorithm ?? 'EdDSA');
   const linkDict = delegationLinkToDict(link);
   delete linkDict.signature;
@@ -151,9 +148,7 @@ const mandateValidator: ValidateFunction = ajv.compile(MANDATE_JSON_SCHEMA);
  * `<message>` is CPython jsonschema's message for the first/best-match error,
  * reconstructed from ajv's structured error by {@link pythonJsonschemaMessage}.
  */
-export function validateMandateSchema(
-  mandateDict: Record<string, unknown>,
-): string[] {
+export function validateMandateSchema(mandateDict: Record<string, unknown>): string[] {
   const ok = mandateValidator(mandateDict);
   if (ok) {
     return [];
@@ -184,10 +179,7 @@ function selectError(errors: ErrorObject[]): ErrorObject {
 }
 
 /** Resolve the instance value an ajv error points at (via its `instancePath`). */
-function instanceAt(
-  error: ErrorObject,
-  root: Record<string, unknown>,
-): unknown {
+function instanceAt(error: ErrorObject, root: Record<string, unknown>): unknown {
   const path = error.instancePath;
   if (path === '' || path === undefined) {
     return root;
@@ -249,9 +241,7 @@ function pythonJsonschemaMessage(
     case 'pattern':
       return `${pyRepr(value)} does not match ${pyRepr(params.pattern)}`;
     case 'enum':
-      return `${pyRepr(value)} is not one of ${pyReprList(
-        params.allowedValues as unknown[],
-      )}`;
+      return `${pyRepr(value)} is not one of ${pyReprList(params.allowedValues as unknown[])}`;
     case 'type':
       // CPython jsonschema renders a type UNION as the per-type reprs joined by
       // ", " (e.g. `is not of type 'number', 'boolean'`), NOT as a Python list
@@ -260,17 +250,13 @@ function pythonJsonschemaMessage(
       return `${pyRepr(value)} is not of type ${pyReprTypeList(params.type)}`;
     case 'minLength': {
       const limit = params.limit as number;
-      return limit === 1
-        ? `${pyRepr(value)} should be non-empty`
-        : `${pyRepr(value)} is too short`;
+      return limit === 1 ? `${pyRepr(value)} should be non-empty` : `${pyRepr(value)} is too short`;
     }
     case 'maxLength':
       return `${pyRepr(value)} is too long`;
     case 'minItems': {
       const limit = params.limit as number;
-      return limit === 1
-        ? `${pyRepr(value)} should be non-empty`
-        : `${pyRepr(value)} is too short`;
+      return limit === 1 ? `${pyRepr(value)} should be non-empty` : `${pyRepr(value)} is too short`;
     }
     case 'maxItems':
       return `${pyRepr(value)} is too long`;
@@ -283,21 +269,13 @@ function pythonJsonschemaMessage(
     case 'maxProperties':
       return `${pyRepr(value)} has too many properties`;
     case 'minimum':
-      return `${pyRepr(value)} is less than the minimum of ${pyRepr(
-        params.limit,
-      )}`;
+      return `${pyRepr(value)} is less than the minimum of ${pyRepr(params.limit)}`;
     case 'maximum':
-      return `${pyRepr(value)} is greater than the maximum of ${pyRepr(
-        params.limit,
-      )}`;
+      return `${pyRepr(value)} is greater than the maximum of ${pyRepr(params.limit)}`;
     case 'exclusiveMinimum':
-      return `${pyRepr(value)} is less than or equal to the minimum of ${pyRepr(
-        params.limit,
-      )}`;
+      return `${pyRepr(value)} is less than or equal to the minimum of ${pyRepr(params.limit)}`;
     case 'exclusiveMaximum':
-      return `${pyRepr(
-        value,
-      )} is greater than or equal to the maximum of ${pyRepr(params.limit)}`;
+      return `${pyRepr(value)} is greater than or equal to the maximum of ${pyRepr(params.limit)}`;
     default:
       // Defensive: an unhandled keyword would mismatch a fixture and fail the
       // test loudly. Surface ajv's own message so the gap is diagnosable rather
@@ -324,17 +302,14 @@ function additionalPropertiesMessage(
   schema: Record<string, unknown>,
 ): string {
   const subschema = resolveSubschema(error.schemaPath, schema);
-  const props =
-    (subschema?.properties as Record<string, unknown> | undefined) ?? {};
-  const patternProps =
-    (subschema?.patternProperties as Record<string, unknown> | undefined) ?? {};
+  const props = (subschema?.properties as Record<string, unknown> | undefined) ?? {};
+  const patternProps = (subschema?.patternProperties as Record<string, unknown> | undefined) ?? {};
   const patternKeys = Object.keys(patternProps);
 
   // Recompute extras the way Python `find_additional_properties` does.
   let extras: string[];
   if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-    const joinedPattern =
-      patternKeys.length > 0 ? new RegExp(patternKeys.join('|')) : null;
+    const joinedPattern = patternKeys.length > 0 ? new RegExp(patternKeys.join('|')) : null;
     extras = Object.keys(value as Record<string, unknown>).filter((key) => {
       if (key in props) return false;
       if (joinedPattern && joinedPattern.test(key)) return false;
@@ -353,9 +328,7 @@ function additionalPropertiesMessage(
 
   if (patternKeys.length > 0) {
     const verb = extras.length === 1 ? 'does' : 'do';
-    const sortedPatterns = [...patternKeys].sort((a, b) =>
-      a < b ? -1 : a > b ? 1 : 0,
-    );
+    const sortedPatterns = [...patternKeys].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
     const patterns = sortedPatterns.map(pyRepr).join(', ');
     return `${joinedExtras} ${verb} not match any of the regexes: ${patterns}`;
   }
@@ -526,9 +499,7 @@ export function validateConstraints(
  * ajv-internal (not byte-equal to CPython's), so the prefix is what the
  * fixtures pin. A well-formed schema returns `null`.
  */
-function checkConstraintSchema(
-  constraints: Record<string, unknown>,
-): string | null {
+function checkConstraintSchema(constraints: Record<string, unknown>): string | null {
   try {
     compileConstraintSchema(constraints);
     return null;
@@ -578,9 +549,7 @@ function cpythonMetaSchemaMessage(
 const constraintSchemaCache = new Map<string, ValidateFunction>();
 
 /** Compile a constraints-as-schema validator, caching by canonical key. */
-function compileConstraintSchema(
-  constraints: Record<string, unknown>,
-): ValidateFunction {
+function compileConstraintSchema(constraints: Record<string, unknown>): ValidateFunction {
   const key = JSON.stringify(constraints);
   const cached = constraintSchemaCache.get(key);
   if (cached) {
@@ -636,9 +605,7 @@ export function scopeRestrictionToSchema(
     return [null, ['unsupported_scope_restriction']];
   }
 
-  const hasSchemaKeyword = Object.keys(scopeRestriction).some((k) =>
-    JSON_SCHEMA_KEYWORDS.has(k),
-  );
+  const hasSchemaKeyword = Object.keys(scopeRestriction).some((k) => JSON_SCHEMA_KEYWORDS.has(k));
   if (hasSchemaKeyword) {
     const schemaError = checkConstraintSchema(scopeRestriction);
     if (schemaError !== null) {
@@ -652,11 +619,7 @@ export function scopeRestrictionToSchema(
   // Python: `set(scope_restriction) == {"max_spend"}` AND isinstance(max_spend,
   // int|float) AND not isinstance(max_spend, bool). A JS `boolean` is rejected
   // to match `not isinstance(_, bool)`.
-  if (
-    keys.length === 1 &&
-    keys[0] === 'max_spend' &&
-    typeof maxSpend === 'number'
-  ) {
+  if (keys.length === 1 && keys[0] === 'max_spend' && typeof maxSpend === 'number') {
     return [
       {
         type: 'object',
@@ -671,10 +634,7 @@ export function scopeRestrictionToSchema(
     ];
   }
 
-  return [
-    null,
-    ['unsupported_scope_restriction: expected JSON Schema or max_spend shorthand'],
-  ];
+  return [null, ['unsupported_scope_restriction: expected JSON Schema or max_spend shorthand']];
 }
 
 /**
@@ -770,10 +730,7 @@ export function checkTemporalValidity(
     // CPython isoformat, so a naive (offset-less) timestamp fails it. A
     // genuinely malformed timestamp also fails it, but is routed to the
     // `Invalid timestamp format` (ValueError) path below for message parity.
-    if (
-      !isCpythonIsoDateTime(validity.notBefore) ||
-      !isCpythonIsoDateTime(validity.notAfter)
-    ) {
+    if (!isCpythonIsoDateTime(validity.notBefore) || !isCpythonIsoDateTime(validity.notAfter)) {
       const naive = !isCpythonIsoDateTime(validity.notBefore)
         ? validity.notBefore
         : validity.notAfter;
@@ -786,9 +743,7 @@ export function checkTemporalValidity(
             `offset or 'Z'): ${naive}`,
         );
       } else {
-        errors.push(
-          `Invalid timestamp format: ${cpythonFromisoformatError(naive)}`,
-        );
+        errors.push(`Invalid timestamp format: ${cpythonFromisoformatError(naive)}`);
       }
       return [false, errors];
     }
@@ -801,9 +756,7 @@ export function checkTemporalValidity(
       // only for the residual offset cases where `Date.parse` is stricter than
       // CPython; the tz-naive and structurally-invalid cases are handled above.)
       const bad = nb === null ? validity.notBefore : validity.notAfter;
-      errors.push(
-        `Invalid timestamp format: ${cpythonFromisoformatError(bad)}`,
-      );
+      errors.push(`Invalid timestamp format: ${cpythonFromisoformatError(bad)}`);
       return [false, errors];
     }
     if (now < nb) {
@@ -821,23 +774,17 @@ export function checkTemporalValidity(
     }
     if (sequenceKey !== null && sequenceKey !== validity.sequenceKey) {
       errors.push(
-        `Sequence key mismatch: mandate=${validity.sequenceKey}, ` +
-          `provided=${sequenceKey}`,
+        `Sequence key mismatch: mandate=${validity.sequenceKey}, ` + `provided=${sequenceKey}`,
       );
       return [false, errors];
     }
   } else if (validity.mode === TemporalMode.STATE_BOUND) {
-    if (
-      validity.stateCondition === null ||
-      validity.stateCondition === undefined
-    ) {
+    if (validity.stateCondition === null || validity.stateCondition === undefined) {
       errors.push('State-bound mode requires state_condition');
       return [false, errors];
     }
     if (stateActive !== null && !stateActive) {
-      errors.push(
-        `State condition '${validity.stateCondition}' is not active`,
-      );
+      errors.push(`State condition '${validity.stateCondition}' is not active`);
       return [false, errors];
     }
   }
@@ -911,8 +858,7 @@ function cpythonFromisoformatError(value: string): string | null {
   if (month < 1 || month > 12) return 'month must be in 1..12';
   const isLeap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
   const daysInMonth =
-    [31, isLeap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1] ??
-    31;
+    [31, isLeap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1] ?? 31;
   if (day < 1 || day > daysInMonth) return 'day is out of range for month';
   if (hour > 23) return 'hour must be in 0..23';
   if (minute > 59) return 'minute must be in 0..59';
@@ -957,15 +903,13 @@ export function verifyDelegationChain(
 
   if (head.delegator !== issuer) {
     errors.push(
-      `Chain root mismatch: expected issuer=${issuer}, ` +
-        `got delegator=${head.delegator}`,
+      `Chain root mismatch: expected issuer=${issuer}, ` + `got delegator=${head.delegator}`,
     );
   }
 
   if (tail.delegate !== subject) {
     errors.push(
-      `Chain tail mismatch: expected subject=${subject}, ` +
-        `got delegate=${tail.delegate}`,
+      `Chain tail mismatch: expected subject=${subject}, ` + `got delegate=${tail.delegate}`,
     );
   }
 
@@ -980,9 +924,7 @@ export function verifyDelegationChain(
 
     const pubKey = publicKeys[link.delegator];
     if (pubKey === undefined) {
-      errors.push(
-        `No public key for delegator '${link.delegator}' at link ${i}`,
-      );
+      errors.push(`No public key for delegator '${link.delegator}' at link ${i}`);
       return;
     }
 
@@ -1032,10 +974,7 @@ export function verifyDelegationChain(
  * default `urllib`-style fetch). Fail-closed semantics (an unreachable endpoint
  * -> `[false, [...]]`) are the hook's responsibility, matching Python.
  */
-export type RevocationChecker = (
-  mandateId: string,
-  endpoint: string,
-) => [boolean, string[]];
+export type RevocationChecker = (mandateId: string, endpoint: string) => [boolean, string[]];
 
 // ---------------------------------------------------------------------------
 // Full mandate verification
@@ -1128,9 +1067,7 @@ export function verifyMandate(
   delete signable.signature;
   // EdDSA-only verify (the crypto layer's scope). An ES256 mandate would fail
   // here, matching the deferred-ES256 posture (fail-closed).
-  const sigValid =
-    mandateObj.algorithm === 'EdDSA' &&
-    verify(signable, sig, issuerPublicKey);
+  const sigValid = mandateObj.algorithm === 'EdDSA' && verify(signable, sig, issuerPublicKey);
   result.checks.issuer_signature = sigValid;
   if (!sigValid) {
     result.errors.push('Invalid issuer signature');
@@ -1141,9 +1078,7 @@ export function verifyMandate(
   result.checks.lifecycle_status = mandateObj.status === MandateStatus.ACTIVE;
   if (mandateObj.status !== MandateStatus.ACTIVE) {
     result.failureReason = `mandate_${mandateObj.status}`;
-    result.errors.push(
-      `Mandate lifecycle status is ${pyRepr(mandateObj.status)}`,
-    );
+    result.errors.push(`Mandate lifecycle status is ${pyRepr(mandateObj.status)}`);
     return result;
   }
 
@@ -1169,14 +1104,11 @@ export function verifyMandate(
       result.errors.push('State-bound mandate requires state_active context');
       return result;
     }
-    const [temporalValid, temporalErrors] = checkTemporalValidity(
-      mandateObj.validity,
-      {
-        now: options.now,
-        sequenceKey: options.sequenceKey,
-        stateActive: options.stateActive,
-      },
-    );
+    const [temporalValid, temporalErrors] = checkTemporalValidity(mandateObj.validity, {
+      now: options.now,
+      sequenceKey: options.sequenceKey,
+      stateActive: options.stateActive,
+    });
     result.checks.temporal_validity = temporalValid;
     if (!temporalValid) {
       result.errors.push(...temporalErrors);
@@ -1184,15 +1116,11 @@ export function verifyMandate(
     }
   } else {
     result.checks.temporal_validity = true;
-    result.warnings.push(
-      'No validity window specified — mandate has no temporal bounds',
-    );
+    result.warnings.push('No validity window specified — mandate has no temporal bounds');
   }
 
   // --- Check 3: Constraint compliance ---
-  const [constraintValid, constraintErrors] = validateConstraints(
-    mandateObj.constraints,
-  );
+  const [constraintValid, constraintErrors] = validateConstraints(mandateObj.constraints);
   result.checks.constraint_compliance = constraintValid;
   if (!constraintValid) {
     result.errors.push(...constraintErrors);
@@ -1231,10 +1159,7 @@ export function verifyMandate(
   }
 
   // --- Check 4b: Effective action scope ---
-  const [effValid, effErrors] = validateConstraints(
-    effectiveConstraints,
-    options.action,
-  );
+  const [effValid, effErrors] = validateConstraints(effectiveConstraints, options.action);
   result.checks.constraint_compliance = effValid;
   if (!effValid) {
     result.errors.push(...effErrors);
@@ -1262,10 +1187,7 @@ export function verifyMandate(
     }
   } else {
     result.checks.revocation_status = true;
-    if (
-      mandateObj.revocationEndpoint === null ||
-      mandateObj.revocationEndpoint === undefined
-    ) {
+    if (mandateObj.revocationEndpoint === null || mandateObj.revocationEndpoint === undefined) {
       result.warnings.push('No revocation endpoint — status not verified');
     }
   }

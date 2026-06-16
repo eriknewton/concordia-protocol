@@ -23,14 +23,13 @@ This module is pure in-process logic — no networking.  MCP tools in
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-import logging
 from typing import Any
-
 
 # Audit M4 hardening: keep one initiator from monopolizing relay sessions while
 # preserving the existing global relay caps.
@@ -202,7 +201,7 @@ class TranscriptArchive:
     retention_days: int = 365  # 1 year default
 
     def to_dict(self) -> dict[str, Any]:
-        d = {
+        d: dict[str, Any] = {
             "archive_id": self.archive_id,
             "relay_session_id": self.relay_session_id,
             "concordia_session_id": self.concordia_session_id,

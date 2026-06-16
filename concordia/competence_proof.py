@@ -20,9 +20,7 @@ privacy-by-architecture rather than privacy-by-policy.
 
 from __future__ import annotations
 
-import base64
 import hashlib
-import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -30,9 +28,8 @@ from typing import Any, Callable
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
+from .receipt_bundle import _compute_summary
 from .signing import KeyPair, canonical_json, sign_message, verify_signature
-from .receipt_bundle import BundleSummary, _compute_summary
-
 
 # ---------------------------------------------------------------------------
 # Merkle tree construction and proof generation
@@ -267,8 +264,8 @@ class CompetenceProof:
             for rev_id in reveal_ids:
                 if rev_id not in att_ids:
                     raise ValueError(f"Attestation '{rev_id}' not found in attestations")
-                proof = generate_merkle_proof(rev_id, sorted_ids, layers)
-                merkle_proofs.append(proof)
+                merkle_proof = generate_merkle_proof(rev_id, sorted_ids, layers)
+                merkle_proofs.append(merkle_proof)
 
                 # Include the attestation itself
                 for att in attestations:

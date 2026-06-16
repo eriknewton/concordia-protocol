@@ -44,9 +44,7 @@ export function checkLoneSurrogates(s: string): void {
 export function checkNoSpecialFloats(value: unknown): void {
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) {
-      throw new CanonicalizationError(
-        `Cannot serialize non-finite number: ${value}`,
-      );
+      throw new CanonicalizationError(`Cannot serialize non-finite number: ${value}`);
     }
     if (Object.is(value, -0)) {
       throw new CanonicalizationError('Cannot serialize negative zero (-0)');
@@ -87,11 +85,7 @@ export function checkNoSpecialFloats(value: unknown): void {
     // integers this large (amounts are small ints / strings; limits are floats;
     // timestamps are ISO-8601 strings), so the realistic precision-loss cases
     // (16-19 digit IDs, nanosecond timestamps < 1e21) are caught here too.
-    if (
-      Number.isInteger(value) &&
-      !Number.isSafeInteger(value) &&
-      !/[eE]/.test(String(value))
-    ) {
+    if (Number.isInteger(value) && !Number.isSafeInteger(value) && !/[eE]/.test(String(value))) {
       throw new CanonicalizationError(
         `Cannot serialize unsafe integer ${value}: integers beyond ` +
           `Number.MAX_SAFE_INTEGER (2^53 - 1) lose precision in JavaScript ` +

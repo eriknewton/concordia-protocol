@@ -9,7 +9,6 @@ Implements Viral Strategy item #18: session receipts as portable proof.
 
 from __future__ import annotations
 
-import hashlib
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -18,7 +17,6 @@ from typing import Any, Callable
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from .signing import KeyPair, canonical_json, sign_message, verify_signature
-
 
 # ---------------------------------------------------------------------------
 # Bundle summary — precomputed aggregate stats
@@ -407,7 +405,7 @@ def verify_bundle(
         if claimed.unique_counterparties != recomputed.unique_counterparties:
             mismatches.append(f"unique_counterparties: claimed {claimed.unique_counterparties}, actual {recomputed.unique_counterparties}")
         if sorted(claimed.categories) != sorted(recomputed.categories):
-            mismatches.append(f"categories mismatch")
+            mismatches.append("categories mismatch")
         if abs(claimed.reasoning_rate - recomputed.reasoning_rate) > 0.001:
             mismatches.append(f"reasoning_rate: claimed {claimed.reasoning_rate}, actual {recomputed.reasoning_rate}")
 

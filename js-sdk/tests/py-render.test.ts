@@ -58,10 +58,7 @@ interface Fixtures {
 }
 
 const fixtures: Fixtures = JSON.parse(
-  readFileSync(
-    join(__dirname, 'fixtures/internal/py_render_vectors.json'),
-    'utf8',
-  ),
+  readFileSync(join(__dirname, 'fixtures/internal/py_render_vectors.json'), 'utf8'),
 );
 
 interface Decoded {
@@ -86,12 +83,7 @@ function decodeInput(node: unknown, floats: FloatConstraintMap): Decoded {
   if (node !== null && typeof node === 'object') {
     const obj = node as Record<string, unknown>;
     if ('$nonfinite' in obj) {
-      const v =
-        obj.$nonfinite === 'nan'
-          ? NaN
-          : obj.$nonfinite === 'inf'
-            ? Infinity
-            : -Infinity;
+      const v = obj.$nonfinite === 'nan' ? NaN : obj.$nonfinite === 'inf' ? Infinity : -Infinity;
       return { value: v, isFloat: true };
     }
     if ('$float' in obj) {
@@ -144,7 +136,7 @@ describe('pyJsonDumps CPython json.dumps parity (Python-generated vectors)', () 
 describe('pyReprString export', () => {
   it('selects double quotes only when a single quote is present alone', () => {
     expect(pyReprString("it's")).toBe('"it\'s"'); // CPython: repr("it's")
-    expect(pyReprString('say "hi"')).toBe("'say \"hi\"'"); // CPython: repr('say "hi"')
+    expect(pyReprString('say "hi"')).toBe('\'say "hi"\''); // CPython: repr('say "hi"')
     expect(pyReprString('a\'b"c')).toBe("'a\\'b\"c'"); // CPython: repr('a\'b"c')
   });
 
@@ -217,9 +209,7 @@ describe('pyJsonDumps FloatConstraintMap scoping', () => {
     const b = { x: 1 };
     const floats: FloatConstraintMap = new WeakMap([[a, new Set(['x'])]]);
     // CPython: json.dumps({"a": {"x": 1.0}, "b": {"x": 1}}, sort_keys=True)
-    expect(pyJsonDumps({ a, b }, floats)).toBe(
-      '{"a": {"x": 1.0}, "b": {"x": 1}}',
-    );
+    expect(pyJsonDumps({ a, b }, floats)).toBe('{"a": {"x": 1.0}, "b": {"x": 1}}');
   });
 
   it('treats an unmarked integral root as an int by default', () => {

@@ -15,10 +15,9 @@ from typing import Any, Callable
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from .message import GENESIS_HASH, build_envelope, compute_hash
-from .signing import KeyPair, verify_signature
+from .message import GENESIS_HASH, compute_hash
+from .signing import verify_signature
 from .types import (
-    AgentIdentity,
     BehaviorRecord,
     MessageType,
     PartyRole,

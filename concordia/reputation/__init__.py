@@ -10,9 +10,9 @@ Components:
     query   — Standard §9.6.7 query/response interface
 """
 
-from .store import AttestationStore
-from .scorer import ReputationScorer
 from .query import ReputationQueryHandler
+from .scorer import ReputationScorer
+from .store import AttestationStore
 
 __all__ = [
     "AttestationStore",

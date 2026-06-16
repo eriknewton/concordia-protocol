@@ -29,11 +29,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import {
-  Session,
-  type Message,
-  type PublicKeyResolver,
-} from '../src/session/index.js';
+import { Session, type Message, type PublicKeyResolver } from '../src/session/index.js';
 import {
   generateAttestation,
   AttestationError,
@@ -63,10 +59,7 @@ import { KeyPair, verify } from '../src/crypto/signing.js';
 // ---------------------------------------------------------------------------
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixtures = JSON.parse(
-  readFileSync(
-    join(__dirname, 'fixtures/attestation/attestation_vectors.json'),
-    'utf8',
-  ),
+  readFileSync(join(__dirname, 'fixtures/attestation/attestation_vectors.json'), 'utf8'),
 ) as {
   seeds: {
     agent_a: { id: string; seed_hex: string };
@@ -166,9 +159,7 @@ describe('L3 value_range bucket vocabulary', () => {
   for (const bucket of VALUE_RANGE_BUCKETS) {
     it(`accepts bucket ${bucket}`, () => {
       const att = generate({ valueRange: `${bucket}_USD` });
-      expect((att.meta as Record<string, unknown>).value_range).toBe(
-        `${bucket}_USD`,
-      );
+      expect((att.meta as Record<string, unknown>).value_range).toBe(`${bucket}_USD`);
     });
   }
 
@@ -280,9 +271,7 @@ describe('L3 references caps at issuance', () => {
     const refs = Array.from({ length: MAX_REFERENCES + 1 }, (_, i) => ref(i));
     const err = captureError(() => generate({ references: refs }));
     expect(err).toBeInstanceOf(AttestationError);
-    expect(err.message).toBe(
-      `references[] exceeds the maximum of ${MAX_REFERENCES} entries`,
-    );
+    expect(err.message).toBe(`references[] exceeds the maximum of ${MAX_REFERENCES} entries`);
   });
 
   const requiredCaps: Array<[string, number]> = [
@@ -295,9 +284,7 @@ describe('L3 references caps at issuance', () => {
       const okRef = ref();
       okRef[field] = 'x'.repeat(cap);
       const att = generate({ references: [okRef] });
-      expect(
-        (att.references as Array<Record<string, unknown>>)[0]![field],
-      ).toBe('x'.repeat(cap));
+      expect((att.references as Array<Record<string, unknown>>)[0]![field]).toBe('x'.repeat(cap));
 
       const badRef = ref();
       badRef[field] = 'x'.repeat(cap + 1);
@@ -315,21 +302,15 @@ describe('L3 references caps at issuance', () => {
 
       const longRef = ref();
       longRef[field] = 'x'.repeat(MAX_REFERENCE_OPTIONAL_STRING_LENGTH + 1);
-      expect(() => generate({ references: [longRef] })).toThrow(
-        new RegExp(field),
-      );
+      expect(() => generate({ references: [longRef] })).toThrow(new RegExp(field));
 
       const objRef = ref();
       objRef[field] = { sneaky: 'object' };
-      expect(() => generate({ references: [objRef] })).toThrow(
-        new RegExp(field),
-      );
+      expect(() => generate({ references: [objRef] })).toThrow(new RegExp(field));
 
       const emptyRef = ref();
       emptyRef[field] = '';
-      expect(() => generate({ references: [emptyRef] })).toThrow(
-        new RegExp(field),
-      );
+      expect(() => generate({ references: [emptyRef] })).toThrow(new RegExp(field));
     });
   }
 
@@ -346,14 +327,7 @@ describe('L3 references caps at issuance', () => {
 // Whitespace ban: the documented UNION of Python \s and JS \s.
 // ---------------------------------------------------------------------------
 describe('L3 whitespace ban (union of Python \\s and JS \\s)', () => {
-  const FIELDS = [
-    'type',
-    'id',
-    'relationship',
-    'version',
-    'signed_at',
-    'signer_did',
-  ] as const;
+  const FIELDS = ['type', 'id', 'relationship', 'version', 'signed_at', 'signer_did'] as const;
 
   // ASCII whitespace: in BOTH languages' \s.
   const asciiWs = [' ', '\t', '\n', '\r', '\f', '\v'];
@@ -439,9 +413,7 @@ describe('L3 extensions structure and byte caps', () => {
 
   it('rejects depth one over the bound', () => {
     const ext = chain(MAX_REFERENCE_EXTENSIONS_DEPTH);
-    expect(() => validateReference(withExtensions(ext), 0)).toThrow(
-      /nesting depth/,
-    );
+    expect(() => validateReference(withExtensions(ext), 0)).toThrow(/nesting depth/);
   });
 
   it('rejects a deeply nested array chain', () => {
@@ -449,9 +421,7 @@ describe('L3 extensions structure and byte caps', () => {
     for (let i = 0; i < MAX_REFERENCE_EXTENSIONS_DEPTH; i += 1) {
       value = [value];
     }
-    expect(() => validateReference(withExtensions({ a: value }), 0)).toThrow(
-      /nesting depth/,
-    );
+    expect(() => validateReference(withExtensions({ a: value }), 0)).toThrow(/nesting depth/);
   });
 
   it('accepts the node count exactly at the bound', () => {
@@ -472,9 +442,9 @@ describe('L3 extensions structure and byte caps', () => {
   });
 
   it('rejects a non-object extensions value', () => {
-    expect(() =>
-      validateReference(withExtensions('free text deal terms: $4,350'), 0),
-    ).toThrow(/extensions must be an object/);
+    expect(() => validateReference(withExtensions('free text deal terms: $4,350'), 0)).toThrow(
+      /extensions must be an object/,
+    );
   });
 
   it('round-trips a small extensions object', () => {
@@ -488,24 +458,18 @@ describe('L3 extensions structure and byte caps', () => {
     // implementation that measured `String.prototype.length` would ACCEPT
     // this -- a fail-open the Python byte semantics forbid.
     const overByBytesOnly = { blob: 'é'.repeat(1200) };
-    const err = captureError(() =>
-      validateReference(withExtensions(overByBytesOnly), 0),
-    );
+    const err = captureError(() => validateReference(withExtensions(overByBytesOnly), 0));
     expect(err.message).toBe(
       `references[0].extensions exceeds ${MAX_REFERENCE_EXTENSIONS_BYTES} canonical-JSON bytes`,
     );
     // And the same payload sized under the BYTE cap is accepted.
     const underBytes = { blob: 'é'.repeat(1000) }; // ~2011 UTF-8 bytes
-    expect(
-      validateReference(withExtensions(underBytes), 0).extensions,
-    ).toEqual(underBytes);
+    expect(validateReference(withExtensions(underBytes), 0).extensions).toEqual(underBytes);
   });
 
   it('rejects an ASCII payload over the byte cap', () => {
     const ext = { blob: 'x'.repeat(MAX_REFERENCE_EXTENSIONS_BYTES + 1) };
-    expect(() => validateReference(withExtensions(ext), 0)).toThrow(
-      /canonical-JSON bytes/,
-    );
+    expect(() => validateReference(withExtensions(ext), 0)).toThrow(/canonical-JSON bytes/);
   });
 
   it('rejects non-canonically-serializable numeric values (NaN/Infinity)', () => {
@@ -520,18 +484,15 @@ describe('L3 extensions structure and byte caps', () => {
     // Python's canonical_json raises TypeError for these; JS stableStringify
     // would silently emit "{}" for a Date (fail-open). The walk flags them.
     for (const exotic of [new Date(), new Map()]) {
-      expect(() =>
-        validateReference(withExtensions({ v: exotic }), 0),
-      ).toThrow(/not canonically serializable/);
+      expect(() => validateReference(withExtensions({ v: exotic }), 0)).toThrow(
+        /not canonically serializable/,
+      );
     }
   });
 
   it('never echoes rejected extensions content', () => {
     const err = captureError(() =>
-      validateReference(
-        withExtensions({ secret: 'SECRET_TERMS $4,350 ' + 'x'.repeat(3000) }),
-        0,
-      ),
+      validateReference(withExtensions({ secret: 'SECRET_TERMS $4,350 ' + 'x'.repeat(3000) }), 0),
     );
     expect(err.message).not.toContain('SECRET_TERMS');
     expect(err.message).not.toContain('4,350');
@@ -706,9 +667,7 @@ describe('L3 reference snapshot semantics (no getters, no echo, no TOCTOU)', () 
     r.extensions = hostile;
     const err = captureError(() => validateReference(r, 0));
     expectSanitized(err);
-    expect(err.message).toBe(
-      'references[0].extensions could not be safely inspected',
-    );
+    expect(err.message).toBe('references[0].extensions could not be safely inspected');
   });
 
   it('a Proxy whose traps throw is sanitized (the reference itself)', () => {
@@ -760,9 +719,7 @@ describe('L3 reference snapshot semantics (no getters, no echo, no TOCTOU)', () 
     holey[0] = 1; // index 1 stays a hole
     const r = ref();
     r.extensions = { list: holey };
-    expect(() => validateReference(r, 0)).toThrow(
-      /not canonically serializable/,
-    );
+    expect(() => validateReference(r, 0)).toThrow(/not canonically serializable/);
   });
 
   it('a non-index own property on an array inside extensions is rejected', () => {
@@ -816,9 +773,7 @@ describe('L3 reference snapshot semantics (no getters, no echo, no TOCTOU)', () 
     expect(err).toBeInstanceOf(AttestationError);
     expect(err.message).not.toContain('SECRET_TERMS');
     expect(err.message).not.toContain('4350');
-    expect(err.message).toBe(
-      'references[] must contain only plain enumerable data elements',
-    );
+    expect(err.message).toBe('references[] must contain only plain enumerable data elements');
     expect(invoked).toBe(false);
   });
 
@@ -826,9 +781,7 @@ describe('L3 reference snapshot semantics (no getters, no echo, no TOCTOU)', () 
     const refs = new Array<unknown>(1); // [ <hole> ]
     const err = captureError(() => generate({ references: refs }));
     expect(err).toBeInstanceOf(ReferenceValidationError);
-    expect(err.message).toBe(
-      'references[0] must be a dict, got NoneType per SPEC §11.5.6',
-    );
+    expect(err.message).toBe('references[0] must be a dict, got NoneType per SPEC §11.5.6');
   });
 
   it('generateAttestation: a Proxy references[] with throwing traps is sanitized', () => {

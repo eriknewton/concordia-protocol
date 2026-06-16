@@ -10,8 +10,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
 
-from .predicate import Predicate, verify_predicate
 from .canonicalization import canonicalize_predicate
+from .predicate import Predicate, verify_predicate
 
 
 class ResolverProtocolError(Exception):

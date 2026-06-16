@@ -287,12 +287,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 // Keyword checks (each pushes CPython-jsonschema-identical messages)
 // ---------------------------------------------------------------------------
 
-function checkType(
-  type: unknown,
-  instance: unknown,
-  path: string,
-  errors: SchemaError[],
-): void {
+function checkType(type: unknown, instance: unknown, path: string, errors: SchemaError[]): void {
   const types = Array.isArray(type) ? (type as string[]) : [type as string];
   if (types.some((t) => jsonTypeMatches(instance, t))) {
     return;
@@ -371,13 +366,7 @@ function checkProperties(
   // instance order) and only for keys present in the instance.
   for (const prop of Object.keys(properties)) {
     if (prop in instance) {
-      validateNode(
-        properties[prop],
-        instance[prop],
-        `${path}${childPath(prop)}`,
-        errors,
-        ctx,
-      );
+      validateNode(properties[prop], instance[prop], `${path}${childPath(prop)}`, errors, ctx);
     }
   }
 }
@@ -413,13 +402,7 @@ function checkAdditionalProperties(
   }
   // additionalProperties is a subschema: validate every extra against it.
   for (const key of extras) {
-    validateNode(
-      additional,
-      instance[key],
-      `${path}${childPath(key)}`,
-      errors,
-      ctx,
-    );
+    validateNode(additional, instance[key], `${path}${childPath(key)}`, errors, ctx);
   }
 }
 
@@ -437,13 +420,7 @@ function checkPatternProperties(
     const re = new RegExp(pattern);
     for (const key of Object.keys(instance)) {
       if (re.test(key)) {
-        validateNode(
-          patternProps[pattern],
-          instance[key],
-          `${path}${childPath(key)}`,
-          errors,
-          ctx,
-        );
+        validateNode(patternProps[pattern], instance[key], `${path}${childPath(key)}`, errors, ctx);
       }
     }
   }
@@ -499,9 +476,7 @@ function checkMinItems(
   }
   // CPython: minItems == 1 -> "should be non-empty"; else "is too short".
   const message =
-    limit === 1
-      ? `${pyRepr(instance)} should be non-empty`
-      : `${pyRepr(instance)} is too short`;
+    limit === 1 ? `${pyRepr(instance)} should be non-empty` : `${pyRepr(instance)} is too short`;
   errors.push({ jsonPath: path, message });
 }
 
@@ -527,9 +502,7 @@ function checkMinLength(
     return;
   }
   const message =
-    limit === 1
-      ? `${pyRepr(instance)} should be non-empty`
-      : `${pyRepr(instance)} is too short`;
+    limit === 1 ? `${pyRepr(instance)} should be non-empty` : `${pyRepr(instance)} is too short`;
   errors.push({ jsonPath: path, message });
 }
 
@@ -565,12 +538,7 @@ function checkPattern(
   });
 }
 
-function checkMinimum(
-  limit: number,
-  instance: unknown,
-  path: string,
-  errors: SchemaError[],
-): void {
+function checkMinimum(limit: number, instance: unknown, path: string, errors: SchemaError[]): void {
   if (!isComparableNumber(instance) || instance >= limit) {
     return;
   }
@@ -580,12 +548,7 @@ function checkMinimum(
   });
 }
 
-function checkMaximum(
-  limit: number,
-  instance: unknown,
-  path: string,
-  errors: SchemaError[],
-): void {
+function checkMaximum(limit: number, instance: unknown, path: string, errors: SchemaError[]): void {
   if (!isComparableNumber(instance) || instance <= limit) {
     return;
   }
@@ -667,9 +630,7 @@ function checkOneOf(
   errors: SchemaError[],
   ctx: ValidationContext,
 ): void {
-  const matches = branches.filter(
-    (branch) => iterErrorsSilent(branch, instance, ctx).length === 0,
-  );
+  const matches = branches.filter((branch) => iterErrorsSilent(branch, instance, ctx).length === 0);
   if (matches.length === 1) {
     return;
   }
@@ -682,9 +643,7 @@ function checkOneOf(
   }
   errors.push({
     jsonPath: path,
-    message: `${pyRepr(instance)} is valid under each of ${branches
-      .map(pyRepr)
-      .join(', ')}`,
+    message: `${pyRepr(instance)} is valid under each of ${branches.map(pyRepr).join(', ')}`,
   });
 }
 
@@ -775,13 +734,10 @@ function findAdditionalProperties(
   instance: Record<string, unknown>,
   schema: Record<string, unknown>,
 ): string[] {
-  const props =
-    (schema.properties as Record<string, unknown> | undefined) ?? {};
-  const patternProps =
-    (schema.patternProperties as Record<string, unknown> | undefined) ?? {};
+  const props = (schema.properties as Record<string, unknown> | undefined) ?? {};
+  const patternProps = (schema.patternProperties as Record<string, unknown> | undefined) ?? {};
   const patternKeys = Object.keys(patternProps);
-  const joined =
-    patternKeys.length > 0 ? new RegExp(patternKeys.join('|')) : null;
+  const joined = patternKeys.length > 0 ? new RegExp(patternKeys.join('|')) : null;
   return Object.keys(instance).filter((key) => {
     if (key in props) return false;
     if (joined && joined.test(key)) return false;
@@ -917,11 +873,7 @@ export function assertSupportedSchema(schema: unknown, name: string): void {
   // Keywords whose VALUE is a map of {name -> subschema}; the names are arbitrary
   // (property names / pattern strings / def names), NOT keywords, so we recurse
   // into the VALUES but never check the keys.
-  const SUBSCHEMA_MAP_KEYWORDS = new Set([
-    'properties',
-    'patternProperties',
-    '$defs',
-  ]);
+  const SUBSCHEMA_MAP_KEYWORDS = new Set(['properties', 'patternProperties', '$defs']);
   // Keywords whose value is a single subschema (recurse straight in).
   const SINGLE_SUBSCHEMA_KEYWORDS = new Set([
     'items',

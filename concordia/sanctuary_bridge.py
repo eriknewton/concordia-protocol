@@ -27,15 +27,11 @@ Architecture:
 
 from __future__ import annotations
 
-import hashlib
-import json
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from .signing import KeyPair, canonical_json
-
+from .signing import canonical_json
 
 # ---------------------------------------------------------------------------
 # Configuration

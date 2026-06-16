@@ -58,10 +58,7 @@ import {
   type SchemaError,
 } from '../internal/jsonschema.js';
 import { isCpythonIsoDateTime } from '../internal/iso-datetime.js';
-import {
-  pyJsonDumps,
-  type FloatConstraintMap,
-} from '../internal/py-json.js';
+import { pyJsonDumps, type FloatConstraintMap } from '../internal/py-json.js';
 import {
   MESSAGE_SCHEMA,
   ATTESTATION_SCHEMA,
@@ -110,9 +107,7 @@ const FLOAT_CONSTRAINTS: FloatConstraintMap = new WeakMap();
   for (const [name, paths] of Object.entries(FLOAT_CONSTRAINT_PATHS)) {
     const root = roots[name];
     if (root === undefined) {
-      throw new Error(
-        `schema-validator: FLOAT_CONSTRAINT_PATHS names unknown schema '${name}'`,
-      );
+      throw new Error(`schema-validator: FLOAT_CONSTRAINT_PATHS names unknown schema '${name}'`);
     }
     for (const path of paths) {
       let node: unknown = root;
@@ -164,9 +159,7 @@ function formatValidationError(error: SchemaError): string {
   let rendered: string;
   try {
     const rootIsFloat =
-      typeof error.keyword === 'string' &&
-      error.schema !== null &&
-      typeof error.schema === 'object'
+      typeof error.keyword === 'string' && error.schema !== null && typeof error.schema === 'object'
         ? (FLOAT_CONSTRAINTS.get(error.schema)?.has(error.keyword) ?? false)
         : false;
     rendered = pyJsonDumps(error.validatorValue, FLOAT_CONSTRAINTS, rootIsFloat);
@@ -179,8 +172,7 @@ function formatValidationError(error: SchemaError): string {
   return `${error.jsonPath}: violates '${keyword}' constraint: ${rendered}`;
 }
 
-const FREE_TEXT_TERM_ERROR =
-  'free-text field must not contain obvious raw deal terms';
+const FREE_TEXT_TERM_ERROR = 'free-text field must not contain obvious raw deal terms';
 const RAW_TERM_PATTERNS = [
   /[$€£¥]\s*\d/i,
   /\b(?:USD|EUR|GBP|JPY|CAD|AUD|CHF|CNY|INR)\s*\d/i,
@@ -324,14 +316,8 @@ export function validateFulfillmentAttestation(attestation: unknown): string[] {
           fulfillsTargets.push(ref.id);
         }
       }
-      if (
-        fulfillsTargets.length > 0 &&
-        !fulfillsTargets.includes(agreementId)
-      ) {
-        errors.push(
-          '$.references: fulfills reference id must equal ' +
-            'agreement_attestation_id',
-        );
+      if (fulfillsTargets.length > 0 && !fulfillsTargets.includes(agreementId)) {
+        errors.push('$.references: fulfills reference id must equal ' + 'agreement_attestation_id');
       }
     }
   }
@@ -359,20 +345,14 @@ function validateAttestationFreeText(attestation: unknown): string[] {
     if (Array.isArray(disputes)) {
       disputes.forEach((dispute, index) => {
         if (isPlainObject(dispute)) {
-          candidates.push([
-            `$.fulfillment.disputes[${index}].description`,
-            dispute.description,
-          ]);
+          candidates.push([`$.fulfillment.disputes[${index}].description`, dispute.description]);
         }
       });
     }
 
     const counterparty = fulfillment.counterparty_attestation;
     if (isPlainObject(counterparty)) {
-      candidates.push([
-        '$.fulfillment.counterparty_attestation.notes',
-        counterparty.notes,
-      ]);
+      candidates.push(['$.fulfillment.counterparty_attestation.notes', counterparty.notes]);
     }
   }
 

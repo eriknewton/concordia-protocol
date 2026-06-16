@@ -100,8 +100,7 @@ export const ResolutionMechanism = {
   ESCALATION: 'escalation',
   NONE: 'none',
 } as const;
-export type ResolutionMechanism =
-  (typeof ResolutionMechanism)[keyof typeof ResolutionMechanism];
+export type ResolutionMechanism = (typeof ResolutionMechanism)[keyof typeof ResolutionMechanism];
 
 /**
  * Fulfillment status of an agreed outcome (SPEC §9.6).
@@ -117,8 +116,7 @@ export const FulfillmentStatus = {
   PENDING: 'pending',
   FULFILLED_WITH_MEDIATION: 'fulfilled_with_mediation',
 } as const;
-export type FulfillmentStatus =
-  (typeof FulfillmentStatus)[keyof typeof FulfillmentStatus];
+export type FulfillmentStatus = (typeof FulfillmentStatus)[keyof typeof FulfillmentStatus];
 
 /**
  * Party roles in a negotiation (SPEC §9.6).

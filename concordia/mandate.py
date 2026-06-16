@@ -13,33 +13,29 @@ the SD-JWT-based mandate model used by Prove Verified Agent / Mastercard VI.
 
 from __future__ import annotations
 
-import base64
 import json
-import urllib.request
 import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from typing import Any
 
 import jsonschema
 
 from .models.mandate import (
+    MANDATE_JSON_SCHEMA,
     DelegationLink,
     Mandate,
     MandateStatus,
     MandateVerificationResult,
     TemporalMode,
     ValidityWindow,
-    MANDATE_JSON_SCHEMA,
 )
 from .signing import (
-    KeyPair,
     ES256KeyPair,
-    canonical_json,
+    KeyPair,
     sign_message,
     verify_signature,
-    _check_no_special_floats,
 )
-
 
 _JSON_SCHEMA_KEYWORDS = frozenset(
     {

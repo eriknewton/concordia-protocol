@@ -17,8 +17,8 @@ import base64
 import json
 import logging
 import os
-import urllib.request
 import urllib.error
+import urllib.request
 from typing import TYPE_CHECKING, Any, Callable, cast
 
 from .cosign import CounterpartySigner, build_cosigned_receipt, did_key_for

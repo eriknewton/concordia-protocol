@@ -2,18 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import {
-  KeyPair,
-  sign,
-  verify,
-  generateKeyPair,
-  SigningError,
-} from '../src/crypto/signing.js';
-import {
-  toBase64Url,
-  fromBase64Url,
-  Base64UrlError,
-} from '../src/crypto/base64url.js';
+import { KeyPair, sign, verify, generateKeyPair, SigningError } from '../src/crypto/signing.js';
+import { toBase64Url, fromBase64Url, Base64UrlError } from '../src/crypto/base64url.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -36,10 +26,7 @@ interface SigningFixtures {
 }
 
 const fixtures = JSON.parse(
-  readFileSync(
-    join(__dirname, 'fixtures/signing/ed25519_vectors.json'),
-    'utf8',
-  ),
+  readFileSync(join(__dirname, 'fixtures/signing/ed25519_vectors.json'), 'utf8'),
 ) as SigningFixtures;
 
 function seedBytes(): Uint8Array {
@@ -98,15 +85,11 @@ describe('Ed25519 signing - tamper rejection (Python-defined cases)', () => {
   });
 
   it('rejects a tampered payload under a valid signature', () => {
-    expect(verify(t.tampered_payload, t.valid_signature, kp.publicKey)).toBe(
-      false,
-    );
+    expect(verify(t.tampered_payload, t.valid_signature, kp.publicKey)).toBe(false);
   });
 
   it('rejects a flipped-byte signature', () => {
-    expect(verify(t.base_payload, t.flipped_signature, kp.publicKey)).toBe(
-      false,
-    );
+    expect(verify(t.base_payload, t.flipped_signature, kp.publicKey)).toBe(false);
   });
 
   it('rejects a valid signature under the wrong public key', () => {
@@ -136,9 +119,7 @@ describe('Ed25519 signing - round-trip and key generation', () => {
   });
 
   it('rejects a private key of the wrong length', () => {
-    expect(() => KeyPair.fromPrivateKey(new Uint8Array(16))).toThrow(
-      SigningError,
-    );
+    expect(() => KeyPair.fromPrivateKey(new Uint8Array(16))).toThrow(SigningError);
     expect(() => sign({ a: 1 }, new Uint8Array(16))).toThrow(SigningError);
   });
 
@@ -263,8 +244,6 @@ describe('Ed25519 verify - base64url accept/reject parity with Python', () => {
   });
 
   it('rejects a tampered payload under the valid signature', () => {
-    expect(verify({ ...payload, amount: 4 }, validSig, kp.publicKey)).toBe(
-      false,
-    );
+    expect(verify({ ...payload, amount: 4 }, validSig, kp.publicKey)).toBe(false);
   });
 });

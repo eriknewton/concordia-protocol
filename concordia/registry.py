@@ -18,12 +18,9 @@ negotiate with, and what do they support?"
 from __future__ import annotations
 
 import logging
-import time
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
-
 
 # ---------------------------------------------------------------------------
 # Data models

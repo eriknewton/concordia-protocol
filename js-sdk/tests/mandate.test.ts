@@ -55,10 +55,7 @@ interface MandateFixtures {
   mandate_to_dict_cases: ToDictCase[];
   mandate_from_dict_cases: RoundtripCase[];
   result_to_dict_cases: ToDictCase[];
-  schema_constants: Record<
-    string,
-    { value: Record<string, unknown>; canonical: string }
-  >;
+  schema_constants: Record<string, { value: Record<string, unknown>; canonical: string }>;
 }
 
 const fixtures = JSON.parse(
@@ -98,9 +95,7 @@ function delegationFromWire(d: Record<string, unknown>): DelegationLink {
     delegator: d.delegator as string,
     delegate: d.delegate as string,
     scopeRestriction:
-      'scope_restriction' in d
-        ? (d.scope_restriction as Record<string, unknown> | null)
-        : null,
+      'scope_restriction' in d ? (d.scope_restriction as Record<string, unknown> | null) : null,
     delegatedAt: (d.delegated_at as string) ?? '',
     signature: (d.signature as string) ?? '',
     algorithm: (d.algorithm as string) ?? 'EdDSA',
@@ -128,9 +123,7 @@ describe('delegationLinkToDict - parity with DelegationLink.to_dict()', () => {
 
   it('omits scope_restriction when null but emits an empty-object restriction', () => {
     expect(
-      delegationLinkToDict(
-        makeDelegationLink({ delegator: 'a', delegate: 'b' }),
-      ),
+      delegationLinkToDict(makeDelegationLink({ delegator: 'a', delegate: 'b' })),
     ).not.toHaveProperty('scope_restriction');
     expect(
       delegationLinkToDict(
@@ -176,8 +169,7 @@ function validityFromWire(d: Record<string, unknown>): ValidityWindow {
     notBefore: 'not_before' in d ? (d.not_before as string) : null,
     notAfter: 'not_after' in d ? (d.not_after as string) : null,
     sequenceKey: 'sequence_key' in d ? (d.sequence_key as string) : null,
-    stateCondition:
-      'state_condition' in d ? (d.state_condition as string) : null,
+    stateCondition: 'state_condition' in d ? (d.state_condition as string) : null,
     maxUses: 'max_uses' in d ? (d.max_uses as number) : null,
   });
 }
@@ -193,9 +185,7 @@ describe('validityWindowToDict - parity with ValidityWindow.to_dict()', () => {
   }
 
   it('always emits mode first and omits null optionals', () => {
-    const out = validityWindowToDict(
-      makeValidityWindow({ mode: TemporalMode.SEQUENCE }),
-    );
+    const out = validityWindowToDict(makeValidityWindow({ mode: TemporalMode.SEQUENCE }));
     expect(out).toEqual({ mode: 'sequence' });
   });
 
@@ -235,9 +225,7 @@ describe('validityWindowFromDict - parity with ValidityWindow.from_dict()', () =
 // emits the non-standard `NaN`/`Infinity` literals, which JS JSON.parse
 // rejects). This rebuilds the real JS float so the value reaching
 // validityWindowFromDict is the genuine non-finite number Python repr()'d.
-function materializeSpecialFloats(
-  input: Record<string, unknown>,
-): Record<string, unknown> {
+function materializeSpecialFloats(input: Record<string, unknown>): Record<string, unknown> {
   const mode = input.mode;
   if (
     mode !== null &&
@@ -246,8 +234,7 @@ function materializeSpecialFloats(
     '__special_float__' in (mode as Record<string, unknown>)
   ) {
     const tag = (mode as Record<string, unknown>).__special_float__;
-    const value =
-      tag === 'nan' ? NaN : tag === 'inf' ? Infinity : -Infinity;
+    const value = tag === 'nan' ? NaN : tag === 'inf' ? Infinity : -Infinity;
     return { ...input, mode: value };
   }
   return input;
@@ -368,9 +355,7 @@ describe('createMandate - factory shape parity with Mandate.create()', () => {
 // ---------------------------------------------------------------------------
 
 // Reconstruct a result from the Python-recorded to_dict, then re-serialize.
-function resultFromWire(
-  d: Record<string, unknown>,
-): MandateVerificationResult {
+function resultFromWire(d: Record<string, unknown>): MandateVerificationResult {
   let mandate: Mandate | null = null;
   if ('mandate' in d && d.mandate !== null && d.mandate !== undefined) {
     mandate = mandateFromDict(d.mandate as Record<string, unknown>);
@@ -383,8 +368,7 @@ function resultFromWire(
     checks: (d.checks as Record<string, boolean>) ?? {},
     errors: (d.errors as string[]) ?? [],
     warnings: (d.warnings as string[]) ?? [],
-    failureReason:
-      'failure_reason' in d ? (d.failure_reason as string) : null,
+    failureReason: 'failure_reason' in d ? (d.failure_reason as string) : null,
     revokedAt: 'revoked_at' in d ? (d.revoked_at as string) : null,
     tier: 'tier' in d ? (d.tier as string) : null,
     mandate,
@@ -402,9 +386,7 @@ describe('mandateVerificationResultToDict - parity with MandateVerificationResul
   }
 
   it('minimal invalid result emits only the seven always-present keys', () => {
-    const out = mandateVerificationResultToDict(
-      makeMandateVerificationResult({ valid: false }),
-    );
+    const out = mandateVerificationResultToDict(makeMandateVerificationResult({ valid: false }));
     expect(Object.keys(out)).toEqual([
       'valid',
       'mandate_id',
@@ -434,17 +416,13 @@ describe('static schema constants - canonical-byte parity with Python', () => {
     CONSTRAINT_PATTERNS,
   };
 
-  for (const [constName, { value, canonical }] of Object.entries(
-    fixtures.schema_constants,
-  )) {
+  for (const [constName, { value, canonical }] of Object.entries(fixtures.schema_constants)) {
     it(`${constName} structurally equals the Python constant`, () => {
       expect(TS_CONSTANTS[constName]).toEqual(value);
     });
 
     it(`${constName} canonicalizes to byte-identical JCS bytes`, () => {
-      const tsCanonical = canonicalizeJcs(TS_CONSTANTS[constName]).toString(
-        'utf8',
-      );
+      const tsCanonical = canonicalizeJcs(TS_CONSTANTS[constName]).toString('utf8');
       expect(tsCanonical).toBe(canonical);
     });
   }

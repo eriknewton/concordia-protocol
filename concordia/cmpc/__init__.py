@@ -22,14 +22,6 @@ from .chain_session import (
     verify_transcript,
 )
 from .errors import CMPCError, InvalidPrimitiveError, SchemaValidationError
-from .signing import (
-    sign_atomic_activation_proof,
-    sign_conditional_commitment,
-    sign_unwind_record,
-    verify_atomic_activation_proof,
-    verify_conditional_commitment,
-    verify_unwind_record,
-)
 from .revocation import (
     CandidateArtifact,
     CascadeResult,
@@ -37,6 +29,14 @@ from .revocation import (
     cascade_revocation,
     sign_revocation_record,
     verify_revocation_record,
+)
+from .signing import (
+    sign_atomic_activation_proof,
+    sign_conditional_commitment,
+    sign_unwind_record,
+    verify_atomic_activation_proof,
+    verify_conditional_commitment,
+    verify_unwind_record,
 )
 from .types import (
     AtomicActivationProof,

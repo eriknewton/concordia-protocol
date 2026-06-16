@@ -10,6 +10,7 @@ Usage:
 
 import json
 import sys
+from typing import Literal
 
 
 def _predicate_cli(argv: list[str]) -> bool:
@@ -88,11 +89,17 @@ def main() -> None:
             ) from exc
         raise
 
-    transport = "stdio"
+    transport: Literal["stdio", "sse", "streamable-http"] = "stdio"
     if "--transport" in sys.argv:
         idx = sys.argv.index("--transport")
         if idx + 1 < len(sys.argv):
-            transport = sys.argv[idx + 1]
+            requested = sys.argv[idx + 1]
+            if requested not in ("stdio", "sse", "streamable-http"):
+                raise SystemExit(
+                    f"Unknown --transport '{requested}'. "
+                    "Valid values: stdio, sse, streamable-http"
+                )
+            transport = requested  # type: ignore[assignment]
 
     mcp.run(transport=transport)
 

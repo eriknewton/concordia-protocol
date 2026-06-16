@@ -13,10 +13,7 @@ import {
   type PredicateResolver,
 } from '../src/predicate/predicate.js';
 import { validateConditionForProfile } from '../src/predicate/profiles.js';
-import {
-  validateReference,
-  ReferenceValidationError,
-} from '../src/predicate/references.js';
+import { validateReference, ReferenceValidationError } from '../src/predicate/references.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -96,16 +93,11 @@ interface PredicateFixtures {
 }
 
 const fixtures = JSON.parse(
-  readFileSync(
-    join(__dirname, 'fixtures/predicate/predicate_vectors.json'),
-    'utf8',
-  ),
+  readFileSync(join(__dirname, 'fixtures/predicate/predicate_vectors.json'), 'utf8'),
 ) as PredicateFixtures;
 
 function seedKeyPair(): KeyPair {
-  return KeyPair.fromPrivateKey(
-    new Uint8Array(Buffer.from(fixtures.seed_hex, 'hex')),
-  );
+  return KeyPair.fromPrivateKey(new Uint8Array(Buffer.from(fixtures.seed_hex, 'hex')));
 }
 
 /**
@@ -115,19 +107,13 @@ function seedKeyPair(): KeyPair {
  * reproduces Python's full sign path (metadata injection + canonical bytes +
  * Ed25519) and not merely a copied signature.
  */
-function signingInputFromSigned(
-  signed: Record<string, unknown>,
-): Record<string, unknown> {
+function signingInputFromSigned(signed: Record<string, unknown>): Record<string, unknown> {
   const input = { ...signed };
   delete input.signature;
   // The Python signer injects metadata.issuer_public_key_b64. If that was the
   // only metadata key, drop metadata entirely so the TS signer re-injects it.
   const metadata = input.metadata as Record<string, unknown> | undefined;
-  if (
-    metadata &&
-    Object.keys(metadata).length === 1 &&
-    'issuer_public_key_b64' in metadata
-  ) {
+  if (metadata && Object.keys(metadata).length === 1 && 'issuer_public_key_b64' in metadata) {
     delete input.metadata;
   }
   return input;
@@ -316,10 +302,7 @@ describe('Predicate - Finding #3: year-9999 expiry overflow (fail-closed)', () =
 
   it('control: a far-future in-range expiry verifies (baseline)', () => {
     const kp = KeyPair.generate();
-    const signed = signPredicate(
-      baseSigningInput({ issuer: 'did:web:issuer.test#key-1' }),
-      kp,
-    );
+    const signed = signPredicate(baseSigningInput({ issuer: 'did:web:issuer.test#key-1' }), kp);
     const result = verifyPredicate(signed);
     expect(result.valid).toBe(true);
   });
@@ -335,9 +318,7 @@ describe('Predicate - Finding #3: year-9999 expiry overflow (fail-closed)', () =
   });
 
   it('verifyPredicate rejects an overflow issued_at as schema_invalid', () => {
-    const result = verifyPredicate(
-      baseSigningInput({ issued_at: '0001-01-01T00:00:00+23:59' }),
-    );
+    const result = verifyPredicate(baseSigningInput({ issued_at: '0001-01-01T00:00:00+23:59' }));
     expect(result.valid).toBe(false);
     expect(result.failure_reason).toBe('schema_invalid');
     expect(result.errors).toContain('date value out of range');
@@ -356,17 +337,15 @@ describe('Predicate - Finding #3: year-9999 expiry overflow (fail-closed)', () =
 
   it('signPredicate refuses to sign an overflow-expiry predicate, matching Python', () => {
     const kp = KeyPair.generate();
-    expect(() =>
-      signPredicate(baseSigningInput({ expires_at: OVERFLOW }), kp),
-    ).toThrow(PredicateValidationError);
+    expect(() => signPredicate(baseSigningInput({ expires_at: OVERFLOW }), kp)).toThrow(
+      PredicateValidationError,
+    );
   });
 });
 
 // A minimal valid predicate-signing input, mirroring the generator's
 // `_base_predicate`, used to inject malformed condition / metadata values.
-function baseSigningInput(
-  overrides: Record<string, unknown> = {},
-): Record<string, unknown> {
+function baseSigningInput(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     predicate_id: 'urn:concordia:predicate:edge',
     type: 'urn:concordia:predicate-type:authority_gate:v1',
@@ -438,10 +417,7 @@ describe('Predicate - Finding 1: strict-dict condition (profile + write)', () =>
   it('rejects a Date / Map condition (not a plain mapping)', () => {
     for (const value of [new Date(), new Map([['result', 'satisfied']])]) {
       expect(
-        validateConditionForProfile(
-          'urn:concordia:predicate-type:authority_gate:v1',
-          value,
-        ),
+        validateConditionForProfile('urn:concordia:predicate-type:authority_gate:v1', value),
       ).toEqual(['condition must be an object']);
     }
   });
@@ -470,9 +446,9 @@ describe('Predicate - Finding 2: metadata coercion parity', () => {
     class FakeMeta {
       issuer_public_key_b64 = 'x';
     }
-    expect(() =>
-      signPredicate(baseSigningInput({ metadata: new FakeMeta() }), kp),
-    ).toThrow(PredicateValidationError);
+    expect(() => signPredicate(baseSigningInput({ metadata: new FakeMeta() }), kp)).toThrow(
+      PredicateValidationError,
+    );
   });
 });
 
@@ -498,23 +474,16 @@ describe('Predicate - Finding 3: reference diagnostics fail-closed', () => {
   });
 
   it('rejects a Date reference (Python isinstance(_, dict) is False)', () => {
-    expect(() => validateReference(new Date(), 0)).toThrow(
-      ReferenceValidationError,
-    );
+    expect(() => validateReference(new Date(), 0)).toThrow(ReferenceValidationError);
   });
 
   it('rejects a Map reference (not a plain mapping)', () => {
-    expect(() => validateReference(new Map(), 0)).toThrow(
-      ReferenceValidationError,
-    );
+    expect(() => validateReference(new Map(), 0)).toThrow(ReferenceValidationError);
   });
 
   it('still accepts a genuine plain-object reference', () => {
     expect(
-      validateReference(
-        { type: 'predicate', id: 'urn:x', relationship: 'extends' },
-        0,
-      ),
+      validateReference({ type: 'predicate', id: 'urn:x', relationship: 'extends' }, 0),
     ).toEqual({ type: 'predicate', id: 'urn:x', relationship: 'extends' });
   });
 });
@@ -575,17 +544,14 @@ describe('Predicate - Finding 5: deferred revocation_records boundary', () => {
     expect(result).toEqual(fx.expected_verify_without);
   });
 
-  it.skip(
-    'with revocation records: should fail REVOKED once concordia.cmpc is ported (deferred to PR-N)',
-    () => {
-      // When the cmpc revocation layer is ported, verifyPredicate should accept
-      // { revocationRecords, now } and reproduce fx.expected_verify_with
-      // (valid=false, failure_reason="revoked", checks.revocation_records=false,
-      // errors=["referenced artifact revoked by <revocation_id>"]).
-      expect(fx.expected_verify_with.valid).toBe(false);
-      expect(fx.expected_verify_with.failure_reason).toBe('revoked');
-    },
-  );
+  it.skip('with revocation records: should fail REVOKED once concordia.cmpc is ported (deferred to PR-N)', () => {
+    // When the cmpc revocation layer is ported, verifyPredicate should accept
+    // { revocationRecords, now } and reproduce fx.expected_verify_with
+    // (valid=false, failure_reason="revoked", checks.revocation_records=false,
+    // errors=["referenced artifact revoked by <revocation_id>"]).
+    expect(fx.expected_verify_with.valid).toBe(false);
+    expect(fx.expected_verify_with.failure_reason).toBe('revoked');
+  });
 });
 
 describe('Predicate - resolver-based reference binding', () => {
@@ -672,9 +638,7 @@ describe('Predicate - fromDict snapshot semantics (no getters, no echo, no TOCTO
     });
     const err = captureFromDictError(data);
     expectSanitized(err);
-    expect(err.message).toBe(
-      'predicate data must contain only plain enumerable data properties',
-    );
+    expect(err.message).toBe('predicate data must contain only plain enumerable data properties');
     // The descriptor walk never performs [[Get]], so the hostile getter (and
     // therefore its throw) cannot execute at all.
     expect(invoked).toBe(false);

@@ -8,7 +8,6 @@ from jsonschema import Draft202012Validator, ValidationError
 
 from .errors import SchemaValidationError
 
-
 URN = r"^urn:concordia:"
 ANY_ARTIFACT_URN = r"^urn:(concordia|a2cn|ap2|x402|erc8004):"
 DID = r"^did:"

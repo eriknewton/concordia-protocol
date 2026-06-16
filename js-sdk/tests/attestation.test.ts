@@ -2,12 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import {
-  Session,
-  GENESIS_HASH,
-  type Message,
-  type PublicKeyResolver,
-} from '../src/session/index.js';
+import { Session, type Message, type PublicKeyResolver } from '../src/session/index.js';
 import {
   generateAttestation,
   generateReceiptSummary,
@@ -17,11 +12,7 @@ import {
   ATTESTATION_VERSION,
   type GenerateAttestationOptions,
 } from '../src/attestation/index.js';
-import {
-  PartyRole,
-  ResolutionMechanism,
-  SessionState,
-} from '../src/types/index.js';
+import { PartyRole, ResolutionMechanism, SessionState } from '../src/types/index.js';
 import { KeyPair, verify } from '../src/crypto/signing.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -134,10 +125,7 @@ interface AttestationFixtures {
 }
 
 const fixtures = JSON.parse(
-  readFileSync(
-    join(__dirname, 'fixtures/attestation/attestation_vectors.json'),
-    'utf8',
-  ),
+  readFileSync(join(__dirname, 'fixtures/attestation/attestation_vectors.json'), 'utf8'),
 ) as AttestationFixtures;
 
 function hexToBytes(hex: string): Uint8Array {
@@ -217,8 +205,7 @@ function optionsFromCase(c: AttestationCase): GenerateAttestationOptions {
   if (c.kwargs.category !== null) opts.category = c.kwargs.category;
   if (c.kwargs.value_range !== null) opts.valueRange = c.kwargs.value_range;
   if (c.kwargs.resolution_mechanism !== null) {
-    opts.resolutionMechanism = c.kwargs
-      .resolution_mechanism as ResolutionMechanism;
+    opts.resolutionMechanism = c.kwargs.resolution_mechanism as ResolutionMechanism;
   }
   if (c.kwargs.references !== null) opts.references = c.kwargs.references;
   if (c.kwargs.validity_temporal !== null) {
@@ -243,11 +230,7 @@ describe('generateAttestation parity (Python-generated over real sessions)', () 
   for (const c of fixtures.cases) {
     it(`produces a byte-identical attestation for "${c.name}"`, () => {
       const session = rebuildSession(c.session);
-      const attestation = generateAttestation(
-        session,
-        keyPairsFromCase(c),
-        optionsFromCase(c),
-      );
+      const attestation = generateAttestation(session, keyPairsFromCase(c), optionsFromCase(c));
       // Whole-object byte parity: header fields, outcome (with conditional
       // terms_count + insertion order), per-party behavioral records and their
       // real Python Ed25519 signatures, transcript_hash, meta, normalized
@@ -257,11 +240,7 @@ describe('generateAttestation parity (Python-generated over real sessions)', () 
 
     it(`per-party signatures verify under the signer's key for "${c.name}"`, () => {
       const session = rebuildSession(c.session);
-      const attestation = generateAttestation(
-        session,
-        keyPairsFromCase(c),
-        optionsFromCase(c),
-      );
+      const attestation = generateAttestation(session, keyPairsFromCase(c), optionsFromCase(c));
       const parties = attestation.parties as Array<Record<string, unknown>>;
       for (const party of parties) {
         const agentId = party.agent_id as string;
@@ -294,11 +273,7 @@ describe('no-raw-terms privacy invariant', () => {
   for (const c of fixtures.cases) {
     it(`leaks no raw term value in "${c.name}"`, () => {
       const session = rebuildSession(c.session);
-      const attestation = generateAttestation(
-        session,
-        keyPairsFromCase(c),
-        optionsFromCase(c),
-      );
+      const attestation = generateAttestation(session, keyPairsFromCase(c), optionsFromCase(c));
 
       // The behavioral-only keys that ARE expected in each party record.
       const allowedBehaviorKeys = new Set([
@@ -371,9 +346,7 @@ describe('generateAttestation rejects a non-concluded session', () => {
     const session = new Session({ sessionId: 'ses_open' });
     session.addParty(AGENT_A, PartyRole.INITIATOR, KP_A);
     // PROPOSED, not terminal, not expired.
-    expect(() => generateAttestation(session, KP_BY_AGENT)).toThrow(
-      AttestationError,
-    );
+    expect(() => generateAttestation(session, KP_BY_AGENT)).toThrow(AttestationError);
     expect(() => generateAttestation(session, KP_BY_AGENT)).toThrow(
       'Cannot generate attestation for session in state proposed',
     );
@@ -411,23 +384,16 @@ describe('validateValidityTemporal error-text parity', () => {
     it(`rejects "${c.name}" with Python-identical text`, () => {
       // The ISO-parse detail (after the colon) is implementation-specific and
       // documented as non-asserted; for those cases assert the stable prefix.
-      const isParseDetail = c.expected_error.includes(
-        'is not a valid ISO 8601 timestamp:',
-      );
+      const isParseDetail = c.expected_error.includes('is not a valid ISO 8601 timestamp:');
       if (isParseDetail) {
-        const prefix = c.expected_error.split(
-          'is not a valid ISO 8601 timestamp:',
-        )[0];
+        const prefix = c.expected_error.split('is not a valid ISO 8601 timestamp:')[0];
         expect(() => validateValidityTemporal(c.input)).toThrow(
           new RegExp(
-            prefix!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
-              'is not a valid ISO 8601 timestamp:',
+            prefix!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + 'is not a valid ISO 8601 timestamp:',
           ),
         );
       } else {
-        expect(() => validateValidityTemporal(c.input)).toThrow(
-          AttestationError,
-        );
+        expect(() => validateValidityTemporal(c.input)).toThrow(AttestationError);
         let captured = '';
         try {
           validateValidityTemporal(c.input);
@@ -464,9 +430,7 @@ describe('isValidNow temporal containment parity', () => {
 describe('isValidNow rejects a non-int-coercible duration_seconds (Finding 2)', () => {
   for (const c of fixtures.valid_now_error_cases) {
     it(`rejects "${c.name}" where Python int() raises`, () => {
-      expect(() => isValidNow(c.attestation, c.now_ms)).toThrow(
-        AttestationError,
-      );
+      expect(() => isValidNow(c.attestation, c.now_ms)).toThrow(AttestationError);
       let captured = '';
       try {
         isValidNow(c.attestation, c.now_ms);
@@ -711,9 +675,7 @@ describe('attestation timestamp parse is fail-closed (Python parity, not Date.pa
         until: '2027-01-01T00:00:00Z',
       },
     };
-    expect(() => isValidNow(att, Date.UTC(2026, 5, 15))).toThrow(
-      AttestationError,
-    );
+    expect(() => isValidNow(att, Date.UTC(2026, 5, 15))).toThrow(AttestationError);
   });
 
   it('isValidNow honors a valid naive-is-UTC absolute window unchanged', () => {
@@ -822,9 +784,12 @@ describe('validity_temporal[window] span is microsecond-precise (Python parity)'
   ];
   for (const { name, start, end, duration_seconds } of accepts) {
     it(`still accepts a span >= duration_seconds (${name})`, () => {
-      expect(
-        validateValidityTemporal({ mode: 'window', start, end, duration_seconds }),
-      ).toEqual({ mode: 'window', start, end, duration_seconds });
+      expect(validateValidityTemporal({ mode: 'window', start, end, duration_seconds })).toEqual({
+        mode: 'window',
+        start,
+        end,
+        duration_seconds,
+      });
     });
   }
 
