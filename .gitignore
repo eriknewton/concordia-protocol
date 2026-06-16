@@ -25,3 +25,17 @@ SERVICE_ARCHITECTURE.md
 .mcpregistry_github_token
 .mcpregistry_registry_token
 .gstack/
+
+# Internal back-office docs (security review, sprint, and handoff artifacts).
+# These live in a private coordinator workspace and must never re-enter the
+# public repository. Patterns chosen so they cannot match a kept root doc
+# (SECURITY.md, README.md, SPEC.md, AGENTS.md, etc.).
+SECURITY_AUDIT.md
+REVIEW_MAP.md
+BUG_REPORT.md
+SPRINT_*.md
+*_HANDOFF.md
+*_PR_BODY.md
+MERGE_GATE_REPORT.md
+KNOWN_ISSUES.md
+COWORK_CONTEXT.md

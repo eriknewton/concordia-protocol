@@ -32,7 +32,12 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Audit dependencies for CVEs
-        # CVE-2026-4539 (pygments 2.19.2): no fix version available — see KNOWN_ISSUES.md
+        # Suppression rationale (self-contained; reviewed 2026-06-16):
+        #   CVE-2026-4539 (pygments, low-severity ReDoS in the AdlLexer GUID regex)
+        #   is a transitive dev-only dependency with no upstream fix version
+        #   available at suppression time. Advisory:
+        #   https://github.com/advisories/GHSA-5239-wwwm-4pmq
+        #   Re-evaluate and drop this --ignore-vuln once a patched pygments is pinned.
         run: pip install pip-audit && pip-audit --requirement requirements.lock --ignore-vuln CVE-2026-4539
 
       - name: Run tests
