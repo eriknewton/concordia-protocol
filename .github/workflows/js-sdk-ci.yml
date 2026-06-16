@@ -37,6 +37,11 @@ jobs:
       - name: Test
         working-directory: js-sdk
         run: npm test
+      - name: Test-count floor (no silent coverage loss)
+        # Hard-fail gate: fails if the vitest test count drops below the integer
+        # in js-sdk/.test-baseline. Catches silently-deleted or skipped tests.
+        working-directory: js-sdk
+        run: node scripts/test-floor.mjs
       - name: Build
         working-directory: js-sdk
         run: npm run build

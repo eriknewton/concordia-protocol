@@ -1,0 +1,13 @@
+# Code owners for the Concordia Protocol repository.
+#
+# GitHub uses this file to request review automatically. When branch
+# protection requires review from Code Owners, every pull request needs an
+# approval from an owner listed here before it can merge. As a single-owner
+# project, this makes the required-review gate meaningful: nothing lands
+# without the owner's sign-off.
+#
+# Syntax: https://docs.github.com/articles/about-code-owners
+# The last matching pattern wins.
+
+# Default owner for everything in the repository.
+* @eriknewton

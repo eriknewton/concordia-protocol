@@ -1,36 +1,113 @@
 # @concordia-protocol/sdk
 
-TypeScript reference implementation of the Concordia Protocol -- signed
-agreement primitives for autonomous agents.
+TypeScript reference implementation of the Concordia Protocol: signed agreement
+primitives for autonomous agents. Agents propose, counter, accept, and commit,
+and every step carries an Ed25519 signature over canonical JSON, so an outcome
+can be verified by anyone without trusting the agent that produced it.
 
-Status: alpha. Currently ships the canonical JSON serializer, the Ed25519
-signing layer (key generation, sign, and verify over canonical JSON), the
-foundational types layer (session, message, term, and outcome enumerations plus
-the core data structures and their serialization), the v0.6 signed
-predicate primitive (sign, verify, write-validation, and the type-profile
-deterministic-semantics gate), the mandate credential models (the
-`TemporalMode` / `MandateStatus` enumerations, the `DelegationLink`,
-`ValidityWindow`, and `Mandate` data structures with their serialization, and
-the mandate JSON-schema constants), the mandate verification engine (mandate
-and delegation signing, schema and constraint validation, delegation-scope
-composition, temporal-validity checking, delegation-chain verification, and the
-full `verifyMandate` over all five checks), the session lifecycle (the
-six-state negotiation state machine PROPOSED -> ACTIVE -> AGREED / REJECTED /
-EXPIRED -> DORMANT with its strict transition table, signature-verified message
-application, behavioral-signal tracking, and the hash-chain transcript helpers),
-the reputation attestation (the signed behavioral record produced from a
-concluded session: `generateAttestation`, the 4-line receipt summary, the
-whole-transcript hash, and the three-mode temporal-validity checks, with the
-attestation carrying behavioral signals only and never the raw deal terms),
-and the JSON-schema validation layer (`validateMessage` for the message
-envelope, `validateApprovalReceipt` and `validateFulfillmentAttestation` for the
-standalone artifacts, each returning CPython-`jsonschema`-identical ordered error
-lists, plus the full `verifyApprovalReceipt` human-in-the-loop receipt verifier
-over schema, the negotiation-session reference, the Ed25519 signature, the expiry
-window, and the canonical offer-hash match), all with byte-level parity against
-the Python reference implementation. The mandate revocation-endpoint network
-fetch is deferred (an injectable hook covers the no-revocation outcome), and the
-reputation-attestation schema validator (`validateAttestation`, which needs
-`$ref` / `oneOf` schema support) ships in a subsequent alpha release.
+This package is byte-for-byte compatible with the Python reference
+implementation (`concordia-protocol` on PyPI): the same input produces the same
+canonical bytes, the same signature, and the same validation result in both
+languages.
 
-Apache-2.0. Spec at https://github.com/eriknewton/concordia-protocol.
+Status: alpha. Apache-2.0. Spec and Python SDK at
+<https://github.com/eriknewton/concordia-protocol>.
+
+## Install
+
+```sh
+npm install @concordia-protocol/sdk
+```
+
+Requires Node.js 20 or newer. The package ships ESM and CommonJS builds plus
+TypeScript types, so both `import` and `require` work.
+
+## Quickstart
+
+Generate a key pair, sign an offer, and verify it. The signature is taken over
+the canonical JSON of the object, so any tampering is detected.
+
+```ts
+import { generateKeyPair, sign, verify } from '@concordia-protocol/sdk';
+
+const keyPair = generateKeyPair();
+
+const offer = {
+  type: 'offer',
+  terms: { price: 1200, currency: 'USD', quantity: 10 },
+  from: 'agent-a',
+};
+
+const signature = sign(offer, keyPair); // URL-safe base64 Ed25519 signature
+console.log(verify(offer, signature, keyPair)); // true
+
+// Any change to the signed object fails verification.
+const tampered = { ...offer, terms: { price: 1 } };
+console.log(verify(tampered, signature, keyPair)); // false
+```
+
+`sign` excludes a top-level `signature` field before signing, so you can attach
+the signature to the same object and re-verify it later. `verify` never throws
+on a bad signature or key; it returns `false`, matching the Python verifier.
+
+## Canonical JSON
+
+Signatures are deterministic because they sign canonical bytes (RFC 8785 JCS),
+not whatever key order your object literal happened to use.
+
+```ts
+import { canonicalizeJcs } from '@concordia-protocol/sdk';
+
+// Same content, different key order, identical canonical bytes.
+const a = canonicalizeJcs({ b: 2, a: 1 });
+const b = canonicalizeJcs({ a: 1, b: 2 });
+console.log(a.equals(b)); // true
+```
+
+## What this SDK provides
+
+The public API surface (see `src/index.ts`) covers:
+
+- **Canonical JSON:** `canonicalizeJcs` and `canonicalizePredicate` plus the
+  strict parser `parseJsonStrict` and the `checkNoSpecialFloats` guard.
+- **Ed25519 signing:** `generateKeyPair` / `KeyPair`, `sign` / `verify` over an
+  object, `signJson` / `verifyJson` over a JSON string, and the
+  `toBase64Url` / `fromBase64Url` helpers.
+- **Core types:** the `SessionState`, `MessageType`, `TermType`,
+  `OutcomeStatus`, and related enumerations, plus `Term`, `AgentIdentity`,
+  `BehaviorRecord`, and their serialization helpers.
+- **Negotiation session:** the `Session` state machine
+  (PROPOSED -> ACTIVE -> AGREED / REJECTED / EXPIRED -> DORMANT) with a strict
+  transition table, signature-verified message application, hash-chain transcript
+  helpers (`computeHash`, `validateChain`, `GENESIS_HASH`), and
+  `computeConcession`.
+- **Signed predicates:** `signPredicate` / `verifyPredicate`,
+  `validatePredicateForWrite`, the type-profile registry, and `validateReference`
+  with its size bounds.
+- **Mandate credentials:** the `Mandate` and `DelegationLink` models, `signMandate`
+  / `signDelegation`, constraint and temporal validation, delegation-scope
+  composition, and the full `verifyMandate` over all five checks.
+- **Reputation attestation:** `generateAttestation` (behavioral signals only,
+  never the raw deal terms), `generateReceiptSummary`, `computeTranscriptHash`,
+  and the temporal-validity checks.
+- **Schema validation:** `validateMessage`, `validateApprovalReceipt`, and
+  `validateFulfillmentAttestation` (each returning a CPython-`jsonschema`-identical
+  ordered error list), plus the full `verifyApprovalReceipt` human-in-the-loop
+  receipt verifier.
+
+The mandate revocation-endpoint network fetch is deferred (an injectable hook
+covers the no-revocation outcome), and the attestation schema validator
+(`validateAttestation`) ships in a subsequent alpha release.
+
+## Parity with the Python SDK
+
+Every primitive in this package is validated against fixtures generated by the
+Python reference implementation, so a message signed in Python verifies in
+TypeScript and vice versa. If you find a case where the two disagree on canonical
+bytes, a signature, or a validation result, that is a bug; please report it (see
+[SECURITY.md](https://github.com/eriknewton/concordia-protocol/blob/main/SECURITY.md)
+for cryptographic-correctness issues).
+
+## License
+
+Apache-2.0. Copyright 2026 Erik Newton.
