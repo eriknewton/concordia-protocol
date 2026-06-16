@@ -3,10 +3,12 @@
 Posts behavioral metadata from concluded Concordia sessions to the Verascore
 transaction ingestion API. Only behavioral signals are sent (rounds, duration,
 outcome, concession count) — never raw deal terms, prices, or counterparty
-names. This is a hard constraint from §9.6 and CLAUDE.md rule #8.
+names. This is a hard constraint from §9.6 and the no-raw-deal-terms privacy
+invariant (AGENTS.md rule #8).
 
 Requires VERASCORE_ENABLED=true environment variable to activate, ensuring
-no external data is transmitted without explicit user intent (CLAUDE.md rule #1).
+no external data is transmitted without explicit user intent (the
+no-external-transmit-without-intent invariant, AGENTS.md rule #1).
 """
 
 from __future__ import annotations
@@ -90,7 +92,8 @@ def build_publish_body(
         ValueError: If the envelope cannot be built completely — e.g.
             ``agent_did`` does not match the signing key's ``did:key``, or
             the receipt is not canonicalizable. A partial or unverifiable
-            envelope is never produced (CLAUDE.md rule #5, fail closed).
+            envelope is never produced (the fail-closed invariant, AGENTS.md
+            rule #5: never silently degrade to a less-secure behavior on error).
     """
     # ── Publisher identity must equal the signing key's did:key ──────────
     # Verascore's /api/publish IGNORES any caller-supplied agentId and
@@ -183,7 +186,7 @@ class VerascoreClient:
                 can verify it as bilateral (cryptographic-tier) evidence.
                 FAIL CLOSED: if omitted, or the counterparty is unavailable, the
                 receipt is emitted clearly single-signed — never with an empty or
-                fabricated co-signature (CLAUDE.md rule #5).
+                fabricated co-signature (the fail-closed invariant, AGENTS.md rule #5).
 
         Returns:
             The parsed JSON response from Verascore, or an error dict.
@@ -192,7 +195,8 @@ class VerascoreClient:
             ValueError: If the envelope cannot be built completely — e.g.
                 ``agent_did`` does not match the signing key's ``did:key``, or
                 the receipt is not canonicalizable. A partial or unverifiable
-                envelope is never transmitted (CLAUDE.md rule #5, fail closed).
+                envelope is never transmitted (the fail-closed invariant, AGENTS.md
+                rule #5: never silently degrade to a less-secure behavior on error).
         """
         # Envelope construction (identity check, co-signed receipt, signed
         # data object) lives in build_publish_body — the single source of
@@ -250,7 +254,8 @@ def _extract_session_data(session: "Session", agent_id: str) -> dict[str, Any]:
 
     Idempotency key for Verascore-side upsert is ``session_id``
     (see Verascore ``prisma.concordiaReceipt.upsert({where: {sessionId}})``).
-    Behavioral fields only; no terms or prices, per CLAUDE.md rule #8.
+    Behavioral fields only; no terms or prices, per the no-raw-deal-terms
+    privacy invariant (AGENTS.md rule #8).
     """
     from .types import OutcomeStatus, SessionState  # avoid circular import
 

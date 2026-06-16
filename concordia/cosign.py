@@ -29,7 +29,8 @@ The co-sign contract is the shared cross-repo anchor
    public key is embedded in the DID (self-contained, no network resolution, no
    SSRF).
 
-**Fail closed (CLAUDE.md rule #5):** if the counterparty signature cannot be
+**Fail closed (the fail-closed invariant, AGENTS.md rule #5 — never silently
+degrade to a less-secure behavior on error):** if the counterparty signature cannot be
 collected, the receipt is emitted clearly single-signed (current behavior). A
 malformed or empty co-signature field is NEVER written, and a co-signature is
 NEVER fabricated under any error path.
@@ -238,7 +239,7 @@ def build_concordia_receipt(
     ``session_data`` is the behavioral-signal dict from
     ``verascore._extract_session_data`` (session_id, counterparty_did, outcome,
     rounds, duration_seconds, terms_count, concessions_made, fulfillment_status).
-    No deal terms or prices (CLAUDE.md rule #8).
+    No deal terms or prices (the no-raw-deal-terms privacy invariant, AGENTS.md rule #8).
     """
     counterparty_did = session_data["counterparty_did"]
     return {

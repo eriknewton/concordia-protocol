@@ -3,7 +3,7 @@
 These tests verify that Concordia's MCP tools enforce bearer-token
 authentication and reject unauthenticated or wrongly-authenticated callers.
 
-Test plan (per REMEDIATION_PLAN RT-05 and SPRINT_CONTRACT):
+Test plan (the authentication regression matrix for SEC-007):
 
 1. Session tools reject calls with no token.
 2. Session tools reject calls with wrong token.

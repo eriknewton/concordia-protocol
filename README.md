@@ -32,10 +32,10 @@ Cryptographic signatures that prove both parties agreed to specific terms. No am
 Every negotiation creates a verifiable record. What was proposed? What changed? What was agreed? It's all signed and auditable.
 
 ### Portable reputation
-Your agent builds a track record — "completed 47 deals, all on time, 4.9 stars." That reputation follows your agent everywhere, usable across platforms.
+Your agent builds a track record: "completed 47 deals, all on time, 4.9 stars." That reputation follows your agent everywhere, usable across platforms.
 
 ### Graceful degradation
-Concordia works even with agents that don't have it. If the other agent doesn't support Concordia, you'll see what you're missing — a way to know that you *could* have a binding agreement if both sides had it.
+Concordia works even with agents that don't have it. If the other agent doesn't support Concordia, you'll see what you're missing: a way to know that you *could* have a binding agreement if both sides had it.
 
 ---
 
@@ -145,7 +145,7 @@ python3 -m venv .venv
 .venv/bin/pip install "concordia-protocol[server]"
 ```
 
-**Note:** Concordia requires Python 3.10+. macOS ships Python 3.9 with Xcode — install a newer version first:
+**Note:** Concordia requires Python 3.10+. macOS ships Python 3.9 with Xcode, so install a newer version first:
 ```bash
 brew install python@3.12
 ```
@@ -240,7 +240,7 @@ Tools             MCP · Function Calling · APIs
 Identity          DIDs · KERI · OAuth 2.0
 ```
 
-Concordia composes with — never competes with — the existing stack. Use any payment protocol. Use any identity standard. Concordia adds structure to the negotiation layer.
+Concordia composes with (never competes with) the existing stack. Use any payment protocol. Use any identity standard. Concordia adds structure to the negotiation layer.
 
 ---
 
@@ -267,13 +267,13 @@ They work independently, but together they're more powerful.
 
 Concordia defines:
 
-- **A universal offer schema** — machine-readable deal proposals with any number of attributes
-- **A negotiation state machine** — six states (proposed → active → agreed / rejected / expired → dormant) governing how offers flow
-- **Resolution mechanisms** — from simple split-the-difference to Pareto-optimal optimization
-- **Binding commitments** — cryptographic signatures that bridge to any settlement protocol
-- **Reputation attestations** — signed behavioral records that feed portable trust scores
-- **Want registry** — agents publish what they seek; discovery happens on demand
-- **Predicate primitive** — signed v0.6 authority, policy, eligibility, and bounds evaluations
+- **A universal offer schema**: machine-readable deal proposals with any number of attributes
+- **A negotiation state machine**: six states (proposed → active → agreed / rejected / expired → dormant) governing how offers flow
+- **Resolution mechanisms**: from simple split-the-difference to Pareto-optimal optimization
+- **Binding commitments**: cryptographic signatures that bridge to any settlement protocol
+- **Reputation attestations**: signed behavioral records that feed portable trust scores
+- **Want registry**: agents publish what they seek; discovery happens on demand
+- **Predicate primitive**: signed v0.6 authority, policy, eligibility, and bounds evaluations
 
 **The tool set:**
 - 59 MCP tools across negotiation, session receipts, competence proofs, reputation, discovery, agent profiles, want registry, relay, adoption, Sanctuary bridge, receipt bundles, Verascore reporting, mandate verification, and approval receipt verification
@@ -285,20 +285,20 @@ Concordia defines:
 - Multi-attribute offer optimization
 
 **Documentation:**
-- [Full Specification](SPEC.md) — complete protocol specification
-- [v0.6 Predicate Primitive](docs/v0.6_predicate_primitive.md) — signed predicate artifact, verifier, resolver, and CTEF mapping
-- [Python SDK](concordia/) — reference implementation
-- [Examples](examples/) — negotiation scripts and use cases
-- [Contributing Guide](CONTRIBUTING.md) — how to contribute
+- [Full Specification](SPEC.md): complete protocol specification
+- [v0.6 Predicate Primitive](docs/v0.6_predicate_primitive.md): signed predicate artifact, verifier, resolver, and CTEF mapping
+- [Python SDK](concordia/): reference implementation
+- [Examples](examples/): negotiation scripts and use cases
+- [Contributing Guide](CONTRIBUTING.md): how to contribute
 
 **Design Principles:**
 1. Mutual flourishing over zero-sum extraction
 2. Honesty is structurally rewarded
 3. Simplicity and parsimony
-4. Composability — fills a gap, replaces nothing
-5. Privacy by default — agents never must reveal reservation price
-6. Verifiability — every negotiation produces a signed transcript
-7. Kindness at the boundary — graceful exits when deals don't happen
+4. Composability: fills a gap, replaces nothing
+5. Privacy by default: agents never must reveal reservation price
+6. Verifiability: every negotiation produces a signed transcript
+7. Kindness at the boundary: graceful exits when deals don't happen
 
 ---
 
@@ -361,11 +361,11 @@ pytest -v
 
 Concordia is developed in the open. We welcome:
 
-- **RFCs** for protocol changes — see [rfcs/](rfcs/)
+- **RFCs** for protocol changes (see [rfcs/](rfcs/))
 - **SDK implementations** in any language
 - **Domain extensions** for specific industries (real estate, used goods, services, B2B)
 - **Security reviews**
-- **Feedback** — open an issue or start a discussion
+- **Feedback**: open an issue or start a discussion
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
@@ -379,7 +379,7 @@ Apache License 2.0. Use it, build on it, extend it.
 
 ## Why "Concordia"?
 
-From the Latin *concordia*: harmony, agreement — literally, "hearts together." The Roman goddess of understanding between parties. Because negotiation, done well, is not a contest. It is a collaborative search for the point where everyone's needs are met.
+From the Latin *concordia*: harmony, agreement, literally, "hearts together." The Roman goddess of understanding between parties. Because negotiation, done well, is not a contest. It is a collaborative search for the point where everyone's needs are met.
 
 ---
 
