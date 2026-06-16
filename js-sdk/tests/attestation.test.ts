@@ -444,6 +444,83 @@ describe('isValidNow rejects a non-int-coercible duration_seconds (Finding 2)', 
 });
 
 // ---------------------------------------------------------------------------
+// ReDoS hardening (CodeQL js/polynomial-redos, attestation.ts:392): the string
+// branch of pyIntCoerce strips surrounding whitespace before testing the int
+// literal. The original `value.replace(/^\s+|\s+$/g, '')` backtracked
+// polynomially on a long interior whitespace run; it was replaced with a linear
+// two-boundary scan. These cases pin BYTE-FOR-BYTE accept/reject parity (the
+// strip removes exactly the leading + trailing `\s` run, never interior
+// whitespace) through the public isValidNow surface, plus a fast-return guard on
+// the adversarial input the regex choked on. `duration_seconds` is the only
+// field that reaches the string-coercion path (is_valid_now coerces it via
+// Python int(), and a hand-built attestation can carry a string there).
+// ---------------------------------------------------------------------------
+describe('pyIntCoerce strips surrounding whitespace without ReDoS (CodeQL js/polynomial-redos)', () => {
+  const FROM = '2026-01-01T00:00:00Z';
+  const NOW_MS = Date.UTC(2026, 0, 1, 12, 0, 0); // 12h after `from`
+  const relAtt = (duration: unknown) => ({
+    validity_temporal: { mode: 'relative', from: FROM, duration_seconds: duration },
+  });
+
+  // ACCEPT parity: a whitespace-wrapped integer coerces to the bare integer.
+  // 86400s = 24h window starting at `from`, so 12h-in is inside -> true, exactly
+  // as the bare-integer `86400` case (fixture `relative_inside`) does.
+  const accepted: Array<[string, string]> = [
+    ['leading + trailing spaces', '  86400  '],
+    ['leading + trailing tabs', '\t86400\t'],
+    ['mixed ASCII whitespace', '\n\r\v\f 86400 \f\v\r\n'],
+    ['signed with surrounding ws', '  +86400  '],
+    ['no surrounding whitespace', '86400'],
+  ];
+  for (const [name, duration] of accepted) {
+    it(`accepts a whitespace-wrapped integer string (${name})`, () => {
+      // Parity anchor: identical verdict to the numeric duration.
+      expect(isValidNow(relAtt(duration), NOW_MS)).toBe(true);
+      expect(isValidNow(relAtt(86400), NOW_MS)).toBe(true);
+    });
+  }
+
+  // REJECT parity: INTERIOR whitespace (and other non-int literals) must still
+  // raise Python's exact int() ValueError text -- the strip never touches the
+  // interior, so the post-strip `/^[+-]?\d+$/` test fails identically.
+  const rejected: Array<[string, string]> = [
+    ['interior space', '8 6400'],
+    ['interior space, whitespace-wrapped', '  8 6400  '],
+    ['interior tab', '86\t400'],
+    ['all whitespace', '   \t\n  '],
+    ['empty string', ''],
+    ['float-formatted', '  1.5  '],
+  ];
+  for (const [name, duration] of rejected) {
+    it(`rejects a non-integer literal with byte-identical Python text (${name})`, () => {
+      expect(() => isValidNow(relAtt(duration), NOW_MS)).toThrow(AttestationError);
+      let captured = '';
+      try {
+        isValidNow(relAtt(duration), NOW_MS);
+      } catch (e) {
+        captured = (e as Error).message;
+      }
+      // jsRepr wraps the ORIGINAL (un-stripped) value in single quotes verbatim
+      // (mirroring CPython int()'s `'<repr>'`); the strip never altered the value
+      // that reaches the error text.
+      expect(captured).toBe(`invalid literal for int() with base 10: '${duration}'`);
+    });
+  }
+
+  it('returns fast on the adversarial input the regex backtracked on', () => {
+    // A long interior whitespace run flanked by non-ws chars: the old
+    // `/[\s]+$/` alternative retried from every ws position (O(n^2)). The linear
+    // scan is O(n); even 200k chars must reject in well under the regex's old
+    // hundreds-of-ms. Generous ceiling to stay non-flaky on shared CI.
+    const adversarial = 'x' + '\t'.repeat(200_000) + 'y';
+    const t0 = performance.now();
+    expect(() => isValidNow(relAtt(adversarial), NOW_MS)).toThrow(AttestationError);
+    const elapsedMs = performance.now() - t0;
+    expect(elapsedMs).toBeLessThan(50);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // generate_receipt_summary: formatting parity.
 // ---------------------------------------------------------------------------
 describe('generateReceiptSummary formatting parity', () => {
