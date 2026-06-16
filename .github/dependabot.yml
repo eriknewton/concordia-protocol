@@ -1,0 +1,55 @@
+# Dependabot configuration for version updates.
+#
+# Security updates are enabled separately via repository settings
+# (Dependabot security updates) and are NOT controlled by this file.
+# This file governs scheduled VERSION updates only.
+#
+# Three ecosystems are tracked:
+#   - pip            : Python deps (pyproject.toml / requirements.lock at repo root)
+#   - npm            : js-sdk TypeScript SDK
+#   - github-actions : workflow action pins (all SHA-pinned; bumps keep pins current)
+version: 2
+updates:
+  # --- Python (root) ---
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+      include: "scope"
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
+
+  # --- TypeScript SDK ---
+  - package-ecosystem: "npm"
+    directory: "/js-sdk"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+      include: "scope"
+    groups:
+      js-sdk-dependencies:
+        patterns:
+          - "*"
+
+  # --- GitHub Actions ---
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(ci)"
+      include: "scope"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
