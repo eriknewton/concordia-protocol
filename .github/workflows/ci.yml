@@ -43,6 +43,28 @@ jobs:
       - name: Run tests
         run: pytest -v
 
+      - name: Test-count floor (no silent coverage loss)
+        # Hard-fail gate: fails if the collected pytest count drops below the
+        # integer in .test-baseline. Catches silently-deleted tests.
+        run: bash scripts/test-floor.sh
+
+  version-coherence:
+    # Hard-fail gate: the three Python publish surfaces (pyproject.toml,
+    # concordia/__init__.py, server.json) must declare the same version.
+    # Deliberately does NOT bind plugin.json or the independently-versioned
+    # js-sdk. See scripts/version-coherence.py for scope rationale.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2 (resolved 2026-05-18)
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0 (resolved 2026-05-18)
+        with:
+          python-version: "3.12"
+
+      - name: Assert version coherence across Python publish surfaces
+        run: python scripts/version-coherence.py
+
   lint:
     # Gated code-quality checks for the Python package: ruff (lint) and mypy
     # (type check). Hard-fail — a new lint or type regression blocks the merge.
