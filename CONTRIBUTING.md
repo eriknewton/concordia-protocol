@@ -27,7 +27,7 @@ python examples/demo_quick_negotiation.py
 ### Code Style
 
 - Type hints are required on all public functions and methods.
-- Keep dependencies minimal. The SDK depends only on `cryptography` and `jsonschema` — additions need strong justification.
+- Keep dependencies minimal. The SDK depends only on `cryptography` and `jsonschema`, so additions need strong justification.
 - Follow the existing module structure. Each module has a clear, single responsibility.
 - Docstrings should reference the relevant spec section (e.g. "§6.1").
 
@@ -36,7 +36,7 @@ python examples/demo_quick_negotiation.py
 Changes to the Concordia Protocol specification go through an RFC process:
 
 1. Create a file in `rfcs/` following the naming convention `NNNN-short-title.md`.
-2. Use the structure of `SPEC.md` as your guide — define the problem, propose the change, describe the message format and state transitions affected.
+2. Use the structure of `SPEC.md` as your guide: define the problem, propose the change, describe the message format and state transitions affected.
 3. Open a pull request with the RFC. Discussion happens on the PR.
 4. Once accepted, the RFC is merged and the spec is updated accordingly.
 

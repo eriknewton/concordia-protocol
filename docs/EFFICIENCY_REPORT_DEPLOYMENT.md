@@ -12,11 +12,11 @@ A Concordia **efficiency report** is a short, structured comparison that shows w
 
 It's produced by the `concordia_efficiency_report` tool after a degraded interaction has been tracked with `concordia_start_degraded` and `concordia_degraded_message`. The report quantifies the gap along five dimensions:
 
-1. **Rounds** — how many messages were exchanged versus how many a structured protocol would have needed.
-2. **Wall-clock time** — total elapsed time versus the Concordia median for comparable negotiations.
-3. **Ambiguity cost** — how many messages were spent clarifying terms that would have been enumerated up front in a Concordia session.
-4. **Missing artifacts** — whether the interaction produced a signed receipt, a hash-chained transcript, or a portable attestation.
-5. **Reputation capture** — whether the outcome can be used to build verifiable reputation for either party.
+1. **Rounds**: how many messages were exchanged versus how many a structured protocol would have needed.
+2. **Wall-clock time**: total elapsed time versus the Concordia median for comparable negotiations.
+3. **Ambiguity cost**: how many messages were spent clarifying terms that would have been enumerated up front in a Concordia session.
+4. **Missing artifacts**: whether the interaction produced a signed receipt, a hash-chained transcript, or a portable attestation.
+5. **Reputation capture**: whether the outcome can be used to build verifiable reputation for either party.
 
 The output is a plain-text block, ~10-20 lines, suitable for pasting into a chat thread, an email reply, or a forum comment.
 
@@ -41,7 +41,7 @@ Gap summary: +9 rounds, +3d 2h, no verifiable artifacts.
 Structured equivalent: concordia_open_session with 3 terms.
 ```
 
-Keep it monospaced. Keep it under 25 lines. Keep the "Gap summary" line — that is the line people quote.
+Keep it monospaced. Keep it under 25 lines. Keep the "Gap summary" line; that is the line people quote.
 
 ---
 
@@ -85,14 +85,14 @@ The test: **if the report would feel like a gotcha, don't send it.** Efficiency 
 ### Chat (Slack, Discord, Signal, iMessage)
 
 - Use a single code block. Most clients render monospaced.
-- Lead with one sentence of context: "Pulled this from the thread — 14 rounds, no receipt."
+- Lead with one sentence of context: "Pulled this from the thread, 14 rounds, no receipt."
 - Do not attach a link unless someone asks. The report should stand alone.
 - If the group is small (<=5 people), consider sending it as a DM to the person who'd benefit most, not to the group.
 
 ### Email
 
 - Put the report in the body, not as an attachment.
-- Paste it under your signature or in a "PS" — it reads as a bonus observation, not a lecture.
+- Paste it under your signature or in a "PS"; it reads as a bonus observation, not a lecture.
 - Subject line: add `[efficiency report]` in brackets only if the recipient already knows the term.
 
 ### Forum / GitHub issue / DEV.to / HN comment
@@ -106,7 +106,7 @@ The test: **if the report would feel like a gotcha, don't send it.** Efficiency 
 
 - Read only the "Gap summary" line out loud.
 - Offer to paste the full report afterward.
-- Do not walk through each line in real time — it kills the pacing of the meeting.
+- Do not walk through each line in real time; it kills the pacing of the meeting.
 
 ### Case study / blog post / conference slide
 
@@ -118,14 +118,14 @@ The test: **if the report would feel like a gotcha, don't send it.** Efficiency 
 
 ## Example deployments
 
-### Example 1 — procurement thread (high value)
+### Example 1: procurement thread (high value)
 
 A buyer and a supplier exchanged 22 emails over 9 days about delivery terms and payment schedule. The buyer's ops lead asks why it took so long. You drop:
 
 ```
 Concordia Efficiency Report
 ---------------------------
-Thread: Q2 component order — delivery terms
+Thread: Q2 component order - delivery terms
 Rounds observed:          22
 Rounds expected (median):  7
 Wall-clock:               9d 3h
@@ -141,11 +141,11 @@ Structured equivalent: concordia_open_session with 4 terms.
 
 This lands because the ops lead was already looking for a reason.
 
-### Example 2 — side-project collaboration (low stakes, don't send)
+### Example 2: side-project collaboration (low stakes, don't send)
 
 Two friends negotiated a weekend code-swap in 6 Signal messages over 2 hours. A report here would be gratuitous. Skip it.
 
-### Example 3 — a conference Q&A
+### Example 3: a conference Q&A
 
 Someone asks, "but does anyone actually use structured negotiation protocols?" You show an efficiency report from a real (anonymized) procurement thread on a slide, then a Concordia-mediated version. 30 seconds, one visual, numbers on screen. This is the best venue for the report.
 
@@ -159,7 +159,7 @@ Concordia Protocol is authored by Erik Newton. The efficiency report mechanism i
 
 ## Related
 
-- `concordia_start_degraded` — begin tracking an informal thread.
-- `concordia_degraded_message` — record each round of the informal thread.
-- `concordia_efficiency_report` — produce the report shown above.
-- `concordia_propose_protocol` — invite the counterparty to switch to Concordia mid-thread.
+- `concordia_start_degraded`: begin tracking an informal thread.
+- `concordia_degraded_message`: record each round of the informal thread.
+- `concordia_efficiency_report`: produce the report shown above.
+- `concordia_propose_protocol`: invite the counterparty to switch to Concordia mid-thread.

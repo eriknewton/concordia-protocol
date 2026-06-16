@@ -3165,7 +3165,7 @@ def tool_verascore_report(
             "error": f"Agent '{agent_id}' is not a party in session '{session_id}'.",
         })
 
-    # Extract behavioral metadata — NEVER raw deal terms (CLAUDE.md rule #8)
+    # Extract behavioral metadata — NEVER raw deal terms (the no-raw-deal-terms privacy invariant, AGENTS.md rule #8)
     outcome = session.state.value  # agreed, rejected, expired
     rounds = session.round_count
     duration = session.duration_seconds()

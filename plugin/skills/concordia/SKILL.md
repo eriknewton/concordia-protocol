@@ -1,7 +1,7 @@
 ---
 name: concordia
 description: >
-  Structured negotiation protocol for AI agents — binding offers, counteroffers, session receipts,
+  Structured negotiation protocol for AI agents: binding offers, counteroffers, session receipts,
   portable reputation, and agent discovery via MCP tools. Use when the agent needs to negotiate,
   make or respond to offers, check counterparty reputation, find trading partners, publish wants
   or haves, relay messages, propose the protocol to non-Concordia peers, or bridge outcomes to
@@ -19,14 +19,14 @@ Concordia gives your agent structured negotiation: binding offers, multi-round c
 
 Use Concordia tools whenever your work involves:
 
-- **Negotiating with another agent** — prices, terms, schedules, resource allocation. Use `concordia_open_session` to start, then `concordia_propose`, `concordia_counter`, `concordia_accept`, or `concordia_reject`.
-- **Checking a counterparty's track record** — before committing to a deal. Use `concordia_reputation_query` or `concordia_reputation_score`.
-- **Finding trading partners** — searching for agents by capability or category. Use `concordia_register_agent`, `concordia_search_agents`, `concordia_agent_card`.
-- **Publishing what you need or offer** — demand-side and supply-side discovery. Use `concordia_post_want`, `concordia_post_have`, `concordia_find_matches`.
-- **Relay-mediated negotiation** — when agents communicate through an intermediary. Use `concordia_relay_create`, `concordia_relay_join`, `concordia_relay_send`, `concordia_relay_receive`.
-- **Proposing the protocol to a new peer** — graceful onboarding. Use `concordia_propose_protocol`, `concordia_respond_to_proposal`, `concordia_start_degraded`.
-- **Bridging outcomes to Sanctuary** — binding negotiation results to sovereignty infrastructure. Use `concordia_sanctuary_bridge_commit`, `concordia_sanctuary_bridge_attest`.
-- **Creating portable proof of track record** — bundle session receipts into a verifiable proof. Use `concordia_create_receipt_bundle`, `concordia_verify_receipt_bundle`, `concordia_list_receipt_bundles`.
+- **Negotiating with another agent**: prices, terms, schedules, resource allocation. Use `concordia_open_session` to start, then `concordia_propose`, `concordia_counter`, `concordia_accept`, or `concordia_reject`.
+- **Checking a counterparty's track record**: before committing to a deal. Use `concordia_reputation_query` or `concordia_reputation_score`.
+- **Finding trading partners**: searching for agents by capability or category. Use `concordia_register_agent`, `concordia_search_agents`, `concordia_agent_card`.
+- **Publishing what you need or offer**: demand-side and supply-side discovery. Use `concordia_post_want`, `concordia_post_have`, `concordia_find_matches`.
+- **Relay-mediated negotiation**: when agents communicate through an intermediary. Use `concordia_relay_create`, `concordia_relay_join`, `concordia_relay_send`, `concordia_relay_receive`.
+- **Proposing the protocol to a new peer**: graceful onboarding. Use `concordia_propose_protocol`, `concordia_respond_to_proposal`, `concordia_start_degraded`.
+- **Bridging outcomes to Sanctuary**: binding negotiation results to sovereignty infrastructure. Use `concordia_sanctuary_bridge_commit`, `concordia_sanctuary_bridge_attest`.
+- **Creating portable proof of track record**: bundle session receipts into a verifiable proof. Use `concordia_create_receipt_bundle`, `concordia_verify_receipt_bundle`, `concordia_list_receipt_bundles`.
 
 ## Tool categories
 
@@ -38,8 +38,8 @@ Concordia exposes 59 MCP tools: 55 from `concordia.mcp_server` plus 4 agent-prof
 | `concordia_open_session` | Open a new negotiation session between two parties |
 | `concordia_propose` | Send an initial offer with terms |
 | `concordia_counter` | Send a counter-offer modifying terms |
-| `concordia_accept` | Accept the current offer — session moves to AGREED |
-| `concordia_reject` | Reject the negotiation — session moves to REJECTED |
+| `concordia_accept` | Accept the current offer; session moves to AGREED |
+| `concordia_reject` | Reject the negotiation; session moves to REJECTED |
 | `concordia_commit` | Finalize an agreed deal with binding commitment |
 | `concordia_session_status` | Query session state, analytics, and transcript summary |
 | `concordia_session_receipt` | Generate a cryptographic receipt (signed attestation) from a concluded session |
@@ -63,8 +63,8 @@ Concordia exposes 59 MCP tools: 55 from `concordia.mcp_server` plus 4 agent-prof
 ### Want Registry (10 tools)
 | Tool | Purpose |
 |------|---------|
-| `concordia_post_want` | Publish a demand — what you're looking for, with constraints |
-| `concordia_post_have` | Publish a supply — what you're offering, with terms |
+| `concordia_post_want` | Publish a demand: what you're looking for, with constraints |
+| `concordia_post_have` | Publish a supply: what you're offering, with terms |
 | `concordia_get_want` | Retrieve a specific want listing by ID |
 | `concordia_get_have` | Retrieve a specific have listing by ID |
 | `concordia_withdraw_want` | Remove a want listing |
@@ -115,7 +115,7 @@ Concordia exposes 59 MCP tools: 55 from `concordia.mcp_server` plus 4 agent-prof
 ### Session Receipts & Competence Proofs (4 tools)
 | Tool | Purpose |
 |------|---------|
-| `concordia_session_public_view` | Read-only public view of a session — non-sensitive metadata and transcript summary, no auth required |
+| `concordia_session_public_view` | Read-only public view of a session: non-sensitive metadata and transcript summary, no auth required |
 | `concordia_session_receipt_envelope` | Export a concluded session as an interoperable trust-evidence-format v1.0.0 signed envelope |
 | `concordia_competence_proof` | Generate a privacy-preserving proof of negotiation competence without revealing deal terms |
 | `concordia_verify_competence_proof` | Verify a counterparty's competence proof (signature, Merkle root, revealed claims) |
@@ -138,61 +138,61 @@ Concordia exposes 59 MCP tools: 55 from `concordia.mcp_server` plus 4 agent-prof
 ## Common workflows
 
 ### Basic negotiation
-1. `concordia_open_session` — open a session between Agent A and Agent B
-2. `concordia_propose` — Agent A sends an initial offer (e.g., price: 500, delivery: "2 weeks")
-3. `concordia_counter` — Agent B counters (e.g., price: 600, delivery: "3 weeks")
-4. `concordia_counter` — Agent A counters again (price: 550, delivery: "2.5 weeks")
-5. `concordia_accept` — Agent B accepts the terms
-6. `concordia_session_receipt` — both parties generate signed receipts
+1. `concordia_open_session`: open a session between Agent A and Agent B
+2. `concordia_propose`: Agent A sends an initial offer (e.g., price: 500, delivery: "2 weeks")
+3. `concordia_counter`: Agent B counters (e.g., price: 600, delivery: "3 weeks")
+4. `concordia_counter`: Agent A counters again (price: 550, delivery: "2.5 weeks")
+5. `concordia_accept`: Agent B accepts the terms
+6. `concordia_session_receipt`: both parties generate signed receipts
 
 ### Reputation check before dealing
-1. `concordia_reputation_query` — check the counterparty's attestation history
-2. `concordia_reputation_score` — get their computed trust score across dimensions (reliability, fairness, responsiveness, reasoning, flexibility, fulfillment)
+1. `concordia_reputation_query`: check the counterparty's attestation history
+2. `concordia_reputation_score`: get their computed trust score across dimensions (reliability, fairness, responsiveness, reasoning, flexibility, fulfillment)
 3. If score meets your threshold, proceed with `concordia_open_session`
 
 ### Want/Have marketplace
-1. `concordia_post_want` — "looking for cloud GPU time, budget 100-500 USD/month"
-2. `concordia_post_have` — another agent posts "offering A100 GPU hours, 200 USD/month"
-3. `concordia_find_matches` — platform finds overlapping wants and haves
+1. `concordia_post_want`: "looking for cloud GPU time, budget 100-500 USD/month"
+2. `concordia_post_have`: another agent posts "offering A100 GPU hours, 200 USD/month"
+3. `concordia_find_matches`: platform finds overlapping wants and haves
 4. Matched agents proceed to `concordia_open_session` for negotiation
 
 ### Relay-mediated negotiation
-1. `concordia_relay_create` — Agent A creates a relay session
-2. `concordia_relay_join` — Agent B joins using the relay ID
-3. `concordia_relay_send` / `concordia_relay_receive` — exchange messages through the relay
-4. `concordia_relay_conclude` — close the relay when done
-5. `concordia_relay_archive` — archive the transcript for records
+1. `concordia_relay_create`: Agent A creates a relay session
+2. `concordia_relay_join`: Agent B joins using the relay ID
+3. `concordia_relay_send` / `concordia_relay_receive`: exchange messages through the relay
+4. `concordia_relay_conclude`: close the relay when done
+5. `concordia_relay_archive`: archive the transcript for records
 
 ### Proposing Concordia to a new peer
-1. `concordia_propose_protocol` — send a protocol proposal with capability summary
+1. `concordia_propose_protocol`: send a protocol proposal with capability summary
 2. If accepted: proceed with normal negotiation tools
-3. If declined: `concordia_start_degraded` — fall back to unstructured interaction
-4. `concordia_degraded_message` — exchange messages without binding semantics
-5. `concordia_efficiency_report` — show the counterparty what they're missing
+3. If declined: `concordia_start_degraded` falls back to unstructured interaction
+4. `concordia_degraded_message`: exchange messages without binding semantics
+5. `concordia_efficiency_report`: show the counterparty what they're missing
 
 ### Presenting portable proof to a new counterparty
 1. Complete several negotiations and generate receipts
-2. `concordia_ingest_attestation` — ingest receipts into the reputation store
-3. `concordia_create_receipt_bundle` — select attestations (by category, counterparty, or date range) and sign a bundle
+2. `concordia_ingest_attestation`: ingest receipts into the reputation store
+3. `concordia_create_receipt_bundle`: select attestations (by category, counterparty, or date range) and sign a bundle
 4. Share the bundle JSON with the new counterparty
-5. Counterparty calls `concordia_verify_receipt_bundle` — checks signatures, summary accuracy, and Sybil patterns
-6. `concordia_list_receipt_bundles` — review bundles you've created
+5. Counterparty calls `concordia_verify_receipt_bundle`: checks signatures, summary accuracy, and Sybil patterns
+6. `concordia_list_receipt_bundles`: review bundles you've created
 
 ### Bridging to Sanctuary
 1. Complete a negotiation to AGREED state
-2. `concordia_sanctuary_bridge_configure` — set up Concordia-to-Sanctuary identity mapping
-3. `concordia_sanctuary_bridge_commit` — create a cryptographic commitment binding the outcome
-4. `concordia_sanctuary_bridge_attest` — record the negotiation as an L4 reputation attestation
+2. `concordia_sanctuary_bridge_configure`: set up Concordia-to-Sanctuary identity mapping
+3. `concordia_sanctuary_bridge_commit`: create a cryptographic commitment binding the outcome
+4. `concordia_sanctuary_bridge_attest`: record the negotiation as a Heralds reputation attestation
 5. Either party can later verify the commitment via Sanctuary's `bridge_verify`
 
 ## Architecture notes
 
-**Protocol stack position:** Concordia sits at the application layer — it defines message formats and state machines for negotiation. It does not handle transport (that's MCP's job) or encryption at rest (that's Sanctuary's job if bridged).
+**Protocol stack position:** Concordia sits at the application layer; it defines message formats and state machines for negotiation. It does not handle transport (that's MCP's job) or encryption at rest (that's Sanctuary's job if bridged).
 
-**Session state machine:** PROPOSED -> ACTIVE -> AGREED / REJECTED / EXPIRED -> DORMANT. Transitions are enforced — invalid transitions raise errors. Every state change is recorded in the hash-chain transcript.
+**Session state machine:** PROPOSED -> ACTIVE -> AGREED / REJECTED / EXPIRED -> DORMANT. Transitions are enforced; invalid transitions raise errors. Every state change is recorded in the hash-chain transcript.
 
-**Cryptographic integrity:** Every message is Ed25519-signed over canonical JSON (sorted keys, deterministic serialization). Messages form a hash chain — each includes the SHA-256 hash of its predecessor. Tampering with any message breaks the chain.
+**Cryptographic integrity:** Every message is Ed25519-signed over canonical JSON (sorted keys, deterministic serialization). Messages form a hash chain: each includes the SHA-256 hash of its predecessor. Tampering with any message breaks the chain.
 
-**Attestation flow:** When a session concludes, `concordia_session_receipt` generates a signed attestation containing behavioral signals (offers made, concession magnitude, reasoning rate, responsiveness) — never raw deal terms. Attestations are ingested via `concordia_ingest_attestation` with Sybil screening (self-dealing, suspiciously fast sessions, symmetric concessions, closed loops).
+**Attestation flow:** When a session concludes, `concordia_session_receipt` generates a signed attestation containing behavioral signals (offers made, concession magnitude, reasoning rate, responsiveness), never raw deal terms. Attestations are ingested via `concordia_ingest_attestation` with Sybil screening (self-dealing, suspiciously fast sessions, symmetric concessions, closed loops).
 
-**All tools require `auth_token`** — obtained from `concordia_open_session` for the session's parties. Discovery, want registry, relay, and adoption tools use agent-level authentication.
+**All tools require `auth_token`**, obtained from `concordia_open_session` for the session's parties. Discovery, want registry, relay, and adoption tools use agent-level authentication.

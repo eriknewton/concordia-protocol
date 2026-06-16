@@ -1,8 +1,8 @@
 # Concordia RFCs
 
-Substantive changes to the Concordia Protocol — new message types, offer
+Substantive changes to the Concordia Protocol (new message types, offer
 shapes, state-machine transitions, attestation semantics, bridge contracts, or
-any change to the wire format — go through a lightweight RFC (Request For
+any change to the wire format) go through a lightweight RFC (Request For
 Comments) process so the design and its tradeoffs are recorded before code
 lands.
 
@@ -25,13 +25,13 @@ and a maintainer will tell you whether an RFC is warranted.
 An RFC moves through these states. Record the current state in the `Status`
 field of the RFC's front matter.
 
-- **Draft** — authored and opened as a pull request; under active revision.
-- **Discussion** — open for maintainer and community review on the pull
+- **Draft**: authored and opened as a pull request; under active revision.
+- **Discussion**: open for maintainer and community review on the pull
   request thread. The author iterates in response to feedback.
-- **Accepted** — a maintainer has approved the design. The RFC is merged and may
+- **Accepted**: a maintainer has approved the design. The RFC is merged and may
   now be implemented. Implementation lands in follow-up pull requests that
   reference the RFC number.
-- **Rejected** — the design will not be adopted. The RFC is merged (or closed)
+- **Rejected**: the design will not be adopted. The RFC is merged (or closed)
   with a short rationale so the decision is discoverable and not re-litigated.
 
 Superseded RFCs stay in this directory for the historical record; mark them
@@ -62,7 +62,7 @@ enough?
 The proposed change in detail. Cover the wire format, message/offer/state
 semantics, validation rules, and any backward-compatibility or migration
 concerns. Include concrete examples. Note the security and privacy
-implications — Concordia attestations must never carry raw deal terms, and any
+implications: Concordia attestations must never carry raw deal terms, and any
 new signed surface must specify its canonical-serialization and verification
 rules.
 

@@ -1,7 +1,9 @@
 """Caller authentication for Concordia MCP tools.
 
-Implements bearer-token authentication as specified in REMEDIATION_PLAN CP-05.
-Tokens are 256-bit random hex strings issued at two scopes:
+Implements bearer-token authentication so that every state-changing MCP tool
+call is bound to a caller that holds a secret issued by the server, closing the
+unauthenticated-access gap. Tokens are 256-bit random hex strings issued at two
+scopes:
 
 1. **Agent auth token (long-lived)** — identifies/authenticates a Concordia
    agent itself across sessions. Issued by ``concordia_register_agent``.
