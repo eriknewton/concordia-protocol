@@ -373,6 +373,28 @@ function pyTruthy(value: unknown): boolean {
  * where Python's `int(...)` would raise -- never silently coerced (the prior
  * `Number(...)` accepted `"1.5"` -> `1.5` and `NaN` where Python raises).
  */
+/**
+ * Strip the leading and trailing whitespace run from a string with a linear
+ * two-boundary scan, equivalent to `value.replace(/^\s+|\s+$/g, '')` but without
+ * that regex's polynomial backtracking (`js/polynomial-redos`).
+ *
+ * Parity is exact: it advances each boundary while the boundary character tests
+ * positive against the SAME JS `\s` character class the regex used, so it removes
+ * precisely the characters the regex did and leaves interior whitespace intact.
+ * For a string of all-whitespace it returns `''` (both boundaries cross), and an
+ * empty input returns `''`, matching the regex on the inputs `pyIntCoerce` feeds
+ * it (whose result is then tested against `/^[+-]?\d+$/`).
+ */
+function stripWhitespace(value: string): string {
+  let start = 0;
+  let end = value.length;
+  // `\s` here is the single-character class; testing one char at a time is O(1)
+  // per position, so the whole strip is O(n) with no backtracking.
+  while (start < end && /\s/.test(value[start]!)) start++;
+  while (end > start && /\s/.test(value[end - 1]!)) end--;
+  return value.slice(start, end);
+}
+
 function pyIntCoerce(value: unknown): number {
   if (typeof value === 'boolean') return value ? 1 : 0;
   if (typeof value === 'number') {
@@ -388,8 +410,15 @@ function pyIntCoerce(value: unknown): number {
     return Math.trunc(value);
   }
   if (typeof value === 'string') {
-    // Python strips ASCII whitespace, then requires an optional sign + digits.
-    const stripped = value.replace(/^[\s]+|[\s]+$/g, '');
+    // Python strips surrounding whitespace, then requires an optional sign +
+    // digits. A linear two-boundary scan strips exactly the same leading and
+    // trailing whitespace run the regex `^\s+|\s+$` did, but without the regex's
+    // O(n^2) backtracking on adversarial input (a long whitespace run that is
+    // NOT at a string boundary forced the trailing-`\s+$` alternative to retry
+    // from every position) -- the CodeQL `js/polynomial-redos` finding. The
+    // accepted/rejected string set is byte-for-byte unchanged: both use the same
+    // JS `\s` character class, so they trim the identical set of characters.
+    const stripped = stripWhitespace(value);
     if (/^[+-]?\d+$/.test(stripped)) {
       return parseInt(stripped, 10);
     }
