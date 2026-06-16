@@ -131,9 +131,7 @@ function escapeRegExp(literal: string): string {
  * equivalent. Pinned by a trailing-newline rejection test.
  */
 const VALUE_RANGE_PATTERN = new RegExp(
-  '^(?:' +
-    VALUE_RANGE_BUCKETS.map((b) => escapeRegExp(b)).join('|') +
-    ')_[A-Z]{3}$',
+  '^(?:' + VALUE_RANGE_BUCKETS.map((b) => escapeRegExp(b)).join('|') + ')_[A-Z]{3}$',
 );
 
 /**
@@ -395,9 +393,7 @@ function pyIntCoerce(value: unknown): number {
     if (/^[+-]?\d+$/.test(stripped)) {
       return parseInt(stripped, 10);
     }
-    throw new AttestationError(
-      `invalid literal for int() with base 10: ${jsRepr(value)}`,
-    );
+    throw new AttestationError(`invalid literal for int() with base 10: ${jsRepr(value)}`);
   }
   throw new AttestationError(
     `int() argument must be a string, a bytes-like object or a real number, ` +
@@ -429,9 +425,7 @@ function pyTermsCount(value: unknown): number {
   if (Array.isArray(value)) return value.length;
   if (isPlainObject(value)) return Object.keys(value).length;
   // Truthy but non-sized (number/boolean/exotic): Python's len() raises.
-  throw new AttestationError(
-    `object of type '${pyTypeName(value)}' has no len()`,
-  );
+  throw new AttestationError(`object of type '${pyTypeName(value)}' has no len()`);
 }
 
 /**
@@ -484,9 +478,7 @@ function pyTermsCount(value: unknown): number {
  * converted to a sanitized {@link AttestationError} that includes neither the
  * caught error text nor any input value.
  */
-function normalizeReferences(
-  references: unknown,
-): Array<Record<string, unknown>> {
+function normalizeReferences(references: unknown): Array<Record<string, unknown>> {
   let elements: unknown[] = [];
   try {
     if (!pyTruthy(references)) {
@@ -509,14 +501,10 @@ function normalizeReferences(
       count = elements.length;
     } else {
       // number, boolean, or any non-sized value: Python's len(...) raises.
-      throw new AttestationError(
-        `object of type '${pyTypeName(references)}' has no len()`,
-      );
+      throw new AttestationError(`object of type '${pyTypeName(references)}' has no len()`);
     }
     if (count > MAX_REFERENCES) {
-      throw new AttestationError(
-        `references[] exceeds the maximum of ${MAX_REFERENCES} entries`,
-      );
+      throw new AttestationError(`references[] exceeds the maximum of ${MAX_REFERENCES} entries`);
     }
     if (isArrayInput) {
       // Cap already checked, so this loop is bounded. Descriptor reads keep
@@ -560,24 +548,19 @@ export function validateValidityTemporal(vt: unknown): ValidityTemporal {
   const mode = vt.mode;
   if (mode !== 'absolute' && mode !== 'relative' && mode !== 'window') {
     throw new AttestationError(
-      `validity_temporal.mode ${pyReprValue(mode)} not in ` +
-        `('absolute', 'relative', 'window')`,
+      `validity_temporal.mode ${pyReprValue(mode)} not in ` + `('absolute', 'relative', 'window')`,
     );
   }
 
   if (mode === 'absolute') {
     const missing = ['from', 'until'].filter((k) => !(k in vt));
     if (missing.length > 0) {
-      throw new AttestationError(
-        `validity_temporal[absolute] missing: ${pyListRepr(missing)}`,
-      );
+      throw new AttestationError(`validity_temporal[absolute] missing: ${pyListRepr(missing)}`);
     }
     const frm = parseIso8601(vt.from, 'validity_temporal.from');
     const until = parseIso8601(vt.until, 'validity_temporal.until');
     if (until <= frm) {
-      throw new AttestationError(
-        'validity_temporal[absolute]: until must be after from',
-      );
+      throw new AttestationError('validity_temporal[absolute]: until must be after from');
     }
     return { mode: 'absolute', from: vt.from as string, until: vt.until as string };
   }
@@ -585,9 +568,7 @@ export function validateValidityTemporal(vt: unknown): ValidityTemporal {
   if (mode === 'relative') {
     const missing = ['from', 'duration_seconds'].filter((k) => !(k in vt));
     if (missing.length > 0) {
-      throw new AttestationError(
-        `validity_temporal[relative] missing: ${pyListRepr(missing)}`,
-      );
+      throw new AttestationError(`validity_temporal[relative] missing: ${pyListRepr(missing)}`);
     }
     parseIso8601(vt.from, 'validity_temporal.from');
     const duration = pyIntValue(vt.duration_seconds);
@@ -606,22 +587,16 @@ export function validateValidityTemporal(vt: unknown): ValidityTemporal {
   // window
   const missing = ['start', 'end', 'duration_seconds'].filter((k) => !(k in vt));
   if (missing.length > 0) {
-    throw new AttestationError(
-      `validity_temporal[window] missing: ${pyListRepr(missing)}`,
-    );
+    throw new AttestationError(`validity_temporal[window] missing: ${pyListRepr(missing)}`);
   }
   const start = parseIso8601(vt.start, 'validity_temporal.start');
   const end = parseIso8601(vt.end, 'validity_temporal.end');
   if (end <= start) {
-    throw new AttestationError(
-      'validity_temporal[window]: end must be after start',
-    );
+    throw new AttestationError('validity_temporal[window]: end must be after start');
   }
   const duration = pyIntValue(vt.duration_seconds);
   if (duration === null || duration < 1) {
-    throw new AttestationError(
-      'validity_temporal[window].duration_seconds must be a positive int',
-    );
+    throw new AttestationError('validity_temporal[window].duration_seconds must be a positive int');
   }
   // Python compares `duration_seconds` against `(end - start).total_seconds()`,
   // which carries MICROSECOND precision (a Python `datetime`'s resolution). The
@@ -686,10 +661,7 @@ export function validateValidityTemporal(vt: unknown): ValidityTemporal {
  *   `validity_temporal`).
  * @param now Epoch milliseconds for "now". Defaults to `Date.now()`.
  */
-export function isValidNow(
-  attestation: Record<string, unknown>,
-  now?: number,
-): boolean {
+export function isValidNow(attestation: Record<string, unknown>, now?: number): boolean {
   const vt = attestation.validity_temporal;
   if (vt === undefined || vt === null) {
     return true;
@@ -795,9 +767,7 @@ export function generateAttestation(
   } = options;
 
   if (!session.isTerminal && session.state !== SessionState.EXPIRED) {
-    throw new AttestationError(
-      `Cannot generate attestation for session in state ${session.state}`,
-    );
+    throw new AttestationError(`Cannot generate attestation for session in state ${session.state}`);
   }
 
   const outcomeStatus = mapStateToOutcome(session.state);
@@ -878,8 +848,7 @@ export function generateAttestation(
 
   const attestation: Record<string, unknown> = {
     concordia_attestation: ATTESTATION_VERSION,
-    attestation_id:
-      options.attestationId ?? `att_${randomHex8()}`,
+    attestation_id: options.attestationId ?? `att_${randomHex8()}`,
     session_id: session.sessionId,
     timestamp: options.timestamp ?? nowIso8601(),
     outcome,
@@ -950,12 +919,10 @@ export function generateReceiptSummary(receipt: Record<string, unknown>): string
   const outcomeLine = `Outcome: ${status ? String(status).toUpperCase() : 'UNKNOWN'}`;
 
   const transcriptHashRaw = receipt.transcript_hash;
-  const transcriptHash =
-    typeof transcriptHashRaw === 'string' ? transcriptHashRaw : '';
+  const transcriptHash = typeof transcriptHashRaw === 'string' ? transcriptHashRaw : '';
   // Python: `transcript_hash.split(":", 1)[1] if ":" in transcript_hash else ...`
   const colonIdx = transcriptHash.indexOf(':');
-  const digest =
-    colonIdx >= 0 ? transcriptHash.slice(colonIdx + 1) : transcriptHash;
+  const digest = colonIdx >= 0 ? transcriptHash.slice(colonIdx + 1) : transcriptHash;
   const hashLine = `Transcript hash: ${digest.slice(0, 16)}`;
 
   return [partiesLine, topicLine, outcomeLine, hashLine].join('\n');
@@ -970,9 +937,7 @@ export function generateReceiptSummary(receipt: Record<string, unknown>): string
  * concatenation, returning `sha256:<hex>`. An empty transcript hashes the empty
  * byte string (Python's `combined = b""` start), so the result is well-defined.
  */
-export function computeTranscriptHash(
-  transcript: Array<Record<string, unknown>>,
-): string {
+export function computeTranscriptHash(transcript: Array<Record<string, unknown>>): string {
   const parts: Buffer[] = [];
   for (const msg of transcript) {
     parts.push(canonicalizeJcs(msg));

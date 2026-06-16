@@ -52,7 +52,6 @@ Revocation mid-session (operator-decision per the 2026-05-10 thread):
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
@@ -63,7 +62,6 @@ from .models.mandate import (
     MandateVerificationResult,
 )
 from .verification_audit import VerificationAuditLog, record_mandate_verification
-
 
 # ---------------------------------------------------------------------------
 # Public tier constants

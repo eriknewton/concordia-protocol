@@ -122,12 +122,12 @@ export function verifyApprovalReceipt(
   const result: ApprovalReceiptResult = {
     valid: false,
     decision: isPlainObject(receipt.scope)
-      ? (scope.decision as ApprovalDecision | undefined) ?? null
+      ? ((scope.decision as ApprovalDecision | undefined) ?? null)
       : null,
     failureReason: null,
     receiptId: (receipt.id as string | undefined) ?? null,
     approver: isPlainObject(receipt.approver)
-      ? (approverObj.identity as string | undefined) ?? null
+      ? ((approverObj.identity as string | undefined) ?? null)
       : null,
     references: Array.isArray(refs) ? (refs as Array<Record<string, unknown>>) : [],
     checks: {},
@@ -173,8 +173,7 @@ export function verifyApprovalReceipt(
     return result;
   }
 
-  const sigValue =
-    typeof signature.value === 'string' ? signature.value : '';
+  const sigValue = typeof signature.value === 'string' ? signature.value : '';
   result.checks.signature = verify(receipt, sigValue, publicKey);
   if (!result.checks.signature) {
     result.failureReason = SIGNATURE_INVALID;
@@ -247,9 +246,7 @@ function hasApprovesReference(receipt: Record<string, unknown>): boolean {
  * `canonicalizeJcs` produces the same bytes as Python `canonical_json`.
  */
 function offerHash(offer: Record<string, unknown>): string {
-  const digest = createHash('sha256')
-    .update(canonicalizeJcs(offer))
-    .digest('hex');
+  const digest = createHash('sha256').update(canonicalizeJcs(offer)).digest('hex');
   return `sha256:${digest}`;
 }
 
@@ -275,9 +272,7 @@ function parseDateTimeMs(value: string): number | null {
  * returning the verifying key or `null` (an invalid-length key -> `null`, which
  * Python reproduces by catching the `ValueError` from `from_public_bytes`).
  */
-function publicKeyFrom(
-  key: Uint8Array | KeyPair | null | undefined,
-): Uint8Array | KeyPair | null {
+function publicKeyFrom(key: Uint8Array | KeyPair | null | undefined): Uint8Array | KeyPair | null {
   if (key === null || key === undefined) {
     return null;
   }

@@ -43,6 +43,28 @@ jobs:
       - name: Run tests
         run: pytest -v
 
+  lint:
+    # Gated code-quality checks for the Python package: ruff (lint) and mypy
+    # (type check). Hard-fail — a new lint or type regression blocks the merge.
+    # Config lives in pyproject.toml ([tool.ruff], [tool.mypy]).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2 (resolved 2026-05-18)
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0 (resolved 2026-05-18)
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Ruff lint
+        run: ruff check concordia
+
+      - name: Mypy type check
+        run: mypy concordia
+
   wheel-install-smoke:
     # Catches the schema-packaging class of bug: the editable install used by
     # the `test` job runs from the source tree, where repo-root schemas/ always

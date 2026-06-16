@@ -33,7 +33,7 @@
 
 import { canonicalizePredicate } from '../canonical/canonicalize.js';
 import { sign, verify, KeyPair } from '../crypto/signing.js';
-import { toBase64Url, fromBase64Url } from '../crypto/base64url.js';
+import { fromBase64Url } from '../crypto/base64url.js';
 import { cpythonIsoDateTimeToEpochMs } from '../internal/iso-datetime.js';
 import { validateReference, snapshotPlainData } from './references.js';
 import { validateConditionForProfile } from './profiles.js';
@@ -45,8 +45,7 @@ export const PredicateStatus = {
   REVOKED: 'revoked',
   SUSPENDED: 'suspended',
 } as const;
-export type PredicateStatus =
-  (typeof PredicateStatus)[keyof typeof PredicateStatus];
+export type PredicateStatus = (typeof PredicateStatus)[keyof typeof PredicateStatus];
 
 /** Stable, policy-readable failure reasons. Mirrors Python `PredicateFailureReason`. */
 export const PredicateFailureReason = {
@@ -94,9 +93,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * `null`/`undefined` if it cannot be resolved. Mirrors Python
  * `PredicateResolver`.
  */
-export type PredicateResolver = (
-  predicateId: string,
-) => Predicate | null | undefined;
+export type PredicateResolver = (predicateId: string) => Predicate | null | undefined;
 
 /** The wire/dict shape of a predicate. Mirrors Python `Predicate.to_dict()`. */
 export interface PredicateDict {
@@ -215,9 +212,7 @@ export class Predicate {
     let normalized: Record<string, unknown>;
     try {
       if (!isPlainObject(data)) {
-        throw new PredicateValidationError(
-          'predicate data must be a plain object',
-        );
+        throw new PredicateValidationError('predicate data must be a plain object');
       }
       normalized = snapshotPlainData(data, {
         label: 'predicate data',
@@ -230,18 +225,14 @@ export class Predicate {
       }
       // Foreign throw while inspecting hostile input. Never echo the caught
       // error text: it is attacker-controlled content.
-      throw new PredicateValidationError(
-        'predicate data could not be safely inspected',
-      );
+      throw new PredicateValidationError('predicate data could not be safely inspected');
     }
     if (!('type' in normalized) && 'predicate_type' in normalized) {
       normalized.type = normalized.predicate_type;
       delete normalized.predicate_type;
     }
     const rawRefs = (normalized.references as unknown[]) ?? [];
-    normalized.references = rawRefs.map((ref, index) =>
-      validateReference(ref, index),
-    );
+    normalized.references = rawRefs.map((ref, index) => validateReference(ref, index));
     return new Predicate({
       predicate_id: normalized.predicate_id as string,
       type: normalized.type as string,
@@ -257,8 +248,7 @@ export class Predicate {
       signature: (normalized.signature as string) ?? '',
       validity: (normalized.validity as Record<string, unknown>) ?? null,
       constraints: (normalized.constraints as Record<string, unknown>) ?? null,
-      delegation_chain:
-        (normalized.delegation_chain as Record<string, unknown>[]) ?? null,
+      delegation_chain: (normalized.delegation_chain as Record<string, unknown>[]) ?? null,
       revocation_endpoint: (normalized.revocation_endpoint as string) ?? null,
       revoked_at: (normalized.revoked_at as string) ?? null,
       metadata: (normalized.metadata as Record<string, unknown>) ?? null,
@@ -331,8 +321,7 @@ export interface PredicateVerificationResult {
 export function serializePredicateCanonical(
   predicate: Predicate | Record<string, unknown>,
 ): Buffer {
-  const dict =
-    predicate instanceof Predicate ? predicate.toDict() : predicate;
+  const dict = predicate instanceof Predicate ? predicate.toDict() : predicate;
   return canonicalizePredicate(dict);
 }
 
@@ -406,9 +395,7 @@ function fromIsoformatError(s: string): string | null {
   const isLeap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
   // month is already validated to 1..12 above, so this index is always in range.
   const daysInMonth =
-    [31, isLeap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][
-      month - 1
-    ] ?? 31;
+    [31, isLeap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1] ?? 31;
   if (day < 1 || day > daysInMonth) return `day is out of range for month`;
   if (hour > 23) return 'hour must be in 0..23';
   if (minute > 59) return 'minute must be in 0..59';
@@ -449,9 +436,7 @@ function fromIsoformatError(s: string): string | null {
  */
 function parseDatetimeMs(value: unknown, fieldName: string): number {
   if (typeof value !== 'string') {
-    throw new PredicateValidationError(
-      `${fieldName} must be an ISO 8601 string`,
-    );
+    throw new PredicateValidationError(`${fieldName} must be an ISO 8601 string`);
   }
   // Python treats a trailing 'Z' as +00:00 (it does `value.replace("Z",
   // "+00:00")` before `fromisoformat`). Mirror the replace so the error text
@@ -539,31 +524,18 @@ function schemaErrors(input: Record<string, unknown>): string[] {
     .sort();
   if (extra.length > 0) {
     errors.push(
-      `additional predicate properties are not allowed: [${extra
-        .map((k) => `'${k}'`)
-        .join(', ')}]`,
+      `additional predicate properties are not allowed: [${extra.map((k) => `'${k}'`).join(', ')}]`,
     );
   }
   const missing = required.filter((f) => !(f in data));
   if (missing.length > 0) {
-    errors.push(
-      `missing required predicate fields: [${missing
-        .map((f) => `'${f}'`)
-        .join(', ')}]`,
-    );
+    errors.push(`missing required predicate fields: [${missing.map((f) => `'${f}'`).join(', ')}]`);
     return errors;
   }
   if (!String(data.predicate_id).startsWith('urn:concordia:predicate:')) {
     errors.push('predicate_id must start with urn:concordia:predicate:');
   }
-  for (const field of [
-    'type',
-    'authority',
-    'issuer',
-    'subject',
-    'algorithm',
-    'status',
-  ]) {
+  for (const field of ['type', 'authority', 'issuer', 'subject', 'algorithm', 'status']) {
     const v = data[field];
     if (typeof v !== 'string' || v.length === 0) {
       errors.push(`${field} must be a non-empty string`);
@@ -580,10 +552,7 @@ function schemaErrors(input: Record<string, unknown>): string[] {
   // A strict plain-object test matches `isinstance(_, dict)` (rejecting class
   // instances / Date / Map that a loose `typeof === 'object'` would fail-open
   // on); the empty check matches Python's truthiness on an empty mapping.
-  if (
-    !isPlainObject(data.condition) ||
-    Object.keys(data.condition).length === 0
-  ) {
+  if (!isPlainObject(data.condition) || Object.keys(data.condition).length === 0) {
     errors.push('condition must be a non-empty object');
   }
   if (!Array.isArray(data.references)) {
@@ -613,20 +582,15 @@ function schemaErrors(input: Record<string, unknown>): string[] {
  * gate, and throws a {@link PredicateValidationError} joining all messages with
  * `"; "` if any are present.
  */
-export function validatePredicateForWrite(
-  predicate: Predicate | Record<string, unknown>,
-): void {
-  const data =
-    predicate instanceof Predicate ? predicate.toDict() : { ...predicate };
+export function validatePredicateForWrite(predicate: Predicate | Record<string, unknown>): void {
+  const data = predicate instanceof Predicate ? predicate.toDict() : { ...predicate };
   const errors = schemaErrors(data);
   if ('predicate_type' in data) {
     errors.push('predicate_type is read-only compatibility; write type instead');
   }
   const candidateType = data.type ?? data.predicate_type;
   if (typeof candidateType === 'string') {
-    errors.push(
-      ...validateConditionForProfile(candidateType, data.condition),
-    );
+    errors.push(...validateConditionForProfile(candidateType, data.condition));
   }
   if (errors.length > 0) {
     throw new PredicateValidationError(errors.join('; '));
@@ -770,11 +734,7 @@ export function verifyPredicate(
 
   if (typeof predicate === 'string') {
     if (!resolver) {
-      return failResult(
-        null,
-        PredicateFailureReason.RESOLVER_MISS,
-        'resolver required',
-      );
+      return failResult(null, PredicateFailureReason.RESOLVER_MISS, 'resolver required');
     }
     const resolved = resolver(predicate);
     if (resolved === null || resolved === undefined) {
@@ -786,35 +746,25 @@ export function verifyPredicate(
     working = resolved;
   }
 
-  const raw =
-    working instanceof Predicate ? working.toDict() : { ...working };
+  const raw = working instanceof Predicate ? working.toDict() : { ...working };
   const errs = schemaErrors(raw);
   if (errs.length > 0) {
-    return failResult(
-      null,
-      PredicateFailureReason.SCHEMA_INVALID,
-      errs.join('; '),
-      { schema: false },
-    );
+    return failResult(null, PredicateFailureReason.SCHEMA_INVALID, errs.join('; '), {
+      schema: false,
+    });
   }
 
   let parsed: Predicate;
   try {
     parsed = Predicate.fromDict(raw);
   } catch (err) {
-    return failResult(
-      null,
-      PredicateFailureReason.SCHEMA_INVALID,
-      (err as Error).message,
-      { schema: false },
-    );
+    return failResult(null, PredicateFailureReason.SCHEMA_INVALID, (err as Error).message, {
+      schema: false,
+    });
   }
   checks.schema = true;
 
-  const profileErrors = validateConditionForProfile(
-    parsed.type,
-    parsed.condition,
-  );
+  const profileErrors = validateConditionForProfile(parsed.type, parsed.condition);
   checks.profile_condition = profileErrors.length === 0;
   if (profileErrors.length > 0) {
     return failResult(
@@ -832,20 +782,10 @@ export function verifyPredicate(
       const refId = ref.id as string;
       const resolved = resolver(refId);
       if (resolved === null || resolved === undefined) {
-        return failResult(
-          parsed,
-          PredicateFailureReason.RESOLVER_MISS,
-          refId,
-          checks,
-        );
+        return failResult(parsed, PredicateFailureReason.RESOLVER_MISS, refId, checks);
       }
       if (resolved.predicate_id !== refId) {
-        return failResult(
-          parsed,
-          PredicateFailureReason.REF_MISMATCH,
-          refId,
-          checks,
-        );
+        return failResult(parsed, PredicateFailureReason.REF_MISMATCH, refId, checks);
       }
     }
     checks.resolver_binding = true;
@@ -886,30 +826,15 @@ export function verifyPredicate(
   const expiresMs = parseDatetimeMs(parsed.expires_at, 'expires_at');
   if (parsed.status === PredicateStatus.EXPIRED || expiresMs < now) {
     checks.lifecycle = false;
-    return failResult(
-      parsed,
-      PredicateFailureReason.EXPIRED,
-      'predicate expired',
-      checks,
-    );
+    return failResult(parsed, PredicateFailureReason.EXPIRED, 'predicate expired', checks);
   }
   if (parsed.status === PredicateStatus.REVOKED || parsed.revoked_at !== null) {
     checks.lifecycle = false;
-    return failResult(
-      parsed,
-      PredicateFailureReason.REVOKED,
-      'predicate revoked',
-      checks,
-    );
+    return failResult(parsed, PredicateFailureReason.REVOKED, 'predicate revoked', checks);
   }
   if (parsed.status === PredicateStatus.SUSPENDED) {
     checks.lifecycle = false;
-    return failResult(
-      parsed,
-      PredicateFailureReason.REVOKED,
-      'predicate suspended',
-      checks,
-    );
+    return failResult(parsed, PredicateFailureReason.REVOKED, 'predicate suspended', checks);
   }
   checks.lifecycle = true;
 

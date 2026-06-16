@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-import hashlib
 from typing import Any
 
 from concordia.canonicalization import canonicalize_jcs

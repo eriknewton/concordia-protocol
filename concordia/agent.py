@@ -11,7 +11,7 @@ from typing import Any
 
 from .attestation import generate_attestation
 from .message import build_envelope
-from .offer import Offer, offer_to_body
+from .offer import Offer
 from .session import Session
 from .signing import KeyPair, verify_signature
 from .types import (
@@ -80,7 +80,7 @@ class Agent:
                 "max_rounds": timing.max_rounds,
             }
 
-        msg = self._send(
+        self._send(
             MessageType.OPEN,
             body=body,
             recipients=[counterparty],

@@ -76,70 +76,53 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from mcp.server.fastmcp import FastMCP
 
 from .agent import Agent
 from .agent_profile import AgentProfileStore
 from .agent_profile.tools import register_discovery_tools
+from .approval_receipt import verify_approval_receipt
 from .attestation import generate_attestation
 from .auth import AuthTokenStore
 from .competence_proof import (
     CompetenceProof,
-    CompetenceVerificationResult,
     verify_competence_proof,
 )
 from .degradation import InteractionManager, PeerProtocolStatus
+from .mandate import (
+    verify_mandate,
+)
+from .message import validate_chain
+from .offer import BasicOffer, Condition, ConditionalOffer, PartialOffer
 from .receipt_bundle import (
     BundleStore,
     ReceiptBundle,
-    verify_bundle,
-    screen_bundle,
     check_freshness,
 )
-from .verascore import VerascoreClient, compute_negotiation_competence
-from .mandate import (
-    sign_mandate,
-    verify_mandate,
-    validate_constraints,
-)
-from .verification_audit import record_mandate_verification
-from .approval_receipt import verify_approval_receipt
-from .models.mandate import (
-    Mandate,
-    MandateVerificationResult,
-    ValidityWindow,
-    TemporalMode,
-)
-from .sanctuary_bridge import (
-    SanctuaryBridgeConfig,
-    BridgeResult,
-    bridge_on_agreement,
-    bridge_on_attestation,
-    build_commitment_payload,
-    build_reveal_payload,
-)
-from .message import validate_chain
-from .offer import BasicOffer, ConditionalOffer, Condition, PartialOffer
 from .registry import AgentRegistry
 from .relay import NegotiationRelay
-from .reputation import AttestationStore, ReputationScorer, ReputationQueryHandler
-from .want_registry import WantRegistry
+from .reputation import AttestationStore, ReputationQueryHandler, ReputationScorer
+from .sanctuary_bridge import (
+    SanctuaryBridgeConfig,
+    bridge_on_agreement,
+    bridge_on_attestation,
+)
 from .session import InvalidTransitionError, Session
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from .signing import KeyPair
 from .types import (
-    AgentIdentity,
-    MessageType,
     ResolutionMechanism,
     SessionState,
     TimingConfig,
 )
-
-import re
+from .verascore import VerascoreClient, compute_negotiation_competence
+from .verification_audit import record_mandate_verification
+from .want_registry import WantRegistry
 
 # ---------------------------------------------------------------------------
 # SEC-ADD-02: Input sanitization constants and utilities
@@ -1158,6 +1141,7 @@ def tool_session_receipt_envelope(
         )
 
         # Select key pair and algorithm for envelope signing
+        envelope_key: KeyPair | ES256KeyPair
         if algorithm == "ES256":
             envelope_key = ES256KeyPair.generate()
         else:
@@ -1218,7 +1202,8 @@ def tool_competence_proof(
     try:
         # Collect all attestations where this agent is a party
         attestations: list[dict[str, Any]] = []
-        for att_id, att_dict in _attestation_store._attestations.items():
+        for stored in _attestation_store._by_id.values():
+            att_dict = stored.attestation
             parties = att_dict.get("parties", [])
             party_ids = [p.get("agent_id", "") for p in parties]
             if agent_id in party_ids:
@@ -1298,7 +1283,8 @@ def tool_verify_competence_proof(
         # Build a resolver that uses the attestation store's session contexts
         def _proof_resolver(agent_id: str) -> Ed25519PublicKey | None:
             # Try to find a key from any attestation mentioning this agent
-            for att_id, att_dict in _attestation_store._attestations.items():
+            for stored in _attestation_store._by_id.values():
+                att_dict = stored.attestation
                 parties = att_dict.get("parties", [])
                 for party in parties:
                     if party.get("agent_id", "") == agent_id:
@@ -1870,6 +1856,8 @@ def tool_degraded_message(
         return json.dumps({"error": f"Interaction '{interaction_id}' not found."})
 
     interaction = _interaction_mgr.get_interaction(interaction_id)
+    if interaction is None:
+        return json.dumps({"error": f"Interaction '{interaction_id}' not found."})
     return json.dumps({
         "message_recorded": msg,
         "total_rounds": interaction.rounds,
@@ -2349,7 +2337,7 @@ def tool_relay_send(
             ttl=ttl,
         )
         if msg is None:
-            return json.dumps({"error": f"Cannot send message. Session not found, not active, or agent not a participant."})
+            return json.dumps({"error": "Cannot send message. Session not found, not active, or agent not a participant."})
         return json.dumps({
             "sent": True,
             "message": msg.to_dict(),
@@ -2688,7 +2676,6 @@ def tool_sanctuary_bridge_commit(
                      "Sanctuary commitments require an agreed session.",
         })
 
-    from .message import validate_chain
     transcript_hash = None
     if session.transcript:
         last_msg = session.transcript[-1]
@@ -2909,9 +2896,11 @@ def tool_verify_receipt_bundle(
 
     # Override the verify_bundle to use session-aware resolution
     from concordia.receipt_bundle import (
-        _compute_summary,
         BundleSummary,
         BundleVerificationResult,
+        _compute_summary,
+    )
+    from concordia.receipt_bundle import (
         screen_bundle as _screen_bundle,
     )
 
@@ -3008,13 +2997,13 @@ def tool_verify_receipt_bundle(
             claimed = BundleSummary.from_dict(bdict["summary"])
             mismatches = []
             if claimed.total_negotiations != recomputed.total_negotiations:
-                mismatches.append(f"total_negotiations")
+                mismatches.append("total_negotiations")
             if claimed.agreements != recomputed.agreements:
-                mismatches.append(f"agreements")
+                mismatches.append("agreements")
             if abs(claimed.agreement_rate - recomputed.agreement_rate) > 0.001:
-                mismatches.append(f"agreement_rate")
+                mismatches.append("agreement_rate")
             if claimed.unique_counterparties != recomputed.unique_counterparties:
-                mismatches.append(f"unique_counterparties")
+                mismatches.append("unique_counterparties")
             if mismatches:
                 summary_accurate = False
                 for m in mismatches:
@@ -3271,20 +3260,17 @@ def tool_verify_mandate(
     except Exception as e:
         return json.dumps({"error": f"Invalid issuer public key encoding: {e}"})
 
+    # Either an EllipticCurvePublicKey (ES256) or an Ed25519PublicKey (EdDSA);
+    # verify_mandate() accepts either and dispatches on the algorithm.
+    issuer_pub: Any
     try:
         if algorithm == "ES256":
-            from cryptography.hazmat.primitives.asymmetric.ec import (
-                EllipticCurvePublicKey,
-                SECP256R1,
-            )
-            from cryptography.hazmat.primitives.serialization import (
-                load_der_public_key,
-            )
+            from cryptography.hazmat.primitives.asymmetric import ec
+
             # Try X9.62 uncompressed point format first
             from cryptography.hazmat.primitives.asymmetric.ec import (
-                EllipticCurvePublicNumbers,
+                SECP256R1,
             )
-            from cryptography.hazmat.primitives.asymmetric import ec
             issuer_pub = ec.EllipticCurvePublicKey.from_encoded_point(SECP256R1(), key_bytes)
         else:
             from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey

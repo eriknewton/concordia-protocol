@@ -96,9 +96,7 @@ export class InvalidMessageError extends Error {
  * `MessageType(value)` enum coercion: an unknown value raises a `ValueError`
  * with the text `'<value>' is not a valid MessageType`.
  */
-const MESSAGE_TYPE_VALUES: ReadonlySet<string> = new Set(
-  Object.values(MessageType),
-);
+const MESSAGE_TYPE_VALUES: ReadonlySet<string> = new Set(Object.values(MessageType));
 
 /**
  * Coerce a raw `type` value into a {@link MessageType}, mirroring Python's
@@ -124,45 +122,24 @@ function transitionKey(state: SessionState, msgType: MessageType): string {
   return `${state}|${msgType}`;
 }
 
-const TRANSITIONS: ReadonlyMap<string, SessionState> = new Map<
-  string,
-  SessionState
->([
+const TRANSITIONS: ReadonlyMap<string, SessionState> = new Map<string, SessionState>([
   // The OPEN message creates the session in PROPOSED state
   [transitionKey(SessionState.PROPOSED, MessageType.OPEN), SessionState.PROPOSED],
   // From PROPOSED
-  [
-    transitionKey(SessionState.PROPOSED, MessageType.ACCEPT_SESSION),
-    SessionState.ACTIVE,
-  ],
-  [
-    transitionKey(SessionState.PROPOSED, MessageType.DECLINE_SESSION),
-    SessionState.REJECTED,
-  ],
+  [transitionKey(SessionState.PROPOSED, MessageType.ACCEPT_SESSION), SessionState.ACTIVE],
+  [transitionKey(SessionState.PROPOSED, MessageType.DECLINE_SESSION), SessionState.REJECTED],
   // From ACTIVE — messages that keep the session active
   [transitionKey(SessionState.ACTIVE, MessageType.OFFER), SessionState.ACTIVE],
   [transitionKey(SessionState.ACTIVE, MessageType.COUNTER), SessionState.ACTIVE],
   [transitionKey(SessionState.ACTIVE, MessageType.SIGNAL), SessionState.ACTIVE],
   [transitionKey(SessionState.ACTIVE, MessageType.INQUIRE), SessionState.ACTIVE],
-  [
-    transitionKey(SessionState.ACTIVE, MessageType.CONSTRAIN),
-    SessionState.ACTIVE,
-  ],
-  [
-    transitionKey(SessionState.ACTIVE, MessageType.PROPOSE_MEDIATOR),
-    SessionState.ACTIVE,
-  ],
+  [transitionKey(SessionState.ACTIVE, MessageType.CONSTRAIN), SessionState.ACTIVE],
+  [transitionKey(SessionState.ACTIVE, MessageType.PROPOSE_MEDIATOR), SessionState.ACTIVE],
   [transitionKey(SessionState.ACTIVE, MessageType.RESOLVE), SessionState.ACTIVE],
   // From ACTIVE — terminal transitions
   [transitionKey(SessionState.ACTIVE, MessageType.ACCEPT), SessionState.AGREED],
-  [
-    transitionKey(SessionState.ACTIVE, MessageType.REJECT),
-    SessionState.REJECTED,
-  ],
-  [
-    transitionKey(SessionState.ACTIVE, MessageType.WITHDRAW),
-    SessionState.REJECTED,
-  ],
+  [transitionKey(SessionState.ACTIVE, MessageType.REJECT), SessionState.REJECTED],
+  [transitionKey(SessionState.ACTIVE, MessageType.WITHDRAW), SessionState.REJECTED],
   [transitionKey(SessionState.ACTIVE, MessageType.COMMIT), SessionState.AGREED],
   // From DORMANT — reactivation
   [transitionKey(SessionState.DORMANT, MessageType.OFFER), SessionState.ACTIVE],
@@ -177,9 +154,7 @@ export type Message = Record<string, unknown>;
  * `public_key_resolver` SEC-005 contract: mandatory, with a `null` return
  * treated as a rejection.
  */
-export type PublicKeyResolver = (
-  agentId: string,
-) => Uint8Array | KeyPair | null;
+export type PublicKeyResolver = (agentId: string) => Uint8Array | KeyPair | null;
 
 /** A monotonic-ish clock returning epoch milliseconds. Defaults to `Date.now`. */
 export type SessionClock = () => number;
@@ -285,11 +260,7 @@ export class Session {
    * created only the first time an agent is seen. A provided public key is stored
    * for later resolver lookups.
    */
-  addParty(
-    agentId: string,
-    role: PartyRole,
-    publicKey?: Uint8Array | KeyPair | null,
-  ): void {
+  addParty(agentId: string, role: PartyRole, publicKey?: Uint8Array | KeyPair | null): void {
     this.parties.set(agentId, role);
     if (!this.behaviors.has(agentId)) {
       this.behaviors.set(agentId, makeBehaviorRecord());
@@ -319,9 +290,7 @@ export class Session {
         ? (from as Record<string, unknown>).agent_id
         : undefined;
     if (!agentId || typeof agentId !== 'string') {
-      throw new InvalidSignatureError(
-        "Message missing 'from.agent_id' — cannot verify identity",
-      );
+      throw new InvalidSignatureError("Message missing 'from.agent_id' — cannot verify identity");
     }
 
     const signature = message.signature;
@@ -340,8 +309,7 @@ export class Session {
 
     if (!verify(message, signature, publicKey)) {
       throw new InvalidSignatureError(
-        `Invalid signature for agent '${agentId}' — ` +
-          'message content does not match signature',
+        `Invalid signature for agent '${agentId}' — ` + 'message content does not match signature',
       );
     }
 
@@ -355,9 +323,7 @@ export class Session {
 
     const key = transitionKey(this.state, msgType);
     if (!TRANSITIONS.has(key)) {
-      throw new InvalidTransitionError(
-        `Cannot apply ${msgType} in state ${this.state}`,
-      );
+      throw new InvalidTransitionError(`Cannot apply ${msgType} in state ${this.state}`);
     }
     const newState = TRANSITIONS.get(key) as SessionState;
 
@@ -380,9 +346,7 @@ export class Session {
     if (msgType === MessageType.OPEN) {
       const body = resolveBody(message);
       this.termsValue =
-        'terms' in body
-          ? (body.terms as Record<string, Record<string, unknown>> | null)
-          : null;
+        'terms' in body ? (body.terms as Record<string, Record<string, unknown>> | null) : null;
     }
 
     // Track behavioral signals
@@ -406,13 +370,8 @@ export class Session {
 
   /** Expire the session (TTL elapsed). Valid from PROPOSED or ACTIVE. */
   expire(): void {
-    if (
-      this.state !== SessionState.PROPOSED &&
-      this.state !== SessionState.ACTIVE
-    ) {
-      throw new InvalidTransitionError(
-        `Cannot expire session in state ${this.state}`,
-      );
+    if (this.state !== SessionState.PROPOSED && this.state !== SessionState.ACTIVE) {
+      throw new InvalidTransitionError(`Cannot expire session in state ${this.state}`);
     }
     this.state = SessionState.EXPIRED;
     this.concludedAt = this.clock();
@@ -421,13 +380,8 @@ export class Session {
 
   /** Move to DORMANT state (§5.1). Valid from REJECTED or EXPIRED. */
   makeDormant(): void {
-    if (
-      this.state !== SessionState.REJECTED &&
-      this.state !== SessionState.EXPIRED
-    ) {
-      throw new InvalidTransitionError(
-        `Cannot make dormant from state ${this.state}`,
-      );
+    if (this.state !== SessionState.REJECTED && this.state !== SessionState.EXPIRED) {
+      throw new InvalidTransitionError(`Cannot make dormant from state ${this.state}`);
     }
     this.state = SessionState.DORMANT;
     this.reactivatable = true;
@@ -469,11 +423,7 @@ export class Session {
   }
 
   /** Behavioral-signal accumulation (§5.4, §9.6). Mirrors Python `_track_behavior`. */
-  private trackBehavior(
-    agentId: string,
-    msgType: MessageType,
-    message: Message,
-  ): void {
+  private trackBehavior(agentId: string, msgType: MessageType, message: Message): void {
     let b = this.behaviors.get(agentId);
     if (b === undefined) {
       b = makeBehaviorRecord();
@@ -491,9 +441,7 @@ export class Session {
       // `terms` body is a dict (or absent); an absent or empty `terms` is falsy
       // and skips both the concession and the last-offer update, matching Python.
       const body = resolveBody(message);
-      const currentTerms = isPlainObject(body.terms)
-        ? (body.terms as Record<string, unknown>)
-        : {};
+      const currentTerms = isPlainObject(body.terms) ? (body.terms as Record<string, unknown>) : {};
       const hasCurrentTerms = Object.keys(currentTerms).length > 0;
       const prior = this.lastOffers.get(agentId);
       if (prior !== undefined && hasCurrentTerms) {
@@ -502,8 +450,7 @@ export class Session {
           b.concessions += 1;
           // Running average of concession magnitude — same op order as Python.
           const n = b.concessions;
-          b.concessionMagnitude =
-            (b.concessionMagnitude * (n - 1) + concession) / n;
+          b.concessionMagnitude = (b.concessionMagnitude * (n - 1) + concession) / n;
         }
       }
       if (hasCurrentTerms) {
@@ -548,12 +495,8 @@ export function computeConcession(
     }
     const prev = prevTerms[termId];
     const curr = currTerms[termId];
-    const prevVal = isPlainObject(prev)
-      ? (prev as Record<string, unknown>).value
-      : undefined;
-    const currVal = isPlainObject(curr)
-      ? (curr as Record<string, unknown>).value
-      : undefined;
+    const prevVal = isPlainObject(prev) ? (prev as Record<string, unknown>).value : undefined;
+    const currVal = isPlainObject(curr) ? (curr as Record<string, unknown>).value : undefined;
     const prevNum = pyNumeric(prevVal);
     const currNum = pyNumeric(currVal);
     if (prevNum !== null && currNum !== null) {

@@ -15,8 +15,6 @@ designed so a persistent backend (PostgreSQL, DynamoDB) can be swapped in.
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -24,8 +22,7 @@ from typing import Any, Callable
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from ..signing import KeyPair, verify_signature
-
+from ..signing import verify_signature
 
 # ---------------------------------------------------------------------------
 # Validation result
@@ -350,7 +347,7 @@ class AttestationStore:
         transcript_hash = attestation.get("transcript_hash", "")
         if transcript_hash and not transcript_hash.startswith("sha256:"):
             errors.append(
-                f"Invalid transcript_hash format: must start with 'sha256:'"
+                "Invalid transcript_hash format: must start with 'sha256:'"
             )
 
         # Mandatory signature verification (SEC-014 fix — cluster contract)

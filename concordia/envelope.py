@@ -6,21 +6,20 @@ with the multi-provider trust evidence format (A2A Discussion #1734).
 
 from __future__ import annotations
 
+import base64
 import uuid
 import warnings
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .signing import (
     ES256KeyPair,
     KeyPair,
-    canonical_json,
     _check_no_special_floats,
     _is_low_s_es256_der_signature,
     _normalize_es256_der_signature,
+    canonical_json,
 )
-
-import base64
 
 # Outcome status mapping: Concordia internal -> envelope standard
 _OUTCOME_MAP = {
@@ -40,7 +39,6 @@ def _map_attestation_to_payload(attestation: dict[str, Any]) -> dict[str, Any]:
 
     outcome = attestation.get("outcome", {})
     parties = attestation.get("parties", [])
-    meta = attestation.get("meta", {})
     fulfillment = attestation.get("fulfillment")
 
     # Find the initiator (first party) behavior for quality signals

@@ -24,6 +24,16 @@ jobs:
       - name: Typecheck
         working-directory: js-sdk
         run: npm run typecheck
+      - name: Lint (eslint)
+        # Hard-fail gate: a new lint finding blocks the merge. Config:
+        # js-sdk/eslint.config.js (typescript-eslint flat config).
+        working-directory: js-sdk
+        run: npm run lint
+      - name: Format check (prettier)
+        # Hard-fail gate: unformatted code blocks the merge. Run `npm run format`
+        # locally to fix. Config: js-sdk/.prettierrc.json.
+        working-directory: js-sdk
+        run: npm run format:check
       - name: Test
         working-directory: js-sdk
         run: npm test

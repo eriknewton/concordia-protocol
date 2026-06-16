@@ -137,9 +137,7 @@ export function cpythonIsoDateTimeToEpochMs(value: string): number | null {
   // any) is subtracted to reach the true instant; a naive value is interpreted as
   // UTC, matching Python's `tzinfo is None -> replace(tzinfo=utc)`.
   const EPOCH_ORDINAL = 719163; // ymdToOrdinal(1970, 1, 1)
-  const dayMs =
-    (ymdToOrdinal(parsed.year, parsed.month, parsed.day) - EPOCH_ORDINAL) *
-    86400000;
+  const dayMs = (ymdToOrdinal(parsed.year, parsed.month, parsed.day) - EPOCH_ORDINAL) * 86400000;
   const timeMs =
     parsed.hour * 3600000 +
     parsed.minute * 60000 +
@@ -212,8 +210,7 @@ export function cpythonIsoDateTimeToEpochMicros(value: string): bigint | null {
   }
   const EPOCH_ORDINAL = 719163n; // ymdToOrdinal(1970, 1, 1)
   const dayMicros =
-    (BigInt(ymdToOrdinal(parsed.year, parsed.month, parsed.day)) - EPOCH_ORDINAL) *
-    86_400_000_000n;
+    (BigInt(ymdToOrdinal(parsed.year, parsed.month, parsed.day)) - EPOCH_ORDINAL) * 86_400_000_000n;
   const timeMicros =
     BigInt(parsed.hour) * 3_600_000_000n +
     BigInt(parsed.minute) * 60_000_000n +
@@ -473,8 +470,7 @@ function parseIsoTime(s: string): IsoTime | null {
     }
     // Offset magnitude must be strictly less than 24h (CPython: "offset must be a
     // timedelta strictly between -timedelta(hours=24) and timedelta(hours=24)").
-    const magnitude =
-      off.hour * 3600 + off.minute * 60 + off.second + off.microsecond / 1e6;
+    const magnitude = off.hour * 3600 + off.minute * 60 + off.second + off.microsecond / 1e6;
     if (magnitude >= 24 * 3600) {
       return null;
     }
@@ -487,8 +483,7 @@ function parseIsoTime(s: string): IsoTime | null {
     // nonzero (`+01:02:03.5` keeps `.5`). Mirror that here so the epoch ms is
     // byte-identical; carrying the fraction unconditionally over-shifted these
     // degenerate zero-offset spellings by up to ~1s.
-    const fractionSeconds =
-      integerOffsetSeconds === 0 ? 0 : off.microsecond / 1e6;
+    const fractionSeconds = integerOffsetSeconds === 0 ? 0 : off.microsecond / 1e6;
     offsetSeconds = sign * (integerOffsetSeconds + fractionSeconds);
   }
 
@@ -521,11 +516,7 @@ interface Hms {
  *   applied by the caller. When parsing the time-of-day, hour 0..23, minute
  *   0..59, second 0..59 are enforced.
  */
-function parseHms(
-  s: string,
-  isOffset = false,
-  emptyFractionOk = false,
-): Hms | null {
+function parseHms(s: string, isOffset = false, emptyFractionOk = false): Hms | null {
   // Separate the fractional-second tail (`.`/`,` + digits) from the HH[MM[SS]].
   let head = s;
   let fraction = '';
@@ -643,11 +634,7 @@ interface YmD {
  * year that has no week 53). All arithmetic uses proleptic-Gregorian ordinals
  * (no JS `Date`, which mishandles years 0..99).
  */
-function isoWeekToGregorian(
-  year: number,
-  week: number,
-  weekday: number,
-): YmD | null {
+function isoWeekToGregorian(year: number, week: number, weekday: number): YmD | null {
   if (week < 1 || week > 53) {
     return null;
   }

@@ -12,12 +12,9 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
-from .message import compute_hash
 from .signing import KeyPair, canonical_json, sign_message
 from .types import (
-    BehaviorRecord,
     OutcomeStatus,
-    PartyRole,
     ResolutionMechanism,
     SessionState,
 )
@@ -608,6 +605,7 @@ def generate_receipt_summary(receipt: dict[str, Any]) -> str:
 def _compute_transcript_hash(transcript: list[dict[str, Any]]) -> str:
     """Compute a single SHA-256 hash over the entire transcript."""
     import hashlib
+
     from .signing import canonical_json
 
     combined = b""

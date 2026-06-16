@@ -6,10 +6,9 @@ session states, message types, term types, and typed data structures.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
-
 
 # ---------------------------------------------------------------------------
 # §5.1  Session states

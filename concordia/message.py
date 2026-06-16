@@ -7,7 +7,6 @@ the SHA-256 hash of the previous message, forming an immutable chain.
 from __future__ import annotations
 
 import hashlib
-import json
 import uuid
 from datetime import datetime, timezone
 from typing import Any

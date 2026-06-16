@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
 from datetime import datetime
+from enum import Enum
 from typing import Any
-
-from concordia.cmpc.chain_session import ChainSession, ChainSessionState
 
 
 class RevocationScope(str, Enum):

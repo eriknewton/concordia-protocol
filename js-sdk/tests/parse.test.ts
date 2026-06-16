@@ -4,10 +4,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { parseJsonStrict } from '../src/canonical/parse.js';
 import { CanonicalizationError } from '../src/canonical/checks.js';
-import {
-  canonicalizeJcs,
-  canonicalizePredicate,
-} from '../src/canonical/canonicalize.js';
+import { canonicalizeJcs, canonicalizePredicate } from '../src/canonical/canonicalize.js';
 import {
   sign,
   verify,
@@ -27,51 +24,39 @@ describe('parseJsonStrict - rejects bare unsafe integer literals at ingest', () 
   // parse-boundary scan reads the SOURCE literal, before the lossy double, and
   // rejects it.
   it('rejects a bare 21-digit integer as the whole document', () => {
-    expect(() => parseJsonStrict('123456789012345678901')).toThrow(
-      CanonicalizationError,
-    );
+    expect(() => parseJsonStrict('123456789012345678901')).toThrow(CanonicalizationError);
   });
 
   it('rejects a bare 21-digit integer nested in an object', () => {
-    expect(() =>
-      parseJsonStrict('{"limit":123456789012345678901}'),
-    ).toThrow(CanonicalizationError);
+    expect(() => parseJsonStrict('{"limit":123456789012345678901}')).toThrow(CanonicalizationError);
   });
 
   it('rejects a bare 21-digit integer nested in an array', () => {
-    expect(() =>
-      parseJsonStrict('{"xs":[1,123456789012345678901,2]}'),
-    ).toThrow(CanonicalizationError);
+    expect(() => parseJsonStrict('{"xs":[1,123456789012345678901,2]}')).toThrow(
+      CanonicalizationError,
+    );
   });
 
   it('rejects 9007199254740993 (2^53 + 1, the canonical 16-17 digit example)', () => {
-    expect(() => parseJsonStrict('{"x":9007199254740993}')).toThrow(
-      CanonicalizationError,
-    );
+    expect(() => parseJsonStrict('{"x":9007199254740993}')).toThrow(CanonicalizationError);
   });
 
   it('rejects 9007199254740992 (2^53 itself, the first unsafe integer)', () => {
-    expect(() => parseJsonStrict('{"x":9007199254740992}')).toThrow(
-      CanonicalizationError,
-    );
+    expect(() => parseJsonStrict('{"x":9007199254740992}')).toThrow(CanonicalizationError);
   });
 
   it('rejects a large negative unsafe integer', () => {
-    expect(() => parseJsonStrict('{"x":-9007199254740993}')).toThrow(
-      CanonicalizationError,
-    );
+    expect(() => parseJsonStrict('{"x":-9007199254740993}')).toThrow(CanonicalizationError);
   });
 
   it('rejects a 20-digit plain-decimal integer', () => {
-    expect(() => parseJsonStrict('{"x":12345678901234567890}')).toThrow(
-      CanonicalizationError,
-    );
+    expect(() => parseJsonStrict('{"x":12345678901234567890}')).toThrow(CanonicalizationError);
   });
 
   it('rejects an unsafe integer nested deep in the structure', () => {
-    expect(() =>
-      parseJsonStrict('{"a":{"b":[{"c":123456789012345678901}]}}'),
-    ).toThrow(CanonicalizationError);
+    expect(() => parseJsonStrict('{"a":{"b":[{"c":123456789012345678901}]}}')).toThrow(
+      CanonicalizationError,
+    );
   });
 
   it('error names the offending literal and points to the string escape hatch', () => {
@@ -135,9 +120,7 @@ describe('parseJsonStrict - the legitimate 1e30 float still round-trips', () => 
 
   it('parses the already-exponential 1e+30 source identically', () => {
     const parsed = parseJsonStrict('{"limit":1e+30,"result":"satisfied"}');
-    expect(canonicalizeJcs(parsed).toString('utf8')).toBe(
-      '{"limit":1e+30,"result":"satisfied"}',
-    );
+    expect(canonicalizeJcs(parsed).toString('utf8')).toBe('{"limit":1e+30,"result":"satisfied"}');
   });
 
   it('round-trips predicate fixture vector_08 (real Python-sourced 1e+30) via parseJsonStrict', () => {
@@ -169,9 +152,7 @@ describe('parseJsonStrict + canonicalizeJcs - layered defense, no fail-open gap'
   });
 
   it('a plain-decimal 1e20 (21 digits, no exponent) is rejected at ingest', () => {
-    expect(() =>
-      parseJsonStrict('{"x":100000000000000000000}'),
-    ).toThrow(CanonicalizationError);
+    expect(() => parseJsonStrict('{"x":100000000000000000000}')).toThrow(CanonicalizationError);
   });
 });
 
@@ -185,38 +166,28 @@ describe('parseJsonStrict - big integers carried as strings (the escape hatch)',
 
   it('canonicalizes a string-carried big integer identically', () => {
     const parsed = parseJsonStrict('{"id":"9007199254740993"}');
-    expect(canonicalizeJcs(parsed).toString('utf8')).toBe(
-      '{"id":"9007199254740993"}',
-    );
+    expect(canonicalizeJcs(parsed).toString('utf8')).toBe('{"id":"9007199254740993"}');
   });
 
   it('does not misread a big integer embedded in string text', () => {
-    expect(() =>
-      parseJsonStrict('{"note":"limit is 123456789012345678901 units"}'),
-    ).not.toThrow();
+    expect(() => parseJsonStrict('{"note":"limit is 123456789012345678901 units"}')).not.toThrow();
   });
 
   it('does not misread a big integer after an escaped quote inside a string', () => {
     // Source: {"a":"\"123456789012345678901"} -- the digits live inside the
     // string, after an escaped quote, and must not be inspected as a number.
-    expect(() =>
-      parseJsonStrict('{"a":"\\"123456789012345678901"}'),
-    ).not.toThrow();
+    expect(() => parseJsonStrict('{"a":"\\"123456789012345678901"}')).not.toThrow();
   });
 
   it('does not misread a big-integer-looking object KEY (keys are strings)', () => {
-    expect(() =>
-      parseJsonStrict('{"123456789012345678901":1}'),
-    ).not.toThrow();
+    expect(() => parseJsonStrict('{"123456789012345678901":1}')).not.toThrow();
   });
 });
 
 describe('parseJsonStrict - input validation', () => {
   it('propagates a native SyntaxError for malformed JSON (not a CanonicalizationError)', () => {
     expect(() => parseJsonStrict('{not valid json')).toThrow(SyntaxError);
-    expect(() => parseJsonStrict('{not valid json')).not.toThrow(
-      CanonicalizationError,
-    );
+    expect(() => parseJsonStrict('{not valid json')).not.toThrow(CanonicalizationError);
   });
 
   it('throws CanonicalizationError for a non-string argument', () => {
@@ -226,9 +197,7 @@ describe('parseJsonStrict - input validation', () => {
 
   it('accepts bare safe-integer and string documents', () => {
     expect(parseJsonStrict('42')).toBe(42);
-    expect(parseJsonStrict('"123456789012345678901"')).toBe(
-      '123456789012345678901',
-    );
+    expect(parseJsonStrict('"123456789012345678901"')).toBe('123456789012345678901');
   });
 });
 
@@ -259,9 +228,7 @@ describe('signJson / verifyJson - hardened signing-ingest entry points', () => {
 
   it('signJson rejects a bare unsafe integer literal (fail-closed at signing)', () => {
     const kp = generateKeyPair();
-    expect(() =>
-      signJson('{"amount":123456789012345678901}', kp),
-    ).toThrow(CanonicalizationError);
+    expect(() => signJson('{"amount":123456789012345678901}', kp)).toThrow(CanonicalizationError);
   });
 
   it('signJson rejects a non-object top-level JSON value', () => {
@@ -273,16 +240,14 @@ describe('signJson / verifyJson - hardened signing-ingest entry points', () => {
   it('verifyJson throws (fail-closed) on a bare unsafe integer literal', () => {
     const kp = generateKeyPair();
     const sig = sign({ amount: 1 }, kp);
-    expect(() =>
-      verifyJson('{"amount":123456789012345678901}', sig, kp.publicKey),
-    ).toThrow(CanonicalizationError);
+    expect(() => verifyJson('{"amount":123456789012345678901}', sig, kp.publicKey)).toThrow(
+      CanonicalizationError,
+    );
   });
 
   it('verifyJson returns false (does not throw) on a bad signature', () => {
     const kp = generateKeyPair();
-    expect(
-      verifyJson('{"message_type":"OFFER"}', 'not-a-signature', kp.publicKey),
-    ).toBe(false);
+    expect(verifyJson('{"message_type":"OFFER"}', 'not-a-signature', kp.publicKey)).toBe(false);
   });
 
   it('verifyJson returns false for a tampered payload under a valid signature', () => {

@@ -17,10 +17,7 @@ import {
   conformsFormat,
 } from '../src/validation/index.js';
 import { iterErrors } from '../src/internal/jsonschema.js';
-import {
-  isCpythonIsoDateTime,
-  cpythonIsoDateTimeToEpochMs,
-} from '../src/internal/iso-datetime.js';
+import { isCpythonIsoDateTime, cpythonIsoDateTimeToEpochMs } from '../src/internal/iso-datetime.js';
 import { KeyPair, sign } from '../src/crypto/signing.js';
 import { fromBase64Url } from '../src/crypto/base64url.js';
 
@@ -88,10 +85,7 @@ interface Fixtures {
 }
 
 const fixtures: Fixtures = JSON.parse(
-  readFileSync(
-    join(__dirname, 'fixtures/validation/schema_validator_vectors.json'),
-    'utf8',
-  ),
+  readFileSync(join(__dirname, 'fixtures/validation/schema_validator_vectors.json'), 'utf8'),
 );
 
 /** Parse a fixture `now` ISO string to epoch ms (the offset is explicit). */
@@ -148,9 +142,7 @@ describe('validateFulfillmentAttestation — Python parity', () => {
 
   it('isValidFulfillmentAttestation agrees with the empty-error-list cases', () => {
     for (const c of fixtures.fulfillment_cases) {
-      expect(isValidFulfillmentAttestation(c.attestation)).toBe(
-        c.expected.length === 0,
-      );
+      expect(isValidFulfillmentAttestation(c.attestation)).toBe(c.expected.length === 0);
     }
   });
 });
@@ -163,9 +155,7 @@ describe('verifyApprovalReceipt — Python parity', () => {
   for (const c of fixtures.verify_cases) {
     it(`verify: ${c.name}`, () => {
       const issuerPublicKey =
-        c.issuer_public_key_b64 === null
-          ? null
-          : fromBase64Url(c.issuer_public_key_b64);
+        c.issuer_public_key_b64 === null ? null : fromBase64Url(c.issuer_public_key_b64);
       const result = verifyApprovalReceipt(c.receipt, c.offer, {
         now: nowMs(c.now),
         issuerPublicKey,
@@ -249,9 +239,7 @@ describe('verifyApprovalReceipt — Python parity', () => {
     // Schema format check still passes (mirrors CPython `_is_date_time` -> True);
     // the overflow only bites at the expiry parse, exactly like Python.
     expect(conformsFormat('date-time', '9999-12-31T23:59:59-14:00')).toBe(true);
-    expect(
-      cpythonIsoDateTimeToEpochMs('9999-12-31T23:59:59-14:00'),
-    ).toBeNull();
+    expect(cpythonIsoDateTimeToEpochMs('9999-12-31T23:59:59-14:00')).toBeNull();
 
     const result = verifyApprovalReceipt(overflowReceipt, valid.offer, {
       now: nowMs(valid.now),
@@ -325,9 +313,7 @@ describe('date-time expiry parse — epoch-ms parity (Date.parse NaN fix)', () =
     ];
     // At least one form must be a `Date.parse` NaN (the false-expired trigger),
     // proving `Date.parse` is not a safe substitute for the parser.
-    const anyDateParseFails = cases.some(([form]) =>
-      Number.isNaN(Date.parse(form)),
-    );
+    const anyDateParseFails = cases.some(([form]) => Number.isNaN(Date.parse(form)));
     expect(anyDateParseFails).toBe(true);
     // The shared parser is correct on every one of them.
     for (const [form, expected] of cases) {
@@ -343,21 +329,13 @@ describe('date-time expiry parse — epoch-ms parity (Date.parse NaN fix)', () =
 describe('schema validators — robustness on malformed top-level input', () => {
   it('a non-object message reports the type error, never throws', () => {
     // Post-#95 no-echo rendering: the violated CONSTRAINT, never the instance.
-    expect(validateMessage('not-an-object')).toEqual([
-      '$: violates \'type\' constraint: "object"',
-    ]);
-    expect(validateMessage(null)).toEqual([
-      '$: violates \'type\' constraint: "object"',
-    ]);
-    expect(validateMessage([1, 2])).toEqual([
-      '$: violates \'type\' constraint: "object"',
-    ]);
+    expect(validateMessage('not-an-object')).toEqual(['$: violates \'type\' constraint: "object"']);
+    expect(validateMessage(null)).toEqual(['$: violates \'type\' constraint: "object"']);
+    expect(validateMessage([1, 2])).toEqual(['$: violates \'type\' constraint: "object"']);
   });
 
   it('a non-object approval receipt reports the type error', () => {
-    expect(validateApprovalReceipt(42)).toEqual([
-      '$: violates \'type\' constraint: "object"',
-    ]);
+    expect(validateApprovalReceipt(42)).toEqual(['$: violates \'type\' constraint: "object"']);
   });
 
   it('verifyApprovalReceipt does not throw on a malformed receipt', () => {
@@ -416,8 +394,7 @@ function validAttestation(): Record<string, unknown> {
       extensions_used: [],
       mediator_invoked: false,
     },
-    transcript_hash:
-      'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    transcript_hash: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     fulfillment: null,
   };
 }
@@ -426,9 +403,7 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
   it('matches the Python-produced deferred boundary fixture exactly', () => {
     const d = fixtures.deferred_attestation;
     expect(validateAttestation(d.valid_attestation)).toEqual(d.valid_expected);
-    expect(validateAttestation(d.bad_oneof_attestation)).toEqual(
-      d.bad_oneof_expected,
-    );
+    expect(validateAttestation(d.bad_oneof_attestation)).toEqual(d.bad_oneof_expected);
   });
 
   it('accepts a valid §9.6 attestation with null fulfillment', () => {
@@ -456,9 +431,7 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
   });
 
   it('rejects malformed and unknown attestations instead of failing open', () => {
-    expect(validateAttestation(null)).toEqual([
-      '$: violates \'type\' constraint: "object"',
-    ]);
+    expect(validateAttestation(null)).toEqual(['$: violates \'type\' constraint: "object"']);
     expect(validateAttestation({})).toEqual([
       "$: 'concordia_attestation' is a required property",
       "$: 'attestation_id' is a required property",
@@ -488,12 +461,8 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
     const attestation = validAttestation();
     attestation.price = { value: 1900, currency: 'USD' };
     const errors = validateAttestation(attestation);
-    expect(errors).toContain(
-      "$: violates 'additionalProperties' constraint: false",
-    );
-    expect(errors.some((e) => e.includes('price') || e.includes('1900'))).toBe(
-      false,
-    );
+    expect(errors).toContain("$: violates 'additionalProperties' constraint: false");
+    expect(errors.some((e) => e.includes('price') || e.includes('1900'))).toBe(false);
   });
 
   it('rejects raw agreed terms carried under outcome', () => {
@@ -503,12 +472,8 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
       quantity: 2,
     };
     const errors = validateAttestation(attestation);
-    expect(errors).toContain(
-      "$.outcome: violates 'additionalProperties' constraint: false",
-    );
-    expect(
-      errors.some((e) => e.includes('agreed_terms') || e.includes('1900')),
-    ).toBe(false);
+    expect(errors).toContain("$.outcome: violates 'additionalProperties' constraint: false");
+    expect(errors.some((e) => e.includes('agreed_terms') || e.includes('1900'))).toBe(false);
   });
 
   it('rejects raw price fields carried under party behavior', () => {
@@ -522,10 +487,7 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
       "$.parties[0].behavior: violates 'additionalProperties' constraint: false",
     );
     expect(
-      errors.some(
-        (e) =>
-          e.includes('price_floor') || e.includes('1750') || e.includes('1900'),
-      ),
+      errors.some((e) => e.includes('price_floor') || e.includes('1750') || e.includes('1900')),
     ).toBe(false);
   });
 
@@ -546,9 +508,7 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
     expect(errors).toContain(
       "$.references[0].extensions: violates 'additionalProperties' constraint: false",
     );
-    expect(
-      errors.some((e) => e.includes('1900') || e.includes('quantity')),
-    ).toBe(false);
+    expect(errors.some((e) => e.includes('1900') || e.includes('quantity'))).toBe(false);
   });
 
   it('accepts a legitimate behavioral summary', () => {
@@ -566,9 +526,7 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
     const attestation = validAttestation();
     attestation.summary = 'x'.repeat(1025);
     const errors = validateAttestation(attestation);
-    expect(errors).toEqual([
-      "$.summary: violates 'maxLength' constraint: 1024",
-    ]);
+    expect(errors).toEqual(["$.summary: violates 'maxLength' constraint: 1024"]);
     // Non-echo: the oversized instance string never rides in the error
     // (mirrors Python test_rejects_overlong_attestation_free_text).
     expect(errors.some((e) => e.includes('xxxx'))).toBe(false);
@@ -597,9 +555,7 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
       },
     };
     const errors = validateAttestation(attestation);
-    expect(errors).toContain(
-      '$.summary: free-text field must not contain obvious raw deal terms',
-    );
+    expect(errors).toContain('$.summary: free-text field must not contain obvious raw deal terms');
     expect(errors).toContain(
       '$.fulfillment.disputes[0].description: free-text field must not contain obvious raw deal terms',
     );
@@ -607,10 +563,7 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
       '$.fulfillment.counterparty_attestation.notes: free-text field must not contain obvious raw deal terms',
     );
     expect(
-      errors.some(
-        (e) =>
-          e.includes('1900') || e.includes('quantity 2') || e.includes('$1900'),
-      ),
+      errors.some((e) => e.includes('1900') || e.includes('quantity 2') || e.includes('$1900')),
     ).toBe(false);
   });
 
@@ -665,9 +618,7 @@ describe('schema-validation errors never echo the instance (Python #95 parity)',
       expect(errors).toEqual(c.expected);
       // The hostile markers planted in the violating instances must never
       // ride in ANY error string (free-text errors report a fixed sentence).
-      expect(
-        errors.some((e) => e.includes('SECRET') || e.includes('4350')),
-      ).toBe(false);
+      expect(errors.some((e) => e.includes('SECRET') || e.includes('4350'))).toBe(false);
     });
   }
 
@@ -739,9 +690,7 @@ describe('schema-validation errors never echo the instance (Python #95 parity)',
       ]) {
         const errors = validate(instance);
         expect(errors.length).toBeGreaterThan(0);
-        expect(
-          errors.some((e) => e.includes('SECRET') || e.includes('4350')),
-        ).toBe(false);
+        expect(errors.some((e) => e.includes('SECRET') || e.includes('4350'))).toBe(false);
       }
     }
   });
@@ -818,15 +767,15 @@ describe('internal jsonschema $ref/oneOf support', () => {
   });
 
   it('throws for missing $ref targets', () => {
-    expect(() =>
-      iterErrors({ $ref: '#/$defs/missing', $defs: {} }, 'x'),
-    ).toThrow("schema-validator: unresolved $ref '#/$defs/missing'");
+    expect(() => iterErrors({ $ref: '#/$defs/missing', $defs: {} }, 'x')).toThrow(
+      "schema-validator: unresolved $ref '#/$defs/missing'",
+    );
   });
 
   it('throws for malformed $ref JSON Pointers', () => {
-    expect(() =>
-      iterErrors({ $ref: '#/$defs/~2bad', $defs: {} }, 'x'),
-    ).toThrow("schema-validator: malformed $ref '#/$defs/~2bad'");
+    expect(() => iterErrors({ $ref: '#/$defs/~2bad', $defs: {} }, 'x')).toThrow(
+      "schema-validator: malformed $ref '#/$defs/~2bad'",
+    );
   });
 
   it('throws for unsupported external $refs', () => {

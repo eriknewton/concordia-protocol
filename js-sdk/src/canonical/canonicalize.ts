@@ -1,8 +1,4 @@
-import {
-  CanonicalizationError,
-  checkLoneSurrogates,
-  checkNoSpecialFloats,
-} from './checks.js';
+import { CanonicalizationError, checkLoneSurrogates, checkNoSpecialFloats } from './checks.js';
 
 /**
  * Canonicalize a JSON-serializable value per RFC 8785 (JCS).
@@ -18,9 +14,7 @@ export function canonicalizeJcs(value: unknown): Buffer {
  * Canonicalize a predicate object, stripping the top-level `signature` field.
  * Nested signature fields are preserved.
  */
-export function canonicalizePredicate(
-  predicate: Record<string, unknown>,
-): Buffer {
+export function canonicalizePredicate(predicate: Record<string, unknown>): Buffer {
   const { signature: _stripped, ...rest } = predicate;
   return canonicalizeJcs(rest);
 }
@@ -51,7 +45,5 @@ function stableStringify(value: unknown): string {
       '}'
     );
   }
-  throw new CanonicalizationError(
-    `Cannot canonicalize value of type ${t}`,
-  );
+  throw new CanonicalizationError(`Cannot canonicalize value of type ${t}`);
 }

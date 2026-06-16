@@ -31,7 +31,6 @@ from ..signing import KeyPair, sign_message
 from .scorer import ReputationScorer
 from .store import AttestationStore
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------

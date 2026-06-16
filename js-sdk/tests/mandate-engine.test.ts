@@ -139,10 +139,7 @@ interface EngineFixtures {
 }
 
 const fixtures = JSON.parse(
-  readFileSync(
-    join(__dirname, 'fixtures/mandate/mandate_engine_vectors.json'),
-    'utf8',
-  ),
+  readFileSync(join(__dirname, 'fixtures/mandate/mandate_engine_vectors.json'), 'utf8'),
 ) as EngineFixtures;
 
 // ---------------------------------------------------------------------------
@@ -215,9 +212,7 @@ describe('signMandate / signDelegation - ES256 is deferred (throws)', () => {
       constraints: { k: 'v' },
       algorithm: 'ES256',
     });
-    expect(() => signMandate(m, keyPairFor('issuer'))).toThrow(
-      MandateValidationError,
-    );
+    expect(() => signMandate(m, keyPairFor('issuer'))).toThrow(MandateValidationError);
   });
 });
 
@@ -248,10 +243,7 @@ describe('validateConstraints - parity with Python validate_constraints', () => 
   ]);
   for (const c of fixtures.constraint_cases) {
     it(`case ${c.name}`, () => {
-      const [compliant, errors] = validateConstraints(
-        c.constraints,
-        c.action,
-      );
+      const [compliant, errors] = validateConstraints(c.constraints, c.action);
       expect(compliant).toBe(c.compliant);
       if (metaSchemaInvalid.has(c.name)) {
         expect(errors).toHaveLength(1);
@@ -294,10 +286,7 @@ describe('composeEffectiveConstraints - parity with Python', () => {
   for (const c of fixtures.compose_cases) {
     it(`case ${c.name}`, () => {
       const chain: DelegationLink[] = c.chain.map(delegationLinkFromDict);
-      const [effective, errors] = composeEffectiveConstraints(
-        c.constraints,
-        chain,
-      );
+      const [effective, errors] = composeEffectiveConstraints(c.constraints, chain);
       expect(effective).toEqual(c.effective);
       expect(errors).toEqual(c.errors);
     });
@@ -362,27 +351,21 @@ describe('checkTemporalValidity - tz-naive timestamps fail closed (Python raises
       notBefore: '2026-05-14T00:00:00Z',
       notAfter: '2126-06-14T00:00:00Z',
     });
-    expect(
-      checkTemporalValidity(z, { now: epochMs('2026-06-01T00:00:00Z') })[0],
-    ).toBe(true);
+    expect(checkTemporalValidity(z, { now: epochMs('2026-06-01T00:00:00Z') })[0]).toBe(true);
     // Explicit +00:00 offset.
     const off = makeValidityWindow({
       mode: TemporalMode.WINDOWED,
       notBefore: '2026-05-14T00:00:00+00:00',
       notAfter: '2126-06-14T00:00:00+00:00',
     });
-    expect(
-      checkTemporalValidity(off, { now: epochMs('2026-06-01T00:00:00Z') })[0],
-    ).toBe(true);
+    expect(checkTemporalValidity(off, { now: epochMs('2026-06-01T00:00:00Z') })[0]).toBe(true);
     // Non-UTC offset (still tz-aware -> honored).
     const tokyo = makeValidityWindow({
       mode: TemporalMode.WINDOWED,
       notBefore: '2026-05-14T09:00:00+09:00',
       notAfter: '2126-06-14T00:00:00Z',
     });
-    expect(
-      checkTemporalValidity(tokyo, { now: epochMs('2026-06-01T00:00:00Z') })[0],
-    ).toBe(true);
+    expect(checkTemporalValidity(tokyo, { now: epochMs('2026-06-01T00:00:00Z') })[0]).toBe(true);
   });
 });
 
@@ -398,12 +381,7 @@ describe('verifyDelegationChain - parity with Python verify_delegation_chain', (
       for (const [agentId, named] of Object.entries(c.public_keys)) {
         publicKeys[agentId] = publicKeyBytesFor(named);
       }
-      const [valid, errors] = verifyDelegationChain(
-        chain,
-        c.issuer,
-        c.subject,
-        publicKeys,
-      );
+      const [valid, errors] = verifyDelegationChain(chain, c.issuer, c.subject, publicKeys);
       expect(valid).toBe(c.valid);
       expect(errors).toEqual(c.errors);
     });
@@ -474,11 +452,9 @@ describe('verifyMandate - tz-naive temporal field fails closed (Python raises)',
     // The signature still verifies (the mandate is genuinely signed); the
     // rejection is specifically temporal, naming the tz-naive cause.
     expect(result.checks.issuer_signature).toBe(true);
-    expect(
-      result.errors.some((e) =>
-        e.includes('Timezone-naive timestamp not permitted'),
-      ),
-    ).toBe(true);
+    expect(result.errors.some((e) => e.includes('Timezone-naive timestamp not permitted'))).toBe(
+      true,
+    );
   });
 });
 
@@ -512,10 +488,7 @@ describe('verifyMandate - revocation network fetch (DEFERRED)', () => {
     const revoked = verifyMandate(c.mandate_dict, issuerKey, {
       now: epochMs(c.now),
       checkRevocationStatus: true,
-      revocationChecker: (mandateId) => [
-        false,
-        [`Mandate '${mandateId}' has been revoked`],
-      ],
+      revocationChecker: (mandateId) => [false, [`Mandate '${mandateId}' has been revoked`]],
     });
     expect(revoked.valid).toBe(false);
     expect(revoked.checks.revocation_status).toBe(false);

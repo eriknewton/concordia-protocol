@@ -12,10 +12,7 @@
  * defaults Python's dataclass fields declare).
  */
 
-import {
-  type TermType,
-  type Flexibility,
-} from './enums.js';
+import { type TermType, type Flexibility } from './enums.js';
 
 /**
  * Decompose a finite IEEE-754 double into the exact rational `p / q` it
@@ -108,9 +105,8 @@ export function pyRound(value: number, ndigits: number): number {
     // Exact half: round to even.
     if (quotient % 2n === 1n) quotient += 1n;
   }
-  const rounded = negative ? -quotient : quotient;
 
-  // Build the EXACT decimal string for `rounded / 10^ndigits`, then let
+  // Build the EXACT decimal string for `quotient / 10^ndigits`, then let
   // `Number()` do the (correctly-rounded) decimal->double conversion. This
   // avoids ever materializing `10^|ndigits|` as a Number, which overflows to
   // Infinity for |ndigits| >= 309 and yields NaN. The string carries the full
@@ -202,9 +198,7 @@ export interface AgentIdentity {
  * `if self.principal_id is not None`). The wire key names are snake_case
  * (`agent_id`, `principal_id`) to match the Python serialization exactly.
  */
-export function agentIdentityToDict(
-  identity: AgentIdentity,
-): Record<string, unknown> {
+export function agentIdentityToDict(identity: AgentIdentity): Record<string, unknown> {
   const d: Record<string, unknown> = { agent_id: identity.agentId };
   if (identity.principalId !== undefined && identity.principalId !== null) {
     d.principal_id = identity.principalId;
@@ -231,9 +225,7 @@ export interface TimingConfig {
  * `TimingConfig` dataclass declares (`session_ttl=86400`, `offer_ttl=3600`,
  * `max_rounds=20`).
  */
-export function makeTimingConfig(
-  overrides: Partial<TimingConfig> = {},
-): TimingConfig {
+export function makeTimingConfig(overrides: Partial<TimingConfig> = {}): TimingConfig {
   return {
     sessionTtl: 86400,
     offerTtl: 3600,
@@ -273,9 +265,7 @@ export interface BehaviorRecord {
  * `BehaviorRecord` dataclass declares (all counters 0, magnitudes 0.0, flags
  * false).
  */
-export function makeBehaviorRecord(
-  overrides: Partial<BehaviorRecord> = {},
-): BehaviorRecord {
+export function makeBehaviorRecord(overrides: Partial<BehaviorRecord> = {}): BehaviorRecord {
   return {
     offersMade: 0,
     concessions: 0,
@@ -302,9 +292,7 @@ export function makeBehaviorRecord(
  *   but matching insertion order keeps `to_dict()` output structurally
  *   identical for direct object comparison in the parity tests.)
  */
-export function behaviorRecordToDict(
-  record: BehaviorRecord,
-): Record<string, unknown> {
+export function behaviorRecordToDict(record: BehaviorRecord): Record<string, unknown> {
   return {
     offers_made: record.offersMade,
     concessions: record.concessions,

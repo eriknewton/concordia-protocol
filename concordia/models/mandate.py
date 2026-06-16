@@ -18,14 +18,11 @@ schema uses JSON Schema for expressiveness and interoperability.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
-
 
 # ---------------------------------------------------------------------------
 # Temporal validity modes (three-mode enum per #1734 consensus)

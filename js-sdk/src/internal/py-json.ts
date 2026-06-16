@@ -59,11 +59,7 @@ export function pyJsonDumps(
   return render(value, rootIsFloat, floatConstraints);
 }
 
-function render(
-  value: unknown,
-  isFloat: boolean,
-  floats: FloatConstraintMap | undefined,
-): string {
+function render(value: unknown, isFloat: boolean, floats: FloatConstraintMap | undefined): string {
   if (value === null) return 'null';
   if (value === true) return 'true';
   if (value === false) return 'false';
@@ -83,8 +79,7 @@ function render(
     if (keys.length === 0) return '{}';
     const floatKeys = floats?.get(obj);
     const parts = keys.map(
-      (k) =>
-        `${renderString(k)}: ${render(obj[k], floatKeys?.has(k) ?? false, floats)}`,
+      (k) => `${renderString(k)}: ${render(obj[k], floatKeys?.has(k) ?? false, floats)}`,
     );
     return `{${parts.join(', ')}}`;
   }

@@ -40,8 +40,7 @@ export function toBase64Url(bytes: Uint8Array): string {
 // the correctly-padded form Python's urlsafe_b64decode requires; unpadded
 // strings, embedded whitespace, the standard (`+`/`/`) alphabet, and trailing
 // junk are all rejected.
-const STRICT_BASE64URL =
-  /^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-]{2}==|[A-Za-z0-9_-]{3}=)?$/;
+const STRICT_BASE64URL = /^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-]{2}==|[A-Za-z0-9_-]{3}=)?$/;
 
 /**
  * Decode a correctly-PADDED URL-safe base64 string to bytes.

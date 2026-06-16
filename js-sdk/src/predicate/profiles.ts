@@ -66,9 +66,7 @@ type PropertyCheck =
 
 // authority_gate / approval_gate / jcs_edge all share this schema.
 const AUTHORITY_GATE_SCHEMA: ConditionSchema = {
-  properties: [
-    { name: 'result', kind: 'enum', values: ['satisfied', 'denied'] },
-  ],
+  properties: [{ name: 'result', kind: 'enum', values: ['satisfied', 'denied'] }],
   required: ['result'],
 };
 
@@ -159,9 +157,7 @@ export function registerPredicateTypeProfile(
  * Mirrors Python `get_predicate_type_profile`. Python loads built-ins lazily;
  * here they are pre-registered, which is behaviorally identical for callers.
  */
-export function getPredicateTypeProfile(
-  typeId: string,
-): PredicateTypeProfile | null {
+export function getPredicateTypeProfile(typeId: string): PredicateTypeProfile | null {
   return REGISTRY.get(typeId) ?? null;
 }
 
@@ -248,10 +244,7 @@ function isJsonObject(value: unknown): boolean {
  * order (jsonschema iterates the `properties` map in declaration order), with
  * the `enum` check on `result` taking the property's slot.
  */
-function schemaErrors(
-  schema: ConditionSchema,
-  condition: Record<string, unknown>,
-): string[] {
+function schemaErrors(schema: ConditionSchema, condition: Record<string, unknown>): string[] {
   const errors: string[] = [];
   // jsonschema emits property-level errors in `properties` declaration order.
   for (const prop of schema.properties) {
@@ -259,8 +252,7 @@ function schemaErrors(
     const value = condition[prop.name];
     if (prop.kind === 'enum') {
       if (!prop.values.some((v) => v === value)) {
-        const enumRepr =
-          '[' + prop.values.map(pyRepr).join(', ') + ']';
+        const enumRepr = '[' + prop.values.map(pyRepr).join(', ') + ']';
         errors.push(`${pyRepr(value)} is not one of ${enumRepr}`);
       }
     } else {
@@ -292,10 +284,7 @@ function schemaErrors(
  *
  * Returns the list of error message strings (empty when the condition is valid).
  */
-export function validateConditionForProfile(
-  typeId: string,
-  condition: unknown,
-): string[] {
+export function validateConditionForProfile(typeId: string, condition: unknown): string[] {
   const profile = getPredicateTypeProfile(typeId);
   if (profile === null) {
     return [`predicate type profile must be registered before signing: ${typeId}`];

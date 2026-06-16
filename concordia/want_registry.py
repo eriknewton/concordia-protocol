@@ -24,8 +24,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
-
+from typing import Any, TypeGuard
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -44,8 +43,14 @@ MAX_TTL_SECONDS = 7 * 24 * 60 * 60
 # Input validation helpers
 # ---------------------------------------------------------------------------
 
-def _is_number(value: Any) -> bool:
-    """True for a real JSON number (int or float), excluding bool."""
+def _is_number(value: Any) -> TypeGuard[float]:
+    """True for a real JSON number (int or float), excluding bool.
+
+    Typed as a ``TypeGuard[float]`` so that callers gating numeric comparisons
+    on ``_is_number(x)`` narrow ``x`` to a number for the type checker. ``int``
+    is accepted at runtime and is compatible with ``float`` in the static
+    numeric tower, so arithmetic on the narrowed value type-checks cleanly.
+    """
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
@@ -322,8 +327,6 @@ def compute_term_overlap(
         if isinstance(wt, dict) and isinstance(ht, dict):
             w_max = wt.get("max")
             h_min = ht.get("min")
-            w_min = wt.get("min")
-            h_max = ht.get("max")
 
             # Standard price: want.max vs have.min.
             # Guard with _is_number so a counterparty that sends a string where
@@ -335,7 +338,6 @@ def compute_term_overlap(
                 if w_max >= h_min:
                     lo = h_min
                     hi = w_max
-                    midpoint = (lo + hi) / 2
                     spread = hi - lo
                     overlap[key] = {
                         "range": [lo, hi],

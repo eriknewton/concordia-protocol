@@ -6,9 +6,22 @@ An open standard for structured negotiation between autonomous agents.
 __version__ = "0.7.0a1"
 
 from .agent import Agent
+from .approval_receipt import ApprovalReceiptResult, verify_approval_receipt
 from .attestation import generate_attestation, is_valid_now
+from .ctef import predicate_to_ctef_claim
 from .discovery import Have, Match, Want, find_matches
+from .envelope import build_trust_evidence_envelope, verify_envelope_signature
+from .mandate import sign_mandate, validate_constraints, verify_mandate
 from .message import GENESIS_HASH, build_envelope, compute_hash, validate_chain
+from .models.mandate import (
+    MANDATE_JSON_SCHEMA,
+    DelegationLink,
+    Mandate,
+    MandateStatus,
+    MandateVerificationResult,
+    TemporalMode,
+    ValidityWindow,
+)
 from .offer import (
     BasicOffer,
     Bundle,
@@ -18,6 +31,16 @@ from .offer import (
     Offer,
     PartialOffer,
 )
+from .predicate import (
+    Predicate,
+    PredicateFailureReason,
+    PredicateStatus,
+    PredicateVerificationResult,
+    sign_predicate,
+    verify_predicate,
+)
+from .predicate_resolver import BasicHttpsResolver, ResolverProtocolError
+from .receipt_bundle import BundleSummary, ReceiptBundle, screen_bundle, verify_bundle
 from .schema_validator import (
     is_valid_approval_receipt,
     is_valid_attestation,
@@ -31,34 +54,10 @@ from .session import (
     InvalidSignatureError,
     InvalidTransitionError,
     MaxRoundsExceededError,
-    SessionBindingError,
     Session,
+    SessionBindingError,
 )
-from .receipt_bundle import BundleSummary, ReceiptBundle, verify_bundle, screen_bundle
-from .signing import KeyPair, ES256KeyPair, sign_message, verify_signature
-from .envelope import build_trust_evidence_envelope, verify_envelope_signature
-from .verascore import VerascoreClient, make_verascore_auto_hook
-from .mandate import sign_mandate, verify_mandate, validate_constraints
-from .approval_receipt import ApprovalReceiptResult, verify_approval_receipt
-from .predicate import (
-    Predicate,
-    PredicateFailureReason,
-    PredicateStatus,
-    PredicateVerificationResult,
-    sign_predicate,
-    verify_predicate,
-)
-from .predicate_resolver import BasicHttpsResolver, ResolverProtocolError
-from .ctef import predicate_to_ctef_claim
-from .models.mandate import (
-    Mandate,
-    MandateVerificationResult,
-    ValidityWindow,
-    TemporalMode,
-    MandateStatus,
-    DelegationLink,
-    MANDATE_JSON_SCHEMA,
-)
+from .signing import ES256KeyPair, KeyPair, sign_message, verify_signature
 from .types import (
     AgentIdentity,
     BehaviorRecord,
@@ -74,6 +73,7 @@ from .types import (
     TermType,
     TimingConfig,
 )
+from .verascore import VerascoreClient, make_verascore_auto_hook
 
 __all__ = [
     # Agent

@@ -118,9 +118,7 @@ describe('makeBehaviorRecord - dataclass default parity', () => {
 // Map the snake_case Python `input` kwargs onto a partial camelCase
 // BehaviorRecord, then build a full record via the factory (which supplies
 // the same defaults Python's dataclass declares).
-function behaviorFromInput(
-  input: Record<string, number | boolean>,
-): BehaviorRecord {
+function behaviorFromInput(input: Record<string, number | boolean>): BehaviorRecord {
   const map: Record<string, keyof BehaviorRecord> = {
     offers_made: 'offersMade',
     concessions: 'concessions',
@@ -136,7 +134,6 @@ function behaviorFromInput(
   for (const [k, v] of Object.entries(input)) {
     const camel = map[k];
     if (camel === undefined) throw new Error(`unmapped behavior field: ${k}`);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (overrides as Record<string, unknown>)[camel] = v;
   }
   return makeBehaviorRecord(overrides);
