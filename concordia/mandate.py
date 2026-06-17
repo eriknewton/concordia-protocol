@@ -13,8 +13,11 @@ the SD-JWT-based mandate model used by Prove Verified Agent / Mastercard VI.
 
 from __future__ import annotations
 
+import ipaddress
 import json
+import socket
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from typing import Any
@@ -363,22 +366,192 @@ def verify_delegation_chain(
 # Revocation check
 # ---------------------------------------------------------------------------
 
+# Cap on the revocation-list response we are willing to read into memory. A
+# revocation list is a small JSON array of identifiers; anything larger is
+# either misconfigured or a resource-exhaustion attempt, so we refuse to keep
+# reading past this bound rather than buffering an unbounded body.
+_MAX_REVOCATION_RESPONSE_BYTES = 5 * 1024 * 1024  # 5 MiB
+
+
+class RevocationEndpointError(ValueError):
+    """The revocation endpoint URL failed validation (scheme/host/SSRF guard)."""
+
+
+def _ip_is_disallowed(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Return True when ``ip`` is in a range we must never let a fetch reach.
+
+    Blocks loopback, private (RFC1918 / unique-local), link-local, multicast,
+    reserved, and the unspecified address. IPv4-mapped and 6to4/Teredo IPv6
+    forms are unwrapped to their embedded IPv4 address first so an attacker
+    cannot smuggle ``::ffff:127.0.0.1`` or ``::ffff:169.254.169.254`` past the
+    guard.
+    """
+    # Unwrap IPv4-mapped / IPv4-compatible / 6to4 / Teredo so an embedded
+    # private IPv4 address (e.g. the cloud metadata service 169.254.169.254)
+    # cannot hide inside an IPv6 wrapper.
+    if isinstance(ip, ipaddress.IPv6Address):
+        mapped = ip.ipv4_mapped or ip.sixtofour
+        if mapped is None and ip.teredo is not None:
+            mapped = ip.teredo[1]
+        if mapped is not None:
+            ip = mapped
+
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
+def validate_revocation_endpoint(endpoint: str) -> str:
+    """Validate a revocation-endpoint URL before any network fetch.
+
+    Enforces a strict allowlist so a (trusted-but-possibly-compromised or
+    federated) issuer cannot turn the revocation check into a Server-Side
+    Request Forgery primitive against the verifier's internal network or a
+    cloud metadata service:
+
+    - scheme MUST be ``https`` (no http, file, gopher, ftp, data, ...);
+    - the host MUST be a literal IP or a hostname that resolves ONLY to
+      public, routable addresses. Every address returned by name resolution
+      is checked, so a hostname that resolves to a mix of public and private
+      addresses (a DNS-rebinding trick) is rejected.
+
+    Returns the validated endpoint unchanged. Raises
+    :class:`RevocationEndpointError` on any failure.
+    """
+    try:
+        parsed = urllib.parse.urlsplit(endpoint)
+    except ValueError as exc:  # malformed URL
+        raise RevocationEndpointError(f"Malformed revocation endpoint: {exc}") from exc
+
+    if parsed.scheme != "https":
+        raise RevocationEndpointError(
+            "Revocation endpoint must use https (got "
+            f"{parsed.scheme or 'no'} scheme)"
+        )
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise RevocationEndpointError("Revocation endpoint has no host")
+
+    # A trailing dot ("example.com.") is a valid FQDN form; normalise it away
+    # so it cannot be used to dodge a host comparison and so resolution is
+    # consistent.
+    hostname = hostname.rstrip(".")
+    if not hostname:
+        raise RevocationEndpointError("Revocation endpoint has no host")
+
+    # If the host is a literal IP (v4 or v6, including bracketed IPv6, octal
+    # or hex IPv4 forms that ipaddress normalises), check it directly without
+    # a DNS lookup.
+    try:
+        literal_ip = ipaddress.ip_address(hostname)
+    except ValueError:
+        literal_ip = None
+    if literal_ip is not None:
+        if _ip_is_disallowed(literal_ip):
+            raise RevocationEndpointError(
+                f"Revocation endpoint host {hostname} is not a public address"
+            )
+        return endpoint
+
+    # Hostname: resolve and require EVERY resolved address to be public. This
+    # defeats a DNS-rebinding issuer that resolves to a public address on the
+    # first lookup and a private one on the connect.
+    try:
+        infos = socket.getaddrinfo(hostname, parsed.port or 443, proto=socket.IPPROTO_TCP)
+    except socket.gaierror as exc:
+        raise RevocationEndpointError(
+            f"Revocation endpoint host {hostname} could not be resolved: {exc}"
+        ) from exc
+
+    resolved = {info[4][0] for info in infos}
+    if not resolved:
+        raise RevocationEndpointError(
+            f"Revocation endpoint host {hostname} resolved to no addresses"
+        )
+    for addr in resolved:
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:  # pragma: no cover - getaddrinfo returns valid IPs
+            raise RevocationEndpointError(
+                f"Revocation endpoint host {hostname} resolved to an "
+                f"unparseable address {addr!r}"
+            )
+        if _ip_is_disallowed(ip):
+            raise RevocationEndpointError(
+                f"Revocation endpoint host {hostname} resolves to a "
+                "non-public address"
+            )
+
+    return endpoint
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse to follow any redirect.
+
+    Following a redirect would let an issuer point an already-validated https
+    URL at an internal target via a 30x ``Location`` (re-validating each hop is
+    possible but brittle; for a revocation list there is no legitimate reason
+    to chase redirects, so we forbid them outright).
+    """
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        raise RevocationEndpointError(
+            f"Revocation endpoint returned a disallowed redirect to {newurl}"
+        )
+
+
+# An opener that performs no redirect following and carries no proxy/auth
+# handlers. Built once and reused.
+_revocation_opener = urllib.request.build_opener(_NoRedirectHandler())
+
+
 def check_revocation(
     mandate_id: str,
     endpoint: str,
     timeout: float = 5.0,
+    *,
+    allow_insecure_endpoint: bool = False,
 ) -> tuple[bool, list[str]]:
     """Check revocation status against a revocation list endpoint.
 
     The endpoint should return a JSON object with a ``revoked_ids`` array.
     If the mandate_id is in the list, the mandate is revoked.
 
-    If the endpoint is unreachable, the mandate is treated as NOT verified
-    (fail-closed per CLAUDE.md constraint #5: never silently degrade).
+    The endpoint URL is validated before any network access: by default it
+    must be ``https`` and must not resolve to a private, loopback, link-local,
+    multicast, or reserved address (SSRF guard). Redirects are never followed
+    and the response body is size-bounded. Set ``allow_insecure_endpoint=True``
+    ONLY for a trusted local test server; production verification must leave it
+    at the secure default.
+
+    If the endpoint is unreachable or fails validation, the mandate is treated
+    as NOT verified (fail-closed per CLAUDE.md constraint #5: never silently
+    degrade).
 
     Returns (not_revoked, errors).
     """
     errors: list[str] = []
+
+    if not allow_insecure_endpoint:
+        try:
+            validate_revocation_endpoint(endpoint)
+        except RevocationEndpointError as e:
+            errors.append(f"Revocation endpoint rejected: {e}")
+            return False, errors
 
     try:
         req = urllib.request.Request(
@@ -386,12 +559,20 @@ def check_revocation(
             headers={"Accept": "application/json"},
             method="GET",
         )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        with _revocation_opener.open(req, timeout=timeout) as resp:
+            raw = resp.read(_MAX_REVOCATION_RESPONSE_BYTES + 1)
+            if len(raw) > _MAX_REVOCATION_RESPONSE_BYTES:
+                errors.append("Revocation response exceeds size limit")
+                return False, errors
+            data = json.loads(raw.decode("utf-8"))
             revoked_ids = data.get("revoked_ids", [])
             if mandate_id in revoked_ids:
                 errors.append(f"Mandate '{mandate_id}' has been revoked")
                 return False, errors
+    except RevocationEndpointError as e:
+        # A disallowed redirect surfaced through the opener.
+        errors.append(f"Revocation endpoint rejected: {e}")
+        return False, errors
     except (urllib.error.URLError, urllib.error.HTTPError) as e:
         # Fail-closed: unreachable endpoint = verification fails
         errors.append(f"Revocation endpoint unreachable: {e}")
@@ -418,6 +599,7 @@ def verify_mandate(
     check_revocation_status: bool = True,
     revocation_timeout: float = 5.0,
     require_binding_context: bool = True,
+    allow_insecure_revocation_endpoint: bool = False,
 ) -> MandateVerificationResult:
     """Verify a mandate credential against all five checks.
 
@@ -435,6 +617,10 @@ def verify_mandate(
             require caller-provided binding context before authority is granted.
             Set false only for exploratory validation that is not granting
             authority.
+        allow_insecure_revocation_endpoint: When true, skip the https-only and
+            private-address SSRF guard on the revocation endpoint. Set true ONLY
+            for a trusted local test server; production verification must leave
+            it false.
 
     Returns a MandateVerificationResult.
     """
@@ -571,6 +757,7 @@ def verify_mandate(
             mandate_obj.mandate_id,
             mandate_obj.revocation_endpoint,
             timeout=revocation_timeout,
+            allow_insecure_endpoint=allow_insecure_revocation_endpoint,
         )
         result.checks["revocation_status"] = not_revoked
         if not not_revoked:
