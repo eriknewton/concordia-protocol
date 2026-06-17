@@ -160,6 +160,13 @@ class VerascoreClient:
     """
 
     def __init__(self, base_url: str = "https://verascore.ai") -> None:
+        # Require https so signed receipts are never POSTed over a downgraded
+        # cleartext transport. This is operator-configured (not attacker
+        # data), so a plain scheme check is sufficient here; the stronger
+        # private-range SSRF guard lives on the issuer-supplied mandate
+        # revocation endpoint in mandate.validate_revocation_endpoint.
+        if not base_url.startswith("https://"):
+            raise ValueError("VerascoreClient base_url must use https")
         self.base_url = base_url.rstrip("/")
 
     def report_concordia_receipt(

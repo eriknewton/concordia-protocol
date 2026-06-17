@@ -25,12 +25,14 @@ from unittest.mock import patch
 import pytest
 
 from concordia.mandate import (
+    RevocationEndpointError,
     check_revocation,
     check_temporal_validity,
     sign_delegation,
     sign_mandate,
     validate_constraints,
     validate_mandate_schema,
+    validate_revocation_endpoint,
     verify_delegation_chain,
     verify_mandate,
 )
@@ -771,7 +773,9 @@ class TestRevocation:
         t.start()
 
         not_revoked, errors = check_revocation(
-            "mandate-123", f"http://127.0.0.1:{port}/revocations"
+            "mandate-123",
+            f"http://127.0.0.1:{port}/revocations",
+            allow_insecure_endpoint=True,
         )
         assert not_revoked is True
         assert errors == []
@@ -785,7 +789,9 @@ class TestRevocation:
         t.start()
 
         not_revoked, errors = check_revocation(
-            "mandate-123", f"http://127.0.0.1:{port}/revocations"
+            "mandate-123",
+            f"http://127.0.0.1:{port}/revocations",
+            allow_insecure_endpoint=True,
         )
         assert not_revoked is False
         assert any("revoked" in e.lower() for e in errors)
@@ -794,7 +800,10 @@ class TestRevocation:
     def test_unreachable_endpoint_fails_closed(self):
         """Fail-closed: unreachable endpoint = mandate NOT verified."""
         not_revoked, errors = check_revocation(
-            "mandate-123", "http://127.0.0.1:1/nonexistent", timeout=1.0
+            "mandate-123",
+            "http://127.0.0.1:1/nonexistent",
+            timeout=1.0,
+            allow_insecure_endpoint=True,
         )
         assert not_revoked is False
         assert any("unreachable" in e.lower() for e in errors)
@@ -806,10 +815,167 @@ class TestRevocation:
         t.start()
 
         not_revoked, errors = check_revocation(
-            "mandate-123", f"http://127.0.0.1:{port}/revocations"
+            "mandate-123",
+            f"http://127.0.0.1:{port}/revocations",
+            allow_insecure_endpoint=True,
         )
         assert not_revoked is False
         assert any("invalid" in e.lower() for e in errors)
+        t.join(timeout=2)
+
+
+class TestRevocationEndpointSSRFGuard:
+    """SSRF guard on the issuer-supplied revocation endpoint.
+
+    A trusted-but-compromised or federated issuer must not be able to turn the
+    revocation check into a request-forgery primitive against the verifier's
+    internal network or a cloud metadata service.
+    """
+
+    # --- Scheme allowlist -------------------------------------------------
+
+    @pytest.mark.parametrize(
+        "endpoint",
+        [
+            "http://revocations.example.com/list",   # plain http
+            "ftp://revocations.example.com/list",
+            "file:///etc/passwd",
+            "gopher://revocations.example.com/list",
+            "data:application/json,{}",
+            "//revocations.example.com/list",          # scheme-relative
+        ],
+    )
+    def test_non_https_scheme_rejected(self, endpoint: str):
+        with pytest.raises(RevocationEndpointError):
+            validate_revocation_endpoint(endpoint)
+
+    # --- Literal private / loopback / metadata IPs ------------------------
+
+    @pytest.mark.parametrize(
+        "host",
+        [
+            "127.0.0.1",            # loopback
+            "127.255.255.254",      # loopback range edge
+            "10.0.0.5",             # RFC1918
+            "172.16.0.1",           # RFC1918
+            "192.168.1.1",          # RFC1918
+            "169.254.169.254",      # link-local cloud metadata service
+            "0.0.0.0",              # unspecified
+            "[::1]",                # IPv6 loopback
+            "[fc00::1]",            # IPv6 unique-local
+            "[fe80::1]",            # IPv6 link-local
+            "[::ffff:127.0.0.1]",   # IPv4-mapped loopback
+            "[::ffff:169.254.169.254]",  # IPv4-mapped metadata service
+            "[::]",                 # IPv6 unspecified
+        ],
+    )
+    def test_private_literal_ip_rejected(self, host: str):
+        with pytest.raises(RevocationEndpointError):
+            validate_revocation_endpoint(f"https://{host}/revocations")
+
+    @pytest.mark.parametrize(
+        "host",
+        [
+            "2130706433",   # decimal 127.0.0.1
+            "0x7f.0.0.1",   # hex 127.0.0.1
+            "127.1",        # short-form 127.0.0.1
+        ],
+    )
+    def test_alternate_ipv4_loopback_forms_rejected(self, host: str):
+        # The guard resolves the host with the SAME resolver the fetch will
+        # use (getaddrinfo), so any obfuscated form that the OS resolver
+        # expands to a loopback address is caught on the resolved IP, even
+        # though ipaddress.ip_address() does not parse these literal forms.
+        # This neutralizes the classic decimal/hex/short-form IPv4 bypass: the
+        # address checked is the address connected to.
+        with pytest.raises(RevocationEndpointError):
+            validate_revocation_endpoint(f"https://{host}/revocations")
+
+    # --- Hostnames that resolve to disallowed addresses -------------------
+
+    def test_hostname_resolving_to_loopback_rejected(self):
+        # localhost resolves to 127.0.0.1 / ::1 on essentially every host.
+        with pytest.raises(RevocationEndpointError):
+            validate_revocation_endpoint("https://localhost/revocations")
+
+    def test_trailing_dot_loopback_hostname_rejected(self):
+        with pytest.raises(RevocationEndpointError):
+            validate_revocation_endpoint("https://localhost./revocations")
+
+    def test_hostname_with_mixed_public_and_private_rejected(self):
+        """DNS-rebinding defense: if ANY resolved address is private, reject."""
+        public = ("AF_INET", None, None, "", ("93.184.216.34", 443))
+        private = ("AF_INET", None, None, "", ("127.0.0.1", 443))
+        with patch(
+            "concordia.mandate.socket.getaddrinfo",
+            return_value=[public, private],
+        ):
+            with pytest.raises(RevocationEndpointError):
+                validate_revocation_endpoint("https://rebind.example.com/revocations")
+
+    def test_unresolvable_hostname_rejected(self):
+        with pytest.raises(RevocationEndpointError):
+            validate_revocation_endpoint(
+                "https://nonexistent.invalid.example.test/revocations"
+            )
+
+    # --- Public host passes ----------------------------------------------
+
+    def test_public_hostname_allowed(self):
+        public = ("AF_INET", None, None, "", ("93.184.216.34", 443))
+        with patch(
+            "concordia.mandate.socket.getaddrinfo",
+            return_value=[public],
+        ):
+            out = validate_revocation_endpoint("https://revocations.example.com/list")
+        assert out == "https://revocations.example.com/list"
+
+    def test_public_literal_ip_allowed(self):
+        out = validate_revocation_endpoint("https://93.184.216.34/list")
+        assert out == "https://93.184.216.34/list"
+
+    # --- check_revocation honours the guard by default --------------------
+
+    def test_check_revocation_rejects_insecure_by_default(self):
+        not_revoked, errors = check_revocation(
+            "mandate-123", "http://127.0.0.1:9/revocations"
+        )
+        assert not_revoked is False
+        assert any("rejected" in e.lower() for e in errors)
+
+    def test_check_revocation_rejects_metadata_service_by_default(self):
+        not_revoked, errors = check_revocation(
+            "mandate-123", "https://169.254.169.254/latest/meta-data/"
+        )
+        assert not_revoked is False
+        assert any("rejected" in e.lower() for e in errors)
+
+    def test_redirect_to_internal_is_blocked(self):
+        """A 30x Location to an internal target must not be followed."""
+
+        class _RedirectHandler(BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802
+                self.send_response(302)
+                self.send_header("Location", "http://127.0.0.1:1/internal")
+                self.end_headers()
+
+            def log_message(self, *args):  # silence test server logging
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), _RedirectHandler)
+        port = server.server_address[1]
+        t = Thread(target=server.handle_request, daemon=True)
+        t.start()
+
+        # Reach the redirecting server via the insecure-allowed path, then
+        # confirm the redirect itself is refused (never followed).
+        not_revoked, errors = check_revocation(
+            "mandate-123",
+            f"http://127.0.0.1:{port}/revocations",
+            allow_insecure_endpoint=True,
+        )
+        assert not_revoked is False
+        assert any("redirect" in e.lower() for e in errors)
         t.join(timeout=2)
 
 
