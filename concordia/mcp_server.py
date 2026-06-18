@@ -1179,11 +1179,14 @@ def tool_session_receipt_envelope(
 @mcp.tool(
     name="concordia_competence_proof",
     description=(
-        "Generate a privacy-preserving competence proof. Proves negotiation "
-        "competence (agreement rate, fulfillment, etc.) without revealing "
-        "individual counterparties, deal terms, or session details. "
-        "Uses Merkle tree commitments to allow optional spot-checking of "
-        "attestations via selective reveals."
+        "Generate a privacy-preserving competence proof: signed, prover-asserted "
+        "aggregate stats (agreement rate, fulfillment, etc.) plus a Merkle "
+        "commitment to your attestation IDs, without revealing individual "
+        "counterparties, deal terms, or session details. Selectively reveal some "
+        "attestations for spot-checking, or reveal them ALL so a verifier can "
+        "recompute and confirm the aggregate. With no/partial reveal the headline "
+        "stats are asserted, not independently verifiable (this is selective "
+        "disclosure, not a zero-knowledge aggregate)."
     ),
 )
 def tool_competence_proof(
@@ -1262,9 +1265,12 @@ def tool_competence_proof(
 @mcp.tool(
     name="concordia_verify_competence_proof",
     description=(
-        "Verify a competence proof received from a counterparty. "
-        "Checks signature validity, Merkle root consistency, and any revealed "
-        "attestation inclusion proofs. Works offline."
+        "Verify a competence proof received from a counterparty. Checks signature "
+        "validity, that any revealed attestation belongs to the committed Merkle "
+        "set, and the revealed attestations' party signatures. The headline "
+        "aggregate stats are only CONFIRMED when the prover revealed the full set "
+        "(response field 'aggregate_verified'); otherwise they are prover-asserted "
+        "('claims_asserted_not_verified'). Works offline."
     ),
 )
 def tool_verify_competence_proof(
@@ -1318,6 +1324,11 @@ def tool_verify_competence_proof(
             except ValueError:
                 result.warnings.append(f"Invalid created_at format: {created_at_str}")
 
+        # The aggregate numbers are only CONFIRMED on a full reveal. When they
+        # are merely prover-asserted, label them as such so a consuming agent
+        # does not read "total_negotiations: 10000" next to "valid: true" as a
+        # confirmed count.
+        aggregate_verified = result.aggregate_verified
         response = {
             "valid": result.valid,
             "proof_id": proof.get("proof_id", ""),
@@ -1325,14 +1336,26 @@ def tool_verify_competence_proof(
             "errors": result.errors,
             "warnings": result.warnings,
             "merkle_proofs_valid": result.merkle_proofs_valid,
+            "aggregate_verified": aggregate_verified,
+            "claims_asserted_not_verified": result.claims_asserted_not_verified,
+            "unverified_parties": result.unverified_parties,
             "summary": {
                 "total_negotiations": proof.get("claims", {}).get("total_negotiations", 0),
                 "agreement_rate": proof.get("claims", {}).get("agreement_rate", 0),
                 "revealed_count": len(proof.get("revealed_attestations", [])),
+                "aggregate_verified": aggregate_verified,
             },
         }
-        if result.valid:
-            response["message"] = "Competence proof verified successfully."
+        if result.valid and aggregate_verified:
+            response["message"] = (
+                "Competence proof verified; aggregate stats confirmed by full reveal."
+            )
+        elif result.valid:
+            response["message"] = (
+                "Competence proof signature and revealed-attestation membership "
+                "verified. The aggregate stats are PROVER-ASSERTED, not confirmed "
+                "(full reveal required to verify them)."
+            )
         else:
             response["message"] = "Competence proof verification failed."
 

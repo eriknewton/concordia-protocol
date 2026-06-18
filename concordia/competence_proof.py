@@ -1,21 +1,40 @@
-"""ZK-style Competence Proofs — privacy-preserving negotiation competence.
+"""Competence Proofs — selectively revealable, signed negotiation-history commitment.
 
-A competence proof is a privacy-preserving alternative to a receipt bundle.
-Instead of sharing all attestations (which reveals counterparties and session
-details), it shares only:
-  - Aggregate statistics (from BundleSummary)
-  - A Merkle root of the attestation IDs (so individual attestations can be
-    selectively revealed later if the prover chooses)
+A competence proof is a privacy-preserving alternative to sharing a full receipt
+bundle. Instead of sharing all attestations (which reveals counterparties and
+session details), it shares:
+  - Aggregate statistics that the PROVER ASSERTS (from BundleSummary)
+  - A Merkle root committing to the prover's attestation IDs (so individual
+    attestations can be selectively revealed)
   - Ed25519 signature over the whole thing
 
-This allows an agent to prove negotiation competence without revealing:
-  - Individual counterparties
-  - Deal terms
-  - Specific sessions
-  - Timeline details
+What a verifier can confirm depends on how much the prover reveals:
+
+  - **Signature + membership (always):** the proof is signed by the claiming
+    agent, and any *revealed* attestation provably belongs to the committed
+    Merkle set. The revealed attestations' own party signatures are checked.
+
+  - **Full reveal (all attestations revealed, all membership proofs valid):**
+    the verifier RECOMPUTES the aggregate statistics from the revealed
+    attestations and rejects the proof if the prover's signed ``claims`` do not
+    match. In this mode the headline numbers are actually verified
+    (``aggregate_verified=True``), exactly like ``verify_receipt_bundle``.
+
+  - **Subset / no reveal:** the aggregate statistics are PROVER-ASSERTED, NOT
+    verified. The Merkle root commits only to attestation *IDs*, not to
+    outcomes, so the verifier cannot recompute ``agreement_rate`` or
+    ``total_negotiations`` from anything it can check. The result reports
+    ``aggregate_verified=False`` and ``claims_asserted_not_verified=True``; a
+    caller MUST NOT read the headline numbers as confirmed.
+
+IMPORTANT — this is NOT a zero-knowledge proof. There is no cryptographic
+argument that the unrevealed aggregate is correct; absent a full reveal, the
+summary statistics carry only the prover's signature, not a verifiable
+guarantee. The privacy property is selective disclosure (reveal nothing, a
+subset, or everything), not a ZK aggregate.
 
 Implements Viral Strategy item #18 (session receipts as portable proof) with
-privacy-by-architecture rather than privacy-by-policy.
+privacy via selective disclosure rather than privacy-by-policy.
 """
 
 from __future__ import annotations
@@ -28,7 +47,7 @@ from typing import Any, Callable
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from .receipt_bundle import _compute_summary
+from .receipt_bundle import BundleSummary, _compute_summary
 from .signing import KeyPair, canonical_json, sign_message, verify_signature
 
 # ---------------------------------------------------------------------------
@@ -181,13 +200,21 @@ def verify_merkle_proof(attestation_id: str, proof: dict[str, Any], root: str) -
 
 @dataclass
 class CompetenceProof:
-    """Privacy-preserving proof of negotiation competence.
+    """Selectively revealable, signed commitment to negotiation history.
 
-    Proves aggregate stats without revealing individual sessions, counterparties,
-    or deal terms. A verifier can confirm:
+    Carries prover-ASSERTED aggregate stats plus a Merkle commitment to the
+    prover's attestation IDs, without forcing disclosure of individual sessions,
+    counterparties, or deal terms. A verifier can always confirm:
       1. The proof is signed by the claiming agent
-      2. The Merkle root commits to specific attestations
-      3. Individual attestations can be spot-checked via Merkle inclusion proofs
+      2. Any *revealed* attestation provably belongs to the committed Merkle set
+      3. Revealed attestations' own party signatures are checked
+
+    The Merkle root commits to attestation IDs only (not outcomes), so the
+    aggregate ``claims`` are PROVER-ASSERTED, not verified, UNLESS the prover
+    reveals the full committed set — in which case ``verify_competence_proof``
+    recomputes and confirms the aggregate (see that function and
+    ``CompetenceVerificationResult.aggregate_verified``). This is selective
+    disclosure, NOT a zero-knowledge proof of the unrevealed aggregate.
 
     Fields:
         proof_id: Unique ID (format: "proof_<12-hex-chars>")
@@ -352,13 +379,41 @@ class CompetenceProof:
 
 @dataclass
 class CompetenceVerificationResult:
-    """Result of verifying a competence proof."""
+    """Result of verifying a competence proof.
+
+    ``valid`` means "signature is good, every revealed attestation provably
+    belongs to the committed Merkle set, and the revealed attestations' own
+    party signatures check out." It does NOT by itself mean the headline
+    aggregate numbers (``total_negotiations``, ``agreement_rate``, ...) are
+    proven — read ``aggregate_verified`` for that.
+
+    ``aggregate_verified`` is True ONLY when the prover revealed the full
+    committed set, every membership proof verified, and the verifier's
+    recomputation of the aggregate from the revealed attestations matched the
+    prover's signed ``claims``. In that case the headline numbers are verified,
+    exactly like ``verify_receipt_bundle``.
+
+    ``claims_asserted_not_verified`` is True whenever the aggregate could NOT be
+    recomputed (no reveal, or only a subset revealed). A caller MUST treat the
+    proof's ``claims`` as a self-asserted advertisement in that case, never as a
+    confirmed count — a prover can sign ``{total_negotiations: 10000,
+    agreement_rate: 1.0}`` over a Merkle root of zero real attestations and the
+    signature/membership checks still pass.
+
+    ``unverified_parties`` names parties on revealed attestations whose key the
+    verifier could not resolve. Their signatures were NOT checked, so a
+    self-named counterparty in this list must not be read as independent
+    evidence (a Sybil can name a counterparty it controls or invents).
+    """
 
     valid: bool
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     merkle_proofs_valid: bool = True
     sybil_flags: dict[str, Any] = field(default_factory=dict)
+    aggregate_verified: bool = False
+    claims_asserted_not_verified: bool = True
+    unverified_parties: list[str] = field(default_factory=list)
 
 
 def verify_competence_proof(
@@ -369,19 +424,39 @@ def verify_competence_proof(
     """Verify a competence proof.
 
     Checks:
-      1. Signature validity against the agent's public key
-      2. Merkle root consistency: attestation_count matches claims.total_negotiations
-      3. If revealed_attestations are present:
-         a. Each has a valid Merkle inclusion proof against the root
-         b. Each attestation validates against party signatures (if keys are available)
+      1. Signature validity against the agent's public key.
+      2. Internal consistency: ``attestation_count`` matches
+         ``claims.total_negotiations`` (both are prover-chosen and inside the
+         same signed blob, so this only catches an inconsistent forgery, not an
+         inflated-but-consistent one).
+      3. If ``revealed_attestations`` are present:
+         a. Each has a valid Merkle inclusion proof against the root.
+         b. Each revealed attestation validates against its party signatures
+            (parties whose key cannot be resolved are surfaced in
+            ``unverified_parties`` and are NOT counted as independent evidence).
+      4. **Aggregate verification (full reveal only):** if the prover reveals the
+         FULL committed set (one distinct revealed attestation per committed ID,
+         all membership proofs valid), the aggregate is RECOMPUTED from the
+         revealed attestations and the proof FAILS if the signed ``claims`` do
+         not match. ``aggregate_verified`` is then True. Otherwise the aggregate
+         is NOT recomputable and the result reports
+         ``aggregate_verified=False`` and ``claims_asserted_not_verified=True``;
+         callers MUST treat ``claims`` as self-asserted, never as confirmed.
+
+    The Merkle root commits to attestation IDs only, not outcomes. Without a full
+    reveal there is NO cryptographic guarantee behind the headline aggregate;
+    this is selective disclosure, not a zero-knowledge proof.
 
     Args:
         proof_dict: The proof as a dict (from CompetenceProof.to_dict()).
         resolve_key: Callback that maps agent_id to Ed25519PublicKey, or None.
         check_revealed_attestations: If False, skip deep attestation verification.
+            When False, the aggregate is never recomputed (no full-reveal
+            confirmation), so ``aggregate_verified`` stays False.
 
     Returns:
-        CompetenceVerificationResult with valid flag and any errors/warnings.
+        CompetenceVerificationResult with valid flag, the aggregate-honesty
+        fields, and any errors/warnings.
     """
     errors: list[str] = []
     warnings: list[str] = []
@@ -431,7 +506,14 @@ def verify_competence_proof(
             f"claims says {claims.get('total_negotiations', 0)}"
         )
 
-    # 3. Verify revealed attestations and Merkle proofs
+    # 3. Verify revealed attestations and Merkle proofs.
+    #
+    # Track which revealed attestation IDs have a VALID membership proof — only
+    # those can support a full-reveal aggregate recomputation below. Track
+    # parties whose key could not be resolved so a self-named (possibly Sybil)
+    # counterparty does not silently read as independently verified.
+    revealed_membership_valid: set[str] = set()
+    unverified_parties: set[str] = set()
     if check_revealed_attestations and revealed_attestations:
         for att in revealed_attestations:
             att_id = att.get("attestation_id", "")
@@ -450,7 +532,9 @@ def verify_competence_proof(
                 merkle_proofs_valid = False
             else:
                 # Verify the Merkle proof
-                if not verify_merkle_proof(att_id, proof_for_att, root):
+                if verify_merkle_proof(att_id, proof_for_att, root):
+                    revealed_membership_valid.add(att_id)
+                else:
                     errors.append(
                         f"Merkle proof failed for revealed attestation '{att_id}'"
                     )
@@ -466,13 +550,21 @@ def verify_competence_proof(
                         f"Revealed attestation '{att_id}', party {j} ('{pid}'): "
                         f"empty signature"
                     )
+                    if pid != agent_id:
+                        unverified_parties.add(pid)
                     continue
                 party_key = resolve_key(pid)
                 if party_key is None:
+                    # Non-fatal (a legitimate partial reveal may name a
+                    # counterparty this verifier does not know), but the party's
+                    # signature was NOT checked, so surface it distinctly rather
+                    # than letting it pass as verified evidence.
                     warnings.append(
                         f"Revealed attestation '{att_id}', party {j} ('{pid}'): "
                         f"cannot resolve key, signature not verified"
                     )
+                    if pid != agent_id:
+                        unverified_parties.add(pid)
                     continue
                 signable_party = {
                     k: v for k, v in party.items() if k != "signature"
@@ -482,6 +574,50 @@ def verify_competence_proof(
                         f"Revealed attestation '{att_id}', party {j} ('{pid}'): "
                         f"invalid signature"
                     )
+                    if pid != agent_id:
+                        unverified_parties.add(pid)
+
+    # 4. Aggregate verification — only possible on a FULL reveal.
+    #
+    # The Merkle root commits to attestation IDs, not to outcomes, so the
+    # aggregate claims cannot be recomputed from anything the verifier can check
+    # UNLESS the prover reveals the entire committed set. "Full reveal" means:
+    # check_revealed_attestations is on, every committed attestation is revealed
+    # with a VALID membership proof, and no ID is double-counted to fake the
+    # count. Only then do we recompute the BundleSummary from the revealed
+    # attestations and require the signed claims to match.
+    aggregate_verified = False
+    claims_asserted_not_verified = True
+    if (
+        check_revealed_attestations
+        and att_count > 0
+        and len(revealed_attestations) == att_count
+        and len(revealed_membership_valid) == att_count
+        and merkle_proofs_valid
+    ):
+        recomputed = _compute_summary(agent_id, revealed_attestations).to_dict()
+        claimed = BundleSummary.from_dict(claims).to_dict()
+        mismatches: list[str] = []
+        for key in recomputed:
+            rec_val = recomputed[key]
+            claim_val = claimed.get(key)
+            if isinstance(rec_val, float) and isinstance(claim_val, (int, float)):
+                if abs(float(claim_val) - rec_val) > 0.001:
+                    mismatches.append(
+                        f"{key}: claimed {claim_val}, recomputed {rec_val}"
+                    )
+            elif isinstance(rec_val, list):
+                if sorted(map(str, claim_val or [])) != sorted(map(str, rec_val)):
+                    mismatches.append(f"{key} mismatch")
+            elif claim_val != rec_val:
+                mismatches.append(f"{key}: claimed {claim_val}, recomputed {rec_val}")
+
+        if mismatches:
+            for m in mismatches:
+                errors.append(f"Full-reveal aggregate mismatch: {m}")
+        else:
+            aggregate_verified = True
+            claims_asserted_not_verified = False
 
     return CompetenceVerificationResult(
         valid=len(errors) == 0,
@@ -489,4 +625,7 @@ def verify_competence_proof(
         warnings=warnings,
         merkle_proofs_valid=merkle_proofs_valid,
         sybil_flags={},
+        aggregate_verified=aggregate_verified,
+        claims_asserted_not_verified=claims_asserted_not_verified,
+        unverified_parties=sorted(unverified_parties),
     )

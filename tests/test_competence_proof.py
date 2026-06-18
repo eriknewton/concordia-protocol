@@ -607,3 +607,145 @@ class TestEdgeCases:
         assert claims["total_negotiations"] == 3
         assert claims["agreements"] == 2
         assert round(claims["agreement_rate"], 4) == round(2.0 / 3.0, 4)
+
+
+# ---------------------------------------------------------------------------
+# C-H1: aggregate honesty — recompute-or-honestly-label
+# ---------------------------------------------------------------------------
+
+
+class TestAggregateHonesty:
+    """The aggregate claims must be recomputed on a full reveal, and must be
+    honestly labelled as unverified on no/partial reveal.
+
+    Regression guard for C-H1: a prover could sign inflated aggregate claims over
+    a Merkle root and have ``valid=True`` returned with the headline numbers
+    sitting right next to it as if confirmed.
+    """
+
+    def test_full_reveal_honest_claims_aggregate_verified(self):
+        """A full-reveal proof with honest claims passes with aggregate_verified=True."""
+        atts = [
+            _make_attestation(status="agreed"),
+            _make_attestation(status="rejected"),
+            _make_attestation(status="agreed"),
+        ]
+        att_ids = [att["attestation_id"] for att in atts]
+        kp = _get_key("agent_a")
+        proof = CompetenceProof.create("agent_a", atts, kp, reveal_ids=att_ids)
+
+        result = verify_competence_proof(proof.to_dict(), _test_resolver)
+        assert result.valid is True
+        assert result.aggregate_verified is True
+        assert result.claims_asserted_not_verified is False
+        assert result.merkle_proofs_valid is True
+        # Honest claims: 2/3 agreements.
+        assert proof.claims["agreements"] == 2
+
+    def test_full_reveal_mismatched_claims_fails(self):
+        """A full-reveal proof whose signed claims do not match the revealed
+        attestations is REJECTED (this is the core C-H1 fix)."""
+        atts = [_make_attestation(status="rejected") for _ in range(3)]
+        att_ids = [att["attestation_id"] for att in atts]
+        kp = _get_key("agent_a")
+        proof = CompetenceProof.create("agent_a", atts, kp, reveal_ids=att_ids)
+
+        # Tamper the aggregate to brag about agreements that did not happen, then
+        # re-sign so the signature check still passes — only the recompute can
+        # catch this.
+        proof.claims["agreements"] = 3
+        proof.claims["agreement_rate"] = 1.0
+        proof.agent_signature = sign_message(proof.to_dict_for_signing(), kp)
+
+        result = verify_competence_proof(proof.to_dict(), _test_resolver)
+        assert result.valid is False
+        assert result.aggregate_verified is False
+        assert any("aggregate mismatch" in e.lower() for e in result.errors)
+
+    def test_zero_reveal_inflated_claims_not_reported_verified(self):
+        """A proof that reveals NOTHING but signs a wildly inflated aggregate over
+        a Merkle root of zero real attestations must NOT report the aggregate as
+        verified. ``valid`` may be True (signature + trivial membership hold), but
+        a caller reading the result must see that the 10000 negotiations are
+        unconfirmed."""
+        kp = _get_key("agent_liar")
+        # Build a legitimately-signed but empty proof, then inflate the claims and
+        # the committed count and re-sign — no attestations are revealed.
+        proof = CompetenceProof.create("agent_liar", [], kp)
+        proof.claims["total_negotiations"] = 10000
+        proof.claims["agreements"] = 10000
+        proof.claims["agreement_rate"] = 1.0
+        proof.attestation_count = 10000
+        # Give it a non-empty root so it does not read as a trivially-empty proof.
+        proof.attestation_merkle_root = "f" * 64
+        proof.agent_signature = sign_message(proof.to_dict_for_signing(), kp)
+
+        result = verify_competence_proof(proof.to_dict(), _test_resolver)
+
+        # The aggregate is the whole point of C-H1: it must NOT be verified.
+        assert result.aggregate_verified is False
+        assert result.claims_asserted_not_verified is True
+
+    def test_partial_reveal_does_not_verify_aggregate(self):
+        """Revealing a subset is not enough to confirm the aggregate."""
+        atts = [_make_attestation() for _ in range(4)]
+        att_ids = [att["attestation_id"] for att in atts]
+        kp = _get_key("agent_a")
+        proof = CompetenceProof.create("agent_a", atts, kp, reveal_ids=att_ids[:2])
+
+        result = verify_competence_proof(proof.to_dict(), _test_resolver)
+        assert result.valid is True
+        assert result.aggregate_verified is False
+        assert result.claims_asserted_not_verified is True
+
+    def test_full_reveal_with_skip_deep_check_does_not_verify_aggregate(self):
+        """With check_revealed_attestations=False the aggregate is never recomputed."""
+        atts = [_make_attestation() for _ in range(3)]
+        att_ids = [att["attestation_id"] for att in atts]
+        kp = _get_key("agent_a")
+        proof = CompetenceProof.create("agent_a", atts, kp, reveal_ids=att_ids)
+
+        result = verify_competence_proof(
+            proof.to_dict(), _test_resolver, check_revealed_attestations=False
+        )
+        assert result.aggregate_verified is False
+        assert result.claims_asserted_not_verified is True
+
+    def test_duplicate_reveal_cannot_fake_full_reveal(self):
+        """Revealing the same attestation att_count times must NOT count as a full
+        reveal (defends the recompute path against a double-count forgery)."""
+        att = _make_attestation(status="agreed")
+        kp = _get_key("agent_a")
+        # One real attestation, but claim a committed count of 3.
+        proof = CompetenceProof.create("agent_a", [att], kp, reveal_ids=[att["attestation_id"]])
+        # Forge: pretend the set has 3 members and reveal the same one 3 times.
+        proof.attestation_count = 3
+        proof.claims["total_negotiations"] = 3
+        proof.claims["agreements"] = 3
+        proof.revealed_attestations = [att, att, att]
+        proof.merkle_proofs = proof.merkle_proofs * 3
+        proof.agent_signature = sign_message(proof.to_dict_for_signing(), kp)
+
+        result = verify_competence_proof(proof.to_dict(), _test_resolver)
+        # Distinct-membership count is 1, not 3, so the aggregate is not verified.
+        assert result.aggregate_verified is False
+        assert result.claims_asserted_not_verified is True
+
+    def test_unverified_party_surfaced_on_revealed_attestation(self):
+        """A revealed attestation naming a counterparty whose key cannot be
+        resolved surfaces that party in unverified_parties (Sybil self-naming
+        must not read as independent evidence)."""
+        # agent_a is known; the counterparty 'ghost_cp' has no key in the registry.
+        att = _make_attestation(agent_a="agent_a", agent_b="ghost_cp")
+        kp = _get_key("agent_a")
+        proof = CompetenceProof.create(
+            "agent_a", [att], kp, reveal_ids=[att["attestation_id"]]
+        )
+
+        def resolver_without_ghost(agent_id: str) -> Ed25519PublicKey | None:
+            if agent_id == "ghost_cp":
+                return None
+            return _test_resolver(agent_id)
+
+        result = verify_competence_proof(proof.to_dict(), resolver_without_ghost)
+        assert "ghost_cp" in result.unverified_parties
