@@ -211,6 +211,13 @@
     "validity_temporal": {
       "$ref": "#/$defs/validity_temporal",
       "description": "Optional temporal validity window for the attestation. Added in v0.4.0 (WP3)."
+    },
+
+    "countersignatures": {
+      "type": "object",
+      "description": "C-H2 outcome-binding (Option B): map of party agent_id -> base64url-padded Ed25519 signature over canonical_json(strip_signatures(attestation minus countersignatures)). Binds the issuance snapshot (outcome, meta, session_id, transcript_hash) so the outcome is not merely prover-asserted. One entry per party that had a signing key at issuance; parties without a key get no entry. Added in v0.2.0 (C-H2). Soundness (a >=0.2.0 attestation MUST carry a valid map) is enforced by the bundle verifier, not by this shape schema; <0.2.0 attestations validate without it.",
+      "additionalProperties": { "type": "string", "minLength": 1 },
+      "propertyNames": { "minLength": 1 }
     }
   },
   "additionalProperties": false,

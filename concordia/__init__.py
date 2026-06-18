@@ -7,7 +7,13 @@ __version__ = "0.7.0a1"
 
 from .agent import Agent
 from .approval_receipt import ApprovalReceiptResult, verify_approval_receipt
-from .attestation import generate_attestation, is_valid_now
+from .attestation import (
+    ATTESTATION_VERSION,
+    countersign_attestation,
+    generate_attestation,
+    is_valid_now,
+    verify_attestation_countersignature,
+)
 from .ctef import predicate_to_ctef_claim
 from .discovery import Have, Match, Want, find_matches
 from .envelope import build_trust_evidence_envelope, verify_envelope_signature
@@ -110,7 +116,10 @@ __all__ = [
     "VerascoreClient",
     "make_verascore_auto_hook",
     # Attestation
+    "ATTESTATION_VERSION",
     "generate_attestation",
+    "countersign_attestation",
+    "verify_attestation_countersignature",
     "is_valid_now",
     # Receipt Bundles
     "ReceiptBundle",

@@ -6,6 +6,8 @@ export {
   MAX_REFERENCES,
   AttestationError,
   generateAttestation,
+  countersignAttestation,
+  verifyAttestationCountersignature,
   generateReceiptSummary,
   computeTranscriptHash,
   validateValidityTemporal,

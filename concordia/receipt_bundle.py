@@ -9,6 +9,7 @@ Implements Viral Strategy item #18: session receipts as portable proof.
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -16,7 +17,25 @@ from typing import Any, Callable
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
+from .attestation import verify_attestation_countersignature
 from .signing import KeyPair, canonical_json, sign_message, verify_signature
+
+# C-H2 outcome-binding (Option B): attestations at or above this version MUST
+# carry a valid issuance ``countersignatures`` map or the bundle is rejected
+# (fail-closed). Below this version, the outcome is legacy prover-asserted:
+# reported as outcome-unbound and NOT credited, but NOT an error (dual-accept).
+_OUTCOME_BINDING_MIN = (0, 2)
+_SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
+
+
+def _attestation_version_at_least(ver: str, major: int, minor: int) -> bool:
+    """True iff ``ver`` is a well-formed ``major.minor.patch`` at or above
+    ``(major, minor)``. Malformed/missing versions are treated as BELOW (i.e.
+    legacy/unbound) -- never an error, just not credited."""
+    if not isinstance(ver, str) or not _SEMVER_RE.match(ver):
+        return False
+    parts = ver.split(".")
+    return (int(parts[0]), int(parts[1])) >= (major, minor)
 
 # ---------------------------------------------------------------------------
 # Bundle summary — precomputed aggregate stats
@@ -265,6 +284,16 @@ class BundleVerificationResult:
     bundle *claims*, including ones whose signature could not be resolved.
     ``unverified_counterparties`` names the parties the verifier could not
     cryptographically confirm.
+
+    C-H2 outcome-binding (Option B): ``outcome_bound_count`` is the number of
+    attestations whose OUTCOME is cryptographically bound to its issuance
+    snapshot by a valid party countersignature (>=0.2.0 with a verifying map).
+    ``outcome_unbound_attestations`` names the attestation_ids whose outcome is
+    only prover-asserted -- legacy <0.2.0 records that predate C-H2. A consumer
+    (Verascore, competence-proof aggregation) must credit ONLY bound outcomes;
+    unbound ones are reported, not errored. A >=0.2.0 attestation with a
+    missing/invalid countersignature is a hard ERROR (the bundle is invalid),
+    so it never appears as merely "unbound."
     """
     valid: bool
     errors: list[str] = field(default_factory=list)
@@ -273,6 +302,8 @@ class BundleVerificationResult:
     sybil_flags: dict[str, Any] = field(default_factory=dict)
     verified_counterparties: int = 0
     unverified_counterparties: list[str] = field(default_factory=list)
+    outcome_bound_count: int = 0
+    outcome_unbound_attestations: list[str] = field(default_factory=list)
 
 
 def verify_bundle(
@@ -287,6 +318,20 @@ def verify_bundle(
       (c) The agent_id appears as a party in every attestation
       (d) Summary statistics match the attestations (no inflated claims)
       (e) Attestations are not duplicated
+      (f) C-H2 outcome-binding: each >=0.2.0 attestation carries a valid
+          issuance countersignature binding its outcome/meta/transcript_hash
+          (fail-closed if missing/invalid); <0.2.0 attestations are read as
+          legacy outcome-unbound and reported, not credited, not errored.
+
+    C-H2 fulfillment residual: the issuance countersignature binds
+    ``fulfillment`` only as it stood AT ISSUANCE (``null``). A ``fulfillment``
+    block added post-issuance (e.g. via the A2CN dispute-resolved path) is NOT
+    covered by the issuance countersignature; it is treated as integrity-bound
+    ONLY when its own ``counterparty_attestation.signature`` verifies under the
+    confirming counterparty's resolved key. Otherwise the fulfillment is
+    prover-asserted: a warning is emitted and it is excluded from any bound
+    tally (but it does NOT invalidate the whole bundle in this run -- wiring the
+    PRODUCER side of that fulfillment signature is separate follow-up work).
 
     Args:
         bundle_dict: The bundle as a dict (from ReceiptBundle.to_dict()).
@@ -387,6 +432,104 @@ def verify_bundle(
     if len(set(session_ids)) != len(session_ids):
         errors.append("Duplicate session_ids in bundle")
 
+    # (f) C-H2 outcome-binding. Per attestation, decide whether its OUTCOME is
+    # cryptographically bound to the issuance snapshot. This runs BEFORE step
+    # (d) trusts the recomputed summary over outcome/fulfillment/meta: a >=0.2.0
+    # attestation that is not bound has already appended an error (=> valid
+    # False), so the summary derived from its forged outcome cannot be trusted.
+    outcome_bound_count = 0
+    outcome_unbound_attestations: list[str] = []
+    for i, att in enumerate(attestations):
+        att_id = att.get("attestation_id", "")
+        ver = att.get("concordia_attestation", "")
+
+        if not _attestation_version_at_least(ver, *_OUTCOME_BINDING_MIN):
+            # Legacy / pre-C-H2 (or malformed version): outcome is
+            # prover-asserted. Reported as unbound, NOT credited, NOT an error.
+            outcome_unbound_attestations.append(att_id)
+        else:
+            # >=0.2.0 MUST carry a valid countersignature map or be REJECTED.
+            cs = att.get("countersignatures")
+            att_party_ids = {
+                p.get("agent_id", "") for p in att.get("parties", [])
+            }
+            if not isinstance(cs, dict) or not cs:
+                errors.append(
+                    f"Attestation {i}: version {ver} requires "
+                    f"countersignatures; none present"
+                )
+                outcome_unbound_attestations.append(att_id)
+            else:
+                any_party_member_verified = False
+                all_named_party_sigs_ok = True
+                for aid, sig in cs.items():
+                    if aid not in att_party_ids:
+                        # A countersignature naming a non-party is ignored for
+                        # crediting (it cannot bind the outcome on this party's
+                        # behalf); it does not, by itself, error the bundle.
+                        continue
+                    party_key = resolve_key(aid)
+                    if party_key is None:
+                        # Cannot resolve a party's key -> cannot confirm binding.
+                        all_named_party_sigs_ok = False
+                        continue
+                    if verify_attestation_countersignature(att, sig, party_key):
+                        any_party_member_verified = True
+                    else:
+                        all_named_party_sigs_ok = False
+                        errors.append(
+                            f"Attestation {i}: countersignature for "
+                            f"'{aid}' failed verification"
+                        )
+
+                if not all_named_party_sigs_ok:
+                    # At least one party-member countersignature was present but
+                    # failed to verify (or its key could not be resolved) ->
+                    # outcome is NOT bound. Fail-closed.
+                    if not any(
+                        f"Attestation {i}: countersignature" in e
+                        for e in errors
+                    ):
+                        errors.append(
+                            f"Attestation {i}: a party countersignature could "
+                            f"not be confirmed; outcome not bound"
+                        )
+                    outcome_unbound_attestations.append(att_id)
+                elif not any_party_member_verified:
+                    errors.append(
+                        f"Attestation {i}: version {ver} carries no verifiable "
+                        f"party countersignature; outcome not bound"
+                    )
+                    outcome_unbound_attestations.append(att_id)
+                else:
+                    outcome_bound_count += 1
+
+        # C-H2 fulfillment residual: fulfillment added post-issuance is NOT
+        # covered by the issuance countersignature. Credit it as integrity-bound
+        # only when its own counterparty_attestation.signature verifies under
+        # the confirming counterparty's resolved key; otherwise warn and treat
+        # as prover-asserted (does not invalidate the bundle in this run).
+        fulfillment = att.get("fulfillment")
+        if isinstance(fulfillment, dict):
+            cpa = fulfillment.get("counterparty_attestation")
+            fulfillment_bound = False
+            if isinstance(cpa, dict):
+                cp_id = cpa.get("agent_id", "")
+                cp_sig = cpa.get("signature", "")
+                cp_key = resolve_key(cp_id) if cp_id else None
+                if cp_sig and cp_key is not None and verify_signature(
+                    cpa, cp_sig, cp_key
+                ):
+                    fulfillment_bound = True
+            if not fulfillment_bound:
+                warnings.append(
+                    f"Attestation {i}: fulfillment present but its "
+                    f"counterparty_attestation.signature is missing or does "
+                    f"not verify; fulfillment is prover-asserted, not "
+                    f"integrity-bound (excluded from any bound fulfillment "
+                    f"tally)."
+                )
+
     # (d) Verify summary accuracy
     summary_accurate = True
     if attestations:
@@ -430,6 +573,8 @@ def verify_bundle(
         sybil_flags=sybil_flags,
         verified_counterparties=verified_counterparties,
         unverified_counterparties=sorted(unverified_cp),
+        outcome_bound_count=outcome_bound_count,
+        outcome_unbound_attestations=outcome_unbound_attestations,
     )
 
 
