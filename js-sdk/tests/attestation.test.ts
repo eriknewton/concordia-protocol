@@ -291,9 +291,9 @@ describe('countersignature parity + verification (C-H2 Option B)', () => {
         const sig = actualCs[agentId];
         expect(sig).toBeTruthy();
         // Verifies under the agent's key over the issuance snapshot.
-        expect(
-          verifyAttestationCountersignature(attestation, sig!, KP_BY_AGENT[agentId]!),
-        ).toBe(true);
+        expect(verifyAttestationCountersignature(attestation, sig!, KP_BY_AGENT[agentId]!)).toBe(
+          true,
+        );
         // A re-countersign of the same snapshot reproduces the same bytes.
         expect(countersignAttestation(attestation, KP_BY_AGENT[agentId]!)).toBe(sig);
       }
