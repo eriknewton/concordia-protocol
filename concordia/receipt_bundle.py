@@ -294,6 +294,17 @@ class BundleVerificationResult:
     unbound ones are reported, not errored. A >=0.2.0 attestation with a
     missing/invalid countersignature is a hard ERROR (the bundle is invalid),
     so it never appears as merely "unbound."
+
+    ``summary_accurate`` is a SELF-CONSISTENCY check (claimed summary == summary
+    recomputed over ALL attestations), retained for backward compatibility. It
+    is NOT an integrity signal on its own: for legacy ``outcome_unbound_attestations``
+    the recomputed summary reflects a forgeable, prover-asserted outcome. Summary
+    accuracy is credited as INTEGRITY-BOUND ONLY for the attestations counted in
+    ``outcome_bound_count``; the outcomes of ``outcome_unbound_attestations`` remain
+    prover-asserted (and are flagged by the FORGE-finding-1 warning) and MUST NOT
+    be credited by a consumer. A >=0.2.0 outcome that is tampered after issuance
+    fails its countersignature and is a hard ERROR, so it can never be silently
+    credited via ``summary_accurate``.
     """
     valid: bool
     errors: list[str] = field(default_factory=list)
@@ -316,7 +327,13 @@ def verify_bundle(
       (a) Bundle signature matches the agent's public key
       (b) Each attestation's party signatures are valid
       (c) The agent_id appears as a party in every attestation
-      (d) Summary statistics match the attestations (no inflated claims)
+      (d) Summary statistics match the attestations (no inflated claims). NOTE:
+          this is a self-consistency check over ALL attestations; it is credited
+          as integrity-bound ONLY for outcomes in ``outcome_bound_count``.
+          ``outcome_unbound_attestations`` (legacy <0.2.0) feed the recomputed
+          summary with prover-asserted outcomes (warned, per FORGE finding 1) and
+          MUST NOT be credited by a consumer. A >=0.2.0 outcome tamper fails its
+          countersignature in step (f) -> hard error -> never silently credited.
       (e) Attestations are not duplicated
       (f) C-H2 outcome-binding: each >=0.2.0 attestation carries a valid
           issuance countersignature binding its outcome/meta/transcript_hash
@@ -564,7 +581,17 @@ def verify_bundle(
             f"these. Unbound: {sorted(unbound_with_outcome)}."
         )
 
-    # (d) Verify summary accuracy
+    # (d) Verify summary accuracy. This is a SELF-CONSISTENCY check over ALL
+    # attestations (claimed summary == recomputed summary), retained for
+    # backward compatibility. It is credited as INTEGRITY-BOUND ONLY for the
+    # outcomes in ``outcome_bound_count``: a >=0.2.0 tamper already failed its
+    # countersignature in step (f) above (=> hard error => the bundle is invalid
+    # before this runs), and legacy ``outcome_unbound_attestations`` outcomes
+    # remain prover-asserted (flagged by the FORGE-finding-1 warning above) and
+    # MUST NOT be credited by a consumer. We do NOT drop unbound rows from the
+    # recompute (that would break the legacy dual-accept contract); the
+    # bound/unbound split (outcome_bound_count / outcome_unbound_attestations) is
+    # the integrity signal.
     summary_accurate = True
     if attestations:
         recomputed = _compute_summary(agent_id, attestations)
