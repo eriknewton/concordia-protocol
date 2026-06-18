@@ -16,6 +16,24 @@ python examples/demo_camera_negotiation.py
 python examples/demo_quick_negotiation.py
 ```
 
+## Lint and type check
+
+CI does not only run the tests. It also hard-fails on lint, type checking, and a test-count floor, so run these locally before opening a pull request. They mirror exactly what the CI workflow runs:
+
+```bash
+# Lint the package (config: [tool.ruff] in pyproject.toml)
+ruff check concordia
+
+# Type check the package (config: [tool.mypy] in pyproject.toml)
+mypy concordia
+
+# Test-count floor: fails if the collected pytest count drops below the
+# recorded floor, guarding against silent test loss
+bash scripts/test-floor.sh
+```
+
+A change that passes `pytest` but fails any of the above will be rejected by CI.
+
 ## Submitting Code Changes
 
 1. Fork the repository and create a branch from `main`.

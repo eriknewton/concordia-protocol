@@ -3,6 +3,7 @@
 ### An Open Standard for Structured Negotiation Between Autonomous Agents
 
 **Version:** 0.7.0-draft  
+**Version mapping:** spec edition `0.7.0-draft` maps to Python package `0.7.0a1` (PEP 440 pre-release form of the same edition) maps to the on-the-wire envelope identifier `concordia:0.1.0`. The wire identifier is intentionally pinned at `0.1.0` and is versioned independently of the spec edition: it changes only on a breaking envelope-format change, not on every spec revision.  
 **Status:** Draft (v0.7 adds cross-mandate revocation records, §9.6.4c; v0.6 added the predicate primitive)  
 **License:** Apache 2.0  
 **Authors:** Erik Newton
@@ -242,6 +243,7 @@ All Concordia messages are JSON objects transmitted over HTTPS. The protocol use
 - `session_id`: the negotiation session this message belongs to
 - `timestamp`: ISO 8601 UTC timestamp
 - `from`: the sending agent
+- `prev_hash`: hash of the previous message in the session transcript (the genesis hash `sha256:` followed by 64 zeros for the first message); chains the transcript per Section 9.3
 - `body`: type-specific payload
 - `signature`: Ed25519 signature over the canonical JSON of all other fields
 

@@ -202,6 +202,7 @@ session = seller.open_session(
     terms={"price": {"value": 100.00, "currency": "USD"}},
 )
 buyer.join_session(session)
+buyer.accept_session()  # Buyer accepts the session (PROPOSED -> ACTIVE)
 
 # Buyer counters at $80
 buyer.send_counter(BasicOffer(terms={"price": {"value": 80.00, "currency": "USD"}}))
@@ -285,6 +286,7 @@ Concordia defines:
 - Multi-attribute offer optimization
 
 **Documentation:**
+- [Documentation Index](docs/index.md): curated guide to all docs, examples, and runbooks
 - [Full Specification](SPEC.md): complete protocol specification
 - [v0.6 Predicate Primitive](docs/v0.6_predicate_primitive.md): signed predicate artifact, verifier, resolver, and CTEF mapping
 - [Python SDK](concordia/): reference implementation
