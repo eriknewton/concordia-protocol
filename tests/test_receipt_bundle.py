@@ -837,6 +837,7 @@ class TestMcpToolIntegration:
 
 from concordia import Agent, generate_attestation  # noqa: E402
 from concordia import BasicOffer as _BasicOffer  # noqa: E402
+from concordia.attestation import countersign_attestation  # noqa: E402
 
 
 def _mint_bound_attestation(
@@ -866,7 +867,8 @@ def _mint_bound_attestation(
     if status == "agreed":
         buyer.accept_offer(reasoning="ok")
     else:
-        buyer.decline_session(reasoning="no thanks")
+        # ACTIVE -> REJECTED is reject_offer (decline_session is PROPOSED-only).
+        buyer.reject_offer(reasoning="no thanks")
 
     key_pairs = {seller_id: seller.key_pair, buyer_id: buyer.key_pair}
     att = generate_attestation(session, key_pairs, category=category)
@@ -919,6 +921,35 @@ class TestOutcomeBindingBundle:
         assert any("countersignature" in e for e in result.errors), (
             f"expected a fail-closed countersignature error, got: {result.errors}"
         )
+
+    def test_self_rebind_single_party_countersig_fail_closed(self):
+        """OUTCOME-TAMPER forge (HIGH): a holder takes a GENUINE rejected session,
+        flips outcome.status to 'agreed', drops the counterparty's
+        countersignature, and re-countersigns the tampered snapshot with its OWN
+        key alone. Under 'at least one party signed' this passed; dual-accept
+        (every listed party must countersign) makes the bundle invalid because the
+        counterparty -- a listed party -- has no verifying countersignature."""
+        att, seller_id, _ = _mint_bound_attestation(
+            "self_rebind_s", "self_rebind_b", status="rejected"
+        )
+        assert att["outcome"]["status"] == "rejected"
+        # Forge: flip to agreed, drop the counterparty, re-sign with seller key.
+        att["outcome"]["status"] = "agreed"
+        att["countersignatures"] = {
+            seller_id: countersign_attestation(att, _KEY_REGISTRY[seller_id])
+        }
+        kp = _KEY_REGISTRY[seller_id]
+        bundle = ReceiptBundle.create(seller_id, [att], kp)
+        result = verify_bundle(bundle.to_dict(), _test_resolver)
+        assert result.valid is False, (
+            "a self-rebound flipped outcome (only the holder's own "
+            "countersignature) must invalidate the bundle (dual-accept)"
+        )
+        assert result.outcome_bound_count == 0
+        assert any(
+            "countersignature" in e or "outcome not bound" in e
+            for e in result.errors
+        ), f"expected a missing-party-countersignature error, got: {result.errors}"
 
     def test_mixed_version_no_silent_crediting(self):
         """A bundle mixing one 0.1.0 (legacy, unbound) and one valid 0.2.0:

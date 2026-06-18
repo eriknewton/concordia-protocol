@@ -19,20 +19,34 @@ What a verifier CAN confirm (the sound checks):
 
 Sound aggregate verification (C-H2 P4, closes #120): the aggregate statistics
 (``total_negotiations``, ``agreement_rate``, ``unique_counterparties``, ...) are
-reported as INDEPENDENTLY VERIFIED (``aggregate_verified=True``,
-``claims_asserted_not_verified=False``) IFF an exact four-condition gate holds:
+reported as INDEPENDENTLY VERIFIED FOR THE REVEALED SET (``aggregate_verified=True``,
+``claims_asserted_not_verified=False``) IFF an exact five-condition gate holds:
 
-  (a) every committed attestation is revealed AND each is ``>=0.2.0`` with a
-      party-member countersignature that verifies over its issuance snapshot
-      (the outcome is cryptographically bound),
+  (a) every committed attestation is revealed AND each is ``>=0.2.0`` with EVERY
+      listed party's countersignature verifying over its issuance snapshot (the
+      outcome is cryptographically bound, dual-accept — a holder cannot rewrite
+      ``outcome.status`` and re-sign with its OWN key alone),
   (b) the prover is a signed party in EVERY revealed attestation,
-  (c) all merkle inclusion proofs are valid, and
-  (d) the recompute over those countersigned outcomes equals the signed claims.
+  (c) all merkle inclusion proofs are valid,
+  (d) the recompute over those countersigned outcomes equals the signed claims,
+      and
+  (e) the signed ``attestation_merkle_root`` equals the root recomputed over
+      EXACTLY the revealed set (binds ``attestation_count`` to the commitment so
+      a claimed count smaller than the committed leaf set is rejected).
 
 If any condition fails, the verifier HONESTLY DOWNGRADES: the aggregate is left
 prover-asserted (``aggregate_verified=False``, ``claims_asserted_not_verified=True``),
 and a caller MUST NOT read the headline numbers as confirmed. A stolen-history
 reveal (prover not a party) is a HARD rejection (``valid=False``).
+
+COMPLETENESS CAVEAT (inherent to selective disclosure): ``aggregate_verified=True``
+confirms the revealed-and-committed set is internally consistent and party-bound;
+it does NOT prove the prover committed its ENTIRE history. A prover may commit only
+a favorable subset (e.g. omit losses) and still pass the gate over that subset.
+Proving completeness needs an external append-only history anchor the prover
+cannot fork per-proof, which this primitive does not provide (future capability,
+SPEC §9.6.6a). Read the headline as "this revealed set is sound and party-bound,"
+never as "this is the agent's complete or representative record."
 
 History (C-H1 refutation, 2026-06-17 -> C-H2 P4 re-enablement): an adversarial
 review once refuted a naive "full reveal => aggregate_verified=True" path on two
@@ -64,12 +78,10 @@ from typing import Any, Callable
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from .attestation import verify_attestation_countersignature
 from .receipt_bundle import (
-    _OUTCOME_BINDING_MIN,
     BundleSummary,
-    _attestation_version_at_least,
     _compute_summary,
+    evaluate_outcome_binding,
 )
 from .signing import KeyPair, canonical_json, sign_message, verify_signature
 
@@ -414,21 +426,39 @@ class CompetenceVerificationResult:
     does NOT mean the headline aggregate numbers are independently proven — read
     ``aggregate_verified`` for that.
 
-    ``aggregate_verified`` is True IFF the C-H2 P4 four-condition gate holds:
-    (a) full reveal of every committed attestation, each ``>=0.2.0`` with a valid
-    party-member countersignature (outcome cryptographically bound); (b) the
-    prover is a signed party in every reveal; (c) all merkle proofs valid; and
-    (d) the recompute over those countersigned outcomes equals the signed claims.
-    Otherwise it is False (the honest downgrade): the aggregate stays
+    ``aggregate_verified`` is True IFF the C-H2 P4 five-condition gate holds:
+    (a) full reveal of every committed attestation, each ``>=0.2.0`` with EVERY
+    listed party's valid countersignature (outcome cryptographically bound, dual-
+    accept — a holder cannot self-rebind a flipped outcome with its own key
+    alone); (b) the prover is a signed party in every reveal; (c) all merkle
+    proofs valid; (d) the recompute over those countersigned outcomes equals the
+    signed claims; and (e) the signed ``attestation_merkle_root`` equals the root
+    recomputed over EXACTLY the revealed set (binds ``attestation_count`` to the
+    commitment, so a claimed count smaller than the committed leaf set is
+    rejected). Otherwise it is False (the honest downgrade): the aggregate stays
     prover-asserted. (Pre-P4 this was always False; #123 closed the
     outcome-binding hole and P4 closed the membership hole, re-enabling the gate.)
 
+    SCOPE — what ``aggregate_verified=True`` MEANS (and does NOT mean). It
+    confirms the REVEALED-AND-COMMITTED set is internally self-consistent and
+    party-bound: every revealed attestation is a real, dual-countersigned session
+    the prover was a party in, and the signed numbers are the honest arithmetic
+    OF THAT SET. It is NOT a proof of COMPLETENESS. Selective disclosure cannot
+    prove the prover committed its ENTIRE history: a prover may build the Merkle
+    commitment over only a favorable subset (e.g. omit losses) and still get
+    ``aggregate_verified=True`` for a better-than-real aggregate. Proving
+    completeness needs an external, append-only history anchor the prover cannot
+    fork per-proof, which this primitive does not provide (a future capability,
+    SPEC §9.6.6a). A reputation consumer MUST read ``aggregate_verified=True`` as
+    "this revealed set is sound and party-bound," never as "this is the agent's
+    complete or representative track record."
+
     ``claims_asserted_not_verified`` is ``not aggregate_verified``: True whenever
-    the aggregate is NOT independently confirmed. A caller MUST treat ``claims``
-    as a self-asserted advertisement whenever this is True — a prover can sign
-    ``{total_negotiations: 10000, agreement_rate: 1.0}`` over a Merkle root of
-    zero real attestations and the signature/membership checks still pass, so a
-    zero/partial/legacy reveal never flips this to False.
+    the aggregate is NOT independently confirmed for the revealed set. A caller
+    MUST treat ``claims`` as a self-asserted advertisement whenever this is True —
+    a prover can sign ``{total_negotiations: 10000, agreement_rate: 1.0}`` over a
+    Merkle root of zero real attestations and the signature/membership checks
+    still pass, so a zero/partial/legacy reveal never flips this to False.
 
     ``unverified_parties`` names parties on revealed attestations whose key the
     verifier could not resolve. Their signatures were NOT checked, so a
@@ -477,33 +507,43 @@ def verify_competence_proof(
          b. Each revealed attestation validates against its party signatures
             (parties whose key cannot be resolved are surfaced in
             ``unverified_parties`` and are NOT counted as independent evidence).
-         c. Each ``>=0.2.0`` revealed attestation carries a valid party-member
-            countersignature binding its outcome to the issuance snapshot
-            (fail-closed: a tampered outcome or missing/invalid countersignature
-            is an error). Legacy ``<0.2.0`` reveals are recorded as
+         c. Each ``>=0.2.0`` revealed attestation carries EVERY listed party's
+            valid countersignature binding its outcome to the issuance snapshot
+            (dual-accept, fail-closed: a tampered outcome, a missing party
+            countersignature, or a self-rebind with the holder's own key alone is
+            an error). Legacy ``<0.2.0`` reveals are recorded as
             ``revealed_outcome_unbound`` (prover-asserted, not an error).
          d. The prover is a party in EVERY revealed attestation; a stolen-history
             reveal (prover not a party) is a HARD error (``valid=False``).
       4. Self-consistency of a FULL reveal: if the prover reveals the full
          committed set, the signed ``claims`` must not contradict the revealed
-         set's own arithmetic (a self-inconsistent proof is rejected).
+         set's own arithmetic (a self-inconsistent proof is rejected), and the
+         signed ``attestation_merkle_root`` must equal the root recomputed over
+         exactly the revealed set (a count/root mismatch is rejected).
 
     Sound aggregate verification (C-H2 P4, closes #120):
-      - ``aggregate_verified`` is True IFF the four-condition gate holds:
-        (a) full reveal of every committed attestation, each ``>=0.2.0`` with a
-        valid party-member countersignature (outcome bound); (b) the prover is a
-        signed party in every reveal; (c) all merkle proofs valid; (d) the
-        recompute over those countersigned outcomes equals the signed claims.
-        When True, ``claims_asserted_not_verified`` is False and the headline
-        numbers ARE independently confirmed.
+      - ``aggregate_verified`` is True IFF the five-condition gate holds:
+        (a) full reveal of every committed attestation, each ``>=0.2.0`` with
+        EVERY listed party's valid countersignature (outcome bound, dual-accept);
+        (b) the prover is a signed party in every reveal; (c) all merkle proofs
+        valid; (d) the recompute over those countersigned outcomes equals the
+        signed claims; (e) the signed root equals the root over exactly the
+        revealed set. When True, ``claims_asserted_not_verified`` is False and the
+        headline numbers ARE independently confirmed FOR THE REVEALED SET.
       - Otherwise the verifier honestly downgrades: ``aggregate_verified`` is
         False, ``claims_asserted_not_verified`` is True, and a caller MUST treat
         ``claims`` as self-asserted. A zero/partial/legacy/mixed-version reveal,
-        a tampered outcome, or a stolen-history reveal each block the gate.
+        a tampered or self-rebound outcome, a stolen-history reveal, or a
+        count/root mismatch each block the gate.
+
+    Completeness caveat: ``aggregate_verified=True`` confirms the revealed set is
+    self-consistent and party-bound; it does NOT prove the committed set is the
+    prover's COMPLETE history (selective disclosure cannot — a prover may omit
+    unfavorable sessions). See ``CompetenceVerificationResult.aggregate_verified``.
 
     The Merkle root commits to attestation IDs only; the outcome binding comes
-    from the per-attestation ``>=0.2.0`` countersignature (#123), not the root.
-    This is selective disclosure, not a zero-knowledge proof.
+    from the per-attestation ``>=0.2.0`` dual-accept countersignature (#123), not
+    the root. This is selective disclosure, not a zero-knowledge proof.
 
     Args:
         proof_dict: The proof as a dict (from CompetenceProof.to_dict()).
@@ -645,70 +685,21 @@ def verify_competence_proof(
 
             # C-H2 P4 outcome-binding (per revealed attestation). Decide whether
             # this attestation's OUTCOME is cryptographically bound to its
-            # issuance snapshot by a party-member countersignature. This is the
-            # SAME fail-closed logic as verify_bundle step (f) (receipt_bundle.py
-            # (f) block) so a forged outcome cannot survive in either verifier.
-            ver = att.get("concordia_attestation", "")
-            if not _attestation_version_at_least(ver, *_OUTCOME_BINDING_MIN):
-                # Legacy / pre-C-H2 (or malformed version): outcome is
-                # prover-asserted. Recorded as unbound, NOT an error here
-                # (mixed-version handling is the aggregate gate's job).
+            # issuance snapshot via the SHARED single-source-of-truth helper
+            # (``evaluate_outcome_binding``), the SAME dual-accept logic
+            # verify_bundle step (f) uses, so a forged outcome cannot survive in
+            # either verifier. "bound" requires EVERY listed party to have a
+            # verifying countersignature (a holder cannot self-rebind a flipped
+            # outcome with its own key alone). Legacy <0.2.0 reveals are recorded
+            # as unbound, NOT an error (mixed-version handling is the gate's job).
+            state, reason = evaluate_outcome_binding(att, resolve_key)
+            if state == "bound":
+                revealed_outcome_bound.add(att_id)
+            elif state == "unbound":
                 revealed_outcome_unbound.append(att_id)
-            else:
-                # >=0.2.0 MUST carry a valid party-member countersignature or
-                # the outcome is NOT bound (fail-closed -> error).
-                cs = att.get("countersignatures")
-                att_party_ids = {
-                    p.get("agent_id", "") for p in att.get("parties", [])
-                }
-                if not isinstance(cs, dict) or not cs:
-                    errors.append(
-                        f"Revealed attestation '{att_id}': version {ver} requires "
-                        f"countersignatures; none present"
-                    )
-                    revealed_outcome_unbound.append(att_id)
-                else:
-                    any_party_member_verified = False
-                    all_named_party_sigs_ok = True
-                    for aid, sig in cs.items():
-                        if aid not in att_party_ids:
-                            # A countersignature naming a non-party cannot bind
-                            # the outcome on a party's behalf; ignore it for
-                            # crediting (does not, by itself, error).
-                            continue
-                        party_key = resolve_key(aid)
-                        if party_key is None:
-                            all_named_party_sigs_ok = False
-                            continue
-                        if verify_attestation_countersignature(att, sig, party_key):
-                            any_party_member_verified = True
-                        else:
-                            all_named_party_sigs_ok = False
-                            errors.append(
-                                f"Revealed attestation '{att_id}': countersignature "
-                                f"for '{aid}' failed verification"
-                            )
-
-                    if not all_named_party_sigs_ok:
-                        if not any(
-                            f"Revealed attestation '{att_id}': countersignature" in e
-                            for e in errors
-                        ):
-                            errors.append(
-                                f"Revealed attestation '{att_id}': a party "
-                                f"countersignature could not be confirmed; "
-                                f"outcome not bound"
-                            )
-                        revealed_outcome_unbound.append(att_id)
-                    elif not any_party_member_verified:
-                        errors.append(
-                            f"Revealed attestation '{att_id}': version {ver} "
-                            f"carries no verifiable party countersignature; "
-                            f"outcome not bound"
-                        )
-                        revealed_outcome_unbound.append(att_id)
-                    else:
-                        revealed_outcome_bound.add(att_id)
+            else:  # state == "error"
+                errors.append(f"Revealed attestation '{att_id}': {reason}")
+                revealed_outcome_unbound.append(att_id)
 
     # 4. SOUND aggregate verification (C-H2 P4, closes #120). The aggregate is
     # reported as verified IFF an exact 4-condition gate holds; otherwise the
@@ -800,33 +791,63 @@ def verify_competence_proof(
             for m in mismatches:
                 errors.append(f"Self-inconsistent claims vs revealed set: {m}")
 
-    # The exact 4-condition gate for aggregate_verified=True.
+    # Bind ``attestation_count`` to the COMMITTED Merkle tree (closes the
+    # count/root mismatch: a prover claiming att_count=2 while the signed root
+    # commits to 3 leaves). On a full reveal, recompute the root over EXACTLY the
+    # revealed attestation IDs and require it to equal the signed
+    # ``attestation_merkle_root``. Per-leaf inclusion proofs (cond_c) prove each
+    # revealed leaf is IN the tree but never prove the tree has no OTHER leaves;
+    # recomputing the whole root over the revealed set is what binds the count to
+    # the commitment, so a hidden extra leaf (a dropped loss kept in the root)
+    # makes the recomputed root differ -> hard error.
+    count_root_bound = False
+    if full_reveal:
+        revealed_ids = [
+            att.get("attestation_id", "") for att in revealed_attestations
+        ]
+        recomputed_root, _ = build_merkle_tree(revealed_ids)
+        count_root_bound = recomputed_root == root and recomputed_root != ""
+        if not count_root_bound:
+            errors.append(
+                "Committed Merkle root does not match the revealed set: the "
+                "signed attestation_merkle_root commits to a different (e.g. "
+                "larger) leaf set than the revealed attestations, so the "
+                "attestation_count is not bound to the commitment."
+            )
+
+    # The exact 5-condition gate for aggregate_verified=True.
     cond_a = (
         att_count > 0
         and len(revealed_attestations) == att_count
         and len(revealed_membership_valid) == att_count
         and len(revealed_outcome_bound) == att_count
-    )  # every reveal is >=0.2.0 with a valid party-member countersignature
+    )  # every reveal is >=0.2.0 with EVERY listed party's valid countersignature
     cond_b = len(prover_nonmember_attestations) == 0  # prover a party in every reveal
     cond_c = merkle_proofs_valid                       # all merkle proofs valid
     cond_d = recompute_matches                         # full-reveal recompute == signed claims
+    cond_e = count_root_bound  # committed root == root over exactly the revealed set
 
     aggregate_verified = bool(
         cond_a
         and cond_b
         and cond_c
         and cond_d
+        and cond_e
         and len(errors) == 0  # no countersig / membership / signature error fired
     )
     claims_asserted_not_verified = not aggregate_verified
 
     if aggregate_verified:
         warnings.append(
-            "Aggregate VERIFIED: full reveal of every committed attestation, each "
-            ">=0.2.0 with a valid party-member countersignature binding its "
-            "outcome, the prover is a signed party in every one, all merkle proofs "
-            "valid, and the recompute over those countersigned outcomes matches "
-            "the signed claims."
+            "Aggregate VERIFIED for the COMMITTED set: full reveal of every "
+            "committed attestation, each >=0.2.0 with every listed party's valid "
+            "countersignature binding its outcome, the prover is a signed party in "
+            "every one, all merkle proofs valid, the committed root matches the "
+            "revealed set, and the recompute matches the signed claims. NOTE: this "
+            "confirms the revealed set's arithmetic is self-consistent and "
+            "party-bound; it is NOT a proof of COMPLETENESS (selective disclosure "
+            "cannot prove the prover committed its entire history -- a prover may "
+            "have omitted unfavorable sessions from the committed set)."
         )
     elif full_reveal and recompute_matches and len(errors) == 0:
         # A full reveal that is internally consistent but does NOT meet the

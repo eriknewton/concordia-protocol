@@ -887,11 +887,11 @@ class TestAggregateHonesty:
         assert result.claims_asserted_not_verified is True
 
     def test_mcp_message_never_confirms_aggregate(self, monkeypatch):
-        """The MCP verify tool must NEVER emit an 'aggregate stats confirmed'
-        message, and must always report aggregate_verified=False and
-        claims_asserted_not_verified=True (Path A). The sound checks pass, so the
-        message labels the aggregate as prover-asserted and points at the future
-        work."""
+        """When the aggregate gate does NOT hold, the MCP verify tool must report
+        aggregate_verified=False and claims_asserted_not_verified=True, and the
+        message must label the aggregate as prover-asserted (the honest downgrade)
+        without claiming verification. Here the sound checks pass but the gate
+        does not, so the message must stay prover-asserted."""
         from concordia import mcp_server
 
         # Drive the message branch via a controlled result: sound checks pass,
@@ -917,10 +917,11 @@ class TestAggregateHonesty:
         msg = out["message"]
         # Never the old confirm strings.
         assert "confirmed by full reveal" not in msg
+        # Must NOT claim the aggregate is verified in the downgrade message.
+        assert "VERIFIED for the revealed set" not in msg
         # Honest contract surfaced.
         assert "PROVER-ASSERTED" in msg
         assert "not" in msg and "independently verified" in msg
-        assert "future work" in msg
 
     def test_mcp_message_flags_prover_nonmember_attestations(self, monkeypatch):
         """When the prover reveals attestations it is not a party in, the MCP
@@ -977,6 +978,7 @@ class TestAggregateHonesty:
 
 from concordia import Agent, generate_attestation  # noqa: E402
 from concordia import BasicOffer as _BasicOffer  # noqa: E402
+from concordia.attestation import countersign_attestation  # noqa: E402
 
 
 def _mint_bound_attestation(
@@ -1010,7 +1012,8 @@ def _mint_bound_attestation(
     if status == "agreed":
         buyer.accept_offer(reasoning="ok")
     else:
-        buyer.decline_session(reasoning="no thanks")
+        # ACTIVE -> REJECTED is reject_offer (decline_session is PROPOSED-only).
+        buyer.reject_offer(reasoning="no thanks")
 
     key_pairs = {seller_id: seller.key_pair, buyer_id: buyer.key_pair}
     att = generate_attestation(session, key_pairs, category=category)
@@ -1181,3 +1184,119 @@ class TestSoundAggregateVerification:
         assert result.valid is True, result.errors
         assert result.aggregate_verified is False
         assert result.claims_asserted_not_verified is True
+
+    def test_self_rebind_single_party_countersig_not_verified(self):
+        """OUTCOME-TAMPER forge (HIGH): the prover mints GENUINE rejected
+        sessions, flips each outcome.status to 'agreed', DROPS the counterparty's
+        countersignature, and re-countersigns the tampered snapshot with its OWN
+        key alone. Under a 'at least one party signed' rule this would have
+        yielded aggregate_verified=True over a fabricated 100% record. Dual-accept
+        binding requires EVERY listed party's countersignature, so the missing
+        counterparty countersignature makes the outcome unbound -> aggregate False
+        and a hard valid=False."""
+        prover = "self_rebind_prover"
+        forged = []
+        for i in range(3):
+            att = _mint_bound_attestation(prover, f"cp_rebind_{i}", status="rejected")
+            assert att["outcome"]["status"] == "rejected"
+            # Forge: flip to agreed, drop counterparty, re-sign with prover key.
+            att["outcome"]["status"] = "agreed"
+            att["countersignatures"] = {
+                prover: countersign_attestation(att, _KEY_REGISTRY[prover])
+            }
+            forged.append(att)
+        att_ids = [att["attestation_id"] for att in forged]
+        kp = _KEY_REGISTRY[prover]
+        proof = CompetenceProof.create(prover, forged, kp, reveal_ids=att_ids)
+
+        result = verify_competence_proof(proof.to_dict(), _test_resolver)
+        assert result.aggregate_verified is False, (
+            "a holder self-rebinding a flipped outcome with its own key alone must "
+            "NOT verify the aggregate (dual-accept)"
+        )
+        assert result.valid is False
+        assert result.claims_asserted_not_verified is True
+        # The dropped counterparty is surfaced as an unbound-outcome error.
+        assert any(
+            "countersignature" in e or "outcome not bound" in e
+            for e in result.errors
+        ), f"expected a missing-party-countersignature error, got: {result.errors}"
+
+    def test_count_root_mismatch_keeps_aggregate_false(self):
+        """FINDING 2 (count not bound to committed leaf set): the prover commits a
+        3-leaf Merkle root but claims attestation_count=2 and reveals only the 2
+        favorable leaves (dropping a loss from the CLAIM/reveal while keeping it in
+        the root). Per-leaf inclusion proofs still verify (cond_c) but the
+        recomputed root over the revealed 2-leaf set differs from the signed
+        3-leaf root -> cond_e fails -> aggregate stays False with a hard error."""
+        prover = "count_mismatch_prover"
+        win1 = _mint_bound_attestation(prover, "cm_w1", status="agreed")
+        win2 = _mint_bound_attestation(prover, "cm_w2", status="agreed")
+        loss = _mint_bound_attestation(prover, "cm_l1", status="rejected")
+        wins = [win1, win2]
+        win_ids = [a["attestation_id"] for a in wins]
+        all3_ids = [a["attestation_id"] for a in [win1, win2, loss]]
+
+        from concordia.receipt_bundle import _compute_summary
+
+        root3, layers3 = build_merkle_tree(all3_ids)
+        sorted3 = sorted(all3_ids)
+        mproofs = [generate_merkle_proof(i, sorted3, layers3) for i in win_ids]
+        claims2 = _compute_summary(prover, wins).to_dict()  # claims over 2 wins
+        kp = _KEY_REGISTRY[prover]
+        proof = CompetenceProof(
+            proof_id=f"proof_{uuid.uuid4().hex[:12]}",
+            agent_id=prover,
+            created_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            claims=claims2,
+            attestation_merkle_root=root3,  # commits to 3 leaves
+            attestation_count=2,            # but claims only 2
+            merkle_proofs=mproofs,
+            revealed_attestations=wins,
+        )
+        proof.agent_signature = sign_message(proof.to_dict_for_signing(), kp)
+
+        result = verify_competence_proof(proof.to_dict(), _test_resolver)
+        assert result.aggregate_verified is False, (
+            "a count smaller than the committed leaf set must not verify"
+        )
+        assert result.valid is False
+        assert any(
+            "root does not match" in e.lower() or "not bound to the commitment" in e.lower()
+            for e in result.errors
+        ), f"expected a root/count-binding error, got: {result.errors}"
+
+    def test_cherrypick_subset_verifies_but_is_not_completeness(self):
+        """STOLEN-HISTORY FINDING 1 (completeness, inherent to selective
+        disclosure): the prover is a GENUINE party in 2 wins and 1 loss, but
+        commits the Merkle root over ONLY the 2 wins (omitting the loss entirely)
+        and full-reveals that subset. Every gate condition holds for the COMMITTED
+        SET, so aggregate_verified is True -- this is SOUND for what it claims
+        (the revealed set is real and party-bound). The fix is the honest CONTRACT:
+        the success warning MUST disclose that this is not a completeness proof, so
+        a consumer never reads it as the prover's full record."""
+        prover = "cherrypick_prover"
+        win1 = _mint_bound_attestation(prover, "cherry_w1", status="agreed")
+        win2 = _mint_bound_attestation(prover, "cherry_w2", status="agreed")
+        # A real loss the prover simply never commits to.
+        _loss = _mint_bound_attestation(prover, "cherry_l1", status="rejected")
+        wins = [win1, win2]
+        win_ids = [a["attestation_id"] for a in wins]
+        kp = _KEY_REGISTRY[prover]
+        proof = CompetenceProof.create(prover, wins, kp, reveal_ids=win_ids)
+
+        result = verify_competence_proof(proof.to_dict(), _test_resolver)
+        # Sound for the committed set: it IS internally consistent + party-bound.
+        assert result.valid is True, result.errors
+        assert result.aggregate_verified is True
+        assert proof.claims["agreement_rate"] == 1.0
+        assert proof.claims["total_negotiations"] == 2
+        # Honest contract: the success path must flag the completeness limitation
+        # so no consumer reads the verified aggregate as a complete track record.
+        assert any(
+            "completeness" in w.lower() or "omitted" in w.lower()
+            for w in result.warnings
+        ), (
+            "aggregate_verified=True over a cherry-picked subset MUST surface the "
+            f"completeness caveat; warnings were: {result.warnings}"
+        )
