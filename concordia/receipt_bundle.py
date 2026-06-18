@@ -37,6 +37,83 @@ def _attestation_version_at_least(ver: str, major: int, minor: int) -> bool:
     parts = ver.split(".")
     return (int(parts[0]), int(parts[1])) >= (major, minor)
 
+
+def evaluate_outcome_binding(
+    att: dict[str, Any],
+    resolve_key: Callable[[str], Ed25519PublicKey | None],
+) -> tuple[str, str | None]:
+    """Decide whether one attestation's OUTCOME is cryptographically bound to its
+    issuance snapshot. Single source of truth shared by ``verify_bundle`` step
+    (f) and ``competence_proof.verify_competence_proof`` so the two verifiers
+    cannot drift.
+
+    The binding is **dual-accept** (C-H2, SPEC §9.6.5 / §9.6.5a): a >=0.2.0
+    outcome is bound only when EVERY party listed in ``parties[]`` has a
+    countersignature present in the ``countersignatures`` map that verifies under
+    that party's resolved key. A holder cannot rewrite ``outcome.status`` and
+    re-sign with its OWN key alone (dropping the counterparty's countersignature)
+    to fabricate a bound outcome: the counterparty is a listed party with no
+    verifying countersignature, so the outcome is NOT bound. (A genuine single-
+    party attestation -- only one entry in ``parties[]`` -- still binds with its
+    one countersignature, exactly as strong as a single-signed co-signed
+    receipt.)
+
+    Returns ``(state, error)`` where ``state`` is one of:
+      - ``"bound"``     : >=0.2.0, every listed party countersigned and verified.
+      - ``"unbound"``   : legacy <0.2.0 / malformed version -- prover-asserted,
+                          NOT an error (mixed-version handling lives in callers).
+      - ``"error"``     : >=0.2.0 but the dual-accept binding could not be
+                          confirmed (missing map, missing/unresolvable/invalid
+                          party countersignature). ``error`` is a human-readable
+                          reason; callers MUST surface it (fail-closed).
+    """
+    ver = att.get("concordia_attestation", "")
+    if not _attestation_version_at_least(ver, *_OUTCOME_BINDING_MIN):
+        # Legacy / pre-C-H2 (or malformed version): outcome is prover-asserted.
+        # Recorded as unbound, NOT an error (mixed-version handling is the
+        # caller's job).
+        return "unbound", None
+
+    cs = att.get("countersignatures")
+    party_ids = [
+        p.get("agent_id", "") for p in att.get("parties", []) if p.get("agent_id", "")
+    ]
+    if not isinstance(cs, dict) or not cs:
+        return (
+            "error",
+            f"version {ver} requires countersignatures; none present",
+        )
+    if not party_ids:
+        # A >=0.2.0 attestation with no identifiable parties cannot bind an
+        # outcome to anyone (fail-closed).
+        return "error", "no identifiable parties to bind the outcome"
+
+    # Dual-accept: EVERY listed party MUST have a present, verifying
+    # countersignature under its resolved key. Any missing party, unresolvable
+    # key, or failed signature => not bound (fail-closed).
+    for pid in party_ids:
+        sig = cs.get(pid)
+        if not isinstance(sig, str) or not sig:
+            return (
+                "error",
+                f"party '{pid}' has no countersignature; outcome not bound "
+                f"(every party must countersign)",
+            )
+        party_key = resolve_key(pid)
+        if party_key is None:
+            return (
+                "error",
+                f"party '{pid}' countersignature could not be confirmed "
+                f"(key unresolved); outcome not bound",
+            )
+        if not verify_attestation_countersignature(att, sig, party_key):
+            return (
+                "error",
+                f"countersignature for '{pid}' failed verification",
+            )
+    return "bound", None
+
+
 # ---------------------------------------------------------------------------
 # Bundle summary — precomputed aggregate stats
 # ---------------------------------------------------------------------------
@@ -287,13 +364,25 @@ class BundleVerificationResult:
 
     C-H2 outcome-binding (Option B): ``outcome_bound_count`` is the number of
     attestations whose OUTCOME is cryptographically bound to its issuance
-    snapshot by a valid party countersignature (>=0.2.0 with a verifying map).
+    snapshot by a dual-accept countersignature map (>=0.2.0 with EVERY listed
+    party's countersignature verifying -- a single holder cannot self-rebind).
     ``outcome_unbound_attestations`` names the attestation_ids whose outcome is
     only prover-asserted -- legacy <0.2.0 records that predate C-H2. A consumer
     (Verascore, competence-proof aggregation) must credit ONLY bound outcomes;
     unbound ones are reported, not errored. A >=0.2.0 attestation with a
     missing/invalid countersignature is a hard ERROR (the bundle is invalid),
     so it never appears as merely "unbound."
+
+    ``summary_accurate`` is a SELF-CONSISTENCY check (claimed summary == summary
+    recomputed over ALL attestations), retained for backward compatibility. It
+    is NOT an integrity signal on its own: for legacy ``outcome_unbound_attestations``
+    the recomputed summary reflects a forgeable, prover-asserted outcome. Summary
+    accuracy is credited as INTEGRITY-BOUND ONLY for the attestations counted in
+    ``outcome_bound_count``; the outcomes of ``outcome_unbound_attestations`` remain
+    prover-asserted (and are flagged by the FORGE-finding-1 warning) and MUST NOT
+    be credited by a consumer. A >=0.2.0 outcome that is tampered after issuance
+    fails its countersignature and is a hard ERROR, so it can never be silently
+    credited via ``summary_accurate``.
     """
     valid: bool
     errors: list[str] = field(default_factory=list)
@@ -316,12 +405,21 @@ def verify_bundle(
       (a) Bundle signature matches the agent's public key
       (b) Each attestation's party signatures are valid
       (c) The agent_id appears as a party in every attestation
-      (d) Summary statistics match the attestations (no inflated claims)
+      (d) Summary statistics match the attestations (no inflated claims). NOTE:
+          this is a self-consistency check over ALL attestations; it is credited
+          as integrity-bound ONLY for outcomes in ``outcome_bound_count``.
+          ``outcome_unbound_attestations`` (legacy <0.2.0) feed the recomputed
+          summary with prover-asserted outcomes (warned, per FORGE finding 1) and
+          MUST NOT be credited by a consumer. A >=0.2.0 outcome tamper fails its
+          countersignature in step (f) -> hard error -> never silently credited.
       (e) Attestations are not duplicated
-      (f) C-H2 outcome-binding: each >=0.2.0 attestation carries a valid
-          issuance countersignature binding its outcome/meta/transcript_hash
-          (fail-closed if missing/invalid); <0.2.0 attestations are read as
-          legacy outcome-unbound and reported, not credited, not errored.
+      (f) C-H2 outcome-binding (dual-accept, via ``evaluate_outcome_binding``):
+          each >=0.2.0 attestation must carry EVERY listed party's valid issuance
+          countersignature binding its outcome/meta/transcript_hash (fail-closed
+          if any party countersignature is missing/unresolvable/invalid -- a
+          single holder cannot self-rebind a flipped outcome with its own key
+          alone); <0.2.0 attestations are read as legacy outcome-unbound and
+          reported, not credited, not errored.
 
     C-H2 fulfillment residual: the issuance countersignature binds
     ``fulfillment`` only as it stood AT ISSUANCE (``null``). A ``fulfillment``
@@ -441,68 +539,22 @@ def verify_bundle(
     outcome_unbound_attestations: list[str] = []
     for i, att in enumerate(attestations):
         att_id = att.get("attestation_id", "")
-        ver = att.get("concordia_attestation", "")
 
-        if not _attestation_version_at_least(ver, *_OUTCOME_BINDING_MIN):
+        # Dual-accept binding via the shared single-source-of-truth helper
+        # (``evaluate_outcome_binding``), so this verifier and the competence-
+        # proof verifier cannot drift. An outcome is bound ONLY when every listed
+        # party countersigned and verified; a holder cannot self-rebind a flipped
+        # outcome with its own key alone.
+        state, reason = evaluate_outcome_binding(att, resolve_key)
+        if state == "bound":
+            outcome_bound_count += 1
+        elif state == "unbound":
             # Legacy / pre-C-H2 (or malformed version): outcome is
             # prover-asserted. Reported as unbound, NOT credited, NOT an error.
             outcome_unbound_attestations.append(att_id)
-        else:
-            # >=0.2.0 MUST carry a valid countersignature map or be REJECTED.
-            cs = att.get("countersignatures")
-            att_party_ids = {
-                p.get("agent_id", "") for p in att.get("parties", [])
-            }
-            if not isinstance(cs, dict) or not cs:
-                errors.append(
-                    f"Attestation {i}: version {ver} requires "
-                    f"countersignatures; none present"
-                )
-                outcome_unbound_attestations.append(att_id)
-            else:
-                any_party_member_verified = False
-                all_named_party_sigs_ok = True
-                for aid, sig in cs.items():
-                    if aid not in att_party_ids:
-                        # A countersignature naming a non-party is ignored for
-                        # crediting (it cannot bind the outcome on this party's
-                        # behalf); it does not, by itself, error the bundle.
-                        continue
-                    party_key = resolve_key(aid)
-                    if party_key is None:
-                        # Cannot resolve a party's key -> cannot confirm binding.
-                        all_named_party_sigs_ok = False
-                        continue
-                    if verify_attestation_countersignature(att, sig, party_key):
-                        any_party_member_verified = True
-                    else:
-                        all_named_party_sigs_ok = False
-                        errors.append(
-                            f"Attestation {i}: countersignature for "
-                            f"'{aid}' failed verification"
-                        )
-
-                if not all_named_party_sigs_ok:
-                    # At least one party-member countersignature was present but
-                    # failed to verify (or its key could not be resolved) ->
-                    # outcome is NOT bound. Fail-closed.
-                    if not any(
-                        f"Attestation {i}: countersignature" in e
-                        for e in errors
-                    ):
-                        errors.append(
-                            f"Attestation {i}: a party countersignature could "
-                            f"not be confirmed; outcome not bound"
-                        )
-                    outcome_unbound_attestations.append(att_id)
-                elif not any_party_member_verified:
-                    errors.append(
-                        f"Attestation {i}: version {ver} carries no verifiable "
-                        f"party countersignature; outcome not bound"
-                    )
-                    outcome_unbound_attestations.append(att_id)
-                else:
-                    outcome_bound_count += 1
+        else:  # state == "error"
+            errors.append(f"Attestation {i}: {reason}")
+            outcome_unbound_attestations.append(att_id)
 
         # C-H2 fulfillment residual: fulfillment added post-issuance is NOT
         # covered by the issuance countersignature. Credit it as integrity-bound
@@ -564,7 +616,17 @@ def verify_bundle(
             f"these. Unbound: {sorted(unbound_with_outcome)}."
         )
 
-    # (d) Verify summary accuracy
+    # (d) Verify summary accuracy. This is a SELF-CONSISTENCY check over ALL
+    # attestations (claimed summary == recomputed summary), retained for
+    # backward compatibility. It is credited as INTEGRITY-BOUND ONLY for the
+    # outcomes in ``outcome_bound_count``: a >=0.2.0 tamper already failed its
+    # countersignature in step (f) above (=> hard error => the bundle is invalid
+    # before this runs), and legacy ``outcome_unbound_attestations`` outcomes
+    # remain prover-asserted (flagged by the FORGE-finding-1 warning above) and
+    # MUST NOT be credited by a consumer. We do NOT drop unbound rows from the
+    # recompute (that would break the legacy dual-accept contract); the
+    # bound/unbound split (outcome_bound_count / outcome_unbound_attestations) is
+    # the integrity signal.
     summary_accurate = True
     if attestations:
         recomputed = _compute_summary(agent_id, attestations)

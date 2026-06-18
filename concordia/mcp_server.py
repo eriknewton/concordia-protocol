@@ -1179,15 +1179,19 @@ def tool_session_receipt_envelope(
 @mcp.tool(
     name="concordia_competence_proof",
     description=(
-        "Generate a privacy-preserving competence proof: signed, prover-asserted "
-        "aggregate stats (agreement rate, fulfillment, etc.) plus a Merkle "
-        "commitment to your attestation IDs, without revealing individual "
-        "counterparties, deal terms, or session details. Selectively reveal some "
-        "or all attestations so a verifier can confirm they are members of the "
-        "signed set and that their party signatures verify. The aggregate stats "
-        "themselves are ALWAYS prover-asserted, not independently verified, at "
-        "any reveal level (this is selective disclosure, not a zero-knowledge "
-        "aggregate)."
+        "Generate a privacy-preserving competence proof: signed aggregate stats "
+        "(agreement rate, fulfillment, etc.) plus a Merkle commitment to your "
+        "attestation IDs, without revealing individual counterparties, deal "
+        "terms, or session details. Selectively reveal some or all attestations "
+        "so a verifier can confirm they are members of the signed set and that "
+        "their party signatures verify. A verifier independently confirms the "
+        "aggregate stats ONLY on a FULL reveal where every attestation is >=0.2.0 "
+        "with EVERY party's countersignature, you are a party in each, and the "
+        "signed Merkle root matches the revealed set ('aggregate_verified': true); "
+        "a partial, legacy, mixed-version, or count-mismatched reveal leaves the "
+        "stats prover-asserted. Note: a verified aggregate confirms the revealed "
+        "set is sound, NOT that it is your complete history (you can omit "
+        "sessions). This is selective disclosure, not a zero-knowledge aggregate."
     ),
 )
 def tool_competence_proof(
@@ -1270,10 +1274,16 @@ def tool_competence_proof(
         "proof signature, that any revealed attestation belongs to the committed "
         "Merkle set, and the revealed attestations' party signatures. The "
         "headline aggregate stats (total_negotiations, agreement_rate, ...) are "
-        "ALWAYS prover-asserted, NOT independently verified: response field "
-        "'aggregate_verified' is always false and 'claims_asserted_not_verified' "
-        "is always true. A verifiable competence proof that binds outcomes and "
-        "enforces prover party-membership is future work. Works offline."
+        "independently verified for the revealed set ('aggregate_verified': true) "
+        "ONLY when the prover fully reveals every committed attestation, each is "
+        ">=0.2.0 with EVERY party's countersignature binding its outcome, the "
+        "prover is a party in every one, the signed Merkle root matches the "
+        "revealed set, and the recompute matches the signed claims; otherwise "
+        "'aggregate_verified' is false and 'claims_asserted_not_verified' is true "
+        "(the stats stay prover-asserted). A stolen-history reveal (prover not a "
+        "party) is rejected ('valid': false). A verified aggregate confirms the "
+        "revealed set is sound, NOT that it is the prover's complete history. "
+        "Works offline."
     ),
 )
 def tool_verify_competence_proof(
@@ -1288,8 +1298,12 @@ def tool_verify_competence_proof(
       3. Any revealed attestation Merkle proofs + party signatures
       4. Freshness (proof not older than max_age_hours)
 
-    Does NOT confirm: the aggregate statistics are ALWAYS prover-asserted
-    ('aggregate_verified' is always false). See verify_competence_proof.
+    Aggregate confirmation: 'aggregate_verified' is true ONLY under the C-H2 P4
+    five-condition gate (full reveal; every reveal >=0.2.0 with EVERY party's
+    countersignature; prover a party in each; signed Merkle root == root over the
+    revealed set; recompute matches claims); otherwise the stats stay
+    prover-asserted. A verified aggregate confirms the revealed set is sound, not
+    that it is the prover's complete history. See verify_competence_proof.
     """
     try:
         # Build a resolver that uses the attestation store's session contexts
@@ -1330,11 +1344,13 @@ def tool_verify_competence_proof(
             except ValueError:
                 result.warnings.append(f"Invalid created_at format: {created_at_str}")
 
-        # The aggregate numbers are ALWAYS prover-asserted, never independently
-        # confirmed (Path A, C-H1 refutation). Label them as such so a consuming
-        # agent does not read "total_negotiations: 10000" next to "valid: true"
-        # as a confirmed count.
-        aggregate_verified = result.aggregate_verified  # always False
+        # The aggregate numbers are independently confirmed for the revealed set
+        # ONLY when the C-H2 P4 five-condition gate holds (result.aggregate_verified;
+        # a verified aggregate is NOT a completeness proof — the prover may have
+        # omitted sessions). Otherwise they stay prover-asserted; the message +
+        # claims_asserted_not_verified label them so a consuming agent does not
+        # read "total_negotiations: 10000" next to "valid: true" as a confirmed count.
+        aggregate_verified = result.aggregate_verified
         response = {
             "valid": result.valid,
             "proof_id": proof.get("proof_id", ""),
@@ -1355,6 +1371,24 @@ def tool_verify_competence_proof(
         }
         if not result.valid:
             response["message"] = "Competence proof verification failed."
+        elif result.aggregate_verified:
+            # C-H2 P4: the five-condition gate held. The aggregate is now
+            # INDEPENDENTLY VERIFIED FOR THE REVEALED SET, not merely
+            # prover-asserted: full reveal of every committed attestation, each
+            # >=0.2.0 with EVERY party's countersignature binding its outcome,
+            # prover a party in every one, all merkle proofs valid, the signed root
+            # matches the revealed set, and the recompute matches the signed claims.
+            response["message"] = (
+                "Competence proof VERIFIED for the revealed set: signature, full "
+                "revealed-attestation membership, every party's outcome "
+                "countersignature, prover party-membership, and Merkle-root/count "
+                "binding all check out, and the recompute over the countersigned "
+                "outcomes matches the signed claims. The aggregate statistics are "
+                "independently verified for this set (not merely prover-asserted). "
+                "NOTE: this confirms the revealed set is sound and party-bound; it "
+                "is NOT a completeness proof — the prover may have omitted "
+                "unfavorable sessions from the committed set."
+            )
         elif result.prover_nonmember_attestations:
             # The prover full/partial-revealed attestations it is not a party in:
             # it is trying to claim someone else's history. The sound checks may
@@ -1372,8 +1406,11 @@ def tool_verify_competence_proof(
             response["message"] = (
                 "Competence proof signature and revealed-attestation membership "
                 "verified. The aggregate stats are PROVER-ASSERTED, not "
-                "independently verified. A verifiable competence proof that binds "
-                "outcomes and enforces prover party-membership is future work."
+                "independently verified: the five-condition gate did not hold "
+                "(e.g. a partial, legacy, mixed-version, or count-mismatched "
+                "reveal, or an unbound outcome). Reveal every committed attestation "
+                "(each >=0.2.0 with every party's countersignature) to have the "
+                "aggregate independently confirmed."
             )
 
         return json.dumps(response, indent=2, default=str)
