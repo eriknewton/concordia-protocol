@@ -117,8 +117,8 @@ Concordia exposes 59 MCP tools: 55 from `concordia.mcp_server` plus 4 agent-prof
 |------|---------|
 | `concordia_session_public_view` | Read-only public view of a session: non-sensitive metadata and transcript summary, no auth required |
 | `concordia_session_receipt_envelope` | Export a concluded session as an interoperable trust-evidence-format v1.0.0 signed envelope |
-| `concordia_competence_proof` | Generate a privacy-preserving proof of negotiation competence without revealing deal terms |
-| `concordia_verify_competence_proof` | Verify a counterparty's competence proof (signature, Merkle root, revealed claims) |
+| `concordia_competence_proof` | Generate a privacy-preserving competence proof: signature over prover-asserted aggregate stats plus a Merkle commitment to your attestation IDs, without revealing deal terms |
+| `concordia_verify_competence_proof` | Verify a counterparty's competence proof: confirms the signature, that revealed attestations are members of the signed set, and their party signatures. Aggregate stats are always prover-asserted, not independently verified (binding outcomes and enforcing prover party-membership is future work) |
 
 ### Agent Profiles (4 tools)
 | Tool | Purpose |

@@ -1183,10 +1183,11 @@ def tool_session_receipt_envelope(
         "aggregate stats (agreement rate, fulfillment, etc.) plus a Merkle "
         "commitment to your attestation IDs, without revealing individual "
         "counterparties, deal terms, or session details. Selectively reveal some "
-        "attestations for spot-checking, or reveal them ALL so a verifier can "
-        "recompute and confirm the aggregate. With no/partial reveal the headline "
-        "stats are asserted, not independently verifiable (this is selective "
-        "disclosure, not a zero-knowledge aggregate)."
+        "or all attestations so a verifier can confirm they are members of the "
+        "signed set and that their party signatures verify. The aggregate stats "
+        "themselves are ALWAYS prover-asserted, not independently verified, at "
+        "any reveal level (this is selective disclosure, not a zero-knowledge "
+        "aggregate)."
     ),
 )
 def tool_competence_proof(
@@ -1265,12 +1266,14 @@ def tool_competence_proof(
 @mcp.tool(
     name="concordia_verify_competence_proof",
     description=(
-        "Verify a competence proof received from a counterparty. Checks signature "
-        "validity, that any revealed attestation belongs to the committed Merkle "
-        "set, and the revealed attestations' party signatures. The headline "
-        "aggregate stats are only CONFIRMED when the prover revealed the full set "
-        "(response field 'aggregate_verified'); otherwise they are prover-asserted "
-        "('claims_asserted_not_verified'). Works offline."
+        "Verify a competence proof received from a counterparty. Confirms the "
+        "proof signature, that any revealed attestation belongs to the committed "
+        "Merkle set, and the revealed attestations' party signatures. The "
+        "headline aggregate stats (total_negotiations, agreement_rate, ...) are "
+        "ALWAYS prover-asserted, NOT independently verified: response field "
+        "'aggregate_verified' is always false and 'claims_asserted_not_verified' "
+        "is always true. A verifiable competence proof that binds outcomes and "
+        "enforces prover party-membership is future work. Works offline."
     ),
 )
 def tool_verify_competence_proof(
@@ -1279,11 +1282,14 @@ def tool_verify_competence_proof(
 ) -> str:
     """Verify a competence proof received from a counterparty.
 
-    Checks:
+    Confirms (sound checks):
       1. Signature validity
       2. Merkle root consistency
-      3. Any revealed attestation Merkle proofs
+      3. Any revealed attestation Merkle proofs + party signatures
       4. Freshness (proof not older than max_age_hours)
+
+    Does NOT confirm: the aggregate statistics are ALWAYS prover-asserted
+    ('aggregate_verified' is always false). See verify_competence_proof.
     """
     try:
         # Build a resolver that uses the attestation store's session contexts
@@ -1324,11 +1330,11 @@ def tool_verify_competence_proof(
             except ValueError:
                 result.warnings.append(f"Invalid created_at format: {created_at_str}")
 
-        # The aggregate numbers are only CONFIRMED on a full reveal. When they
-        # are merely prover-asserted, label them as such so a consuming agent
-        # does not read "total_negotiations: 10000" next to "valid: true" as a
-        # confirmed count.
-        aggregate_verified = result.aggregate_verified
+        # The aggregate numbers are ALWAYS prover-asserted, never independently
+        # confirmed (Path A, C-H1 refutation). Label them as such so a consuming
+        # agent does not read "total_negotiations: 10000" next to "valid: true"
+        # as a confirmed count.
+        aggregate_verified = result.aggregate_verified  # always False
         response = {
             "valid": result.valid,
             "proof_id": proof.get("proof_id", ""),
@@ -1339,6 +1345,7 @@ def tool_verify_competence_proof(
             "aggregate_verified": aggregate_verified,
             "claims_asserted_not_verified": result.claims_asserted_not_verified,
             "unverified_parties": result.unverified_parties,
+            "prover_nonmember_attestations": result.prover_nonmember_attestations,
             "summary": {
                 "total_negotiations": proof.get("claims", {}).get("total_negotiations", 0),
                 "agreement_rate": proof.get("claims", {}).get("agreement_rate", 0),
@@ -1346,33 +1353,28 @@ def tool_verify_competence_proof(
                 "aggregate_verified": aggregate_verified,
             },
         }
-        if result.valid and aggregate_verified and not result.unverified_parties:
-            response["message"] = (
-                "Competence proof verified; aggregate stats confirmed by full reveal."
-            )
-        elif result.valid and aggregate_verified:
-            # Full reveal recomputed, but some named counterparties could not be
-            # verified (unresolvable key or invalid co-signature). The arithmetic
-            # is confirmed; counterparty authenticity is NOT. Do not let this read
-            # as an unqualified "confirmed."
-            n = len(result.unverified_parties)
-            response["message"] = (
-                "Competence proof verified; aggregate arithmetic confirmed by "
-                f"full reveal, BUT {n} counterpart"
-                f"{'y' if n == 1 else 'ies'} could not be verified (key "
-                "unresolvable or invalid co-signature). unique_counterparties and "
-                "agreement_rate are PARTIALLY self-asserted; reputation must "
-                "credit only the verified counterparty count, not the "
-                "self-asserted total. See warnings and unverified_parties."
-            )
-        elif result.valid:
+        if not result.valid:
+            response["message"] = "Competence proof verification failed."
+        elif result.prover_nonmember_attestations:
+            # The prover full/partial-revealed attestations it is not a party in:
+            # it is trying to claim someone else's history. The sound checks may
+            # pass, but reputation must not credit this.
+            n = len(result.prover_nonmember_attestations)
             response["message"] = (
                 "Competence proof signature and revealed-attestation membership "
-                "verified. The aggregate stats are PROVER-ASSERTED, not confirmed "
-                "(full reveal required to verify them)."
+                f"verified, BUT {n} revealed attestation"
+                f"{'s' if n != 1 else ''} do NOT list the prover as a party; the "
+                "prover cannot claim that history as its own. The aggregate stats "
+                "are PROVER-ASSERTED, not verified, and reputation MUST NOT credit "
+                "the non-member attestations. See prover_nonmember_attestations."
             )
         else:
-            response["message"] = "Competence proof verification failed."
+            response["message"] = (
+                "Competence proof signature and revealed-attestation membership "
+                "verified. The aggregate stats are PROVER-ASSERTED, not "
+                "independently verified. A verifiable competence proof that binds "
+                "outcomes and enforces prover party-membership is future work."
+            )
 
         return json.dumps(response, indent=2, default=str)
     except Exception as e:

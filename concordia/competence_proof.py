@@ -8,30 +8,40 @@ session details), it shares:
     attestations can be selectively revealed)
   - Ed25519 signature over the whole thing
 
-What a verifier can confirm depends on how much the prover reveals:
+What a verifier CAN confirm (the sound checks):
 
-  - **Signature + membership (always):** the proof is signed by the claiming
-    agent, and any *revealed* attestation provably belongs to the committed
-    Merkle set. The revealed attestations' own party signatures are checked.
+  - **Signature:** the proof is signed by the claiming agent.
+  - **Membership:** any *revealed* attestation provably belongs to the committed
+    Merkle set.
+  - **Party signatures on revealed attestations:** each revealed attestation's
+    own party_record signatures are checked (parties whose key cannot be
+    resolved are surfaced as unverified, not counted as evidence).
 
-  - **Full reveal (all attestations revealed, all membership proofs valid):**
-    the verifier RECOMPUTES the aggregate statistics from the revealed
-    attestations and rejects the proof if the prover's signed ``claims`` do not
-    match. In this mode the headline numbers are actually verified
-    (``aggregate_verified=True``), exactly like ``verify_receipt_bundle``.
+What a verifier CANNOT confirm (always prover-asserted):
 
-  - **Subset / no reveal:** the aggregate statistics are PROVER-ASSERTED, NOT
-    verified. The Merkle root commits only to attestation *IDs*, not to
-    outcomes, so the verifier cannot recompute ``agreement_rate`` or
-    ``total_negotiations`` from anything it can check. The result reports
-    ``aggregate_verified=False`` and ``claims_asserted_not_verified=True``; a
-    caller MUST NOT read the headline numbers as confirmed.
+  - **The aggregate statistics** (``total_negotiations``, ``agreement_rate``,
+    ``unique_counterparties``, ...). These are ALWAYS the prover's own
+    assertion. The result ALWAYS reports ``aggregate_verified=False`` and
+    ``claims_asserted_not_verified=True``; a caller MUST NOT read the headline
+    numbers as confirmed.
 
-IMPORTANT: this is NOT a zero-knowledge proof. There is no cryptographic
-argument that the unrevealed aggregate is correct; absent a full reveal, the
-summary statistics carry only the prover's signature, not a verifiable
-guarantee. The privacy property is selective disclosure (reveal nothing, a
-subset, or everything), not a ZK aggregate.
+Path A honest downgrade (C-H1 refutation, 2026-06-17): an earlier version
+claimed that a FULL reveal independently verified the aggregate
+(``aggregate_verified=True``). An adversarial review refuted that on two counts,
+so the claim is removed. Sound aggregate verification is FUTURE WORK; it requires
+(1) binding the attestation's ``outcome`` / ``fulfillment`` / ``meta`` into the
+party signatures (today only each party_record is signed, so a prover can
+rewrite ``outcome.status`` and a recompute would "confirm" a forged aggregate),
+and (2) enforcing at verify time that the prover is a party in every revealed
+attestation (today a prover could full-reveal over OTHER agents' attestations and
+claim their track record). Until both exist, the verifier reports only the sound
+checks above and labels the aggregate as prover-asserted.
+
+This is NOT a zero-knowledge proof. The privacy property is selective disclosure
+(reveal nothing, a subset, or everything), not a ZK aggregate. In short: a
+competence proof proves the revealed attestations are members of a signed set
+and their party signatures verify; the aggregate statistics are prover-asserted,
+not independently verified.
 
 Implements Viral Strategy item #18 (session receipts as portable proof) with
 privacy via selective disclosure rather than privacy-by-policy.
@@ -210,11 +220,10 @@ class CompetenceProof:
       3. Revealed attestations' own party signatures are checked
 
     The Merkle root commits to attestation IDs only (not outcomes), so the
-    aggregate ``claims`` are PROVER-ASSERTED, not verified, UNLESS the prover
-    reveals the full committed set, in which case ``verify_competence_proof``
-    recomputes and confirms the aggregate (see that function and
-    ``CompetenceVerificationResult.aggregate_verified``). This is selective
-    disclosure, NOT a zero-knowledge proof of the unrevealed aggregate.
+    aggregate ``claims`` are ALWAYS PROVER-ASSERTED, not independently verified
+    (see ``verify_competence_proof`` and
+    ``CompetenceVerificationResult.aggregate_verified``, which is always False).
+    This is selective disclosure, NOT a zero-knowledge proof of the aggregate.
 
     Fields:
         proof_id: Unique ID (format: "proof_<12-hex-chars>")
@@ -382,20 +391,25 @@ class CompetenceVerificationResult:
     """Result of verifying a competence proof.
 
     ``valid`` means "signature is good, every revealed attestation provably
-    belongs to the committed Merkle set, and the revealed attestations' own
-    party signatures check out." It does NOT by itself mean the headline
-    aggregate numbers (``total_negotiations``, ``agreement_rate``, ...) are
-    proven: read ``aggregate_verified`` for that.
+    belongs to the committed Merkle set, the revealed attestations' own party
+    signatures check out, and the signed claims are not self-inconsistent with a
+    full revealed set." It does NOT mean the headline aggregate numbers
+    (``total_negotiations``, ``agreement_rate``, ...) are independently proven.
 
-    ``aggregate_verified`` is True ONLY when the prover revealed the full
-    committed set, every membership proof verified, and the verifier's
-    recomputation of the aggregate from the revealed attestations matched the
-    prover's signed ``claims``. In that case the headline numbers are verified,
-    exactly like ``verify_receipt_bundle``.
+    ``aggregate_verified`` is ALWAYS False (Path A honest downgrade, C-H1
+    refutation 2026-06-17). The aggregate statistics are ALWAYS prover-ASSERTED,
+    never independently verified, because sound aggregate verification needs two
+    things this format does not yet provide: (1) the attestation's outcome /
+    fulfillment / category fields must be bound by the party signatures (today
+    only each party_record is signed, so a prover can rewrite ``outcome.status``
+    and a recompute would "confirm" a forged aggregate), and (2) the verifier
+    must enforce that the prover is a party in every revealed attestation (today
+    a prover could full-reveal over OTHER agents' attestations and claim their
+    track record). Both are tracked as FUTURE WORK. The field is retained (always
+    False) so existing callers keep a stable shape and a clear signal.
 
-    ``claims_asserted_not_verified`` is True whenever the aggregate could NOT be
-    recomputed (no reveal, or only a subset revealed). A caller MUST treat the
-    proof's ``claims`` as a self-asserted advertisement in that case, never as a
+    ``claims_asserted_not_verified`` is therefore ALWAYS True. A caller MUST
+    treat the proof's ``claims`` as a self-asserted advertisement, never as a
     confirmed count: a prover can sign ``{total_negotiations: 10000,
     agreement_rate: 1.0}`` over a Merkle root of zero real attestations and the
     signature/membership checks still pass.
@@ -404,6 +418,12 @@ class CompetenceVerificationResult:
     verifier could not resolve. Their signatures were NOT checked, so a
     self-named counterparty in this list must not be read as independent
     evidence (a Sybil can name a counterparty it controls or invents).
+
+    ``prover_nonmember_attestations`` names revealed attestations that do NOT
+    list the prover (``agent_id``) as a party. Defense-in-depth signal for the
+    "stolen history" full reveal: reputation MUST NOT credit these attestations
+    to the prover. (This does not affect ``aggregate_verified``, which is always
+    False regardless.)
     """
 
     valid: bool
@@ -414,6 +434,7 @@ class CompetenceVerificationResult:
     aggregate_verified: bool = False
     claims_asserted_not_verified: bool = True
     unverified_parties: list[str] = field(default_factory=list)
+    prover_nonmember_attestations: list[str] = field(default_factory=list)
 
 
 def verify_competence_proof(
@@ -423,7 +444,7 @@ def verify_competence_proof(
 ) -> CompetenceVerificationResult:
     """Verify a competence proof.
 
-    Checks:
+    Sound checks (what this function actually confirms):
       1. Signature validity against the agent's public key.
       2. Internal consistency: ``attestation_count`` matches
          ``claims.total_negotiations`` (both are prover-chosen and inside the
@@ -434,36 +455,39 @@ def verify_competence_proof(
          b. Each revealed attestation validates against its party signatures
             (parties whose key cannot be resolved are surfaced in
             ``unverified_parties`` and are NOT counted as independent evidence).
-      4. **Aggregate verification (full reveal only):** if the prover reveals the
-         FULL committed set (one distinct revealed attestation per committed ID,
-         all membership proofs valid), the aggregate is RECOMPUTED from the
-         revealed attestations and the proof FAILS if the signed ``claims`` do
-         not match. ``aggregate_verified`` is then True. Otherwise the aggregate
-         is NOT recomputable and the result reports
-         ``aggregate_verified=False`` and ``claims_asserted_not_verified=True``;
-         callers MUST treat ``claims`` as self-asserted, never as confirmed.
-         The arithmetic recompute does NOT vouch for counterparty authenticity:
-         a full reveal can still name counterparties whose key is unresolvable or
-         whose co-signature is invalid (those appear in ``unverified_parties``).
-         When ``unverified_parties`` is non-empty, a ``warnings`` entry states that
-         ``unique_counterparties`` and ``agreement_rate`` are PARTIALLY
-         self-asserted and that reputation must credit only the verified
-         counterparty count, mirroring ``verify_receipt_bundle``.
+      4. Self-consistency of a FULL reveal: if the prover reveals the full
+         committed set, the signed ``claims`` must not contradict the revealed
+         set's own arithmetic (a self-inconsistent proof is rejected). This is
+         honesty about the prover's own numbers; it is NOT verification.
 
-    The Merkle root commits to attestation IDs only, not outcomes. Without a full
-    reveal there is NO cryptographic guarantee behind the headline aggregate;
-    this is selective disclosure, not a zero-knowledge proof.
+    What this function does NOT confirm (Path A, C-H1 refutation 2026-06-17):
+      - **The aggregate is NEVER reported as verified.**
+        ``aggregate_verified`` is ALWAYS False and
+        ``claims_asserted_not_verified`` is ALWAYS True. Callers MUST treat
+        ``claims`` as self-asserted, never as confirmed. Sound aggregate
+        verification is future work: it needs (a) the attestation outcome /
+        fulfillment / meta fields bound by the party signatures (today only each
+        party_record is signed, so ``outcome.status`` can be rewritten without
+        breaking any signature) and (b) enforcement that the prover is a party in
+        every revealed attestation (today a prover could full-reveal over OTHER
+        agents' attestations). As cheap defense-in-depth, revealed attestations
+        that do not list the prover as a party are surfaced in
+        ``prover_nonmember_attestations`` and a warning; this does not resurrect
+        a verified claim.
+
+    The Merkle root commits to attestation IDs only, not outcomes. There is NO
+    cryptographic guarantee behind the headline aggregate; this is selective
+    disclosure, not a zero-knowledge proof.
 
     Args:
         proof_dict: The proof as a dict (from CompetenceProof.to_dict()).
         resolve_key: Callback that maps agent_id to Ed25519PublicKey, or None.
-        check_revealed_attestations: If False, skip deep attestation verification.
-            When False, the aggregate is never recomputed (no full-reveal
-            confirmation), so ``aggregate_verified`` stays False.
+        check_revealed_attestations: If False, skip deep attestation verification
+            (membership, party signatures, and the self-consistency note).
 
     Returns:
         CompetenceVerificationResult with valid flag, the aggregate-honesty
-        fields, and any errors/warnings.
+        fields (``aggregate_verified`` always False), and any errors/warnings.
     """
     errors: list[str] = []
     warnings: list[str] = []
@@ -515,10 +539,10 @@ def verify_competence_proof(
 
     # 3. Verify revealed attestations and Merkle proofs.
     #
-    # Track which revealed attestation IDs have a VALID membership proof: only
-    # those can support a full-reveal aggregate recomputation below. Track
-    # parties whose key could not be resolved so a self-named (possibly Sybil)
-    # counterparty does not silently read as independently verified.
+    # Track which revealed attestation IDs have a VALID membership proof (used
+    # for the full-reveal self-consistency note below). Track parties whose key
+    # could not be resolved so a self-named (possibly Sybil) counterparty does
+    # not silently read as independently verified.
     revealed_membership_valid: set[str] = set()
     unverified_parties: set[str] = set()
     if check_revealed_attestations and revealed_attestations:
@@ -584,17 +608,68 @@ def verify_competence_proof(
                     if pid != agent_id:
                         unverified_parties.add(pid)
 
-    # 4. Aggregate verification: only possible on a FULL reveal.
+    # 4. Aggregate is ALWAYS prover-ASSERTED, never independently verified.
     #
-    # The Merkle root commits to attestation IDs, not to outcomes, so the
-    # aggregate claims cannot be recomputed from anything the verifier can check
-    # UNLESS the prover reveals the entire committed set. "Full reveal" means:
-    # check_revealed_attestations is on, every committed attestation is revealed
-    # with a VALID membership proof, and no ID is double-counted to fake the
-    # count. Only then do we recompute the BundleSummary from the revealed
-    # attestations and require the signed claims to match.
-    aggregate_verified = False
+    # PATH A honest downgrade (C-H1 refutation, 2026-06-17): an adversarial gate
+    # showed the prior "full reveal => aggregate_verified=True" path was UNSOUND
+    # in two independent ways, so it is removed. Sound aggregate verification is
+    # tracked as FUTURE WORK and requires (a) binding outcomes/fulfillment/meta
+    # into the signed material and (b) enforcing prover party-membership. Until
+    # both exist the verifier MUST NOT report the aggregate as confirmed.
+    #
+    #   (1) Outcomes are not signature-bound. An attestation's party signatures
+    #       cover only each party_record (agent_id, role, behavior). The
+    #       top-level ``outcome.status``, ``fulfillment``, and ``meta.category``
+    #       are NOT signed by any party, yet _compute_summary derives
+    #       agreement_rate / fulfillment_rate / categories from exactly those
+    #       fields. A prover can rewrite ``outcome.status``, leave every
+    #       party_record (and its signature) untouched, and a naive recompute
+    #       would "confirm" a forged aggregate.
+    #
+    #   (2) Prover party-membership is not enforced at verify time. ``create()``
+    #       requires agent_id to be a party in every attestation, but a verifier
+    #       receives an arbitrary proof_dict, not a proof built via create(). A
+    #       prover could full-reveal over OTHER agents' valid attestations (where
+    #       it is not a party) and a naive recompute would credit their track
+    #       record as the prover's own.
+    #
+    # Therefore: aggregate_verified is ALWAYS False and claims_asserted_not_verified
+    # is ALWAYS True. We KEEP an internal recompute ONLY to surface whether the
+    # signed claims are internally consistent with the revealed set's arithmetic
+    # (a self-asserted note, NOT verification): a full-reveal whose own claims do
+    # not match its own revealed attestations is self-inconsistent, which is worth
+    # flagging, but a MATCH proves nothing about authenticity for the two reasons
+    # above and must never read as confirmed.
+    aggregate_verified = False  # Path A: never True; sound verification is future work.
     claims_asserted_not_verified = True
+
+    # Defense-in-depth (cheap): record revealed attestations where the prover is
+    # NOT listed as a party. This does NOT and CANNOT resurrect a "verified"
+    # claim (the aggregate stays self-asserted), but it surfaces a stolen-history
+    # full reveal so a consuming reputation system can refuse to credit it.
+    prover_nonmember_attestations: list[str] = []
+    if check_revealed_attestations and revealed_attestations:
+        for att in revealed_attestations:
+            party_ids = [
+                p.get("agent_id", "") for p in att.get("parties", [])
+            ]
+            if agent_id not in party_ids:
+                prover_nonmember_attestations.append(
+                    att.get("attestation_id", "")
+                )
+        if prover_nonmember_attestations:
+            n = len(prover_nonmember_attestations)
+            warnings.append(
+                f"{n} revealed attestation{'s' if n != 1 else ''} do not list the "
+                f"prover ('{agent_id}') as a party; the prover cannot claim this "
+                f"history as its own. The aggregate is self-asserted regardless, "
+                f"but reputation MUST NOT credit these attestations to the prover."
+            )
+
+    # Internal-consistency note (NOT verification). Only meaningful on a full,
+    # non-double-counted reveal; even then a match is purely arithmetic over a
+    # set the prover chose and (per reasons 1 and 2 above) does not confirm the
+    # aggregate. A mismatch is still worth flagging as a self-inconsistent proof.
     if (
         check_revealed_attestations
         and att_count > 0
@@ -620,33 +695,20 @@ def verify_competence_proof(
                 mismatches.append(f"{key}: claimed {claim_val}, recomputed {rec_val}")
 
         if mismatches:
+            # A full reveal whose signed claims contradict its OWN revealed set is
+            # self-inconsistent: reject it. (This is honesty about the prover's
+            # own arithmetic, not aggregate verification.)
             for m in mismatches:
-                errors.append(f"Full-reveal aggregate mismatch: {m}")
+                errors.append(f"Self-inconsistent claims vs revealed set: {m}")
         else:
-            aggregate_verified = True
-            claims_asserted_not_verified = False
-            # The arithmetic recompute over the revealed set is sound, but it
-            # says nothing about whether the named counterparties are real. A
-            # full reveal can still name counterparties whose key the verifier
-            # could not resolve (an unresolvable or Sybil-named party). When that
-            # happens, unique_counterparties / agreement_rate rest on parties
-            # this verifier could NOT check, so the aggregate is only PARTIALLY
-            # confirmed. Mirror verify_receipt_bundle's posture: credit only the
-            # verified counterparty count, not the self-asserted total.
-            if unverified_parties:
-                total_cp = int(recomputed.get("unique_counterparties", 0))
-                n_unverified = len(unverified_parties)
-                verified_cp = max(total_cp - n_unverified, 0)
-                warnings.append(
-                    f"Full reveal arithmetic recomputed, but {n_unverified} "
-                    f"counterpart{'y' if n_unverified == 1 else 'ies'} could not "
-                    f"be verified (key unresolvable or signature invalid); only "
-                    f"{verified_cp} of {total_cp} unique_counterparties had a "
-                    f"verifiable co-signature. unique_counterparties and "
-                    f"agreement_rate are PARTIALLY self-asserted; reputation must "
-                    f"credit only the verified counterparty count, not the "
-                    f"self-asserted total."
-                )
+            warnings.append(
+                "Full reveal: signed claims are internally consistent with the "
+                "revealed set's arithmetic, but this is NOT independent "
+                "verification. Outcomes are not signature-bound and prover "
+                "party-membership is not cryptographically enforced, so the "
+                "aggregate statistics remain PROVER-ASSERTED. Sound aggregate "
+                "verification is future work."
+            )
 
     return CompetenceVerificationResult(
         valid=len(errors) == 0,
@@ -657,4 +719,5 @@ def verify_competence_proof(
         aggregate_verified=aggregate_verified,
         claims_asserted_not_verified=claims_asserted_not_verified,
         unverified_parties=sorted(unverified_parties),
+        prover_nonmember_attestations=sorted(prover_nonmember_attestations),
     )
