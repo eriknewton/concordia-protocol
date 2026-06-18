@@ -948,3 +948,44 @@ class TestOutcomeBindingBundle:
         assert legacy["attestation_id"] in result.outcome_unbound_attestations
         assert bound["attestation_id"] not in result.outcome_unbound_attestations
         assert result.outcome_bound_count == 1
+
+    def test_unbound_legacy_outcome_emits_warning(self):
+        """FORGE finding 1: a legacy (<0.2.0) attestation whose outcome feeds
+        the summary must produce a LOUD warning, not silent valid=True. The
+        only previous signal was the outcome_unbound_attestations list; a
+        consumer gating on valid + reading summary would credit a forgeable
+        agreement history. The warning makes the unbound lane self-announcing,
+        mirroring the unique_counterparties over-claim warning."""
+        legacy = _make_attestation(
+            agent_a="warnagent", agent_b="warn_cp", status="agreed"
+        )
+        assert legacy["concordia_attestation"] == "0.1.0"
+        kp = _get_key("warnagent")
+        bundle = ReceiptBundle.create("warnagent", [legacy], kp)
+        result = verify_bundle(bundle.to_dict(), _test_resolver)
+
+        # Legacy dual-accept: still valid, outcome reported unbound, not credited.
+        assert result.valid is True, f"Errors: {result.errors}"
+        assert legacy["attestation_id"] in result.outcome_unbound_attestations
+        assert result.outcome_bound_count == 0
+        # The summary still reflects the prover-asserted outcome (agreement),
+        # so the verifier must warn that it is NOT cryptographically bound.
+        assert result.summary_accurate is True
+        assert any(
+            "not cryptographically bound" in w.lower() for w in result.warnings
+        ), f"expected an unbound-outcome warning, got: {result.warnings}"
+
+    def test_bound_only_bundle_no_unbound_warning(self):
+        """The reverse of finding 1: a bundle of ONLY bound (>=0.2.0)
+        attestations must NOT emit the unbound-outcome warning."""
+        att, seller_id, _ = _mint_bound_attestation("warn_bound_s", "warn_bound_b")
+        assert att["concordia_attestation"] == "0.2.0"
+        kp = _KEY_REGISTRY[seller_id]
+        bundle = ReceiptBundle.create(seller_id, [att], kp)
+        result = verify_bundle(bundle.to_dict(), _test_resolver)
+
+        assert result.valid is True, f"Errors: {result.errors}"
+        assert result.outcome_bound_count == 1
+        assert not any(
+            "not cryptographically bound" in w.lower() for w in result.warnings
+        ), f"unexpected unbound-outcome warning on a fully bound bundle: {result.warnings}"

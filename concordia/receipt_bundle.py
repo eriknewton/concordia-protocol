@@ -530,6 +530,40 @@ def verify_bundle(
                     f"tally)."
                 )
 
+    # C-H2 self-announce (FORGE finding 1): when a legacy (<0.2.0) attestation
+    # is outcome-unbound but its outcome still feeds the recomputed summary in
+    # step (d), the bundle would otherwise be silently ``valid=True`` with an
+    # "accurate" summary derived from a forgeable, prover-asserted outcome. Emit
+    # a warning so the unbound/legacy lane is LOUD rather than silent (mirroring
+    # the unique_counterparties over-claim warning). The only error-free signal
+    # was previously the ``outcome_unbound_attestations`` list; a consumer that
+    # gates on ``valid`` and reads ``summary`` without consulting that list must
+    # be told. Bound counts are still credited ONLY from verified
+    # countersignatures; this warning does not change validity or any tally.
+    #
+    # We warn only when an unbound attestation actually carries a non-default
+    # outcome (status/duration/rounds), i.e. an outcome that influences the
+    # summary -- a version-less or outcome-less record produces no creditable
+    # claim and needs no warning.
+    unbound_with_outcome = [
+        a.get("attestation_id", "")
+        for a in attestations
+        if a.get("attestation_id", "") in outcome_unbound_attestations
+        and isinstance(a.get("outcome"), dict)
+        and a["outcome"].get("status") is not None
+    ]
+    if unbound_with_outcome:
+        warnings.append(
+            f"{len(unbound_with_outcome)} attestation"
+            f"{'' if len(unbound_with_outcome) == 1 else 's'} "
+            f"carr{'ies' if len(unbound_with_outcome) == 1 else 'y'} an "
+            f"outcome that is NOT cryptographically bound to its issuance "
+            f"(legacy <0.2.0); the recomputed summary reflects these "
+            f"prover-asserted outcomes. Reputation must credit only "
+            f"outcome_bound_count, not summary.agreements/agreement_rate, for "
+            f"these. Unbound: {sorted(unbound_with_outcome)}."
+        )
+
     # (d) Verify summary accuracy
     summary_accurate = True
     if attestations:
