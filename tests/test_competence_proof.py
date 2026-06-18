@@ -607,3 +607,337 @@ class TestEdgeCases:
         assert claims["total_negotiations"] == 3
         assert claims["agreements"] == 2
         assert round(claims["agreement_rate"], 4) == round(2.0 / 3.0, 4)
+
+
+# ---------------------------------------------------------------------------
+# C-H1: aggregate honesty - recompute-or-honestly-label
+# ---------------------------------------------------------------------------
+
+
+class TestAggregateHonesty:
+    """The aggregate claims are ALWAYS prover-asserted, never independently
+    verified (Path A honest downgrade, C-H1 refutation 2026-06-17).
+
+    The verifier MUST report ``aggregate_verified=False`` and
+    ``claims_asserted_not_verified=True`` under all conditions, including a full
+    reveal. It keeps the SOUND checks (signature, Merkle membership, revealed
+    party signatures) and rejects a full reveal whose signed claims are
+    self-inconsistent with its own revealed set, but a consistent full reveal
+    still does NOT promote the aggregate to verified.
+    """
+
+    def test_full_reveal_honest_claims_not_promoted_to_verified(self):
+        """A full-reveal proof with honest, self-consistent claims is valid and
+        passes the sound checks, but the aggregate stays prover-asserted: Path A
+        removed the ``aggregate_verified=True`` path entirely."""
+        atts = [
+            _make_attestation(status="agreed"),
+            _make_attestation(status="rejected"),
+            _make_attestation(status="agreed"),
+        ]
+        att_ids = [att["attestation_id"] for att in atts]
+        kp = _get_key("agent_a")
+        proof = CompetenceProof.create("agent_a", atts, kp, reveal_ids=att_ids)
+
+        result = verify_competence_proof(proof.to_dict(), _test_resolver)
+        assert result.valid is True
+        # The whole point of Path A: never verified, always self-asserted.
+        assert result.aggregate_verified is False
+        assert result.claims_asserted_not_verified is True
+        assert result.merkle_proofs_valid is True
+        # A clean full reveal carries the internal-consistency note, NOT a
+        # "verified" claim.
+        assert any(
+            "internally consistent" in w and "NOT independent verification" in w
+            for w in result.warnings
+        ), result.warnings
+        assert proof.claims["agreements"] == 2
+
+    def test_full_reveal_self_inconsistent_claims_fails(self):
+        """A full-reveal proof whose signed claims contradict its OWN revealed
+        set is rejected as self-inconsistent (honesty about the prover's own
+        arithmetic, not aggregate verification)."""
+        atts = [_make_attestation(status="rejected") for _ in range(3)]
+        att_ids = [att["attestation_id"] for att in atts]
+        kp = _get_key("agent_a")
+        proof = CompetenceProof.create("agent_a", atts, kp, reveal_ids=att_ids)
+
+        # Tamper the aggregate to brag about agreements that did not happen, then
+        # re-sign so the signature check still passes; only the self-consistency
+        # check can catch this.
+        proof.claims["agreements"] = 3
+        proof.claims["agreement_rate"] = 1.0
+        proof.agent_signature = sign_message(proof.to_dict_for_signing(), kp)
+
+        result = verify_competence_proof(proof.to_dict(), _test_resolver)
+        assert result.valid is False
+        assert result.aggregate_verified is False
+        assert any("self-inconsistent" in e.lower() for e in result.errors)
+
+    def test_zero_reveal_inflated_claims_not_reported_verified(self):
+        """A proof that reveals NOTHING but signs a wildly inflated aggregate over
+        a Merkle root of zero real attestations must NOT report the aggregate as
+        verified. ``valid`` may be True (signature + trivial membership hold), but
+        a caller reading the result must see that the 10000 negotiations are
+        unconfirmed."""
+        kp = _get_key("agent_liar")
+        # Build a legitimately-signed but empty proof, then inflate the claims and
+        # the committed count and re-sign; no attestations are revealed.
+        proof = CompetenceProof.create("agent_liar", [], kp)
+        proof.claims["total_negotiations"] = 10000
+        proof.claims["agreements"] = 10000
+        proof.claims["agreement_rate"] = 1.0
+        proof.attestation_count = 10000
+        # Give it a non-empty root so it does not read as a trivially-empty proof.
+        proof.attestation_merkle_root = "f" * 64
+        proof.agent_signature = sign_message(proof.to_dict_for_signing(), kp)
+
+        result = verify_competence_proof(proof.to_dict(), _test_resolver)
+
+        # The aggregate is the whole point of C-H1: it must NOT be verified.
+        assert result.aggregate_verified is False
+        assert result.claims_asserted_not_verified is True
+
+    def test_partial_reveal_does_not_verify_aggregate(self):
+        """Revealing a subset is not enough to confirm the aggregate."""
+        atts = [_make_attestation() for _ in range(4)]
+        att_ids = [att["attestation_id"] for att in atts]
+        kp = _get_key("agent_a")
+        proof = CompetenceProof.create("agent_a", atts, kp, reveal_ids=att_ids[:2])
+
+        result = verify_competence_proof(proof.to_dict(), _test_resolver)
+        assert result.valid is True
+        assert result.aggregate_verified is False
+        assert result.claims_asserted_not_verified is True
+
+    def test_full_reveal_with_skip_deep_check_does_not_verify_aggregate(self):
+        """With check_revealed_attestations=False the aggregate is never recomputed."""
+        atts = [_make_attestation() for _ in range(3)]
+        att_ids = [att["attestation_id"] for att in atts]
+        kp = _get_key("agent_a")
+        proof = CompetenceProof.create("agent_a", atts, kp, reveal_ids=att_ids)
+
+        result = verify_competence_proof(
+            proof.to_dict(), _test_resolver, check_revealed_attestations=False
+        )
+        assert result.aggregate_verified is False
+        assert result.claims_asserted_not_verified is True
+
+    def test_duplicate_reveal_cannot_fake_full_reveal(self):
+        """Revealing the same attestation att_count times must NOT count as a full
+        reveal (defends the recompute path against a double-count forgery)."""
+        att = _make_attestation(status="agreed")
+        kp = _get_key("agent_a")
+        # One real attestation, but claim a committed count of 3.
+        proof = CompetenceProof.create("agent_a", [att], kp, reveal_ids=[att["attestation_id"]])
+        # Forge: pretend the set has 3 members and reveal the same one 3 times.
+        proof.attestation_count = 3
+        proof.claims["total_negotiations"] = 3
+        proof.claims["agreements"] = 3
+        proof.revealed_attestations = [att, att, att]
+        proof.merkle_proofs = proof.merkle_proofs * 3
+        proof.agent_signature = sign_message(proof.to_dict_for_signing(), kp)
+
+        result = verify_competence_proof(proof.to_dict(), _test_resolver)
+        # Distinct-membership count is 1, not 3, so the aggregate is not verified.
+        assert result.aggregate_verified is False
+        assert result.claims_asserted_not_verified is True
+
+    def test_unverified_party_surfaced_on_revealed_attestation(self):
+        """A full reveal naming a counterparty whose key cannot be resolved must
+        surface the party in unverified_parties. Independently, the aggregate is
+        never reported as verified (Path A)."""
+        # agent_a is known; the counterparty 'ghost_cp' has no key in the registry.
+        att = _make_attestation(agent_a="agent_a", agent_b="ghost_cp")
+        kp = _get_key("agent_a")
+        proof = CompetenceProof.create(
+            "agent_a", [att], kp, reveal_ids=[att["attestation_id"]]
+        )
+
+        def resolver_without_ghost(agent_id: str) -> Ed25519PublicKey | None:
+            if agent_id == "ghost_cp":
+                return None
+            return _test_resolver(agent_id)
+
+        result = verify_competence_proof(proof.to_dict(), resolver_without_ghost)
+        # The party is surfaced...
+        assert "ghost_cp" in result.unverified_parties
+        # ...and the aggregate is NEVER verified (Path A removed that path).
+        assert result.aggregate_verified is False
+        assert result.claims_asserted_not_verified is True
+
+    def test_full_reveal_all_parties_resolvable_still_not_verified(self):
+        """Positive case: even a full reveal whose counterparties are ALL
+        resolvable does NOT promote the aggregate to verified. The sound checks
+        pass and the internal-consistency note is present, but
+        aggregate_verified stays False (Path A)."""
+        # Both agent_a and agent_b are in the registry / resolvable.
+        atts = [_make_attestation(agent_a="agent_a", agent_b="agent_b") for _ in range(3)]
+        att_ids = [att["attestation_id"] for att in atts]
+        kp = _get_key("agent_a")
+        proof = CompetenceProof.create("agent_a", atts, kp, reveal_ids=att_ids)
+
+        result = verify_competence_proof(proof.to_dict(), _test_resolver)
+        assert result.valid is True
+        assert result.aggregate_verified is False
+        assert result.claims_asserted_not_verified is True
+        assert result.unverified_parties == []
+        assert result.prover_nonmember_attestations == []
+        # Internal-consistency note present; no "verified" language.
+        assert any("internally consistent" in w for w in result.warnings), result.warnings
+
+    def test_full_reveal_over_non_party_attestations_not_verified(self):
+        """ATTACK (Codex claim 1): a prover full-reveals over attestations it is
+        NOT a party in, trying to claim another agent's track record as its own.
+        The verifier must NOT report the aggregate as verified, must flag the
+        non-member attestations, and the headline numbers stay prover-asserted.
+
+        Against the OLD code this returned aggregate_verified=True (the bug).
+        """
+        # victim_x and victim_y negotiated; 'thief' was never a party.
+        atts = [
+            _make_attestation(agent_a="victim_x", agent_b="victim_y", status="agreed")
+            for _ in range(3)
+        ]
+        att_ids = [att["attestation_id"] for att in atts]
+
+        # The thief hand-builds a proof over the victims' valid attestations
+        # (CompetenceProof.create() would reject this, but a verifier receives an
+        # arbitrary proof_dict, not necessarily one built via create()).
+        import concordia.competence_proof as cp
+        from concordia.receipt_bundle import _compute_summary
+
+        root, layers = cp.build_merkle_tree(att_ids)
+        sorted_ids = sorted(att_ids)
+        mproofs = [cp.generate_merkle_proof(i, sorted_ids, layers) for i in att_ids]
+        thief_kp = _get_key("thief")
+        summary = _compute_summary("thief", atts).to_dict()
+        proof = CompetenceProof(
+            proof_id=f"proof_{uuid.uuid4().hex[:12]}",
+            agent_id="thief",
+            created_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            claims=summary,
+            attestation_merkle_root=root,
+            attestation_count=len(att_ids),
+            merkle_proofs=mproofs,
+            revealed_attestations=atts,
+        )
+        proof.agent_signature = sign_message(proof.to_dict_for_signing(), thief_kp)
+
+        result = verify_competence_proof(proof.to_dict(), _test_resolver)
+        # The aggregate must NOT be reported as verified.
+        assert result.aggregate_verified is False
+        assert result.claims_asserted_not_verified is True
+        # Defense-in-depth: every revealed attestation is flagged as prover-non-member.
+        assert sorted(result.prover_nonmember_attestations) == sorted(att_ids)
+        assert any("do not list the prover" in w for w in result.warnings), result.warnings
+
+    def test_full_reveal_tampered_outcome_status_not_verified(self):
+        """ATTACK (Codex claim 2): the attestation party signatures cover only
+        each party_record, NOT the top-level outcome.status that _compute_summary
+        reads. A prover rewrites outcome.status from 'rejected' to 'agreed',
+        leaves every party_record (and its signature) intact, and signs a forged
+        aggregate. The verifier must NOT report the aggregate as verified.
+
+        Against the OLD code this returned aggregate_verified=True over forged
+        outcomes with no error (the bug).
+        """
+        # Real outcomes were ALL rejected.
+        atts = [
+            _make_attestation(agent_a="agent_a", agent_b="agent_b", status="rejected")
+            for _ in range(3)
+        ]
+        att_ids = [att["attestation_id"] for att in atts]
+        # Attacker rewrites the top-level outcome.status; party signatures untouched.
+        for att in atts:
+            att["outcome"]["status"] = "agreed"
+
+        import concordia.competence_proof as cp
+        from concordia.receipt_bundle import _compute_summary
+
+        root, layers = cp.build_merkle_tree(att_ids)
+        sorted_ids = sorted(att_ids)
+        mproofs = [cp.generate_merkle_proof(i, sorted_ids, layers) for i in att_ids]
+        kp = _get_key("agent_a")
+        # _compute_summary reads the forged outcome.status -> claims 3/3 agreed.
+        summary = _compute_summary("agent_a", atts).to_dict()
+        assert summary["agreements"] == 3  # the forged claim
+        proof = CompetenceProof(
+            proof_id=f"proof_{uuid.uuid4().hex[:12]}",
+            agent_id="agent_a",
+            created_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            claims=summary,
+            attestation_merkle_root=root,
+            attestation_count=len(att_ids),
+            merkle_proofs=mproofs,
+            revealed_attestations=atts,
+        )
+        proof.agent_signature = sign_message(proof.to_dict_for_signing(), kp)
+
+        result = verify_competence_proof(proof.to_dict(), _test_resolver)
+        # The party signatures still verify (status is not bound), so 'valid' may
+        # be True, but the forged aggregate must NEVER read as verified.
+        assert result.aggregate_verified is False
+        assert result.claims_asserted_not_verified is True
+
+    def test_mcp_message_never_confirms_aggregate(self, monkeypatch):
+        """The MCP verify tool must NEVER emit an 'aggregate stats confirmed'
+        message, and must always report aggregate_verified=False and
+        claims_asserted_not_verified=True (Path A). The sound checks pass, so the
+        message labels the aggregate as prover-asserted and points at the future
+        work."""
+        from concordia import mcp_server
+
+        # Drive the message branch via a controlled result: sound checks pass,
+        # aggregate stays prover-asserted, prover IS a party (no non-member flag).
+        fake = CompetenceVerificationResult(
+            valid=True,
+            errors=[],
+            warnings=["Full reveal: signed claims are internally consistent ..."],
+            merkle_proofs_valid=True,
+            aggregate_verified=False,
+            claims_asserted_not_verified=True,
+            unverified_parties=[],
+            prover_nonmember_attestations=[],
+        )
+        monkeypatch.setattr(mcp_server, "verify_competence_proof", lambda *a, **k: fake)
+
+        out = json.loads(
+            mcp_server.tool_verify_competence_proof({"proof_id": "p", "agent_id": "agent_a"})
+        )
+        assert out["valid"] is True
+        assert out["aggregate_verified"] is False
+        assert out["claims_asserted_not_verified"] is True
+        msg = out["message"]
+        # Never the old confirm strings.
+        assert "confirmed by full reveal" not in msg
+        # Honest contract surfaced.
+        assert "PROVER-ASSERTED" in msg
+        assert "not" in msg and "independently verified" in msg
+        assert "future work" in msg
+
+    def test_mcp_message_flags_prover_nonmember_attestations(self, monkeypatch):
+        """When the prover reveals attestations it is not a party in, the MCP
+        message must warn that the prover cannot claim that history and that
+        reputation must not credit it (Path A defense-in-depth)."""
+        from concordia import mcp_server
+
+        # Drive the message branch via a controlled result with non-member flags.
+        fake = CompetenceVerificationResult(
+            valid=True,
+            errors=[],
+            warnings=["... do not list the prover ..."],
+            merkle_proofs_valid=True,
+            aggregate_verified=False,
+            claims_asserted_not_verified=True,
+            unverified_parties=[],
+            prover_nonmember_attestations=["att_stolen1", "att_stolen2"],
+        )
+        monkeypatch.setattr(mcp_server, "verify_competence_proof", lambda *a, **k: fake)
+
+        out = json.loads(mcp_server.tool_verify_competence_proof({"proof_id": "p", "agent_id": "thief"}))
+        assert out["aggregate_verified"] is False
+        assert out["prover_nonmember_attestations"] == ["att_stolen1", "att_stolen2"]
+        msg = out["message"]
+        assert "do NOT list the prover as a party" in msg
+        assert "MUST NOT credit" in msg
