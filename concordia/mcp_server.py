@@ -1346,9 +1346,24 @@ def tool_verify_competence_proof(
                 "aggregate_verified": aggregate_verified,
             },
         }
-        if result.valid and aggregate_verified:
+        if result.valid and aggregate_verified and not result.unverified_parties:
             response["message"] = (
                 "Competence proof verified; aggregate stats confirmed by full reveal."
+            )
+        elif result.valid and aggregate_verified:
+            # Full reveal recomputed, but some named counterparties could not be
+            # verified (unresolvable key or invalid co-signature). The arithmetic
+            # is confirmed; counterparty authenticity is NOT. Do not let this read
+            # as an unqualified "confirmed."
+            n = len(result.unverified_parties)
+            response["message"] = (
+                "Competence proof verified; aggregate arithmetic confirmed by "
+                f"full reveal, BUT {n} counterpart"
+                f"{'y' if n == 1 else 'ies'} could not be verified (key "
+                "unresolvable or invalid co-signature). unique_counterparties and "
+                "agreement_rate are PARTIALLY self-asserted; reputation must "
+                "credit only the verified counterparty count, not the "
+                "self-asserted total. See warnings and unverified_parties."
             )
         elif result.valid:
             response["message"] = (

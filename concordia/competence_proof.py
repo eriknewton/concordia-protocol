@@ -1,4 +1,4 @@
-"""Competence Proofs — selectively revealable, signed negotiation-history commitment.
+"""Competence Proofs - selectively revealable, signed negotiation-history commitment.
 
 A competence proof is a privacy-preserving alternative to sharing a full receipt
 bundle. Instead of sharing all attestations (which reveals counterparties and
@@ -27,7 +27,7 @@ What a verifier can confirm depends on how much the prover reveals:
     ``aggregate_verified=False`` and ``claims_asserted_not_verified=True``; a
     caller MUST NOT read the headline numbers as confirmed.
 
-IMPORTANT — this is NOT a zero-knowledge proof. There is no cryptographic
+IMPORTANT: this is NOT a zero-knowledge proof. There is no cryptographic
 argument that the unrevealed aggregate is correct; absent a full reveal, the
 summary statistics carry only the prover's signature, not a verifiable
 guarantee. The privacy property is selective disclosure (reveal nothing, a
@@ -211,7 +211,7 @@ class CompetenceProof:
 
     The Merkle root commits to attestation IDs only (not outcomes), so the
     aggregate ``claims`` are PROVER-ASSERTED, not verified, UNLESS the prover
-    reveals the full committed set — in which case ``verify_competence_proof``
+    reveals the full committed set, in which case ``verify_competence_proof``
     recomputes and confirms the aggregate (see that function and
     ``CompetenceVerificationResult.aggregate_verified``). This is selective
     disclosure, NOT a zero-knowledge proof of the unrevealed aggregate.
@@ -385,7 +385,7 @@ class CompetenceVerificationResult:
     belongs to the committed Merkle set, and the revealed attestations' own
     party signatures check out." It does NOT by itself mean the headline
     aggregate numbers (``total_negotiations``, ``agreement_rate``, ...) are
-    proven — read ``aggregate_verified`` for that.
+    proven: read ``aggregate_verified`` for that.
 
     ``aggregate_verified`` is True ONLY when the prover revealed the full
     committed set, every membership proof verified, and the verifier's
@@ -396,7 +396,7 @@ class CompetenceVerificationResult:
     ``claims_asserted_not_verified`` is True whenever the aggregate could NOT be
     recomputed (no reveal, or only a subset revealed). A caller MUST treat the
     proof's ``claims`` as a self-asserted advertisement in that case, never as a
-    confirmed count — a prover can sign ``{total_negotiations: 10000,
+    confirmed count: a prover can sign ``{total_negotiations: 10000,
     agreement_rate: 1.0}`` over a Merkle root of zero real attestations and the
     signature/membership checks still pass.
 
@@ -442,6 +442,13 @@ def verify_competence_proof(
          is NOT recomputable and the result reports
          ``aggregate_verified=False`` and ``claims_asserted_not_verified=True``;
          callers MUST treat ``claims`` as self-asserted, never as confirmed.
+         The arithmetic recompute does NOT vouch for counterparty authenticity:
+         a full reveal can still name counterparties whose key is unresolvable or
+         whose co-signature is invalid (those appear in ``unverified_parties``).
+         When ``unverified_parties`` is non-empty, a ``warnings`` entry states that
+         ``unique_counterparties`` and ``agreement_rate`` are PARTIALLY
+         self-asserted and that reputation must credit only the verified
+         counterparty count, mirroring ``verify_receipt_bundle``.
 
     The Merkle root commits to attestation IDs only, not outcomes. Without a full
     reveal there is NO cryptographic guarantee behind the headline aggregate;
@@ -508,7 +515,7 @@ def verify_competence_proof(
 
     # 3. Verify revealed attestations and Merkle proofs.
     #
-    # Track which revealed attestation IDs have a VALID membership proof — only
+    # Track which revealed attestation IDs have a VALID membership proof: only
     # those can support a full-reveal aggregate recomputation below. Track
     # parties whose key could not be resolved so a self-named (possibly Sybil)
     # counterparty does not silently read as independently verified.
@@ -577,7 +584,7 @@ def verify_competence_proof(
                     if pid != agent_id:
                         unverified_parties.add(pid)
 
-    # 4. Aggregate verification — only possible on a FULL reveal.
+    # 4. Aggregate verification: only possible on a FULL reveal.
     #
     # The Merkle root commits to attestation IDs, not to outcomes, so the
     # aggregate claims cannot be recomputed from anything the verifier can check
@@ -618,6 +625,28 @@ def verify_competence_proof(
         else:
             aggregate_verified = True
             claims_asserted_not_verified = False
+            # The arithmetic recompute over the revealed set is sound, but it
+            # says nothing about whether the named counterparties are real. A
+            # full reveal can still name counterparties whose key the verifier
+            # could not resolve (an unresolvable or Sybil-named party). When that
+            # happens, unique_counterparties / agreement_rate rest on parties
+            # this verifier could NOT check, so the aggregate is only PARTIALLY
+            # confirmed. Mirror verify_receipt_bundle's posture: credit only the
+            # verified counterparty count, not the self-asserted total.
+            if unverified_parties:
+                total_cp = int(recomputed.get("unique_counterparties", 0))
+                n_unverified = len(unverified_parties)
+                verified_cp = max(total_cp - n_unverified, 0)
+                warnings.append(
+                    f"Full reveal arithmetic recomputed, but {n_unverified} "
+                    f"counterpart{'y' if n_unverified == 1 else 'ies'} could not "
+                    f"be verified (key unresolvable or signature invalid); only "
+                    f"{verified_cp} of {total_cp} unique_counterparties had a "
+                    f"verifiable co-signature. unique_counterparties and "
+                    f"agreement_rate are PARTIALLY self-asserted; reputation must "
+                    f"credit only the verified counterparty count, not the "
+                    f"self-asserted total."
+                )
 
     return CompetenceVerificationResult(
         valid=len(errors) == 0,
