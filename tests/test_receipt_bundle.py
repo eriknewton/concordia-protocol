@@ -826,3 +826,166 @@ class TestMcpToolIntegration:
             "auth_token": "bad_token",
         })
         assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# C-H2 outcome-binding (Option B): the bundle verifier must NOT trust a
+# >=0.2.0 attestation's outcome unless a valid issuance countersignature binds
+# it; a <0.2.0 attestation stays as today (outcome prover-asserted, reported
+# outcome_unbound, not an error). These tests pin the version-gated dual-accept.
+# ---------------------------------------------------------------------------
+
+from concordia import Agent, generate_attestation  # noqa: E402
+from concordia import BasicOffer as _BasicOffer  # noqa: E402
+
+
+def _mint_bound_attestation(
+    seller_id: str,
+    buyer_id: str,
+    *,
+    status: str = "agreed",
+    category: str = "electronics.cameras",
+) -> tuple[dict[str, Any], str, str]:
+    """Mint a real, countersigned (>=0.2.0) attestation over a real session and
+    register both parties' keys in the shared resolver registry. Returns the
+    attestation plus the two agent ids."""
+    seller = Agent(seller_id)
+    buyer = Agent(buyer_id)
+    # Register keys so _test_resolver can resolve both parties.
+    _KEY_REGISTRY[seller_id] = seller.key_pair
+    _KEY_REGISTRY[buyer_id] = buyer.key_pair
+
+    terms = {"price": {"value": 150.00, "currency": "USD"}}
+    session = seller.open_session(counterparty=buyer.identity, terms=terms)
+    buyer.join_session(session)
+    buyer.accept_session()
+    seller.send_offer(
+        _BasicOffer(terms={"price": {"value": 135.00, "currency": "USD"}}),
+        reasoning="Fair price",
+    )
+    if status == "agreed":
+        buyer.accept_offer(reasoning="ok")
+    else:
+        buyer.decline_session(reasoning="no thanks")
+
+    key_pairs = {seller_id: seller.key_pair, buyer_id: buyer.key_pair}
+    att = generate_attestation(session, key_pairs, category=category)
+    return att, seller_id, buyer_id
+
+
+class TestOutcomeBindingBundle:
+    """C-H2: verify_bundle gates outcome trust on the issuance countersignature."""
+
+    def test_outcome_tamper_breaks_bundle_validity(self):
+        """Rewrite one attestation's outcome.status in a 0.2.0 bundle; the
+        bundle MUST become invalid with a countersignature error. (Pre-C-H2
+        this passed as summary-accurate because both sides derived from the
+        forged outcome.)"""
+        att, seller_id, _ = _mint_bound_attestation("seller_bind1", "buyer_bind1")
+        assert att["concordia_attestation"] == "0.2.0"
+        kp = _KEY_REGISTRY[seller_id]
+        bundle = ReceiptBundle.create(seller_id, [att], kp)
+        bd = bundle.to_dict()
+
+        # Forge the outcome AFTER bundling; leave parties[*].signature intact.
+        bd["attestations"][0]["outcome"]["status"] = (
+            "rejected" if att["outcome"]["status"] == "agreed" else "agreed"
+        )
+        # Re-sign the bundle envelope so the bundle-level signature is not the
+        # thing that fails -- we are isolating the attestation countersignature.
+        signable = {
+            k: v for k, v in bd.items()
+            if k not in ("agent_signature", "concordia_receipt_bundle")
+        }
+        bd["agent_signature"] = sign_message(signable, kp)
+
+        result = verify_bundle(bd, _test_resolver)
+        assert result.valid is False, (
+            "outcome tamper on a bound (>=0.2.0) attestation must invalidate"
+        )
+        assert any("countersignature" in e for e in result.errors), (
+            f"expected a countersignature error, got: {result.errors}"
+        )
+
+    def test_missing_countersignature_fail_closed(self):
+        """A 0.2.0 attestation with countersignatures removed -> invalid bundle
+        (no silent downgrade to prover-asserted)."""
+        att, seller_id, _ = _mint_bound_attestation("seller_bind2", "buyer_bind2")
+        del att["countersignatures"]
+        kp = _KEY_REGISTRY[seller_id]
+        bundle = ReceiptBundle.create(seller_id, [att], kp)
+        result = verify_bundle(bundle.to_dict(), _test_resolver)
+        assert result.valid is False
+        assert any("countersignature" in e for e in result.errors), (
+            f"expected a fail-closed countersignature error, got: {result.errors}"
+        )
+
+    def test_mixed_version_no_silent_crediting(self):
+        """A bundle mixing one 0.1.0 (legacy, unbound) and one valid 0.2.0:
+        the 0.1.0 is reported outcome_unbound (NOT an error); the 0.2.0 is
+        counted as outcome_bound."""
+        # Legacy 0.1.0 attestation, hand-built via the existing helper.
+        legacy = _make_attestation(
+            agent_a="mixagent", agent_b="legacy_cp", status="agreed"
+        )
+        assert legacy["concordia_attestation"] == "0.1.0"
+
+        # A real 0.2.0 attestation where the SAME agent is a party.
+        bound, _, _ = _mint_bound_attestation("mixagent", "buyer_mix", status="agreed")
+        # _mint registers mixagent's NEW key; re-point legacy's self-sig to it
+        # so the bundle agent key is consistent across both attestations.
+        mix_kp = _KEY_REGISTRY["mixagent"]
+        # Rebuild legacy party_a signature under the registered mixagent key.
+        party_a = legacy["parties"][0]
+        signable = {k: v for k, v in party_a.items() if k != "signature"}
+        party_a["signature"] = sign_message(signable, mix_kp)
+
+        bundle = ReceiptBundle.create("mixagent", [legacy, bound], mix_kp)
+        result = verify_bundle(bundle.to_dict(), _test_resolver)
+
+        assert result.valid is True, f"Errors: {result.errors}"
+        # The legacy 0.1.0 is reported as outcome-unbound, the 0.2.0 bound.
+        assert legacy["attestation_id"] in result.outcome_unbound_attestations
+        assert bound["attestation_id"] not in result.outcome_unbound_attestations
+        assert result.outcome_bound_count == 1
+
+    def test_unbound_legacy_outcome_emits_warning(self):
+        """FORGE finding 1: a legacy (<0.2.0) attestation whose outcome feeds
+        the summary must produce a LOUD warning, not silent valid=True. The
+        only previous signal was the outcome_unbound_attestations list; a
+        consumer gating on valid + reading summary would credit a forgeable
+        agreement history. The warning makes the unbound lane self-announcing,
+        mirroring the unique_counterparties over-claim warning."""
+        legacy = _make_attestation(
+            agent_a="warnagent", agent_b="warn_cp", status="agreed"
+        )
+        assert legacy["concordia_attestation"] == "0.1.0"
+        kp = _get_key("warnagent")
+        bundle = ReceiptBundle.create("warnagent", [legacy], kp)
+        result = verify_bundle(bundle.to_dict(), _test_resolver)
+
+        # Legacy dual-accept: still valid, outcome reported unbound, not credited.
+        assert result.valid is True, f"Errors: {result.errors}"
+        assert legacy["attestation_id"] in result.outcome_unbound_attestations
+        assert result.outcome_bound_count == 0
+        # The summary still reflects the prover-asserted outcome (agreement),
+        # so the verifier must warn that it is NOT cryptographically bound.
+        assert result.summary_accurate is True
+        assert any(
+            "not cryptographically bound" in w.lower() for w in result.warnings
+        ), f"expected an unbound-outcome warning, got: {result.warnings}"
+
+    def test_bound_only_bundle_no_unbound_warning(self):
+        """The reverse of finding 1: a bundle of ONLY bound (>=0.2.0)
+        attestations must NOT emit the unbound-outcome warning."""
+        att, seller_id, _ = _mint_bound_attestation("warn_bound_s", "warn_bound_b")
+        assert att["concordia_attestation"] == "0.2.0"
+        kp = _KEY_REGISTRY[seller_id]
+        bundle = ReceiptBundle.create(seller_id, [att], kp)
+        result = verify_bundle(bundle.to_dict(), _test_resolver)
+
+        assert result.valid is True, f"Errors: {result.errors}"
+        assert result.outcome_bound_count == 1
+        assert not any(
+            "not cryptographically bound" in w.lower() for w in result.warnings
+        ), f"unexpected unbound-outcome warning on a fully bound bundle: {result.warnings}"

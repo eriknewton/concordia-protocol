@@ -7,11 +7,15 @@ of what happened.
 
 from __future__ import annotations
 
+import base64
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+from .cosign import canonical_cosign_bytes
 from .signing import KeyPair, canonical_json, sign_message
 from .types import (
     OutcomeStatus,
@@ -22,7 +26,16 @@ from .types import (
 if TYPE_CHECKING:
     from .session import Session
 
-ATTESTATION_VERSION = "0.1.0"
+# C-H2 outcome-binding (Option B): v0.2.0 introduces the top-level
+# ``countersignatures`` map. Each present party signs the canonical issuance
+# snapshot of the WHOLE attestation (every ``signature`` key stripped, and the
+# ``countersignatures`` map itself excluded), so the outcome / meta /
+# transcript_hash are cryptographically bound at issuance -- not merely
+# prover-asserted. A verifier that accepts a >=0.2.0 attestation MUST check this
+# map (see ``receipt_bundle.verify_bundle``); a <0.2.0 attestation is read as
+# outcome-unbound (legacy, prover-asserted) and is NOT credited, but is NOT an
+# error either. See SPEC.md §9.6.
+ATTESTATION_VERSION = "0.2.0"
 
 # v0.5 SPEC §11.5: generalized attestation-level references[] shape. Per
 # §11.5.6 the four canonical type values are receipt, chain_session,
@@ -418,6 +431,74 @@ def _map_state_to_outcome(state: SessionState) -> OutcomeStatus:
     return mapping.get(state, OutcomeStatus.REJECTED)
 
 
+# ---------------------------------------------------------------------------
+# C-H2 outcome-binding (Option B): issuance countersignature primitive.
+#
+# The payload a party countersigns is the canonical issuance snapshot of the
+# WHOLE attestation: ``canonical_json(strip_signatures(att minus
+# countersignatures))``. Because ``strip_signatures`` (reused verbatim from
+# ``cosign.py``) recursively removes every ``"signature"`` key, the payload
+# excludes every ``parties[*].signature`` and any future
+# ``fulfillment.counterparty_attestation.signature``; we additionally exclude
+# the top-level ``countersignatures`` map (which is NOT under a ``"signature"``
+# key) so a countersignature never covers itself or a sibling's
+# countersignature. Every party therefore signs byte-identical payload bytes,
+# mutually independent -- exactly like the cosign lane.
+#
+# base64url is PADDED here (``urlsafe_b64encode(...).decode()``) to match the
+# per-party ``sign_message`` convention and the JS SDK's strict, padding-
+# requiring verifier. (``cosign.cosign_receipt`` returns UNPADDED for Verascore;
+# do NOT reuse it on this lane.)
+# ---------------------------------------------------------------------------
+
+
+def _countersign_payload(attestation: dict[str, Any]) -> bytes:
+    """Canonical bytes a party countersigns: the issuance snapshot.
+
+    ``canonical_json(strip_signatures({k: v ... if k != "countersignatures"}))``
+    -- every ``"signature"`` key stripped recursively AND the top-level
+    ``countersignatures`` map excluded, so the payload is stable and
+    self-independent across all parties.
+    """
+    snapshot = {
+        k: v for k, v in attestation.items() if k != "countersignatures"
+    }
+    return canonical_cosign_bytes(snapshot)
+
+
+def countersign_attestation(attestation: dict[str, Any], key_pair: KeyPair) -> str:
+    """Produce a party's padded-base64url Ed25519 countersignature.
+
+    Signs ``_countersign_payload(attestation)`` with ``key_pair``. PADDED
+    base64url, matching ``sign_message`` and the JS verifier.
+    """
+    raw = key_pair.private_key.sign(_countersign_payload(attestation))
+    return base64.urlsafe_b64encode(raw).decode()
+
+
+def verify_attestation_countersignature(
+    attestation: dict[str, Any],
+    sig_b64: str,
+    public_key: Ed25519PublicKey,
+) -> bool:
+    """Verify one issuance countersignature over the attestation snapshot.
+
+    Recomputes ``_countersign_payload(attestation)``, base64url-decodes the
+    signature, and checks it under ``public_key``. Fail-closed: ANY exception
+    (malformed base64, non-canonicalizable snapshot, wrong key, wrong type)
+    returns ``False`` -- mirrors ``signing.verify_signature``.
+    """
+    try:
+        if not isinstance(public_key, Ed25519PublicKey):
+            return False
+        payload = _countersign_payload(attestation)
+        raw = base64.urlsafe_b64decode(sig_b64)
+        public_key.verify(raw, payload)
+        return True
+    except Exception:
+        return False
+
+
 def generate_attestation(
     session: Session,
     key_pairs: dict[str, KeyPair],
@@ -555,6 +636,19 @@ def generate_attestation(
 
     # Attach a plaintext 4-line summary for quick human/agent inspection.
     attestation["summary"] = generate_receipt_summary(attestation)
+
+    # C-H2 outcome-binding (Option B): one issuance countersignature per party
+    # that has a signing key, over the FULLY-ASSEMBLED snapshot (after summary).
+    # Added LAST so the payload (`_countersign_payload`) excludes the map; the
+    # helper also excludes it explicitly as belt-and-suspenders. Parties without
+    # a key get NO entry (distinct from the per-party signature:"" convention --
+    # an empty countersignature would be meaningless and rejected anyway).
+    countersignatures: dict[str, str] = {
+        agent_id: countersign_attestation(attestation, key_pairs[agent_id])
+        for agent_id in session.parties
+        if agent_id in key_pairs
+    }
+    attestation["countersignatures"] = countersignatures
 
     return attestation
 

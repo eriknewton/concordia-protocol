@@ -670,9 +670,12 @@ class TestSessionReceipt:
         ))
         assert "receipt" in result
         receipt = result["receipt"]
-        assert receipt["concordia_attestation"] == "0.1.0"
+        assert receipt["concordia_attestation"] == "0.2.0"
         assert receipt["outcome"]["status"] == "agreed"
         assert len(receipt["parties"]) == 2
+        # C-H2: a v0.2.0 receipt carries the issuance countersignature map.
+        assert isinstance(receipt.get("countersignatures"), dict)
+        assert receipt["countersignatures"]
         assert result["transcript_valid"] is True
 
     def test_receipt_with_category(self, active_session):

@@ -51,7 +51,10 @@
 
 import { createHash } from 'node:crypto';
 
-import { canonicalizeJcs } from '../canonical/canonicalize.js';
+import { ed25519 } from '@noble/curves/ed25519.js';
+
+import { canonicalizeJcs, canonicalCosignBytes } from '../canonical/canonicalize.js';
+import { toBase64Url, fromBase64Url } from '../crypto/base64url.js';
 import { sign, KeyPair } from '../crypto/signing.js';
 import {
   cpythonIsoDateTimeToEpochMs,
@@ -67,7 +70,57 @@ import { validateReference } from '../predicate/references.js';
 import type { Session } from '../session/index.js';
 
 /** Attestation schema version, byte-identical to Python `ATTESTATION_VERSION`. */
-export const ATTESTATION_VERSION = '0.1.0';
+export const ATTESTATION_VERSION = '0.2.0';
+
+/**
+ * C-H2 outcome-binding (Option B): the canonical issuance-snapshot bytes a
+ * party countersigns. `canonicalCosignBytes` strips every nested `signature`;
+ * we additionally exclude the top-level `countersignatures` map so a
+ * countersignature never covers itself or a sibling. Byte-identical to Python
+ * `attestation._countersign_payload`.
+ */
+function countersignPayload(attestation: Record<string, unknown>): Buffer {
+  const { countersignatures: _omit, ...snapshot } = attestation;
+  return canonicalCosignBytes(snapshot);
+}
+
+/**
+ * Produce a party's PADDED base64url Ed25519 countersignature over the
+ * attestation's issuance snapshot. Byte-identical to Python
+ * `attestation.countersign_attestation`: same payload, deterministic Ed25519,
+ * same padded base64url alphabet (`toBase64Url`).
+ */
+export function countersignAttestation(
+  attestation: Record<string, unknown>,
+  keyPair: KeyPair,
+): string {
+  const payload = countersignPayload(attestation);
+  const rawSig = ed25519.sign(payload, keyPair.privateKey);
+  return toBase64Url(rawSig);
+}
+
+/**
+ * Verify one issuance countersignature over the attestation snapshot. Returns
+ * `true` if valid, `false` on any failure (malformed base64, wrong key, etc.).
+ * Mirrors Python `attestation.verify_attestation_countersignature`
+ * (fail-closed) and the strict, padding-requiring base64url decode used by the
+ * rest of the SDK.
+ */
+export function verifyAttestationCountersignature(
+  attestation: Record<string, unknown>,
+  sigB64: string,
+  publicKey: Uint8Array | KeyPair,
+): boolean {
+  try {
+    const pub = publicKey instanceof KeyPair ? publicKey.publicKey : publicKey;
+    const payload = countersignPayload(attestation);
+    const rawSig = fromBase64Url(sigB64);
+    if (rawSig.length !== 64) return false;
+    return ed25519.verify(rawSig, payload, pub);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * The three validity_temporal modes, mirroring Python `VALIDITY_TEMPORAL_MODES`.
@@ -872,6 +925,21 @@ export function generateAttestation(
 
   // Attach a plaintext 4-line summary for quick human/agent inspection.
   attestation.summary = generateReceiptSummary(attestation);
+
+  // C-H2 outcome-binding (Option B): one issuance countersignature per party
+  // that has a signing key, over the FULLY-ASSEMBLED snapshot (after summary).
+  // Added LAST so the payload excludes the map (countersignPayload also drops
+  // it explicitly). Parties iterate in insertion order (the Map mirrors
+  // Python's insertion-ordered dict), so the JS map keys reproduce Python's.
+  // Parties without a key get NO entry (matches Python).
+  const countersignatures: Record<string, string> = {};
+  for (const [agentId] of session.parties) {
+    const kp = keyPairs[agentId];
+    if (kp !== undefined) {
+      countersignatures[agentId] = countersignAttestation(attestation, kp);
+    }
+  }
+  attestation.countersignatures = countersignatures;
 
   return attestation;
 }

@@ -1,4 +1,9 @@
-export { canonicalizeJcs, canonicalizePredicate } from './canonical/canonicalize.js';
+export {
+  canonicalizeJcs,
+  canonicalizePredicate,
+  stripSignatures,
+  canonicalCosignBytes,
+} from './canonical/canonicalize.js';
 export { CanonicalizationError, checkNoSpecialFloats } from './canonical/checks.js';
 export { parseJsonStrict } from './canonical/parse.js';
 export {
@@ -114,6 +119,8 @@ export {
   MAX_REFERENCES,
   AttestationError,
   generateAttestation,
+  countersignAttestation,
+  verifyAttestationCountersignature,
   generateReceiptSummary,
   computeTranscriptHash,
   validateValidityTemporal,

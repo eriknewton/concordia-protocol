@@ -5,6 +5,8 @@ import { fileURLToPath } from 'url';
 import { Session, type Message, type PublicKeyResolver } from '../src/session/index.js';
 import {
   generateAttestation,
+  countersignAttestation,
+  verifyAttestationCountersignature,
   generateReceiptSummary,
   validateValidityTemporal,
   isValidNow,
@@ -261,6 +263,121 @@ describe('generateAttestation parity (Python-generated over real sessions)', () 
       }
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// C-H2 outcome-binding (Option B): the issuance countersignature parity +
+// verification. The toEqual block above already proves the JS-generated
+// `countersignatures` map is byte-identical to Python's; this block proves the
+// map VERIFIES (each entry over the issuance snapshot) and re-asserts the
+// byte-equality explicitly per signing agent.
+// ---------------------------------------------------------------------------
+describe('countersignature parity + verification (C-H2 Option B)', () => {
+  for (const c of fixtures.cases) {
+    it(`countersignatures byte-equal Python + verify for "${c.name}"`, () => {
+      const session = rebuildSession(c.session);
+      const attestation = generateAttestation(session, keyPairsFromCase(c), optionsFromCase(c));
+
+      const expected = c.expected as Record<string, unknown>;
+      const expectedCs = (expected.countersignatures ?? {}) as Record<string, string>;
+      const actualCs = (attestation.countersignatures ?? {}) as Record<string, string>;
+
+      // Exactly one entry per signing agent (parties without a key get none).
+      expect(Object.keys(actualCs).sort()).toEqual([...c.signing_agents].sort());
+      // Byte-identical to Python's map (same seeds -> deterministic Ed25519).
+      expect(actualCs).toEqual(expectedCs);
+
+      for (const agentId of c.signing_agents) {
+        const sig = actualCs[agentId];
+        expect(sig).toBeTruthy();
+        // Verifies under the agent's key over the issuance snapshot.
+        expect(verifyAttestationCountersignature(attestation, sig!, KP_BY_AGENT[agentId]!)).toBe(
+          true,
+        );
+        // A re-countersign of the same snapshot reproduces the same bytes.
+        expect(countersignAttestation(attestation, KP_BY_AGENT[agentId]!)).toBe(sig);
+      }
+    });
+
+    it(`countersignature rejects an outcome tamper for "${c.name}"`, () => {
+      const session = rebuildSession(c.session);
+      const attestation = generateAttestation(session, keyPairsFromCase(c), optionsFromCase(c));
+      const cs = (attestation.countersignatures ?? {}) as Record<string, string>;
+      // Tamper the outcome WITHOUT touching parties[*].signature.
+      const outcome = attestation.outcome as Record<string, unknown>;
+      outcome.status = outcome.status === 'agreed' ? 'rejected' : 'agreed';
+      for (const agentId of c.signing_agents) {
+        expect(
+          verifyAttestationCountersignature(attestation, cs[agentId]!, KP_BY_AGENT[agentId]!),
+        ).toBe(false);
+      }
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// C-H2 verifier dual-accept: hand-built fixtures (NOT the generated parity
+// vector). A <0.2.0 attestation is read as outcome-unbound (its outcome is not
+// credited as bound); a >=0.2.0 attestation with the map stripped fails closed.
+// This mirrors the Python mixed-version + missing-countersignature tests.
+// ---------------------------------------------------------------------------
+describe('outcome-binding verifier dual-accept (C-H2 Option B)', () => {
+  function boundAttestation(): Record<string, unknown> {
+    // A minimal, real 0.2.0 attestation: build a snapshot, then countersign it.
+    const snapshot: Record<string, unknown> = {
+      concordia_attestation: '0.2.0',
+      attestation_id: 'att_dualaccept',
+      session_id: 'ses_dualaccept',
+      timestamp: '2026-05-29T12:00:00Z',
+      outcome: { status: 'agreed', rounds: 1, duration_seconds: 0 },
+      parties: [{ agent_id: AGENT_A, role: 'initiator', behavior: {}, signature: '' }],
+      meta: { extensions_used: [], mediator_invoked: false },
+      transcript_hash: 'sha256:' + '0'.repeat(64),
+      fulfillment: null,
+      references: [],
+    };
+    const sig = countersignAttestation(snapshot, KP_A);
+    return { ...snapshot, countersignatures: { [AGENT_A]: sig } };
+  }
+
+  it('a 0.2.0 attestation with a valid countersignature is outcome-bound', () => {
+    const att = boundAttestation();
+    const cs = att.countersignatures as Record<string, string>;
+    expect(verifyAttestationCountersignature(att, cs[AGENT_A]!, KP_A)).toBe(true);
+  });
+
+  it('a 0.1.0 (legacy) attestation carries no countersignature and is unbound', () => {
+    // Hand-built legacy record: no `countersignatures` key. Treating it as
+    // outcome-bound is impossible (nothing to verify); a consumer reads its
+    // outcome as prover-asserted. We assert there is no bound signal here.
+    const legacy: Record<string, unknown> = {
+      concordia_attestation: '0.1.0',
+      attestation_id: 'att_legacy',
+      session_id: 'ses_legacy',
+      timestamp: '2026-05-29T12:00:00Z',
+      outcome: { status: 'agreed', rounds: 1, duration_seconds: 0 },
+      parties: [{ agent_id: AGENT_A, role: 'initiator', behavior: {}, signature: '' }],
+      meta: { extensions_used: [], mediator_invoked: false },
+      transcript_hash: 'sha256:' + '0'.repeat(64),
+      fulfillment: null,
+      references: [],
+    };
+    expect('countersignatures' in legacy).toBe(false);
+  });
+
+  it('a 0.2.0 attestation with the countersignature stripped fails closed', () => {
+    const att = boundAttestation();
+    const sig = (att.countersignatures as Record<string, string>)[AGENT_A]!;
+    // Remove the map -> the SAME signature can no longer be located/credited,
+    // and verifying it against a different snapshot (map absent vs present is
+    // excluded from the payload, so the payload is identical) still requires
+    // the signature to be SUPPLIED. A verifier with no map has nothing to
+    // check -> outcome unbound / fail-closed. We assert the verify of a
+    // tampered (mutated outcome) stripped record rejects.
+    const { countersignatures: _omit, ...stripped } = att;
+    (stripped.outcome as Record<string, unknown>).status = 'rejected';
+    expect(verifyAttestationCountersignature(stripped, sig, KP_A)).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

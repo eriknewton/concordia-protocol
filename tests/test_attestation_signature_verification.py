@@ -261,3 +261,133 @@ class TestAttestationSignatureVerificationMandatory:
         assert param.default is inspect.Parameter.empty, (
             "public_key_resolver must be mandatory (no default value)"
         )
+
+
+# ---------------------------------------------------------------------------
+# C-H2 outcome-binding (Option B): the issuance countersignature binds the
+# whole attestation snapshot (outcome/meta/transcript_hash), not just each
+# party's behavioral record. Before C-H2 a party could sign its OWN behavioral
+# record honestly while the OUTCOME was prover-asserted and freely mutable; a
+# bundle verifier re-derived its summary from the forged outcome and called it
+# accurate. These tests pin the binding: tampering the issuance snapshot must
+# break every party's countersignature.
+# ---------------------------------------------------------------------------
+
+from concordia import Agent, generate_attestation  # noqa: E402
+from concordia.attestation import (  # noqa: E402
+    verify_attestation_countersignature,
+)
+
+
+def _agreed_attestation():
+    """Mint a real, countersigned (>=0.2.0) attestation over an AGREED session."""
+    seller = Agent("seller_01")
+    buyer = Agent("buyer_42")
+    terms = {
+        "price": {"value": 150.00, "currency": "USD"},
+        "condition": {"value": "good"},
+    }
+    session = seller.open_session(counterparty=buyer.identity, terms=terms)
+    buyer.join_session(session)
+    buyer.accept_session()
+    from concordia import BasicOffer
+
+    offer = BasicOffer(terms={
+        "price": {"value": 135.00, "currency": "USD"},
+        "condition": {"value": "good"},
+    })
+    seller.send_offer(offer, reasoning="Fair price")
+    buyer.accept_offer(reasoning="Looks good")
+    key_pairs = {"seller_01": seller.key_pair, "buyer_42": buyer.key_pair}
+    att = generate_attestation(
+        session,
+        key_pairs,
+        category="electronics.cameras",
+        value_range="100-500_USD",
+    )
+    return att, key_pairs
+
+
+class TestOutcomeBindingCountersignature:
+    """C-H2: the issuance countersignature must cover the outcome snapshot."""
+
+    def test_sec014_outcome_tamper_rejected_after_binding(self):
+        """Flipping outcome.status (parties untouched) breaks every party's
+        countersignature. This is the exact pre-C-H2 exploit: the party sigs
+        still verify, but the OUTCOME is no longer bound."""
+        att, key_pairs = _agreed_attestation()
+        assert att["concordia_attestation"] == "0.2.0"
+        cs = att["countersignatures"]
+        assert isinstance(cs, dict) and cs
+
+        # Sanity: every countersignature verifies on the untampered snapshot.
+        for aid, sig in cs.items():
+            assert verify_attestation_countersignature(
+                att, sig, key_pairs[aid].public_key
+            ) is True, f"baseline countersignature for {aid} should verify"
+
+        # Forge the outcome WITHOUT touching parties[*].signature.
+        original = att["outcome"]["status"]
+        att["outcome"]["status"] = "agreed" if original != "agreed" else "rejected"
+
+        for aid, sig in cs.items():
+            assert verify_attestation_countersignature(
+                att, sig, key_pairs[aid].public_key
+            ) is False, (
+                f"countersignature for {aid} MUST reject after outcome tamper"
+            )
+
+    def test_sec014_countersignature_covers_meta_and_transcript(self):
+        """meta.category and transcript_hash are each inside the bound snapshot;
+        tampering either independently breaks the countersignature."""
+        # meta.category tamper
+        att, key_pairs = _agreed_attestation()
+        cs = att["countersignatures"]
+        att["meta"]["category"] = "books.fiction"
+        for aid, sig in cs.items():
+            assert verify_attestation_countersignature(
+                att, sig, key_pairs[aid].public_key
+            ) is False, f"meta.category tamper must break {aid}"
+
+        # transcript_hash tamper (fresh attestation)
+        att2, key_pairs2 = _agreed_attestation()
+        cs2 = att2["countersignatures"]
+        att2["transcript_hash"] = "sha256:" + "0" * 64
+        for aid, sig in cs2.items():
+            assert verify_attestation_countersignature(
+                att2, sig, key_pairs2[aid].public_key
+            ) is False, f"transcript_hash tamper must break {aid}"
+
+    def test_single_key_countersignature_degraded_form(self):
+        """Degraded single-key form ({AGENT_A: KP_A}, B omitted) yields a
+        one-entry map that is still bound for the present signer (Option C
+        degraded form, explicitly labelled in the design)."""
+        seller = Agent("seller_01")
+        buyer = Agent("buyer_42")
+        terms = {"price": {"value": 150.00, "currency": "USD"}}
+        session = seller.open_session(counterparty=buyer.identity, terms=terms)
+        buyer.join_session(session)
+        buyer.accept_session()
+        from concordia import BasicOffer
+
+        seller.send_offer(
+            BasicOffer(terms={"price": {"value": 135.00, "currency": "USD"}}),
+            reasoning="Fair price",
+        )
+        buyer.accept_offer(reasoning="ok")
+        # Only seller has a key (B omitted) -> exactly the single-key form.
+        key_pairs = {"seller_01": seller.key_pair}
+        att = generate_attestation(session, key_pairs)
+
+        cs = att["countersignatures"]
+        assert set(cs.keys()) == {"seller_01"}, (
+            "single-key form must yield exactly one countersignature entry"
+        )
+        assert verify_attestation_countersignature(
+            att, cs["seller_01"], seller.key_pair.public_key
+        ) is True
+        # And it is still outcome-bound: tampering breaks it.
+        att["outcome"]["rounds"] = 999
+        assert verify_attestation_countersignature(
+            att, cs["seller_01"], seller.key_pair.public_key
+        ) is False

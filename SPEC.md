@@ -685,7 +685,7 @@ Every completed negotiation session (regardless of outcome) MUST produce an atte
 
 ```json
 {
-  "concordia_attestation": "0.1.0",
+  "concordia_attestation": "0.2.0",
   "attestation_id": "att_a1b2c3d4",
   "session_id": "ses_9d4e8f01",
   "timestamp": "2026-03-21T14:04:00Z",
@@ -740,9 +740,16 @@ Every completed negotiation session (regardless of outcome) MUST produce an atte
 
   "transcript_hash": "sha256:0a1b2c3d4e5f...",
 
-  "fulfillment": null
+  "fulfillment": null,
+
+  "countersignatures": {
+    "agent_seller_sf_01": "base64_ed25519_countersignature",
+    "agent_buyer_oak_42": "base64_ed25519_countersignature"
+  }
 }
 ```
+
+The `countersignatures` map (added in v0.2.0, C-H2) is what makes the outcome trustworthy rather than merely prover-asserted. Each present party signs the canonical issuance snapshot of the WHOLE attestation (every `signature` field stripped, and the `countersignatures` map itself excluded), so the `outcome`, `meta`, `session_id`, and `transcript_hash` are bound at issuance. See §9.6.5.
 
 #### 9.6.3 Attestation Fields
 
@@ -993,6 +1000,16 @@ Attestations inherit the security properties of the transcript:
 - If parties disagree on the attestation (e.g., one party disputes the `concession_magnitude` calculation), the raw transcript is the authoritative source
 - Attestations are self-contained; they can be verified without access to the full transcript, but the transcript can be produced as evidence if the attestation is challenged
 
+##### 9.6.5a Outcome-Binding Countersignature (v0.2.0, C-H2)
+
+Through v0.1.0, each party's signature covered only its own behavior record. The top-level `outcome`, `meta`, and `transcript_hash` were derived from the transcript but not bound by any signature, so a holder could rewrite the outcome (for example, flip `rejected` to `agreed`) without invalidating any party signature. A bundle verifier that re-derived its summary from the rewritten outcome would then report it as accurate. C-H2 closes this.
+
+- **Payload.** The countersignature payload is `canonical_json(strip_signatures(attestation_without_countersignatures))`: the fully assembled attestation with every `signature` field stripped recursively AND the top-level `countersignatures` map excluded. Stripping every `signature` (the same rule the co-signature lane uses) plus excluding the `countersignatures` map means a countersignature never covers itself or a sibling's countersignature, and all parties sign byte-identical, mutually independent payload bytes.
+- **Map.** `countersignatures` is a top-level object mapping each party `agent_id` to its base64url-padded Ed25519 signature over that payload. There is one entry per party that held a signing key at issuance; a party with no key gets no entry (an empty string is never used). A single-key issuance therefore yields a one-entry map, which is exactly as strong as a single-signed co-signed receipt for the present signer.
+- **Version-gated dual-accept (verifier MUST).** A verifier that accepts an attestation at `concordia_attestation` >= `0.2.0` MUST require a `countersignatures` map containing at least one party-member signature that verifies, and every present party-member countersignature MUST verify; otherwise the attestation MUST be rejected (fail-closed). An attestation below `0.2.0` (or with a malformed version) is read as legacy: its outcome is prover-asserted and MUST NOT be credited as outcome-bound, but its presence is NOT an error. This lets pre-C-H2 history remain verifiable for its party-level signals while never silently crediting an unbound outcome.
+- **What is bound.** The issuance snapshot: `concordia_attestation`, `attestation_id`, `session_id`, `timestamp`, `outcome`, `parties[*]` (signatures stripped), `meta`, `transcript_hash`, `references`, `validity_temporal`, `summary`, and `fulfillment` AS IT STOOD AT ISSUANCE (`null`).
+- **Fulfillment residual.** A `fulfillment` block populated AFTER issuance (for example via an A2CN dispute-resolved flow) is NOT covered by the issuance countersignature. A verifier MUST NOT treat post-issuance fulfillment as integrity-bound on the strength of the issuance countersignature; it is bound only when the fulfillment block's own `counterparty_attestation.signature` verifies under the confirming counterparty's key. Defining and wiring the producer side of that fulfillment confirmation signature is future work.
+
 #### 9.6.6 Attestation Privacy
 
 Attestations are designed to reveal behavioral patterns without exposing deal specifics:
@@ -1013,7 +1030,7 @@ Attestations are self-contained, cryptographically verifiable documents. An agen
 
 A counterparty receiving directly presented attestations can independently verify each one (signatures, transcript hashes, schema conformance) and compute its own trust assessment from the raw data. This is more work than querying a reputation service, but it requires no trust in any intermediary.
 
-Agents can go further with a **competence proof**: a signed commitment that carries prover-asserted aggregate statistics (e.g., "a 95%+ fulfillment rate across 50+ transactions in this category") plus a Merkle root committing to the prover's attestation IDs, without revealing the individual attestations. The privacy mechanism is **selective disclosure**, not a zero-knowledge argument. What a verifier can soundly confirm is: the proof signature, that any revealed attestation belongs to the committed Merkle set, and that each revealed attestation's own party signatures verify. The **aggregate statistics are always prover-asserted, not independently verified**, at any reveal level: a verifier MUST treat them as a self-asserted advertisement carrying only the prover's signature, never as a confirmed count. The reason is twofold and structural: (1) an attestation's party signatures cover only each party behavior record, so the top-level outcome, fulfillment, and category fields that drive the aggregate are not bound by any signature and a prover can rewrite them without breaking a signature; and (2) the verifier does not (in this version) enforce that the prover is a party in every revealed attestation, so a full reveal over another agent's attestations cannot be soundly credited to the prover. A verifiable competence proof that binds outcomes into the signed material and enforces prover party-membership, and ultimately a true zero-knowledge proof of the aggregate that confirms the statistics without revealing the attestations, are possible future capabilities and are not what this primitive provides today. This preserves the privacy guarantees of §9.6.6 while enabling trust establishment without any service dependency.
+Agents can go further with a **competence proof**: a signed commitment that carries prover-asserted aggregate statistics (e.g., "a 95%+ fulfillment rate across 50+ transactions in this category") plus a Merkle root committing to the prover's attestation IDs, without revealing the individual attestations. The privacy mechanism is **selective disclosure**, not a zero-knowledge argument. What a verifier can soundly confirm is: the proof signature, that any revealed attestation belongs to the committed Merkle set, and that each revealed attestation's own party signatures verify. The **aggregate statistics are always prover-asserted, not independently verified**, at any reveal level: a verifier MUST treat them as a self-asserted advertisement carrying only the prover's signature, never as a confirmed count. The reason is twofold and structural: (1) historically an attestation's party signatures covered only each party behavior record, so the top-level outcome, fulfillment, and category fields that drive the aggregate were not bound by any signature and a prover could rewrite them without breaking a signature (this binding gap is closed at issuance for v0.2.0+ attestations by the outcome-binding countersignature of §9.6.5a, but the competence-proof verifier does not yet require or check it, so aggregates remain prover-asserted here); and (2) the verifier does not (in this version) enforce that the prover is a party in every revealed attestation, so a full reveal over another agent's attestations cannot be soundly credited to the prover. A verifiable competence proof that binds outcomes into the signed material and enforces prover party-membership, and ultimately a true zero-knowledge proof of the aggregate that confirms the statistics without revealing the attestations, are possible future capabilities and are not what this primitive provides today. This preserves the privacy guarantees of §9.6.6 while enabling trust establishment without any service dependency.
 
 The self-custodied path and the service-mediated path (§9.6.7) are complementary. Neither is privileged. Reputation services add value through aggregation, Sybil detection, and scoring, but they are never gatekeepers to participation.
 
