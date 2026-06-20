@@ -19,7 +19,7 @@ jsonschema-specifications==2025.9.1
 mcp==1.26.0
 pycparser==3.0
 pydantic==2.12.5
-pydantic-settings==2.13.1
+pydantic-settings==2.14.2
 pydantic_core==2.41.5
 PyJWT==2.13.0
 python-dotenv==1.2.2
