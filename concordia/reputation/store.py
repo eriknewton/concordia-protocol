@@ -330,6 +330,29 @@ class AttestationStore:
                 f"Must be one of: {self.VALID_STATUSES}"
             )
 
+        # Schema: outcome.rounds domain. The scorer appends this value to a
+        # list it later sorts (median rounds-to-agreement), so a non-int (or
+        # negative) value would crash the sort with an unhandled TypeError.
+        # Crucially ``outcome`` is NOT covered by any party signature the store
+        # verifies, so this is an unsigned, attacker-controllable value reaching
+        # the scorer's arithmetic; reject at the ingest boundary so the bad
+        # value never reaches scoring (fail closed), matching the status and
+        # behavioral-signal checks. ``bool`` is excluded even though it is an
+        # int subclass. Domain comes from schemas/attestation.schema.json
+        # (rounds: integer >= 0). Absence is handled by the required-field
+        # check above; this guards present-but-invalid.
+        if "rounds" in outcome:
+            rounds = outcome["rounds"]
+            if isinstance(rounds, bool) or not isinstance(rounds, int):
+                errors.append(
+                    f"Invalid outcome rounds: must be an integer, "
+                    f"got {type(rounds).__name__}"
+                )
+            elif rounds < 0:
+                errors.append(
+                    f"Invalid outcome rounds: must be >= 0, got {rounds!r}"
+                )
+
         # Schema: parties
         parties = attestation.get("parties", [])
         if not isinstance(parties, list) or len(parties) < 2:

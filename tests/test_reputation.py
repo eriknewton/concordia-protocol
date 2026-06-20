@@ -537,6 +537,125 @@ class TestBehaviorSignalValidation:
 
 
 # ===================================================================
+# Outcome-field fail-closed tests (outcome.rounds)
+# ===================================================================
+
+class TestOutcomeRoundsValidation:
+    """An invalid ``outcome.rounds`` must be rejected at ingest, never reach
+    the scorer.
+
+    Same defect class as the behavioral-signal fix, but on the ``outcome``
+    object. ``outcome`` is NOT covered by any party signature the store
+    verifies (the per-party signature covers agent_id/role/behavior/signature
+    only), and ``REQUIRED_OUTCOME_FIELDS`` checks presence, never type. So a
+    string/float/negative ``outcome.rounds`` used to pass ingest with
+    ``accepted=True`` / ``errors=[]`` and then crash
+    ``ReputationScorer.score()`` at ``sorted(rounds_to_agreement)`` with an
+    unhandled ``TypeError`` (``'<' not supported between instances of 'str'
+    and 'int'``). The store now rejects these at the ingest boundary, the same
+    fail-closed pattern as invalid status / concession_magnitude. These tests
+    fail against the pre-fix code.
+
+    Domain comes from schemas/attestation.schema.json (rounds: integer >= 0).
+    """
+
+    def _ingest_with_rounds(self, rounds: Any) -> tuple[bool, ValidationResult]:
+        """Build a signed, ``agreed`` attestation with the given outcome.rounds
+        and ingest it. ``outcome.rounds`` is not part of the signed party
+        record, so an out-of-domain value reaches ``_validate`` exactly as an
+        attacker-supplied unsigned value would."""
+        store = AttestationStore()
+        att = _make_attestation(status="agreed", rounds=rounds)  # type: ignore[arg-type]
+        return store.ingest(att, _test_resolver)
+
+    def _reject_and_no_scorer_crash(self, rounds: Any) -> ValidationResult:
+        """Assert the attestation is rejected, nothing is stored, and the
+        scorer does not crash (it returns None on the empty store)."""
+        store = AttestationStore()
+        att = _make_attestation(status="agreed", rounds=rounds)  # type: ignore[arg-type]
+        accepted, result = store.ingest(att, _test_resolver)
+        assert accepted is False
+        assert result.valid is False
+        assert any("rounds" in e for e in result.errors)
+        # Nothing stored, so scoring yields None (no crash).
+        assert ReputationScorer(store).score("agent_a") is None
+        return result
+
+    def test_string_rounds_rejected_not_crash(self):
+        # The exact pre-fix crash vector: a string outcome.rounds.
+        self._reject_and_no_scorer_crash("seventeen")
+
+    def test_float_rounds_rejected(self):
+        # A float with a fractional part is not a valid integer round count.
+        self._reject_and_no_scorer_crash(3.5)
+
+    def test_negative_rounds_rejected(self):
+        self._reject_and_no_scorer_crash(-1)
+
+    def test_bool_rounds_rejected(self):
+        # bool is an int subclass in Python; reject it so True/False cannot
+        # masquerade as 1/0 rounds.
+        self._reject_and_no_scorer_crash(True)
+
+    def test_poisoned_rounds_does_not_crash_scorer_alongside_valid(self):
+        # The end-to-end threat model: a valid agreed attestation plus a
+        # poisoned one for the SAME agent. Pre-fix, both ingested and
+        # score() crashed; post-fix, the poisoned one is rejected and the
+        # scorer runs cleanly on the valid one.
+        store = AttestationStore()
+        good = _make_attestation(
+            agent_a="victim", agent_b="cp1", status="agreed", rounds=3
+        )
+        accepted_good, _ = store.ingest(good, _test_resolver)
+        assert accepted_good is True
+        poisoned = _make_attestation(
+            agent_a="victim", agent_b="cp2", status="agreed",
+            rounds="seventeen",  # type: ignore[arg-type]
+        )
+        accepted_bad, result_bad = store.ingest(poisoned, _test_resolver)
+        assert accepted_bad is False
+        assert any("rounds" in e for e in result_bad.errors)
+        # Scorer must not crash; only the valid attestation contributes.
+        assert ReputationScorer(store).score("victim") is not None
+
+    def test_valid_integer_rounds_accepted(self):
+        # The fix must not reject legitimate values: zero, one, and a large
+        # round count all stay accepted and score cleanly.
+        for r in (0, 1, 9999):
+            accepted, result = self._ingest_with_rounds(r)
+            assert accepted is True, (r, result.errors)
+
+    def test_scorer_skips_stray_noninteger_rounds_defense_in_depth(self):
+        # Defense in depth: even if a non-int outcome.rounds bypassed ingest
+        # (no future unsigned path should, but the scorer must not crash if one
+        # did), the scorer skips it instead of crashing the median sort.
+        #
+        # Two valid agreed attestations are stored first, then one is poisoned
+        # in place. The poisoned value must coexist with a valid int in the
+        # rounds list so that sorted() actually compares heterogeneous types
+        # (otherwise the single-element sort would not exercise the guard). This
+        # test fails against the pre-fix scorer (TypeError on the sort).
+        store = AttestationStore()
+        good1 = _make_attestation(
+            agent_a="victim", agent_b="cp1", status="agreed", rounds=4
+        )
+        good2 = _make_attestation(
+            agent_a="victim", agent_b="cp2", status="agreed", rounds=6
+        )
+        assert store.ingest(good1, _test_resolver)[0] is True
+        assert store.ingest(good2, _test_resolver)[0] is True
+        # Mutate one stored attestation in place to simulate a bypass of the
+        # ingest-time validator.
+        record = store.get_by_session(good2["session_id"])
+        assert record is not None
+        record.attestation["outcome"]["rounds"] = "seventeen"
+        # Must not raise; the stray non-int is skipped, the valid round remains.
+        rep = ReputationScorer(store).score("victim")
+        assert rep is not None
+        assert rep.median_rounds_to_agreement == 4
+
+
+# ===================================================================
 # Sentinel-semantics pin (symmetric-concession detection)
 # ===================================================================
 
