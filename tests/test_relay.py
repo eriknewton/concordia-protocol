@@ -311,6 +311,120 @@ class TestRelaySessionLifecycle:
 
         assert session.initiator.agent_id == "agent_b"
 
+    def test_per_initiator_quota_admits_exactly_n_then_rejects(self, monkeypatch):
+        """The Nth initiator session at cap=N succeeds; the (N+1)th rejects.
+
+        The check is `count >= cap`, so the session that brings the live count
+        up to exactly N must still be created (a direct positive assertion on
+        the boundary, not merely "the overflow attempt raises").
+        """
+        import concordia.relay as relay_module
+
+        cap = 3
+        monkeypatch.setattr(
+            relay_module, "MAX_ACTIVE_RELAY_SESSIONS_PER_INITIATOR", cap,
+        )
+        relay = NegotiationRelay()
+
+        sessions = []
+        for i in range(cap):
+            session = relay.create_session("agent_a", f"resp_{i}")
+            sessions.append(session)
+
+        # All N landed and are live; the Nth (boundary) is a real PENDING session.
+        assert len(sessions) == cap
+        assert sessions[-1].state == RelaySessionState.PENDING
+        assert relay._active_session_count_for_initiator("agent_a") == cap
+
+        # The (N+1)th must be rejected.
+        with pytest.raises(ValueError, match="Relay session limit reached"):
+            relay.create_session("agent_a", "resp_overflow")
+
+    def test_responder_role_does_not_consume_initiator_quota(self, monkeypatch):
+        """Being a responder in many sessions never spends an agent's own
+        initiator quota.
+
+        The quota counts only sessions where the agent is the *initiator*, so
+        an agent named as responder across many sessions can still open its
+        full allotment of initiator sessions.
+        """
+        import concordia.relay as relay_module
+
+        cap = 2
+        monkeypatch.setattr(
+            relay_module, "MAX_ACTIVE_RELAY_SESSIONS_PER_INITIATOR", cap,
+        )
+        relay = NegotiationRelay()
+
+        # agent_x is the responder in several sessions opened by distinct
+        # initiators (well over the cap of 2).
+        for i in range(5):
+            relay.create_session(f"opener_{i}", "agent_x")
+
+        # None of that counts against agent_x's initiator quota.
+        assert relay._active_session_count_for_initiator("agent_x") == 0
+
+        # agent_x can still open exactly `cap` initiator sessions.
+        for i in range(cap):
+            session = relay.create_session("agent_x", f"counterparty_{i}")
+            assert session.initiator.agent_id == "agent_x"
+
+        assert relay._active_session_count_for_initiator("agent_x") == cap
+
+        # And the (cap+1)th initiator session for agent_x is rejected.
+        with pytest.raises(ValueError, match="Relay session limit reached"):
+            relay.create_session("agent_x", "counterparty_overflow")
+
+    def test_timed_out_reservation_cannot_be_rejoined_to_active(self):
+        """A timed-out pending reservation must not be revivable via join.
+
+        join_session only transitions PENDING -> ACTIVE; a reservation that has
+        already timed out is no longer PENDING, so the reserved responder
+        cannot resurrect it into an ACTIVE message-carrying session.
+        """
+        relay = NegotiationRelay()
+        session = relay.create_session("agent_a", "agent_b", session_ttl=1)
+        # Force the session past its TTL.
+        session.created_at = "1970-01-01T00:00:00+00:00"
+
+        # get_session observes the timeout and flips state to TIMED_OUT.
+        observed = relay.get_session(session.relay_session_id)
+        assert observed is not None
+        assert observed.state == RelaySessionState.TIMED_OUT
+
+        # The reserved responder cannot rejoin a timed-out session.
+        result = relay.join_session(session.relay_session_id, "agent_b")
+        assert result is None
+        assert (
+            relay.get_session(session.relay_session_id).state
+            == RelaySessionState.TIMED_OUT
+        )
+
+    def test_join_on_expired_session_fails_closed_without_prior_get(self):
+        """join_session must reject a TTL-expired reservation on its own.
+
+        Regression for the resurrection edge: when no reader has yet observed
+        the timeout (in-memory state is still PENDING but the wall clock is past
+        TTL), join_session must time the session out itself rather than flip it
+        to ACTIVE. This pins fail-closed behavior along the bare join path, not
+        only the get_session()->join_session() path.
+        """
+        relay = NegotiationRelay()
+        session = relay.create_session("agent_a", "agent_b", session_ttl=1)
+        # Force the session past its TTL but do NOT call get_session first, so
+        # the in-memory state is still PENDING when join is attempted.
+        session.created_at = "1970-01-01T00:00:00+00:00"
+        assert session.state == RelaySessionState.PENDING
+
+        result = relay.join_session(session.relay_session_id, "agent_b")
+
+        assert result is None
+        assert session.state == RelaySessionState.TIMED_OUT
+        assert (
+            relay.get_session(session.relay_session_id).state
+            == RelaySessionState.TIMED_OUT
+        )
+
     def test_session_ttl_above_max_rejected(self):
         relay = NegotiationRelay()
 
