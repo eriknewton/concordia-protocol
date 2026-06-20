@@ -199,12 +199,43 @@ def test_constructor_swallows_loader_exceptions(
 
 # ---------------------------------------------------------------------------
 # Credential-file mode: the session store holds bearer tokens and must stay
-# owner-only (0o600). auth.py persists with os.chmod(path, 0o600); these pin
-# that invariant so a regression to a world-readable mode fails CI.
+# owner-only (0o600). auth.py persists with an explicit os.chmod(path, 0o600)
+# after the atomic replace. These pin that invariant so a regression to a
+# world-readable mode fails CI.
+#
+# Non-vacuity note: tempfile.mkstemp already creates the temp file 0o600, and
+# os.replace swaps that inode into place, so a plain "mode == 0o600" assertion
+# would still pass even if the explicit os.chmod hardening line were deleted —
+# the chmod would be untested defense-in-depth. To make these tests actually
+# pin the chmod line, the `_widen_mkstemp_temp` fixture wraps mkstemp to widen
+# the temp file to 0o644 right after creation. With mkstemp's default mode
+# neutralized, the explicit os.chmod(0o600) is the ONLY thing that can bring
+# the persisted file back to owner-only, so deleting it makes these fail.
 # ---------------------------------------------------------------------------
 
 
-def test_session_store_is_owner_only_0o600_after_persist(tmp_path: Path) -> None:
+@pytest.fixture
+def _widen_mkstemp_temp(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Neutralize mkstemp's default-0o600 so os.chmod is the sole 0o600 source.
+
+    Without this, the inode mkstemp produces (already 0o600) is what os.replace
+    installs, masking removal of the explicit chmod hardening line. Widening the
+    temp file to 0o644 immediately after creation forces the final mode to come
+    from the explicit os.chmod(0o600) call and nowhere else.
+    """
+    real_mkstemp = auth_module.tempfile.mkstemp
+
+    def widening_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+        fd, path = real_mkstemp(*args, **kwargs)
+        os.chmod(path, 0o644)
+        return fd, path
+
+    monkeypatch.setattr(auth_module.tempfile, "mkstemp", widening_mkstemp)
+
+
+def test_session_store_is_owner_only_0o600_after_persist(
+    tmp_path: Path, _widen_mkstemp_temp: None,
+) -> None:
     store_file = tmp_path / "sessions.json"
     store = AuthTokenStore(persist_path=store_file, autoload=False)
 
@@ -215,7 +246,7 @@ def test_session_store_is_owner_only_0o600_after_persist(tmp_path: Path) -> None
 
 
 def test_persist_narrows_preexisting_world_readable_file_to_0o600(
-    tmp_path: Path,
+    tmp_path: Path, _widen_mkstemp_temp: None,
 ) -> None:
     store_file = tmp_path / "sessions.json"
     # Pre-seed a world-readable credential file on the persist path. A persist
