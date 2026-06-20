@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import time
 from pathlib import Path
 
@@ -194,3 +195,182 @@ def test_constructor_swallows_loader_exceptions(
     store = AuthTokenStore(persist_path=tmp_path / "sessions.json")
 
     assert store.get_any_session_role("session-a", "token") is None
+
+
+# ---------------------------------------------------------------------------
+# Credential-file mode: the session store holds bearer tokens and must stay
+# owner-only (0o600). auth.py persists with os.chmod(path, 0o600); these pin
+# that invariant so a regression to a world-readable mode fails CI.
+# ---------------------------------------------------------------------------
+
+
+def test_session_store_is_owner_only_0o600_after_persist(tmp_path: Path) -> None:
+    store_file = tmp_path / "sessions.json"
+    store = AuthTokenStore(persist_path=store_file, autoload=False)
+
+    store.register_session_tokens("session-a", "a", "b")
+
+    mode = stat.S_IMODE(os.stat(store_file).st_mode)
+    assert mode == 0o600
+
+
+def test_persist_narrows_preexisting_world_readable_file_to_0o600(
+    tmp_path: Path,
+) -> None:
+    store_file = tmp_path / "sessions.json"
+    # Pre-seed a world-readable credential file on the persist path. A persist
+    # must never inherit/leave a widened mode; it must end up owner-only.
+    store_file.write_text("{}")
+    os.chmod(store_file, 0o644)
+    assert stat.S_IMODE(os.stat(store_file).st_mode) == 0o644
+
+    store = AuthTokenStore(persist_path=store_file, autoload=False)
+    store.register_session_tokens("session-a", "a", "b")
+
+    mode = stat.S_IMODE(os.stat(store_file).st_mode)
+    assert mode == 0o600
+
+
+# ---------------------------------------------------------------------------
+# Agent tokens are NEVER persisted. The replaced test_phase_e assertion was
+# vacuous (a tautology that could never fail); these capture the real returned
+# agent token string and assert it appears nowhere in the on-disk file, and
+# that every persisted session token is a session token (not an agent token).
+# ---------------------------------------------------------------------------
+
+
+def test_agent_token_string_is_absent_from_persisted_file(tmp_path: Path) -> None:
+    store_file = tmp_path / "sessions.json"
+    store = AuthTokenStore(persist_path=store_file, autoload=False)
+
+    agent_token = store.register_agent_token("agent-alice")
+    store.register_session_tokens("session-1", "agent-alice", "bob")
+
+    raw = store_file.read_text()
+    # The concrete agent-token string must not be serialized anywhere.
+    assert agent_token not in raw
+    assert "agents" not in json.loads(raw)
+
+
+def test_every_persisted_session_token_is_a_session_token_not_agent(
+    tmp_path: Path,
+) -> None:
+    store_file = tmp_path / "sessions.json"
+    store = AuthTokenStore(persist_path=store_file, autoload=False)
+
+    agent_token = store.register_agent_token("agent-alice")
+    init_token, resp_token = store.register_session_tokens(
+        "session-1", "agent-alice", "bob",
+    )
+
+    payload = json.loads(store_file.read_text())
+    persisted_tokens = {entry["token"] for entry in payload["sessions"]}
+
+    # Exactly the two session tokens land on disk, and the agent token is not
+    # masquerading as one of them.
+    assert persisted_tokens == {init_token, resp_token}
+    assert agent_token not in persisted_tokens
+
+
+# ---------------------------------------------------------------------------
+# TTL expiry is fail-closed AT the boundary. _is_expired uses time.time() >=
+# expiry, so an exactly-expired token (expires_at == now) must be REJECTED and
+# a token with one second of life left (expires_at == now + 1) must VALIDATE.
+# ---------------------------------------------------------------------------
+
+
+def test_session_token_rejected_exactly_at_expiry_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixed_t = 1_000_000.0
+    monkeypatch.setattr(auth_module.time, "time", lambda: fixed_t)
+
+    # ttl=0 means expiry == issue time == fixed_t, i.e. exactly at the boundary.
+    store = AuthTokenStore(
+        persist_path=tmp_path / "sessions.json", ttl_seconds=0, autoload=False,
+    )
+    init_token, _ = store.register_session_tokens("session-a", "a", "b")
+
+    assert not store.validate_session_token("session-a", "initiator", init_token)
+
+
+def test_session_token_valid_one_second_before_expiry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixed_t = 1_000_000.0
+    monkeypatch.setattr(auth_module.time, "time", lambda: fixed_t)
+
+    # ttl=1 means expiry == fixed_t + 1; at fixed_t the token is still live.
+    store = AuthTokenStore(
+        persist_path=tmp_path / "sessions.json", ttl_seconds=1, autoload=False,
+    )
+    init_token, _ = store.register_session_tokens("session-a", "a", "b")
+
+    assert store.validate_session_token("session-a", "initiator", init_token)
+
+
+# ---------------------------------------------------------------------------
+# An expired session token is scrubbed from disk on validation, so it cannot
+# be resurrected by a server restart that reloads the file.
+# ---------------------------------------------------------------------------
+
+
+def test_expired_session_token_is_scrubbed_from_disk_on_validation(
+    tmp_path: Path,
+) -> None:
+    store_file = tmp_path / "sessions.json"
+    store = AuthTokenStore(
+        persist_path=store_file, ttl_seconds=0, autoload=False,
+    )
+    init_token, _ = store.register_session_tokens("session-a", "a", "b")
+
+    # The entry is on disk immediately after issue.
+    before = json.loads(store_file.read_text())
+    assert any(
+        entry["session_id"] == "session-a" and entry["role"] == "initiator"
+        for entry in before["sessions"]
+    )
+
+    time.sleep(0.01)
+    assert not store.validate_session_token("session-a", "initiator", init_token)
+
+    # Validation of an expired token must rewrite the file without that entry,
+    # so a restart cannot resurrect it.
+    after = json.loads(store_file.read_text())
+    assert not any(
+        entry["session_id"] == "session-a" and entry["role"] == "initiator"
+        for entry in after["sessions"]
+    )
+
+
+# ---------------------------------------------------------------------------
+# A type-poisoned expires_at on disk must never be coerced into a live token.
+# float("not-a-number") raises inside the loader; autoload swallows the error
+# (best-effort load) and the token is simply not admitted (fail closed).
+# ---------------------------------------------------------------------------
+
+
+def test_type_poisoned_expires_at_through_loader_does_not_admit_token(
+    tmp_path: Path,
+) -> None:
+    store_file = tmp_path / "sessions.json"
+    token = "c" * 64
+    store_file.write_text(
+        json.dumps(
+            {
+                "sessions": [
+                    {
+                        "session_id": "poisoned",
+                        "role": "initiator",
+                        "token": token,
+                        "expires_at": "not-a-number",
+                    }
+                ]
+            }
+        )
+    )
+
+    store = AuthTokenStore(persist_path=store_file)
+
+    assert store.get_any_session_role("poisoned", token) is None
+    assert not store.validate_session_token("poisoned", "initiator", token)

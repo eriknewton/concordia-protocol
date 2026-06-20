@@ -217,15 +217,19 @@ class TestAgentVsSessionTokenSeparation:
     def test_agent_tokens_are_not_persisted(self, tmp_path: Path):
         store_file = tmp_path / "sessions.json"
         auth = AuthTokenStore(persist_path=store_file, autoload=False)
-        auth.register_agent_token("agent_alice")
+        agent_token = auth.register_agent_token("agent_alice")
         auth.register_session_tokens("ses_1", "agent_alice", "bob")
 
         payload = json.loads(store_file.read_text())
         # Session entries exist...
         assert len(payload["sessions"]) == 2
-        # ...but no agent tokens are written to the file.
+        # ...but the concrete agent-token secret is never written to the file.
+        # (The previous assertion `"agent_alice" not in serialized or "ses_1"
+        # in serialized` was vacuous: "ses_1" is always persisted, so the right
+        # disjunct was always true and the check could never fail even if the
+        # agent token leaked. Pin the actual secret string instead.)
         serialized = json.dumps(payload)
-        assert "agent_alice" not in serialized or "ses_1" in serialized
+        assert agent_token not in serialized
         # The structure has no 'agents' key.
         assert "agents" not in payload
 
