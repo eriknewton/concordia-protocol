@@ -335,6 +335,16 @@ class NegotiationRelay:
         session = self._sessions.get(relay_session_id)
         if session is None:
             return None
+        # Fail closed on a wall-clock-expired reservation even if no reader has
+        # observed the timeout yet. Without this, a session whose in-memory
+        # state is still PENDING but whose TTL has elapsed could be resurrected
+        # into ACTIVE by a join that races ahead of any get_session() call.
+        if (
+            session.is_timed_out
+            and session.state
+            in (RelaySessionState.PENDING, RelaySessionState.ACTIVE)
+        ):
+            self._timeout_session(session)
         if session.state != RelaySessionState.PENDING:
             return None
         if session.responder is not None:

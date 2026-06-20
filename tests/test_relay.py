@@ -400,6 +400,31 @@ class TestRelaySessionLifecycle:
             == RelaySessionState.TIMED_OUT
         )
 
+    def test_join_on_expired_session_fails_closed_without_prior_get(self):
+        """join_session must reject a TTL-expired reservation on its own.
+
+        Regression for the resurrection edge: when no reader has yet observed
+        the timeout (in-memory state is still PENDING but the wall clock is past
+        TTL), join_session must time the session out itself rather than flip it
+        to ACTIVE. This pins fail-closed behavior along the bare join path, not
+        only the get_session()->join_session() path.
+        """
+        relay = NegotiationRelay()
+        session = relay.create_session("agent_a", "agent_b", session_ttl=1)
+        # Force the session past its TTL but do NOT call get_session first, so
+        # the in-memory state is still PENDING when join is attempted.
+        session.created_at = "1970-01-01T00:00:00+00:00"
+        assert session.state == RelaySessionState.PENDING
+
+        result = relay.join_session(session.relay_session_id, "agent_b")
+
+        assert result is None
+        assert session.state == RelaySessionState.TIMED_OUT
+        assert (
+            relay.get_session(session.relay_session_id).state
+            == RelaySessionState.TIMED_OUT
+        )
+
     def test_session_ttl_above_max_rejected(self):
         relay = NegotiationRelay()
 
