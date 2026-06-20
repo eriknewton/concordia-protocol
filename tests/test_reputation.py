@@ -442,6 +442,163 @@ class TestSybilDetection:
 
 
 # ===================================================================
+# Behavioral-signal fail-closed tests
+# ===================================================================
+
+class TestBehaviorSignalValidation:
+    """Invalid behavioral signals must be rejected at ingest, never reach the
+    scorer.
+
+    Regression guard: a non-numeric (or NaN/inf, or out-of-domain)
+    ``concession_magnitude`` or ``offers_made`` used to pass ingest unvalidated
+    and then crash the scorer's ``sum()`` with an unhandled ``TypeError``
+    instead of failing closed. The scorer must never crash and must never
+    credit cooperation it cannot verify, so the store rejects these at the
+    ingest boundary (the same fail-closed pattern as invalid status /
+    transcript_hash). These tests fail against the pre-fix code.
+    """
+
+    def _scorer_does_not_crash_on_reject(self, att: dict[str, Any]) -> ValidationResult:
+        """Ingest *att*, assert it is rejected, and assert that even if it had
+        been stored the scorer would not crash on the rejected agent."""
+        store = AttestationStore()
+        accepted, result = store.ingest(att, _test_resolver)
+        assert accepted is False
+        assert result.valid is False
+        # Nothing was stored, so scoring the agent yields None (no crash).
+        scorer = ReputationScorer(store)
+        assert scorer.score("agent_a") is None
+        return result
+
+    def test_non_numeric_concession_magnitude_rejected_not_crash(self):
+        # The exact pre-fix crash vector: a string concession_magnitude.
+        att = _make_attestation(concession_a="lots")  # type: ignore[arg-type]
+        result = self._scorer_does_not_crash_on_reject(att)
+        assert any("concession_magnitude" in e for e in result.errors)
+
+    def test_bool_concession_magnitude_rejected(self):
+        # bool is an int subclass in Python; reject it so True/False cannot
+        # masquerade as a 1.0/0.0 magnitude.
+        att = _make_attestation(concession_a=True)  # type: ignore[arg-type]
+        result = self._scorer_does_not_crash_on_reject(att)
+        assert any("concession_magnitude" in e for e in result.errors)
+
+    def test_negative_concession_magnitude_rejected(self):
+        att = _make_attestation(concession_a=-0.1)
+        result = self._scorer_does_not_crash_on_reject(att)
+        assert any("concession_magnitude" in e for e in result.errors)
+
+    def test_above_one_concession_magnitude_rejected(self):
+        att = _make_attestation(concession_a=1.5)
+        result = self._scorer_does_not_crash_on_reject(att)
+        assert any("concession_magnitude" in e for e in result.errors)
+
+    def test_non_integer_offers_made_rejected_not_crash(self):
+        # offers_made shares the same crash vector (sum/square in the scorer).
+        att = _make_attestation(offers_a="many")  # type: ignore[arg-type]
+        result = self._scorer_does_not_crash_on_reject(att)
+        assert any("offers_made" in e for e in result.errors)
+
+    def test_negative_offers_made_rejected(self):
+        att = _make_attestation(offers_a=-1)
+        result = self._scorer_does_not_crash_on_reject(att)
+        assert any("offers_made" in e for e in result.errors)
+
+    def test_nan_inf_concession_magnitude_rejected_directly(self):
+        # NaN/inf cannot reach _validate through a signed party record (the
+        # signing layer rejects special floats), but the behavior validator
+        # must still fail closed on them as a defense-in-depth boundary.
+        for bad in (float("nan"), float("inf"), float("-inf")):
+            errors = AttestationStore._validate_behavior(
+                0, {"concession_magnitude": bad}
+            )
+            assert any("finite" in e for e in errors), bad
+
+    def test_valid_domain_edges_accepted(self):
+        # The fix must not reject legitimate boundary values.
+        for cm, om in ((0.0, 0), (1.0, 2), (0.5, 10)):
+            assert AttestationStore._validate_behavior(
+                0, {"concession_magnitude": cm, "offers_made": om}
+            ) == []
+        store = AttestationStore()
+        att = _make_attestation(concession_a=0.0, concession_b=1.0, offers_a=0)
+        accepted, result = store.ingest(att, _test_resolver)
+        assert accepted is True, result.errors
+        # And the scorer runs cleanly on the accepted attestation.
+        assert ReputationScorer(store).score("agent_a") is not None
+
+    def test_absent_behavior_fields_still_accepted(self):
+        # concession_magnitude / offers_made are optional; absence is fine and
+        # must not be turned into a rejection by the new validator.
+        assert AttestationStore._validate_behavior(0, {}) == []
+        assert AttestationStore._validate_behavior(
+            0, {"reasoning_provided": True}
+        ) == []
+
+
+# ===================================================================
+# Sentinel-semantics pin (symmetric-concession detection)
+# ===================================================================
+
+class TestSymmetricConcessionSentinelPin:
+    """Pin the current -1 / -2 sentinel semantics in SybilSignals.check().
+
+    store.py uses distinct sentinels (-1 vs -2) as the .get() defaults when
+    comparing the two parties' concession_magnitude. The distinct values are
+    LOAD-BEARING: if both parties OMIT concession_magnitude, the defaults must
+    NOT compare equal, otherwise two missing values would falsely register as
+    "symmetric concessions" and open a symmetric-concession evasion path.
+
+    These tests pin that behavior so any future change to the sentinel values
+    (e.g. a 'cleanup' to equal defaults) is a conscious, reviewed decision and
+    not a silent regression. This is intentionally a behavior pin, not an
+    endorsement of the sentinel design.
+    """
+
+    def test_equal_present_concessions_flagged(self):
+        store = AttestationStore()
+        att = _make_attestation(concession_a=0.25, concession_b=0.25)
+        accepted, _ = store.ingest(att, _test_resolver)
+        assert accepted is True
+        record = store.get(att["attestation_id"])
+        assert record.sybil_signals.symmetric_concessions is True
+
+    def test_asymmetric_present_concessions_not_flagged(self):
+        store = AttestationStore()
+        att = _make_attestation(concession_a=0.2, concession_b=0.15)
+        accepted, _ = store.ingest(att, _test_resolver)
+        assert accepted is True
+        record = store.get(att["attestation_id"])
+        assert record.sybil_signals.symmetric_concessions is False
+
+    def test_both_concessions_absent_not_flagged_by_sentinels(self):
+        # The crux of the sentinel design: two MISSING concession_magnitude
+        # values must not compare equal (the -1 vs -2 defaults guarantee this).
+        parties = [
+            {"agent_id": "agent_a", "role": "seller",
+             "behavior": {"offers_made": 2, "reasoning_provided": True}},
+            {"agent_id": "agent_b", "role": "buyer",
+             "behavior": {"offers_made": 3, "reasoning_provided": False}},
+        ]
+        signals = SybilSignals()
+        signals.check({"parties": parties}, AttestationStore())
+        assert signals.symmetric_concessions is False
+
+    def test_both_concessions_zero_not_flagged(self):
+        # Equal but zero magnitudes are not "symmetric concessions": the
+        # existing check requires concession_magnitude > 0 for the first party.
+        parties = [
+            {"agent_id": "agent_a", "role": "seller",
+             "behavior": {"concession_magnitude": 0.0, "offers_made": 2}},
+            {"agent_id": "agent_b", "role": "buyer",
+             "behavior": {"concession_magnitude": 0.0, "offers_made": 3}},
+        ]
+        signals = SybilSignals()
+        signals.check({"parties": parties}, AttestationStore())
+        assert signals.symmetric_concessions is False
+
+
+# ===================================================================
 # ReputationScorer tests
 # ===================================================================
 

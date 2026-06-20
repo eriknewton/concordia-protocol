@@ -15,6 +15,7 @@ designed so a persistent backend (PostgreSQL, DynamoDB) can be swapped in.
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -342,6 +343,19 @@ class AttestationStore:
                 sig = party.get("signature", "")
                 if not sig or not sig.strip():
                     errors.append(f"Party {i}: signature must not be empty")
+                # Behavioral signals must be in-domain numbers. The scorer sums
+                # and squares these, so a non-numeric (or NaN/inf, or
+                # out-of-range) value would crash the scorer or silently credit
+                # cooperation that cannot be verified. Reject at the ingest
+                # boundary so the bad value never reaches scoring — fail closed,
+                # matching the status/transcript_hash checks above. Domain comes
+                # from schemas/attestation.schema.json (concession_magnitude:
+                # number in [0.0, 1.0]; offers_made: integer >= 0).
+                behavior = party.get("behavior")
+                if isinstance(behavior, dict):
+                    errors.extend(
+                        self._validate_behavior(i, behavior)
+                    )
 
         # Transcript hash format
         transcript_hash = attestation.get("transcript_hash", "")
@@ -386,3 +400,54 @@ class AttestationStore:
             errors=errors,
             warnings=warnings,
         )
+
+    @staticmethod
+    def _validate_behavior(index: int, behavior: dict[str, Any]) -> list[str]:
+        """Validate a party's behavioral signals against their schema domain.
+
+        Returns a list of handled error strings (empty when in-domain). Only
+        the fields the scorer reads numerically are checked here; the goal is
+        fail-closed rejection of values that would crash the scorer or credit
+        unverifiable cooperation, not full schema validation.
+
+        ``bool`` is explicitly excluded even though it is a subclass of ``int``
+        in Python: a boolean is not a legitimate magnitude or offer count, and
+        accepting it would let ``True``/``False`` masquerade as 1/0.
+        """
+        errors: list[str] = []
+
+        # concession_magnitude: number in [0.0, 1.0]. Absent is fine (the
+        # scorer defaults it to 0.0); present-but-invalid is rejected.
+        if "concession_magnitude" in behavior:
+            cm = behavior["concession_magnitude"]
+            if isinstance(cm, bool) or not isinstance(cm, (int, float)):
+                errors.append(
+                    f"Party {index}: concession_magnitude must be a number, "
+                    f"got {type(cm).__name__}"
+                )
+            elif not math.isfinite(cm):
+                errors.append(
+                    f"Party {index}: concession_magnitude must be finite, "
+                    f"got {cm!r}"
+                )
+            elif not (0.0 <= cm <= 1.0):
+                errors.append(
+                    f"Party {index}: concession_magnitude must be in "
+                    f"[0.0, 1.0], got {cm!r}"
+                )
+
+        # offers_made: integer >= 0. Same fail-closed reasoning; the scorer
+        # sums and squares this value.
+        if "offers_made" in behavior:
+            om = behavior["offers_made"]
+            if isinstance(om, bool) or not isinstance(om, int):
+                errors.append(
+                    f"Party {index}: offers_made must be an integer, "
+                    f"got {type(om).__name__}"
+                )
+            elif om < 0:
+                errors.append(
+                    f"Party {index}: offers_made must be >= 0, got {om!r}"
+                )
+
+        return errors
