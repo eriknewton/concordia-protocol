@@ -33,7 +33,7 @@ jobs:
       contents: read
       id-token: write  # Required for npm provenance (SLSA attestation).
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.2 (resolved 2026-05-18)
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6.0.2 (resolved 2026-05-18)
 
       - name: Set up Node.js 20
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v4.4.0 (resolved 2026-05-18)
