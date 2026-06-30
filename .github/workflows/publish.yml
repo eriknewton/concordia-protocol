@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6.0.2 (resolved 2026-05-18)
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0 (resolved 2026-05-18)
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.2.0 (resolved 2026-05-18)
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -45,7 +45,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6.0.2 (resolved 2026-05-18)
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0 (resolved 2026-05-18)
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.2.0 (resolved 2026-05-18)
         with:
           python-version: "3.12"
 
@@ -58,7 +58,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6.0.2 (resolved 2026-05-18)
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0 (resolved 2026-05-18)
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.2.0 (resolved 2026-05-18)
         with:
           python-version: "3.12"
 
@@ -81,7 +81,7 @@ jobs:
       id-token: write  # Trusted publisher (OIDC)
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6.0.2 (resolved 2026-05-18)
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0 (resolved 2026-05-18)
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.2.0 (resolved 2026-05-18)
         with:
           python-version: "3.12"
       - run: pip install build
