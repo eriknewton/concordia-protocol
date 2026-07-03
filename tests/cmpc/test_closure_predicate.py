@@ -431,36 +431,6 @@ def test_predicate_result_to_dict_shape() -> None:
     assert "reason" not in payload
 
 
-def test_evaluable_predicate_from_signed_closure_predicate() -> None:
-    from concordia.cmpc import ClosurePredicate
-
-    signed = ClosurePredicate(
-        predicate_id="urn:concordia:predicate:closure-1",
-        type=BILATERAL_CHAIN_CLOSURE_V1,
-        authority="did:web:authority.example",
-        issuer="did:web:issuer.example",
-        subject="urn:concordia:chain-session:beer-1",
-        condition={
-            "expected_participants": [RETAILER, WHOLESALER],
-            "aggregate_quantity_required": 100,
-            "activation_deadline_iso": BEFORE_DEADLINE,
-            "mandate_check_required": False,
-            "_now": NOW,
-        },
-        issued_at="2026-05-16T11:00:00Z",
-        expires_at="2026-05-16T15:00:00Z",
-        references=[],
-        algorithm="EdDSA",
-        status="active",
-        signature="sig",
-    )
-    evaluable = EvaluablePredicate.from_closure_predicate(signed)
-    assert evaluable.type_urn == BILATERAL_CHAIN_CLOSURE_V1
-    commitments = [_commitment(RETAILER, 60), _commitment(WHOLESALER, 40)]
-    result = evaluate_predicate(evaluable, _chain_session(), commitments)
-    assert result.result == "satisfied"
-
-
 # --------------------------------------------------------------------------
 # Fail-closed: non-finite numeric inputs (NaN / inf) never satisfy
 #
@@ -669,3 +639,121 @@ def test_closure_language_deeply_nested_tree_fails_closed() -> None:
     result = evaluate_predicate(predicate, _chain_session(), [_commitment(RETAILER, 60)])
     assert isinstance(result, PredicateResult)
     assert result.result == "unsatisfied"
+
+
+# --------------------------------------------------------------------------
+# Fail-closed (finding C1-1): evaluate_predicate is total even for a malformed
+# predicate object. Reading the type URN or hashing the parameter payload must
+# not raise out of evaluate_predicate; a non-EvaluablePredicate or a predicate
+# with a non-string type URN must resolve to unsatisfied.
+# --------------------------------------------------------------------------
+
+
+def test_non_evaluable_predicate_object_fails_closed() -> None:
+    # A bare object() has no type_urn attribute. Reading it eagerly would raise
+    # AttributeError out of evaluate_predicate; it must fail closed instead.
+    result = evaluate_predicate(object(), _chain_session(), [])  # type: ignore[arg-type]
+    assert isinstance(result, PredicateResult)
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_predicate"
+
+
+def test_unhashable_type_urn_fails_closed() -> None:
+    # A predicate whose type_urn is a list is unhashable; a dict lookup keyed on
+    # it would raise TypeError. It must fail closed as a malformed type payload.
+    predicate = EvaluablePredicate(
+        predicate_id="p",
+        type_urn=["x"],  # type: ignore[arg-type]
+        parameters={},
+    )
+    result = evaluate_predicate(predicate, _chain_session(), [])
+    assert isinstance(result, PredicateResult)
+    assert result.result == "unsatisfied"
+    assert result.reason in ("malformed_predicate", "unknown_predicate_type")
+
+
+def test_non_string_type_urn_fails_closed() -> None:
+    predicate = EvaluablePredicate(
+        predicate_id="p",
+        type_urn=42,  # type: ignore[arg-type]
+        parameters={},
+    )
+    result = evaluate_predicate(predicate, _chain_session(), [])
+    assert isinstance(result, PredicateResult)
+    assert result.result == "unsatisfied"
+    assert result.reason in ("malformed_predicate", "unknown_predicate_type")
+
+
+# --------------------------------------------------------------------------
+# Fail-closed (finding C1-2): the closure language must not satisfy on an EMPTY
+# commitment list. count()==0 and sum()==0 over an empty chain would otherwise
+# report a deal closed against zero commitments.
+# --------------------------------------------------------------------------
+
+
+def test_closure_language_count_zero_on_empty_fails_closed() -> None:
+    predicate = _closure_language_predicate(
+        {"op": "==", "left": {"op": "count"}, "value": 0}
+    )
+    result = evaluate_predicate(predicate, _chain_session(), [])
+    assert result.result == "unsatisfied"
+
+
+def test_closure_language_sum_zero_on_empty_fails_closed() -> None:
+    predicate = _closure_language_predicate(
+        {
+            "op": "==",
+            "left": {"op": "sum", "field": "commitment_terms.quantity"},
+            "value": 0,
+        }
+    )
+    result = evaluate_predicate(predicate, _chain_session(), [])
+    assert result.result == "unsatisfied"
+
+
+def test_closure_language_root_aggregation_empty_fails_closed() -> None:
+    # A bare count root over an empty list must not satisfy either.
+    predicate = _closure_language_predicate({"op": "count"})
+    result = evaluate_predicate(predicate, _chain_session(), [])
+    assert result.result == "unsatisfied"
+
+
+# --------------------------------------------------------------------------
+# Fail-closed (finding C1-3): the bilateral profile must require EVERY expected
+# participant to be present. A partial commitment set (subset of expected) must
+# not close.
+# --------------------------------------------------------------------------
+
+
+def test_bilateral_partial_participants_fails_closed() -> None:
+    # Only the retailer commits (qty 100, future deadline). The wholesaler is an
+    # expected participant with no commitment, so the chain must not close.
+    commitments = [_commitment(RETAILER, 100)]
+    result = evaluate_predicate(_bilateral_predicate(), _chain_session(), commitments)
+    assert result.result == "unsatisfied"
+    assert result.reason == "missing_expected_participant"
+
+
+def test_bilateral_duplicate_participant_fails_closed() -> None:
+    # Two commitments from the same expected participant, with the other expected
+    # participant absent, must not close even if the quantities sum correctly.
+    commitments = [_commitment(RETAILER, 60), _commitment(RETAILER, 40)]
+    result = evaluate_predicate(_bilateral_predicate(), _chain_session(), commitments)
+    assert result.result == "unsatisfied"
+    assert result.reason == "duplicate_participant_commitment"
+
+
+# --------------------------------------------------------------------------
+# Fail-closed (finding C1-4): an unverified signed ClosurePredicate primitive
+# must NOT become a trusted policy tree. The unsafe from_closure_predicate
+# adapter, which converted a signed primitive without verifying its signature,
+# status, expiry, or revocation, has been removed. There is no path from an
+# unverified signed primitive to a satisfied evaluation.
+# --------------------------------------------------------------------------
+
+
+def test_unsafe_closure_predicate_adapter_removed() -> None:
+    # The adapter that turned an unverified signed primitive into trusted policy
+    # is gone. Its removal is the fix: an unverified signed primitive cannot be
+    # adapted at all, so a dummy or expired signature can never evaluate.
+    assert not hasattr(EvaluablePredicate, "from_closure_predicate")

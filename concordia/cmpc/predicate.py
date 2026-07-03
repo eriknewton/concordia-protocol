@@ -17,12 +17,13 @@ Two evaluation surfaces ship in Stage 3:
   membership, ISO 8601 time comparison, and aggregation (sum/min/max/count)
   across the chain's commitments.
 
-Fail-closed contract: evaluation is total. Any unknown predicate type, unknown
-operator, malformed node, missing field, non-numeric aggregand, unparsable
-timestamp, or otherwise malformed input yields ``unsatisfied`` with a
-machine-readable reason. It NEVER defaults to ``satisfied`` and NEVER raises out
-of :func:`evaluate_predicate`. Satisfaction requires every declared check to
-pass explicitly.
+Fail-closed contract: evaluation is total. A malformed predicate object, an
+unknown predicate type, an unknown operator, a malformed node, a missing field,
+a non-numeric aggregand, an unparsable timestamp, an EMPTY commitment list at an
+aggregation/comparison/membership/time boundary, or otherwise malformed input
+yields ``unsatisfied`` with a machine-readable reason. It NEVER defaults to
+``satisfied`` and NEVER raises out of :func:`evaluate_predicate`. Satisfaction
+requires every declared check to pass explicitly over at least one commitment.
 """
 
 from __future__ import annotations
@@ -92,20 +93,17 @@ class EvaluablePredicate:
     parameters: dict[str, Any]
     version: str = "1"
 
-    @classmethod
-    def from_closure_predicate(cls, predicate: Any) -> "EvaluablePredicate":
-        """Adapt a signed ClosurePredicate primitive into an evaluable view.
-
-        The signed primitive stores the profile parameters under its
-        ``condition`` field and the type URN under ``type``.
-        """
-        condition = getattr(predicate, "condition", None)
-        parameters: dict[str, Any] = condition if isinstance(condition, dict) else {}
-        return cls(
-            predicate_id=getattr(predicate, "predicate_id", ""),
-            type_urn=getattr(predicate, "type", ""),
-            parameters=parameters,
-        )
+    # NOTE (security, fail-closed): there is deliberately NO adapter from a
+    # signed :class:`concordia.cmpc.types.ClosurePredicate` to this evaluable
+    # view. A prior ``from_closure_predicate`` classmethod copied a signed
+    # primitive's ``condition``/``type`` into trusted policy WITHOUT verifying
+    # its signature, status, expiry, or revocation, so a primitive carrying a
+    # dummy or expired signature evaluated as satisfied. Constructing an
+    # EvaluablePredicate is an assertion that the parameters are already
+    # trusted; an unverified signed primitive must first pass a real
+    # signature + status + expiry + revocation check (which requires the
+    # issuer public key and the revocation store, neither of which this module
+    # holds) before its parameters may be trusted here.
 
 
 def _satisfied(evidence: dict[str, Any] | None = None) -> PredicateResult:
@@ -129,13 +127,21 @@ def evaluate_predicate(
     rather than propagating. Never returns ``satisfied`` by default.
     """
     commitment_list = commitments if commitments is not None else []
-    evaluator = _PROFILES.get(predicate.type_urn)
-    if evaluator is None:
-        return _unsatisfied(
-            "unknown_predicate_type",
-            {"type_urn": predicate.type_urn},
-        )
     try:
+        # Read the type URN INSIDE the guarded path. A malformed predicate
+        # object (no type_urn attribute) or a non-string / unhashable type URN
+        # must resolve to unsatisfied, not raise out of evaluate_predicate. The
+        # dict lookup below would raise TypeError on an unhashable key, so the
+        # string check is a precondition, not a nicety.
+        type_urn = getattr(predicate, "type_urn", None)
+        if not isinstance(type_urn, str):
+            return _unsatisfied("malformed_predicate", {"detail": "type_urn_not_a_string"})
+        evaluator = _PROFILES.get(type_urn)
+        if evaluator is None:
+            return _unsatisfied(
+                "unknown_predicate_type",
+                {"type_urn": type_urn},
+            )
         return evaluator(predicate, chain_session, commitment_list)
     except PredicateEvaluationError as exc:
         return _unsatisfied("malformed_predicate", {"detail": str(exc)})
@@ -213,12 +219,35 @@ def evaluate_bilateral_chain_closure_v1(
         did = commitment.get("committer_did")
         if not isinstance(did, str) or not did:
             return _unsatisfied("missing_committer_did")
+        # Reject a duplicate committer up front. A second commitment from an
+        # already-committed participant, paired with another expected
+        # participant being absent, could otherwise let a partial set reach the
+        # expected quantity and close. One commitment per expected participant.
+        if did in actual_participants:
+            return _unsatisfied(
+                "duplicate_participant_commitment",
+                {"committer_did": did},
+            )
         actual_participants.add(did)
 
-    if not actual_participants.issubset(expected):
+    # Require EVERY expected participant to be present (exact set match), not
+    # merely a subset. A subset check let a partial commitment set close without
+    # every bilateral participant having committed.
+    if actual_participants != expected:
+        missing = sorted(expected - actual_participants)
+        unexpected = sorted(actual_participants - expected)
+        if unexpected:
+            return _unsatisfied(
+                "unexpected_participant",
+                {
+                    "actual": sorted(actual_participants),
+                    "expected": sorted(expected),
+                },
+            )
         return _unsatisfied(
-            "unexpected_participant",
+            "missing_expected_participant",
             {
+                "missing": missing,
                 "actual": sorted(actual_participants),
                 "expected": sorted(expected),
             },
@@ -424,6 +453,14 @@ def _evaluate_time(node: dict[str, Any], commitments: list[dict[str, Any]]) -> b
 
 def _evaluate_aggregation(node: dict[str, Any], commitments: list[dict[str, Any]]) -> float:
     op = node["op"]
+    # Fail closed on an empty commitment list. count()==0 or sum()==0 over zero
+    # commitments would otherwise let a closure expression report a deal closed
+    # against no commitments at all. Aggregation over an empty chain is
+    # meaningless in the closure context, so every aggregation op requires at
+    # least one commitment. (min/max already reject emptiness below; this makes
+    # count and sum consistent and closes the empty-list satisfaction hole.)
+    if not commitments:
+        raise PredicateEvaluationError(f"empty_commitments_for_aggregation:{op}")
     if op == "count":
         return float(len(commitments))
 
