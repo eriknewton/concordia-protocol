@@ -441,8 +441,17 @@ def _evaluate_comparison(
     expected = _finite_comparand(node["value"], "value")
 
     if "left" in node:
-        actual = _finite_comparand(
+        # The `left` value (an aggregation result, always a finite float) meets
+        # the expected literal through the SAME type/finiteness chokepoint as a
+        # resolved commitment field, keyed on the expected literal. Without the
+        # type-class match, a malformed non-numeric expected literal fails open:
+        # operator.eq(1.0, "two") is False, so not(count == "two") would invert
+        # to satisfied on a cross-type comparison. Keying the guard on
+        # [expected] rejects a number-vs-str (or any mismatched-class) pairing
+        # before the comparator runs, so the whole comparison fails closed.
+        actual = _guard_field_scalar(
             _evaluate_node(_require_node(node["left"]), chain_session, commitments),
+            [expected],
             "left",
         )
         return bool(comparator(actual, expected))
@@ -491,8 +500,13 @@ def _scalar_type_class(value: Any) -> str:
     commitment field ``True`` never aliases to the numeric literal ``1`` (in
     Python ``True == 1`` and ``True in {1}``). ``int``/``float`` collapse into
     one ``number`` class so ``60`` and ``60.0`` compare equal. Everything else
-    that is not a recognised scalar is ``other`` and can only type-match another
-    ``other`` of the same Python type.
+    that is not a recognised scalar is keyed by its concrete Python type name
+    (``other:NoneType``, ``other:dict``, ``other:list``, ...) so it can only
+    type-match another value of the SAME Python type. Collapsing every
+    non-scalar into a single ``other`` class would let a dict field type-match a
+    ``None`` / ``list`` / ``dict`` literal of a different type, re-opening the
+    wrong-type fail-open: ``operator.ne({"nested": 1}, None)`` is True, so a
+    ``field != None`` guard would be satisfied by an arbitrary structured field.
     """
     if isinstance(value, bool):
         return "bool"
@@ -500,7 +514,7 @@ def _scalar_type_class(value: Any) -> str:
         return "number"
     if isinstance(value, str):
         return "str"
-    return "other"
+    return f"other:{type(value).__name__}"
 
 
 def _guard_field_scalar(value: Any, expected: list[Any] | None, field_path: str) -> Any:
@@ -547,6 +561,14 @@ def _evaluate_membership(node: dict[str, Any], commitments: list[dict[str, Any]]
     values = node.get("values")
     if not isinstance(values, list):
         raise PredicateEvaluationError("missing_values")
+    # Reject a non-finite membership LITERAL (NaN / Infinity / -Infinity, which
+    # json.loads accepts as bare tokens) before building the accepted set. A NaN
+    # left in the set is never a member of itself, so a blocklist written as
+    # not(field in {..., NaN}) would leave the NaN inert and invert to satisfied
+    # on a finite field. This mirrors the comparison-side literal guard so both
+    # the comparison `value` and the membership `values` literals fail closed.
+    for reference in values:
+        _finite_comparand(reference, "values")
     accepted = set(values)
     field_path = node.get("field")
     if not isinstance(field_path, str):

@@ -1129,3 +1129,99 @@ def test_bilateral_truthy_non_bool_mandate_check_required_fails_closed() -> None
     result = evaluate_predicate(predicate, _chain_session(), commitments)
     assert result.result == "unsatisfied"
     assert result.reason == "malformed_mandate_check_required"
+
+
+# --------------------------------------------------------------------------
+# Chokepoint hardening round: non-scalar type-class discrimination, membership
+# literal finiteness, and left-path type matching. Each test FAILS-closed on a
+# path that previously fail-opened through a sibling operator.
+# --------------------------------------------------------------------------
+
+
+def test_closure_language_ne_none_literal_dict_field_fails_closed() -> None:
+    # Finding 1: a non-scalar predicate literal (None) against a non-scalar
+    # commitment field (a dict) previously type-matched because both collapsed
+    # into a single "other" class, then operator.ne({"nested": 1}, None) is True
+    # so `field != None` was satisfied by an arbitrary structured field value.
+    # The "other" class is now keyed by concrete Python type, so
+    # other:dict != other:NoneType and the comparison fails closed.
+    commitment = {
+        "commitment_id": "urn:concordia:commitment:r1",
+        "committer_did": RETAILER,
+        "commitment_terms": {"quantity": 60, "q": {"nested": 1}},
+        "mandate_proof_id": "urn:concordia:mandate:m1",
+    }
+    predicate = _closure_language_predicate(
+        {"op": "!=", "field": "commitment_terms.q", "value": None}
+    )
+    result = evaluate_predicate(predicate, _chain_session(), [commitment])
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_predicate"
+
+
+def test_closure_language_not_in_nan_literal_fails_closed() -> None:
+    # Finding 2 (P1): a non-finite membership LITERAL (NaN in `values`) was not
+    # finiteness-guarded, so it stayed in the accepted set. `60 in {NaN}` is
+    # False, so not(qty in [NaN]) would invert to satisfied on a finite field.
+    # The membership literals now pass through the finiteness guard and NaN is
+    # rejected, so the tree fails closed.
+    predicate = _closure_language_predicate(
+        {
+            "op": "not",
+            "arg": {
+                "op": "in",
+                "field": "commitment_terms.quantity",
+                "values": [float("nan")],
+            },
+        }
+    )
+    result = evaluate_predicate(predicate, _chain_session(), [_commitment(RETAILER, 60)])
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_predicate"
+
+
+def test_closure_language_not_in_inf_literal_fails_closed() -> None:
+    # Finding 2 (P1): Infinity in `values` is likewise rejected as a non-finite
+    # membership literal.
+    predicate = _closure_language_predicate(
+        {
+            "op": "not",
+            "arg": {
+                "op": "in",
+                "field": "commitment_terms.quantity",
+                "values": [float("inf")],
+            },
+        }
+    )
+    result = evaluate_predicate(predicate, _chain_session(), [_commitment(RETAILER, 60)])
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_predicate"
+
+
+def test_closure_language_not_count_eq_str_left_path_fails_closed() -> None:
+    # Finding 3: the `left`-path comparison had no type guard between the
+    # aggregation result and a malformed non-numeric expected literal, so
+    # operator.eq(1.0, "two") is False and not(count == "two") would invert to
+    # satisfied. The left value now meets the expected literal through the
+    # type-class chokepoint (number vs str mismatch) and fails closed.
+    predicate = _closure_language_predicate(
+        {
+            "op": "not",
+            "arg": {"op": "==", "left": {"op": "count"}, "value": "two"},
+        }
+    )
+    result = evaluate_predicate(predicate, _chain_session(), [_commitment(RETAILER, 60)])
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_predicate"
+
+
+def test_closure_language_count_ne_str_left_path_fails_closed() -> None:
+    # Finding 3 sibling: count != "two" is operator.ne(1.0, "two") == True, a
+    # cross-type inequality that would report satisfied. The type-class guard on
+    # the left path rejects the number-vs-str pairing first, so it fails closed.
+    predicate = _closure_language_predicate(
+        {"op": "!=", "left": {"op": "count"}, "value": "two"}
+    )
+    result = evaluate_predicate(predicate, _chain_session(), [_commitment(RETAILER, 60)])
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_predicate"
