@@ -9,6 +9,7 @@ must resolve to ``unsatisfied`` and must never raise or default to
 
 from __future__ import annotations
 
+import sys
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -458,3 +459,86 @@ def test_evaluable_predicate_from_signed_closure_predicate() -> None:
     commitments = [_commitment(RETAILER, 60), _commitment(WHOLESALER, 40)]
     result = evaluate_predicate(evaluable, _chain_session(), commitments)
     assert result.result == "satisfied"
+
+
+# --------------------------------------------------------------------------
+# Fail-closed: non-finite numeric inputs (NaN / inf) never satisfy
+#
+# json.loads accepts the bare tokens NaN, Infinity, and -Infinity as float
+# values, so an attacker-controlled commitment or condition payload can carry a
+# non-finite quantity. These must resolve to unsatisfied: a non-finite required
+# quantity, tolerance, or aggregand poisons the abs(...) > tolerance mismatch
+# guard (every comparison against NaN is False), which would otherwise report a
+# deal closed when it is not.
+# --------------------------------------------------------------------------
+
+
+def test_bilateral_nan_quantity_fails_closed() -> None:
+    commitments = [
+        _commitment(RETAILER, float("nan")),
+        _commitment(WHOLESALER, 5),
+    ]
+    result = evaluate_predicate(_bilateral_predicate(), _chain_session(), commitments)
+    assert result.result == "unsatisfied"
+    assert result.reason == "non_numeric_quantity"
+
+
+def test_bilateral_inf_quantity_fails_closed() -> None:
+    commitments = [
+        _commitment(RETAILER, float("inf")),
+        _commitment(WHOLESALER, 5),
+    ]
+    result = evaluate_predicate(_bilateral_predicate(), _chain_session(), commitments)
+    assert result.result == "unsatisfied"
+    assert result.reason == "non_numeric_quantity"
+
+
+def test_bilateral_nan_required_quantity_fails_closed() -> None:
+    commitments = [_commitment(RETAILER, 60), _commitment(WHOLESALER, 40)]
+    predicate = _bilateral_predicate(aggregate_quantity_required=float("nan"))
+    result = evaluate_predicate(predicate, _chain_session(), commitments)
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_aggregate_quantity_required"
+
+
+def test_bilateral_nan_tolerance_fails_closed() -> None:
+    commitments = [_commitment(RETAILER, 60), _commitment(WHOLESALER, 40)]
+    predicate = _bilateral_predicate(match_tolerance=float("nan"))
+    result = evaluate_predicate(predicate, _chain_session(), commitments)
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_match_tolerance"
+
+
+def test_closure_language_nan_aggregand_fails_closed() -> None:
+    # not(sum > threshold) must not report satisfied when a NaN aggregand is
+    # present: rejecting the aggregand keeps the expression unsatisfied.
+    commitments = [_commitment(RETAILER, float("nan")), _commitment(WHOLESALER, 40)]
+    predicate = _closure_language_predicate(
+        {
+            "op": "not",
+            "arg": {
+                "op": ">",
+                "left": {"op": "sum", "field": "commitment_terms.quantity"},
+                "value": 1000,
+            },
+        }
+    )
+    result = evaluate_predicate(predicate, _chain_session(), commitments)
+    assert result.result == "unsatisfied"
+
+
+# --------------------------------------------------------------------------
+# Fail-closed: a deeply nested closure-language tree yields unsatisfied, not a
+# raised RecursionError out of evaluate_predicate.
+# --------------------------------------------------------------------------
+
+
+def test_closure_language_deeply_nested_tree_fails_closed() -> None:
+    depth = sys.getrecursionlimit() * 4
+    expression: dict[str, Any] = {"op": "count"}
+    for _ in range(depth):
+        expression = {"op": "not", "arg": expression}
+    predicate = _closure_language_predicate(expression)
+    result = evaluate_predicate(predicate, _chain_session(), [_commitment(RETAILER, 60)])
+    assert isinstance(result, PredicateResult)
+    assert result.result == "unsatisfied"

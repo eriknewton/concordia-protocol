@@ -27,6 +27,7 @@ pass explicitly.
 
 from __future__ import annotations
 
+import math
 import operator
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -138,10 +139,13 @@ def evaluate_predicate(
         return evaluator(predicate, chain_session, commitment_list)
     except PredicateEvaluationError as exc:
         return _unsatisfied("malformed_predicate", {"detail": str(exc)})
-    except (KeyError, TypeError, ValueError) as exc:
-        # Defensive fail-closed boundary: a malformed parameter payload or
-        # commitment record must never crash the evaluator or leak through as
-        # satisfaction. It surfaces as an unsatisfied result with a reason.
+    except Exception as exc:
+        # Total fail-closed backstop: any error inside a profile evaluator,
+        # including RecursionError from a deeply nested closure-language tree or
+        # a malformed parameter payload, must surface as an unsatisfied result
+        # rather than crash the evaluator or leak through as satisfaction. This
+        # upholds the module contract that evaluation is total and never raises
+        # out of evaluate_predicate.
         return _unsatisfied("malformed_predicate", {"detail": str(exc)})
 
 
@@ -169,11 +173,19 @@ def evaluate_bilateral_chain_closure_v1(
     if "aggregate_quantity_required" not in params:
         return _unsatisfied("missing_aggregate_quantity_required")
     required_qty = params["aggregate_quantity_required"]
-    if not isinstance(required_qty, (int, float)) or isinstance(required_qty, bool):
+    if (
+        not isinstance(required_qty, (int, float))
+        or isinstance(required_qty, bool)
+        or not math.isfinite(required_qty)
+    ):
         return _unsatisfied("malformed_aggregate_quantity_required")
 
     tolerance = params.get("match_tolerance", 0.0)
-    if not isinstance(tolerance, (int, float)) or isinstance(tolerance, bool):
+    if (
+        not isinstance(tolerance, (int, float))
+        or isinstance(tolerance, bool)
+        or not math.isfinite(tolerance)
+    ):
         return _unsatisfied("malformed_match_tolerance")
     if tolerance < 0:
         return _unsatisfied("negative_match_tolerance")
@@ -218,7 +230,11 @@ def evaluate_bilateral_chain_closure_v1(
         if not isinstance(terms, dict):
             return _unsatisfied("malformed_commitment_terms")
         quantity = terms.get("quantity")
-        if not isinstance(quantity, (int, float)) or isinstance(quantity, bool):
+        if (
+            not isinstance(quantity, (int, float))
+            or isinstance(quantity, bool)
+            or not math.isfinite(quantity)
+        ):
             return _unsatisfied("non_numeric_quantity")
         total_qty += float(quantity)
 
@@ -382,7 +398,11 @@ def _evaluate_aggregation(node: dict[str, Any], commitments: list[dict[str, Any]
     numeric_values: list[float] = []
     for commitment in commitments:
         value = _get_field(commitment, field_path)
-        if not isinstance(value, (int, float)) or isinstance(value, bool):
+        if (
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not math.isfinite(value)
+        ):
             raise PredicateEvaluationError(f"non_numeric_aggregand:{field_path}")
         numeric_values.append(float(value))
 
