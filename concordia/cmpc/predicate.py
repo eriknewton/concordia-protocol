@@ -312,8 +312,12 @@ def evaluate_closure_language_v1(
     node = predicate.parameters.get("expression")
     if not isinstance(node, dict):
         return _unsatisfied("missing_expression")
-    value = _evaluate_node(node, chain_session, commitments)
-    if bool(value):
+    # The root is a boolean position: it must evaluate to a declared boolean
+    # check, not a numeric aggregation coerced by truthiness. _evaluate_boolean
+    # is the single chokepoint that rejects a non-boolean node in any boolean
+    # position (root, and/or/not).
+    value = _evaluate_boolean(node, chain_session, commitments)
+    if value:
         return _satisfied({"value": value})
     return _unsatisfied("expression_not_satisfied", {"value": value})
 
@@ -330,9 +334,11 @@ def _evaluate_node(
         # of later children, so a malformed later branch (which raises
         # PredicateEvaluationError) would be silently skipped and the AND could
         # report the tree satisfied on a malformed expression. Evaluating every
-        # branch first makes any branch's failure fail closed.
+        # branch first makes any branch's failure fail closed. Each child is a
+        # boolean position, so _evaluate_boolean rejects a non-boolean child
+        # (bare aggregation) rather than coercing it by truthiness.
         child_values = [
-            bool(_evaluate_node(_require_node(arg), chain_session, commitments))
+            _evaluate_boolean(_require_node(arg), chain_session, commitments)
             for arg in _require_args(node)
         ]
         return all(child_values)
@@ -342,14 +348,18 @@ def _evaluate_node(
         # of later children, so a true-then-malformed OR (a valid true branch
         # followed by a malformed branch that raises PredicateEvaluationError)
         # would report the tree satisfied instead of failing closed. Evaluating
-        # every branch first makes any branch's failure fail closed.
+        # every branch first makes any branch's failure fail closed. Each child
+        # is a boolean position (see the and branch).
         child_values = [
-            bool(_evaluate_node(_require_node(arg), chain_session, commitments))
+            _evaluate_boolean(_require_node(arg), chain_session, commitments)
             for arg in _require_args(node)
         ]
         return any(child_values)
     if op == "not":
-        return not bool(_evaluate_node(_require_node(node.get("arg")), chain_session, commitments))
+        # not's operand is a boolean position: reject a non-boolean node (bare
+        # aggregation) rather than inverting its numeric truthiness, so
+        # not(sum-nets-to-zero) fails closed instead of reporting satisfied.
+        return not _evaluate_boolean(_require_node(node.get("arg")), chain_session, commitments)
     if op in _COMPARATORS:
         return _evaluate_comparison(node, chain_session, commitments)
     if op == "in":
@@ -359,6 +369,29 @@ def _evaluate_node(
     if op in ("sum", "min", "max", "count"):
         return _evaluate_aggregation(node, commitments)
     raise PredicateEvaluationError(f"unknown_op:{op}")
+
+
+def _evaluate_boolean(
+    node: dict[str, Any],
+    chain_session: ChainSession,
+    commitments: list[dict[str, Any]],
+) -> bool:
+    """Evaluate a node that sits in a boolean position and require a bool result.
+
+    Single chokepoint for every boolean position in the tree (the root and the
+    operands of and/or/not). A boolean position must resolve to a declared
+    boolean check (comparison, membership, time, or a boolean composition), not
+    to a numeric aggregation (sum/min/max/count) coerced by truthiness. Coercing
+    an aggregation with bool() contradicts the fail-closed contract: a bare
+    ``count`` root reports satisfied on any non-zero count, and
+    ``not(sum-of-quantities)`` reports satisfied whenever the quantities net to
+    zero. Rejecting a non-boolean node here closes that class at one boundary for
+    every boolean position rather than per-site.
+    """
+    value = _evaluate_node(node, chain_session, commitments)
+    if not isinstance(value, bool):
+        raise PredicateEvaluationError(f"non_boolean_in_boolean_position:{node.get('op')}")
+    return value
 
 
 def _require_args(node: dict[str, Any]) -> list[Any]:
@@ -403,16 +436,14 @@ def _evaluate_comparison(
         raise PredicateEvaluationError("missing_field")
     if not commitments:
         raise PredicateEvaluationError("no_commitments_for_comparison")
-    # Validate EVERY comparand before applying the truth test. Folding the
-    # finiteness guard into the all(...) generator would let all()'s
-    # short-circuit on the first legitimately-False comparator skip the guard
-    # on every later commitment, so a non-finite comparand in a non-first
-    # commitment would evade the check. Materialize all guarded comparands
-    # first, then run the comparison over the materialized list.
-    comparands = [
-        _finite_comparand(_get_field(commitment, field_path), field_path)
-        for commitment in commitments
-    ]
+    # Materialize EVERY comparand before applying the truth test. Folding the
+    # resolution into the all(...) generator would let all()'s short-circuit on
+    # the first legitimately-False comparator skip resolution on every later
+    # commitment, so a non-finite comparand in a non-first commitment would
+    # evade the finiteness guard. Resolve all comparands first (the finiteness
+    # guard is applied inside _get_field, the single field-resolution
+    # chokepoint), then run the comparison over the materialized list.
+    comparands = [_get_field(commitment, field_path) for commitment in commitments]
     return all(bool(comparator(comparand, expected)) for comparand in comparands)
 
 
@@ -447,8 +478,13 @@ def _evaluate_membership(node: dict[str, Any], commitments: list[dict[str, Any]]
     # Resolve the field on EVERY commitment before applying the membership
     # test. Folding _get_field into the all(...) generator would let the
     # short-circuit on a first not-in-set commitment skip field resolution on
-    # later commitments, so a later commitment with a missing field would evade
-    # the fail-closed PredicateEvaluationError _get_field raises.
+    # later commitments, so a later commitment with a missing or non-finite
+    # field would evade the fail-closed PredicateEvaluationError _get_field
+    # raises. _get_field is the single field-resolution chokepoint, so a NaN /
+    # Infinity commitment field is rejected here exactly as it is on the
+    # comparison, aggregation, and before/after paths: without this a blocklist
+    # written as not(field in {...}) would invert to satisfied because NaN is
+    # not a member of any set.
     field_values = [_get_field(commitment, field_path) for commitment in commitments]
     return all(value in accepted for value in field_values)
 
@@ -516,7 +552,18 @@ def _get_field(commitment: dict[str, Any], field_path: str) -> Any:
         if not isinstance(current, dict) or segment not in current:
             raise PredicateEvaluationError(f"missing_field:{field_path}")
         current = current[segment]
-    return current
+    # Single chokepoint for commitment field-value resolution: every consumer
+    # (comparison, membership `in`, aggregation, before/after) reads its
+    # comparand through here, so applying the finiteness guard at this one
+    # boundary makes the whole class fail closed instead of patching each
+    # operator. A NaN / Infinity / -Infinity numeric field (json.loads accepts
+    # the bare tokens, so an attacker-controlled commitment can carry one) is
+    # rejected: NaN is not a member of any value set and every ordering /
+    # inequality comparison against NaN returns False, so a blocklist written as
+    # not(field in {...}) or a cap written as not(field <op> bound) would
+    # otherwise invert to satisfied. Booleans are numeric in Python but are a
+    # legitimate field value, so they pass through unchanged.
+    return _finite_comparand(current, field_path)
 
 
 def _parse_iso_datetime(value: Any) -> datetime:

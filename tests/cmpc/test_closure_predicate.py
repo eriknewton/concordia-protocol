@@ -872,3 +872,130 @@ def test_unsafe_closure_predicate_adapter_removed() -> None:
     # is gone. Its removal is the fix: an unverified signed primitive cannot be
     # adapted at all, so a dummy or expired signature can never evaluate.
     assert not hasattr(EvaluablePredicate, "from_closure_predicate")
+
+
+# --------------------------------------------------------------------------
+# Fail-closed (finding C1-round-N-1): the non-finite guard must cover the
+# membership `in` operator, not only comparison. Field-value resolution now
+# routes through a single chokepoint (_get_field) that rejects a NaN / Infinity
+# commitment field, so a blocklist written as not(field in {...}) cannot invert
+# to satisfied because NaN is not a member of any set. Before the chokepoint the
+# guard was applied on comparison but missed on `in`; these fail before / pass
+# after that fix.
+# --------------------------------------------------------------------------
+
+
+def test_closure_language_membership_nan_field_fails_closed() -> None:
+    # not(in{quantity in [1,2,3]}) with a NaN quantity: NaN is not in the set,
+    # so before the chokepoint not(False) inverted to satisfied and bypassed the
+    # blocklist. The finiteness guard at field resolution now rejects the NaN.
+    predicate = _closure_language_predicate(
+        {
+            "op": "not",
+            "arg": {
+                "op": "in",
+                "field": "commitment_terms.quantity",
+                "values": [1, 2, 3],
+            },
+        }
+    )
+    result = evaluate_predicate(
+        predicate, _chain_session(), [_commitment(RETAILER, float("nan"))]
+    )
+    assert isinstance(result, PredicateResult)
+    assert result.result == "unsatisfied"
+
+
+def test_closure_language_membership_inf_field_fails_closed() -> None:
+    # An infinite membership comparand must fail closed the same way as NaN.
+    predicate = _closure_language_predicate(
+        {
+            "op": "not",
+            "arg": {
+                "op": "in",
+                "field": "commitment_terms.quantity",
+                "values": [1, 2, 3],
+            },
+        }
+    )
+    result = evaluate_predicate(
+        predicate, _chain_session(), [_commitment(RETAILER, float("inf"))]
+    )
+    assert result.result == "unsatisfied"
+
+
+def test_closure_language_membership_nan_field_later_commitment_fails_closed() -> None:
+    # The finiteness guard must fire on a NaN in a NON-first commitment too: a
+    # first in-set commitment must not let all()'s short-circuit skip the guard
+    # on a later NaN. not(in{quantity in [60]}) over [60, NaN] must fail closed.
+    predicate = _closure_language_predicate(
+        {
+            "op": "not",
+            "arg": {
+                "op": "in",
+                "field": "commitment_terms.quantity",
+                "values": [60],
+            },
+        }
+    )
+    commitments = [_commitment(RETAILER, 60), _commitment(WHOLESALER, float("nan"))]
+    result = evaluate_predicate(predicate, _chain_session(), commitments)
+    assert result.result == "unsatisfied"
+
+
+# --------------------------------------------------------------------------
+# Fail-closed (finding C1-round-N-2): a bare aggregation (sum/min/max/count) or
+# not(aggregation) in a boolean position (root, and/or/not) must be rejected,
+# not coerced by numeric truthiness. A boolean position requires a declared
+# boolean check; _evaluate_boolean is the single chokepoint that rejects a
+# non-boolean node. These fail before / pass after that guard.
+# --------------------------------------------------------------------------
+
+
+def test_closure_language_root_count_bare_fails_closed() -> None:
+    # A bare count root over a non-empty chain returned 2.0, which bool()
+    # coerced to satisfied. A boolean position must not accept a raw aggregation.
+    predicate = _closure_language_predicate({"op": "count"})
+    commitments = [_commitment(RETAILER, 60), _commitment(WHOLESALER, 40)]
+    result = evaluate_predicate(predicate, _chain_session(), commitments)
+    assert isinstance(result, PredicateResult)
+    assert result.result == "unsatisfied"
+
+
+def test_closure_language_root_sum_bare_fails_closed() -> None:
+    # A bare sum root likewise must not be coerced by truthiness.
+    predicate = _closure_language_predicate(
+        {"op": "sum", "field": "commitment_terms.quantity"}
+    )
+    commitments = [_commitment(RETAILER, 60), _commitment(WHOLESALER, 40)]
+    result = evaluate_predicate(predicate, _chain_session(), commitments)
+    assert result.result == "unsatisfied"
+
+
+def test_closure_language_not_sum_nets_to_zero_fails_closed() -> None:
+    # not(sum) with quantities +5 and -5 nets to sum=0; not(0.0) is True, so
+    # before the guard this reported satisfied by numeric truthiness. A boolean
+    # position must reject the raw aggregation under not().
+    predicate = _closure_language_predicate(
+        {"op": "not", "arg": {"op": "sum", "field": "commitment_terms.quantity"}}
+    )
+    commitments = [_commitment(RETAILER, 5), _commitment(WHOLESALER, -5)]
+    result = evaluate_predicate(predicate, _chain_session(), commitments)
+    assert isinstance(result, PredicateResult)
+    assert result.result == "unsatisfied"
+
+
+def test_closure_language_and_with_bare_aggregation_child_fails_closed() -> None:
+    # A bare aggregation as an and/or child must be rejected too, not coerced.
+    predicate = _closure_language_predicate(
+        {
+            "op": "and",
+            "args": [
+                {"op": "==", "left": {"op": "count"}, "value": 2},
+                {"op": "count"},
+            ],
+        }
+    )
+    commitments = [_commitment(RETAILER, 60), _commitment(WHOLESALER, 40)]
+    result = evaluate_predicate(predicate, _chain_session(), commitments)
+    assert result.result == "unsatisfied"
