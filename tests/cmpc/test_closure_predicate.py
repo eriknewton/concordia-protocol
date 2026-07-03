@@ -22,8 +22,23 @@ from concordia.cmpc import (
     ChainSessionState,
     EvaluablePredicate,
     PredicateResult,
-    evaluate_predicate,
 )
+from concordia.cmpc import (
+    evaluate_predicate as _evaluate_predicate,
+)
+
+
+def evaluate_predicate(predicate, chain_session, commitments=None, *, now=None):
+    """Test shim that defaults the evaluator-controlled clock to the fixed NOW.
+
+    The deadline clock is an EVALUATOR argument, never a predicate parameter, so
+    a predicate can no longer supply its own `_now` to defeat its own deadline.
+    These tests pin the evaluator clock to the deterministic reference NOW unless
+    a case overrides it, mirroring how a trusted host would pass its own clock.
+    """
+    if now is None:
+        now = NOW
+    return _evaluate_predicate(predicate, chain_session, commitments, now=now)
 
 RETAILER = "did:web:retailer.example"
 WHOLESALER = "did:web:wholesaler.example"
@@ -62,7 +77,6 @@ def _bilateral_predicate(**overrides: Any) -> EvaluablePredicate:
         "match_tolerance": 0.0,
         "activation_deadline_iso": BEFORE_DEADLINE,
         "mandate_check_required": True,
-        "_now": NOW,
     }
     params.update(overrides)
     return EvaluablePredicate(
@@ -171,7 +185,6 @@ def test_bilateral_unsatisfied_no_commitments() -> None:
         ({"match_tolerance": -1.0}, "negative_match_tolerance"),
         ({"activation_deadline_iso": "not-a-date"}, "malformed_activation_deadline"),
         ({"activation_deadline_iso": 42}, "malformed_activation_deadline"),
-        ({"_now": "not-a-date"}, "malformed_now"),
     ],
 )
 def test_bilateral_malformed_parameters_fail_closed(
@@ -1358,5 +1371,134 @@ def test_closure_language_membership_bool_field_numeric_set_fails_closed() -> No
         {"op": "in", "field": "commitment_terms.quantity", "values": [1, 2]}
     )
     result = evaluate_predicate(predicate, _chain_session(), [_commitment(RETAILER, True)])
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_predicate"
+
+
+# --------------------------------------------------------------------------
+# Fail-closed (finding C1-round-4 HIGH #1): the deadline clock is
+# EVALUATOR-controlled, never predicate-controlled. A predicate must not be able
+# to supply its own `_now` in its parameter payload to evaluate an already-
+# expired deadline as still-open. The evaluator now takes `now` as a call
+# argument; any `_now` in parameters is untrusted and ignored. These fail before
+# / pass after that fix.
+# --------------------------------------------------------------------------
+
+
+def test_bilateral_expired_deadline_ignores_predicate_supplied_now() -> None:
+    # The exact failing scenario: an expired deadline (PAST_DEADLINE, before the
+    # trusted evaluation clock NOW), valid commitments, and a predicate-supplied
+    # `_now` set to a moment BEFORE that past deadline. Before the fix, the
+    # evaluator read the clock from predicate.parameters["_now"] and the expired
+    # deadline satisfied. Now the parameter `_now` is ignored, the trusted
+    # evaluator clock (NOW, which is after PAST_DEADLINE) governs, and the
+    # expired deadline fails closed.
+    stale_now = "2026-05-16T09:00:00Z"  # before PAST_DEADLINE (10:00)
+    predicate = _bilateral_predicate(activation_deadline_iso=PAST_DEADLINE)
+    predicate.parameters["_now"] = stale_now
+    commitments = [_commitment(RETAILER, 60), _commitment(WHOLESALER, 40)]
+    # Trusted evaluator clock NOW (12:00) is past the deadline (10:00).
+    result = _evaluate_predicate(predicate, _chain_session(), commitments, now=NOW)
+    assert result.result == "unsatisfied"
+    assert result.reason == "past_activation_deadline"
+
+
+def test_bilateral_deadline_governed_by_evaluator_clock() -> None:
+    # The evaluator clock, not any parameter, decides the deadline. With the same
+    # deadline, an evaluator clock BEFORE it satisfies and one AT/AFTER it fails
+    # closed, regardless of any predicate-supplied `_now`.
+    predicate = _bilateral_predicate(activation_deadline_iso="2026-05-16T14:00:00Z")
+    # A predicate-supplied `_now` far in the future must NOT be able to expire a
+    # still-open deadline either; it is simply ignored.
+    predicate.parameters["_now"] = "2026-05-16T23:00:00Z"
+    commitments = [_commitment(RETAILER, 60), _commitment(WHOLESALER, 40)]
+
+    open_result = _evaluate_predicate(
+        predicate, _chain_session(), commitments, now="2026-05-16T13:00:00Z"
+    )
+    assert open_result.result == "satisfied"
+
+    expired_result = _evaluate_predicate(
+        predicate, _chain_session(), commitments, now="2026-05-16T14:00:00Z"
+    )
+    assert expired_result.result == "unsatisfied"
+    assert expired_result.reason == "past_activation_deadline"
+
+
+def test_bilateral_default_clock_is_real_wall_clock() -> None:
+    # With no evaluator clock supplied, the evaluator reads the real wall clock
+    # (datetime.now(timezone.utc)), which is far past a 2026-05-16 deadline, so a
+    # long-expired predicate fails closed by default rather than defaulting open.
+    predicate = _bilateral_predicate(activation_deadline_iso=BEFORE_DEADLINE)
+    commitments = [_commitment(RETAILER, 60), _commitment(WHOLESALER, 40)]
+    result = _evaluate_predicate(predicate, _chain_session(), commitments)
+    assert result.result == "unsatisfied"
+    assert result.reason == "past_activation_deadline"
+
+
+def test_bilateral_malformed_evaluator_clock_fails_closed() -> None:
+    # A malformed evaluator-supplied clock (not a datetime, not an ISO string)
+    # fails closed rather than raising out of evaluate_predicate.
+    predicate = _bilateral_predicate(activation_deadline_iso=BEFORE_DEADLINE)
+    commitments = [_commitment(RETAILER, 60), _commitment(WHOLESALER, 40)]
+    result = _evaluate_predicate(predicate, _chain_session(), commitments, now=42)  # type: ignore[arg-type]
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_now"
+
+
+# --------------------------------------------------------------------------
+# Fail-closed (finding C1-round-4 HIGH #2): the `count` aggregation must not
+# count a malformed (non-dict) commitment record. count returns len(commitments)
+# structurally, so a malformed entry like [None] would otherwise close a deal
+# over zero valid records. The shared record-shape chokepoint rejects any
+# non-dict record before count returns. These fail before / pass after.
+# --------------------------------------------------------------------------
+
+
+def test_closure_language_count_none_record_fails_closed() -> None:
+    # The exact failing scenario: {op:"==", left:{op:"count"}, value:1} with
+    # commitments=[None]. Before the fix, count returned 1 and the predicate
+    # satisfied over a single malformed record. The record-shape guard rejects
+    # the non-dict None and the tree fails closed.
+    predicate = _closure_language_predicate(
+        {"op": "==", "left": {"op": "count"}, "value": 1}
+    )
+    result = evaluate_predicate(predicate, _chain_session(), [None])  # type: ignore[list-item]
+    assert isinstance(result, PredicateResult)
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_predicate"
+
+
+def test_closure_language_count_malformed_record_among_valid_fails_closed() -> None:
+    # A malformed record mixed with valid ones must also fail closed: count must
+    # never tally a non-dict entry, even when other records are well-formed.
+    predicate = _closure_language_predicate(
+        {"op": "==", "left": {"op": "count"}, "value": 2}
+    )
+    commitments = [_commitment(RETAILER, 60), "not-a-dict"]  # type: ignore[list-item]
+    result = evaluate_predicate(predicate, _chain_session(), commitments)
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_predicate"
+
+    # A clean all-dict list still counts correctly.
+    clean = evaluate_predicate(
+        predicate, _chain_session(), [_commitment(RETAILER, 60), _commitment(WHOLESALER, 40)]
+    )
+    assert clean.result == "satisfied"
+
+
+def test_closure_language_sum_malformed_record_fails_closed() -> None:
+    # The sibling sum path already fails closed on a non-dict record via field
+    # resolution; assert it explicitly so the whole aggregation family is covered
+    # by the shared record-shape guard, not just count.
+    predicate = _closure_language_predicate(
+        {
+            "op": "==",
+            "left": {"op": "sum", "field": "commitment_terms.quantity"},
+            "value": 60,
+        }
+    )
+    commitments = [_commitment(RETAILER, 60), None]  # type: ignore[list-item]
+    result = evaluate_predicate(predicate, _chain_session(), commitments)
     assert result.result == "unsatisfied"
     assert result.reason == "malformed_predicate"

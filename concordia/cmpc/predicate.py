@@ -118,6 +118,8 @@ def evaluate_predicate(
     predicate: EvaluablePredicate,
     chain_session: ChainSession,
     commitments: list[dict[str, Any]] | None = None,
+    *,
+    now: datetime | None = None,
 ) -> PredicateResult:
     """Evaluate a closure predicate over a chain session's commitments.
 
@@ -125,8 +127,18 @@ def evaluate_predicate(
     type URN and always returns a :class:`PredicateResult`. An unknown type,
     or any error raised inside a profile evaluator, yields ``unsatisfied``
     rather than propagating. Never returns ``satisfied`` by default.
+
+    ``now`` is the EVALUATOR-controlled deadline clock, supplied by the trusted
+    host that runs the evaluation. It is deliberately a call argument and NOT a
+    predicate parameter: a deadline check must never read its own clock from the
+    predicate-controlled parameter payload, or an expired predicate could carry a
+    stale past ``_now`` and evaluate as still-open against its own already-lapsed
+    deadline. When ``now`` is omitted the evaluator reads the real wall clock
+    (``datetime.now(timezone.utc)``); a bilateral profile is the only profile
+    that consults it.
     """
     commitment_list = commitments if commitments is not None else []
+    evaluation_now = now if now is not None else datetime.now(timezone.utc)
     try:
         # Read the type URN INSIDE the guarded path. A malformed predicate
         # object (no type_urn attribute) or a non-string / unhashable type URN
@@ -142,7 +154,7 @@ def evaluate_predicate(
                 "unknown_predicate_type",
                 {"type_urn": type_urn},
             )
-        return evaluator(predicate, chain_session, commitment_list)
+        return evaluator(predicate, chain_session, commitment_list, evaluation_now)
     except PredicateEvaluationError as exc:
         return _unsatisfied("malformed_predicate", {"detail": str(exc)})
     except Exception as exc:
@@ -159,6 +171,7 @@ def evaluate_bilateral_chain_closure_v1(
     predicate: EvaluablePredicate,
     chain_session: ChainSession,
     commitments: list[dict[str, Any]],
+    now: datetime,
 ) -> PredicateResult:
     """Evaluate the bilateral chain-closure profile.
 
@@ -166,6 +179,11 @@ def evaluate_bilateral_chain_closure_v1(
     committed quantity matches the required quantity within tolerance, the
     activation deadline has not lapsed, and (when required) every commitment
     carries a mandate proof. Any missing or malformed parameter fails closed.
+
+    ``now`` is the evaluator-controlled deadline clock threaded from
+    :func:`evaluate_predicate`. The deadline check compares against this trusted
+    clock, NEVER against a predicate-parameter-supplied value, so an expired
+    predicate cannot present its own stale past clock to defeat its own deadline.
     """
     params = predicate.parameters
     if not isinstance(params, dict):
@@ -219,9 +237,15 @@ def evaluate_bilateral_chain_closure_v1(
     if not isinstance(mandate_check_raw, bool):
         return _unsatisfied("malformed_mandate_check_required")
     mandate_check = mandate_check_raw
-    now = params.get("_now")
+    # The deadline clock is the evaluator-controlled `now` argument, NEVER a
+    # predicate parameter. Reading the clock from `predicate.parameters` (the old
+    # `_now` key) let an expired predicate carry a stale past clock and evaluate
+    # as still-open against its own already-lapsed deadline; a predicate-supplied
+    # `_now` is untrusted input and is deliberately ignored here. `now` is
+    # normalized through the same ISO parser as the deadline so a naive caller
+    # clock still compares tz-aware.
     try:
-        now_dt = _parse_iso_datetime(now) if now is not None else datetime.now(timezone.utc)
+        now_dt = _parse_iso_datetime(now)
     except (TypeError, ValueError):
         return _unsatisfied("malformed_now")
 
@@ -318,13 +342,18 @@ def evaluate_closure_language_v1(
     predicate: EvaluablePredicate,
     chain_session: ChainSession,
     commitments: list[dict[str, Any]],
+    now: datetime,
 ) -> PredicateResult:
     """Evaluate a closure-language expression tree over the commitments.
 
     The tree lives under ``parameters.expression`` as a JSON object. Satisfied
     iff the root node evaluates truthy. A missing or malformed tree fails
-    closed.
+    closed. ``now`` is accepted for a uniform profile-evaluator signature; the
+    closure language has its own ``before``/``after`` operators that compare
+    commitment timestamps to declared literals and does not consult the
+    evaluator clock.
     """
+    del now  # uniform profile signature; closure language has no deadline clock
     node = predicate.parameters.get("expression")
     if not isinstance(node, dict):
         return _unsatisfied("missing_expression")
@@ -635,16 +664,46 @@ def _evaluate_time(node: dict[str, Any], commitments: list[dict[str, Any]]) -> b
     return all(actual > expected for actual in actual_times)
 
 
+def _require_commitment_records(
+    commitments: list[dict[str, Any]], context: str
+) -> list[dict[str, Any]]:
+    """Validate that a commitment list is non-empty and every record is a dict.
+
+    THE single commitment-record validation chokepoint for aggregation. It fails
+    closed on:
+
+    * an empty list, because count()==0 / sum()==0 over zero commitments would
+      let a closure expression report a deal closed against no commitments; and
+    * any non-dict record (``None``, a scalar, a list), because ``count`` returns
+      ``len(commitments)`` structurally, so a malformed entry like ``[None]``
+      would otherwise be counted as a valid commitment and close a deal over zero
+      real records.
+
+    Every aggregation operator (count/sum/min/max) routes through here before
+    reading records, so record-shape validity is enforced once at the boundary
+    rather than per operator. sum/min/max additionally resolve a field per record
+    (which fails closed on a non-dict via :func:`_resolve_field`), but ``count``
+    reads no field, so this shared guard is what closes the malformed-count hole
+    for it.
+    """
+    if not commitments:
+        raise PredicateEvaluationError(f"empty_commitments_for_aggregation:{context}")
+    for commitment in commitments:
+        if not isinstance(commitment, dict):
+            raise PredicateEvaluationError(
+                f"malformed_commitment_record:{context}:{type(commitment).__name__}"
+            )
+    return commitments
+
+
 def _evaluate_aggregation(node: dict[str, Any], commitments: list[dict[str, Any]]) -> float:
     op = node["op"]
-    # Fail closed on an empty commitment list. count()==0 or sum()==0 over zero
-    # commitments would otherwise let a closure expression report a deal closed
-    # against no commitments at all. Aggregation over an empty chain is
-    # meaningless in the closure context, so every aggregation op requires at
-    # least one commitment. (min/max already reject emptiness below; this makes
-    # count and sum consistent and closes the empty-list satisfaction hole.)
-    if not commitments:
-        raise PredicateEvaluationError(f"empty_commitments_for_aggregation:{op}")
+    # Validate commitment-record shape at the single aggregation chokepoint before
+    # any operator reads a record: reject an empty list AND any non-dict record.
+    # count() returns len(commitments) structurally, so without this guard a
+    # malformed entry (for example [None]) would be counted as a real commitment
+    # and close a deal over zero valid records.
+    commitments = _require_commitment_records(commitments, op)
     if op == "count":
         return float(len(commitments))
 
@@ -726,7 +785,7 @@ _COMPARATORS: dict[str, Callable[[Any, Any], bool]] = {
 
 
 _ProfileEvaluator = Callable[
-    [EvaluablePredicate, ChainSession, list[dict[str, Any]]], PredicateResult
+    [EvaluablePredicate, ChainSession, list[dict[str, Any]], datetime], PredicateResult
 ]
 
 _PROFILES: dict[str, _ProfileEvaluator] = {
