@@ -527,6 +527,49 @@ def test_closure_language_nan_aggregand_fails_closed() -> None:
     assert result.result == "unsatisfied"
 
 
+def test_closure_language_direct_comparison_nan_cap_fails_closed() -> None:
+    # not(qty > 1000) is a hard quantity cap. A NaN quantity makes
+    # operator.gt(nan, 1000) False, so not(False) would report satisfied and
+    # bypass the cap. The direct field-comparison path must reject the
+    # non-finite comparand and fail closed instead.
+    cap = {
+        "op": "not",
+        "arg": {"op": ">", "field": "commitment_terms.quantity", "value": 1000},
+    }
+    predicate = _closure_language_predicate(cap)
+
+    # Honest over-cap quantity is correctly blocked.
+    over = evaluate_predicate(predicate, _chain_session(), [_commitment(RETAILER, 2000)])
+    assert over.result == "unsatisfied"
+
+    # NaN quantity must not slip through as satisfied.
+    nan_result = evaluate_predicate(
+        predicate, _chain_session(), [_commitment(RETAILER, float("nan"))]
+    )
+    assert nan_result.result == "unsatisfied"
+
+    # Honest within-cap quantity still satisfies.
+    within = evaluate_predicate(predicate, _chain_session(), [_commitment(RETAILER, 500)])
+    assert within.result == "satisfied"
+
+
+def test_closure_language_direct_inequality_nan_fails_closed() -> None:
+    # qty != 0 with a NaN quantity: operator.ne(nan, 0) is True, which would
+    # report satisfied. The direct comparison path must reject NaN and fail
+    # closed.
+    predicate = _closure_language_predicate(
+        {"op": "!=", "field": "commitment_terms.quantity", "value": 0}
+    )
+    nan_result = evaluate_predicate(
+        predicate, _chain_session(), [_commitment(RETAILER, float("nan"))]
+    )
+    assert nan_result.result == "unsatisfied"
+
+    # A finite non-zero quantity still satisfies qty != 0.
+    finite = evaluate_predicate(predicate, _chain_session(), [_commitment(RETAILER, 5)])
+    assert finite.result == "satisfied"
+
+
 # --------------------------------------------------------------------------
 # Fail-closed: a deeply nested closure-language tree yields unsatisfied, not a
 # raised RecursionError out of evaluate_predicate.

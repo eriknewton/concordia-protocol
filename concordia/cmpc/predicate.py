@@ -352,9 +352,27 @@ def _evaluate_comparison(
     if not commitments:
         raise PredicateEvaluationError("no_commitments_for_comparison")
     return all(
-        bool(comparator(_get_field(commitment, field_path), expected))
+        bool(comparator(_finite_comparand(_get_field(commitment, field_path), field_path), expected))
         for commitment in commitments
     )
+
+
+def _finite_comparand(value: Any, field_path: str) -> Any:
+    """Reject a non-finite numeric comparand so comparisons fail closed.
+
+    Non-numeric values pass through unchanged (string/set/time comparisons are
+    handled by their own operators). A numeric value that is NaN or infinite is
+    rejected: every ordering/inequality comparison against NaN returns False, so
+    a cap guard written as not(field <op> bound) would otherwise invert to
+    satisfied. json.loads accepts the bare NaN/Infinity/-Infinity tokens, so an
+    attacker-controlled commitment can carry one; this guard mirrors the
+    finiteness checks on the aggregation and bilateral quantity paths.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and not math.isfinite(value):
+        raise PredicateEvaluationError(f"non_finite_comparand:{field_path}")
+    return value
 
 
 def _evaluate_membership(node: dict[str, Any], commitments: list[dict[str, Any]]) -> bool:
