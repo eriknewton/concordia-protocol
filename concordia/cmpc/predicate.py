@@ -174,7 +174,15 @@ def evaluate_bilateral_chain_closure_v1(
     expected_raw = params.get("expected_participants")
     if not isinstance(expected_raw, list) or not expected_raw:
         return _unsatisfied("malformed_expected_participants")
-    expected = {str(did) for did in expected_raw}
+    # Require every expected participant to be a non-empty string WITHOUT
+    # coercion. str(did) would have silently turned a malformed entry (an int
+    # 123, None, a dict) into a string DID, letting a commitment whose
+    # committer_did happens to stringify-match (committer_did="123" against
+    # expected_participants=[123]) satisfy the exact-set participant check on a
+    # malformed parameter payload. A malformed participant list must fail closed.
+    if any(not isinstance(did, str) or not did for did in expected_raw):
+        return _unsatisfied("malformed_expected_participants")
+    expected = set(expected_raw)
 
     if "aggregate_quantity_required" not in params:
         return _unsatisfied("missing_aggregate_quantity_required")
@@ -202,7 +210,15 @@ def evaluate_bilateral_chain_closure_v1(
     except (TypeError, ValueError):
         return _unsatisfied("malformed_activation_deadline")
 
-    mandate_check = bool(params.get("mandate_check_required", False))
+    # mandate_check_required must be absent or an ACTUAL bool. bool(...) coercion
+    # would have read a malformed payload's mandate_check_required="" (or 0, or
+    # None) as False and skipped the mandate check entirely, letting a deal with
+    # missing mandate proofs close despite a malformed parameter. A present
+    # non-bool value fails closed.
+    mandate_check_raw = params.get("mandate_check_required", False)
+    if not isinstance(mandate_check_raw, bool):
+        return _unsatisfied("malformed_mandate_check_required")
+    mandate_check = mandate_check_raw
     now = params.get("_now")
     try:
         now_dt = _parse_iso_datetime(now) if now is not None else datetime.now(timezone.utc)
@@ -439,11 +455,14 @@ def _evaluate_comparison(
     # Materialize EVERY comparand before applying the truth test. Folding the
     # resolution into the all(...) generator would let all()'s short-circuit on
     # the first legitimately-False comparator skip resolution on every later
-    # commitment, so a non-finite comparand in a non-first commitment would
-    # evade the finiteness guard. Resolve all comparands first (the finiteness
-    # guard is applied inside _get_field, the single field-resolution
-    # chokepoint), then run the comparison over the materialized list.
-    comparands = [_get_field(commitment, field_path) for commitment in commitments]
+    # commitment, so a malformed comparand in a non-first commitment would evade
+    # the type/finiteness guard. Resolve all comparands first (the guard is
+    # applied inside _get_field, the single field-resolution chokepoint, keyed on
+    # the expected literal so a type-mismatched commitment field fails closed),
+    # then run the comparison over the materialized list.
+    comparands = [
+        _get_field(commitment, field_path, expected=[expected]) for commitment in commitments
+    ]
     return all(bool(comparator(comparand, expected)) for comparand in comparands)
 
 
@@ -465,6 +484,65 @@ def _finite_comparand(value: Any, field_path: str) -> Any:
     return value
 
 
+def _scalar_type_class(value: Any) -> str:
+    """Classify a scalar into a comparison type-class.
+
+    ``bool`` is deliberately its OWN class, distinct from ``number``, so a
+    commitment field ``True`` never aliases to the numeric literal ``1`` (in
+    Python ``True == 1`` and ``True in {1}``). ``int``/``float`` collapse into
+    one ``number`` class so ``60`` and ``60.0`` compare equal. Everything else
+    that is not a recognised scalar is ``other`` and can only type-match another
+    ``other`` of the same Python type.
+    """
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, str):
+        return "str"
+    return "other"
+
+
+def _guard_field_scalar(value: Any, expected: list[Any] | None, field_path: str) -> Any:
+    """Single type/finiteness guard for a resolved commitment field value.
+
+    This is the one boundary every operator's field resolution passes through
+    (comparison, membership ``in``, aggregation, before/after), so a malformed
+    commitment field fails closed once here instead of per operator.
+
+    Two classes are closed:
+
+    * Non-finite numbers (NaN / Infinity / -Infinity, which json.loads accepts
+      as bare tokens) are rejected outright. Every ordering/inequality
+      comparison against NaN is False and NaN is not a member of any set, so a
+      cap ``not(field <op> bound)`` or blocklist ``not(field in {...})`` would
+      otherwise invert to satisfied.
+    * A field whose scalar type-class does not match ANY expected literal is
+      rejected. Without this, a string field ``"sixty"`` satisfies
+      ``quantity != 0`` (``operator.ne("sixty", 0)`` is True) and a boolean
+      field ``True`` satisfies ``quantity in [1]`` (``True in {1}`` is True) by
+      Python cross-type equality / numeric aliasing. ``bool`` is its own class
+      so it never aliases to ``number``.
+
+    ``expected`` is the operator's reference literal(s): the comparison ``value``
+    or the membership ``values``. When ``expected`` is ``None`` (an aggregation,
+    where the numeric requirement is enforced by the caller) only the finiteness
+    guard applies.
+    """
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if not math.isfinite(value):
+            raise PredicateEvaluationError(f"non_finite_comparand:{field_path}")
+    if not expected:
+        return value
+    value_class = _scalar_type_class(value)
+    expected_classes = {_scalar_type_class(ref) for ref in expected}
+    if value_class not in expected_classes:
+        raise PredicateEvaluationError(
+            f"type_mismatch:{field_path}:{value_class}!={sorted(expected_classes)}"
+        )
+    return value
+
+
 def _evaluate_membership(node: dict[str, Any], commitments: list[dict[str, Any]]) -> bool:
     values = node.get("values")
     if not isinstance(values, list):
@@ -478,14 +556,18 @@ def _evaluate_membership(node: dict[str, Any], commitments: list[dict[str, Any]]
     # Resolve the field on EVERY commitment before applying the membership
     # test. Folding _get_field into the all(...) generator would let the
     # short-circuit on a first not-in-set commitment skip field resolution on
-    # later commitments, so a later commitment with a missing or non-finite
-    # field would evade the fail-closed PredicateEvaluationError _get_field
-    # raises. _get_field is the single field-resolution chokepoint, so a NaN /
-    # Infinity commitment field is rejected here exactly as it is on the
-    # comparison, aggregation, and before/after paths: without this a blocklist
-    # written as not(field in {...}) would invert to satisfied because NaN is
-    # not a member of any set.
-    field_values = [_get_field(commitment, field_path) for commitment in commitments]
+    # later commitments, so a later commitment with a missing / non-finite /
+    # type-mismatched field would evade the fail-closed PredicateEvaluationError
+    # _get_field raises. _get_field is the single field-resolution chokepoint,
+    # keyed here on the declared membership set: a NaN / Infinity field is
+    # rejected (NaN is not a member of any set, so not(field in {...}) would
+    # otherwise invert to satisfied) and a type-mismatched field is rejected
+    # before the set lookup (a boolean True must not alias to the numeric member
+    # 1, since True in {1} is True in Python). This closes the same class the
+    # comparison, aggregation, and before/after paths close.
+    field_values = [
+        _get_field(commitment, field_path, expected=values) for commitment in commitments
+    ]
     return all(value in accepted for value in field_values)
 
 
@@ -546,7 +628,9 @@ def _evaluate_aggregation(node: dict[str, Any], commitments: list[dict[str, Any]
     return float(max(numeric_values))
 
 
-def _get_field(commitment: dict[str, Any], field_path: str) -> Any:
+def _get_field(
+    commitment: dict[str, Any], field_path: str, expected: list[Any] | None = None
+) -> Any:
     current: Any = commitment
     for segment in field_path.split("."):
         if not isinstance(current, dict) or segment not in current:
@@ -554,16 +638,20 @@ def _get_field(commitment: dict[str, Any], field_path: str) -> Any:
         current = current[segment]
     # Single chokepoint for commitment field-value resolution: every consumer
     # (comparison, membership `in`, aggregation, before/after) reads its
-    # comparand through here, so applying the finiteness guard at this one
+    # comparand through here, so applying one type/finiteness guard at this one
     # boundary makes the whole class fail closed instead of patching each
     # operator. A NaN / Infinity / -Infinity numeric field (json.loads accepts
     # the bare tokens, so an attacker-controlled commitment can carry one) is
-    # rejected: NaN is not a member of any value set and every ordering /
-    # inequality comparison against NaN returns False, so a blocklist written as
-    # not(field in {...}) or a cap written as not(field <op> bound) would
-    # otherwise invert to satisfied. Booleans are numeric in Python but are a
-    # legitimate field value, so they pass through unchanged.
-    return _finite_comparand(current, field_path)
+    # rejected on every path: NaN is not a member of any value set and every
+    # ordering / inequality comparison against NaN returns False, so a blocklist
+    # written as not(field in {...}) or a cap written as not(field <op> bound)
+    # would otherwise invert to satisfied. When the caller passes the operator's
+    # reference literal(s) (`expected`), a field whose scalar type-class does not
+    # match any reference is also rejected here, so a string field cannot satisfy
+    # a numeric != by Python cross-type inequality and a boolean field cannot
+    # satisfy numeric membership by True-aliases-1. Booleans stay their own class
+    # and pass through unchanged only where a boolean reference is expected.
+    return _guard_field_scalar(current, expected, field_path)
 
 
 def _parse_iso_datetime(value: Any) -> datetime:

@@ -999,3 +999,133 @@ def test_closure_language_and_with_bare_aggregation_child_fails_closed() -> None
     commitments = [_commitment(RETAILER, 60), _commitment(WHOLESALER, 40)]
     result = evaluate_predicate(predicate, _chain_session(), commitments)
     assert result.result == "unsatisfied"
+
+
+# --------------------------------------------------------------------------
+# Fail-closed (finding C1-round-N-P1): the shared field-resolution chokepoint
+# must reject a WRONG-TYPE scalar field, not only a non-finite number. A string
+# quantity must not satisfy a numeric != by Python cross-type inequality, and a
+# boolean field must not satisfy numeric membership by True-aliases-1. The guard
+# is keyed on the operator's reference literal(s) at the single _get_field
+# boundary, so comparison, membership, and (by construction) every other field
+# consumer inherit it. These fail before / pass after the type guard.
+# --------------------------------------------------------------------------
+
+
+def test_closure_language_comparison_string_field_type_mismatch_fails_closed() -> None:
+    # quantity != 0 over a string quantity "sixty": operator.ne("sixty", 0) is
+    # True, so before the type guard this reported satisfied and let a malformed
+    # commitment close a numeric inequality. The chokepoint rejects the string
+    # field because its scalar type-class does not match the numeric literal 0.
+    predicate = _closure_language_predicate(
+        {"op": "!=", "field": "commitment_terms.quantity", "value": 0}
+    )
+    result = evaluate_predicate(predicate, _chain_session(), [_commitment(RETAILER, "sixty")])
+    assert isinstance(result, PredicateResult)
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_predicate"
+
+    # A finite numeric quantity still satisfies quantity != 0.
+    finite = evaluate_predicate(
+        predicate, _chain_session(), [_commitment(RETAILER, 60)]
+    )
+    assert finite.result == "satisfied"
+
+
+def test_closure_language_membership_boolean_field_numeric_alias_fails_closed() -> None:
+    # quantity in [1] over a boolean quantity True: True in {1} is True in
+    # Python, so before the type guard this reported satisfied by numeric
+    # aliasing. The chokepoint rejects the boolean field because bool is its own
+    # type-class, distinct from the numeric member 1.
+    predicate = _closure_language_predicate(
+        {"op": "in", "field": "commitment_terms.quantity", "values": [1]}
+    )
+    result = evaluate_predicate(predicate, _chain_session(), [_commitment(RETAILER, True)])
+    assert isinstance(result, PredicateResult)
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_predicate"
+
+    # A genuine numeric member still matches.
+    numeric = evaluate_predicate(
+        _closure_language_predicate(
+            {"op": "in", "field": "commitment_terms.quantity", "values": [1, 60]}
+        ),
+        _chain_session(),
+        [_commitment(RETAILER, 60)],
+    )
+    assert numeric.result == "satisfied"
+
+    # String membership on a string field is unaffected by the numeric guard.
+    string_member = evaluate_predicate(
+        _closure_language_predicate(
+            {"op": "in", "field": "committer_did", "values": [RETAILER]}
+        ),
+        _chain_session(),
+        [_commitment(RETAILER, 60)],
+    )
+    assert string_member.result == "satisfied"
+
+
+def test_closure_language_membership_string_field_numeric_values_type_mismatch() -> None:
+    # A string field checked against a numeric value set must fail closed rather
+    # than silently never-match: the type-class mismatch is a malformed pairing.
+    predicate = _closure_language_predicate(
+        {"op": "in", "field": "committer_did", "values": [1, 2, 3]}
+    )
+    result = evaluate_predicate(predicate, _chain_session(), [_commitment(RETAILER, 60)])
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_predicate"
+
+
+# --------------------------------------------------------------------------
+# Fail-closed (finding C1-round-N-MED): bilateral parameters must be
+# type-checked WITHOUT coercion. A non-string expected participant (str() would
+# have coerced it into a matching DID) and a non-bool mandate_check_required
+# (bool() would have read "" / 0 / None as False and skipped the mandate check)
+# must fail closed. These fail before / pass after the type checks.
+# --------------------------------------------------------------------------
+
+
+def test_bilateral_non_string_expected_participant_fails_closed() -> None:
+    # expected_participants=[123] with a committer_did="123" would satisfy the
+    # exact-set participant check once str(123) coerces to "123". Requiring a
+    # non-empty string without coercion fails closed on the malformed list.
+    predicate = _bilateral_predicate(expected_participants=[123, WHOLESALER])
+    commitments = [_commitment("123", 60), _commitment(WHOLESALER, 40)]
+    result = evaluate_predicate(predicate, _chain_session(), commitments)
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_expected_participants"
+
+
+def test_bilateral_empty_string_expected_participant_fails_closed() -> None:
+    # An empty-string participant is malformed too (it can never legitimately
+    # match a committer_did, which is itself required non-empty).
+    predicate = _bilateral_predicate(expected_participants=["", WHOLESALER])
+    commitments = [_commitment(RETAILER, 60), _commitment(WHOLESALER, 40)]
+    result = evaluate_predicate(predicate, _chain_session(), commitments)
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_expected_participants"
+
+
+def test_bilateral_non_bool_mandate_check_required_fails_closed() -> None:
+    # mandate_check_required="" is a malformed flag. bool("") is False, which
+    # would skip the mandate check and let commitments with NO mandate proof
+    # close. A present non-bool value must fail closed instead.
+    predicate = _bilateral_predicate(mandate_check_required="")
+    commitments = [
+        _commitment(RETAILER, 60, mandate=None),
+        _commitment(WHOLESALER, 40, mandate=None),
+    ]
+    result = evaluate_predicate(predicate, _chain_session(), commitments)
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_mandate_check_required"
+
+
+def test_bilateral_truthy_non_bool_mandate_check_required_fails_closed() -> None:
+    # A truthy non-bool (the string "yes") must also fail closed: the type is
+    # wrong regardless of truthiness, so the parameter payload is malformed.
+    predicate = _bilateral_predicate(mandate_check_required="yes")
+    commitments = [_commitment(RETAILER, 60), _commitment(WHOLESALER, 40)]
+    result = evaluate_predicate(predicate, _chain_session(), commitments)
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_mandate_check_required"
