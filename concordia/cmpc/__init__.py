@@ -22,6 +22,16 @@ from .chain_session import (
     verify_transcript,
 )
 from .errors import CMPCError, InvalidPrimitiveError, SchemaValidationError
+from .predicate import (
+    BILATERAL_CHAIN_CLOSURE_V1,
+    CLOSURE_LANGUAGE_V1,
+    EvaluablePredicate,
+    PredicateEvaluationError,
+    PredicateResult,
+    evaluate_bilateral_chain_closure_v1,
+    evaluate_closure_language_v1,
+    evaluate_predicate,
+)
 from .revocation import (
     CandidateArtifact,
     CascadeResult,
@@ -81,4 +91,12 @@ __all__ = [
     "InvalidPrimitiveError",
     "SchemaValidationError",
     "verify_transcript",
+    "BILATERAL_CHAIN_CLOSURE_V1",
+    "CLOSURE_LANGUAGE_V1",
+    "EvaluablePredicate",
+    "PredicateEvaluationError",
+    "PredicateResult",
+    "evaluate_predicate",
+    "evaluate_bilateral_chain_closure_v1",
+    "evaluate_closure_language_v1",
 ]
