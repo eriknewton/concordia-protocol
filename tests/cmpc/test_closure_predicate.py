@@ -570,6 +570,90 @@ def test_closure_language_direct_inequality_nan_fails_closed() -> None:
     assert finite.result == "satisfied"
 
 
+def test_closure_language_direct_comparison_nan_cap_fails_closed_benign_first() -> None:
+    # Order-dependent short-circuit leak: a benign in-cap commitment ordered
+    # BEFORE a NaN commitment must not let all()'s short-circuit skip the
+    # finiteness guard on the NaN. The cap not(qty > 1000) must fail closed
+    # regardless of commitment order.
+    cap = {
+        "op": "not",
+        "arg": {"op": ">", "field": "commitment_terms.quantity", "value": 1000},
+    }
+    predicate = _closure_language_predicate(cap)
+
+    benign_then_nan = evaluate_predicate(
+        predicate,
+        _chain_session(),
+        [_commitment(RETAILER, 500), _commitment(WHOLESALER, float("nan"))],
+    )
+    assert benign_then_nan.result == "unsatisfied"
+
+    # An infinite quantity in a non-first commitment must also fail closed.
+    benign_then_inf = evaluate_predicate(
+        predicate,
+        _chain_session(),
+        [_commitment(RETAILER, 500), _commitment(WHOLESALER, float("inf"))],
+    )
+    assert benign_then_inf.result == "unsatisfied"
+
+    # Two honest within-cap commitments still satisfy the cap.
+    both_within = evaluate_predicate(
+        predicate,
+        _chain_session(),
+        [_commitment(RETAILER, 500), _commitment(WHOLESALER, 600)],
+    )
+    assert both_within.result == "satisfied"
+
+
+def test_closure_language_membership_missing_field_later_commitment_fails_closed() -> None:
+    # Order-dependent short-circuit leak in the membership path: a first
+    # commitment that is legitimately not-in-set must not let all()'s
+    # short-circuit skip field resolution on a later commitment whose field is
+    # missing. not(in{committer_did in [a]}) over [not-in-set, missing-field]
+    # must fail closed rather than invert to satisfied.
+    predicate = _closure_language_predicate(
+        {
+            "op": "not",
+            "arg": {"op": "in", "field": "committer_did", "values": [RETAILER]},
+        }
+    )
+    commitments = [
+        {"committer_did": WHOLESALER, "commitment_terms": {}},
+        {"commitment_terms": {}},
+    ]
+    result = evaluate_predicate(predicate, _chain_session(), commitments)
+    assert result.result == "unsatisfied"
+
+
+def test_closure_language_time_unparsable_later_commitment_fails_closed() -> None:
+    # Order-dependent short-circuit leak in the time path: a first commitment
+    # that is legitimately not-before must not let all()'s short-circuit skip
+    # parsing a later commitment whose timestamp is unparsable.
+    # not(before) over [late-parsable, unparsable] must fail closed.
+    predicate = _closure_language_predicate(
+        {
+            "op": "not",
+            "arg": {
+                "op": "before",
+                "field": "commitment_terms.delivery",
+                "value": "2026-05-16T12:00:00Z",
+            },
+        }
+    )
+    commitments = [
+        {
+            "committer_did": RETAILER,
+            "commitment_terms": {"delivery": "2026-05-16T18:00:00Z"},
+        },
+        {
+            "committer_did": WHOLESALER,
+            "commitment_terms": {"delivery": "not-a-time"},
+        },
+    ]
+    result = evaluate_predicate(predicate, _chain_session(), commitments)
+    assert result.result == "unsatisfied"
+
+
 # --------------------------------------------------------------------------
 # Fail-closed: a deeply nested closure-language tree yields unsatisfied, not a
 # raised RecursionError out of evaluate_predicate.

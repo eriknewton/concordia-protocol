@@ -351,10 +351,17 @@ def _evaluate_comparison(
         raise PredicateEvaluationError("missing_field")
     if not commitments:
         raise PredicateEvaluationError("no_commitments_for_comparison")
-    return all(
-        bool(comparator(_finite_comparand(_get_field(commitment, field_path), field_path), expected))
+    # Validate EVERY comparand before applying the truth test. Folding the
+    # finiteness guard into the all(...) generator would let all()'s
+    # short-circuit on the first legitimately-False comparator skip the guard
+    # on every later commitment, so a non-finite comparand in a non-first
+    # commitment would evade the check. Materialize all guarded comparands
+    # first, then run the comparison over the materialized list.
+    comparands = [
+        _finite_comparand(_get_field(commitment, field_path), field_path)
         for commitment in commitments
-    )
+    ]
+    return all(bool(comparator(comparand, expected)) for comparand in comparands)
 
 
 def _finite_comparand(value: Any, field_path: str) -> Any:
@@ -385,7 +392,13 @@ def _evaluate_membership(node: dict[str, Any], commitments: list[dict[str, Any]]
         raise PredicateEvaluationError("missing_field")
     if not commitments:
         raise PredicateEvaluationError("no_commitments_for_membership")
-    return all(_get_field(commitment, field_path) in accepted for commitment in commitments)
+    # Resolve the field on EVERY commitment before applying the membership
+    # test. Folding _get_field into the all(...) generator would let the
+    # short-circuit on a first not-in-set commitment skip field resolution on
+    # later commitments, so a later commitment with a missing field would evade
+    # the fail-closed PredicateEvaluationError _get_field raises.
+    field_values = [_get_field(commitment, field_path) for commitment in commitments]
+    return all(value in accepted for value in field_values)
 
 
 def _evaluate_time(node: dict[str, Any], commitments: list[dict[str, Any]]) -> bool:
@@ -398,11 +411,15 @@ def _evaluate_time(node: dict[str, Any], commitments: list[dict[str, Any]]) -> b
         raise PredicateEvaluationError("missing_field")
     if not commitments:
         raise PredicateEvaluationError("no_commitments_for_time")
+    # Parse EVERY commitment's timestamp before applying the time test. Folding
+    # the parse into the all(...) generator would let the short-circuit on a
+    # first time-not-before/after commitment skip parsing on later commitments,
+    # so a later commitment with a missing or unparsable timestamp would evade
+    # the fail-closed error _parse_iso_datetime / _get_field raise.
+    actual_times = [_parse_iso_datetime(_get_field(c, field_path)) for c in commitments]
     if op == "before":
-        return all(
-            _parse_iso_datetime(_get_field(c, field_path)) < expected for c in commitments
-        )
-    return all(_parse_iso_datetime(_get_field(c, field_path)) > expected for c in commitments)
+        return all(actual < expected for actual in actual_times)
+    return all(actual > expected for actual in actual_times)
 
 
 def _evaluate_aggregation(node: dict[str, Any], commitments: list[dict[str, Any]]) -> float:
