@@ -423,6 +423,9 @@ def _require_node(candidate: Any) -> dict[str, Any]:
     return candidate
 
 
+_ORDERING_OPS = frozenset((">", ">=", "<", "<="))
+
+
 def _evaluate_comparison(
     node: dict[str, Any],
     chain_session: ChainSession,
@@ -432,29 +435,24 @@ def _evaluate_comparison(
     comparator = _COMPARATORS[op]
     if "value" not in node:
         raise PredicateEvaluationError("missing_value")
-    # Reject a non-finite EXPECTED literal (NaN / Infinity / -Infinity) before
-    # comparing. json.loads accepts the bare NaN/Infinity/-Infinity tokens, so a
-    # predicate can carry one as its `value`. Every ordering/equality comparison
-    # against NaN returns False, so a cap guard written as not(field <op> NaN)
-    # would otherwise invert to satisfied. This mirrors the comparand-side
-    # finiteness guard so both sides of the comparison fail closed.
-    expected = _finite_comparand(node["value"], "value")
+    # Resolve the EXPECTED literal to a discriminated typed value through the one
+    # chokepoint. This rejects a non-finite numeric literal (json.loads accepts
+    # bare NaN/Infinity/-Infinity tokens) and anything that is not a recognised
+    # comparand type (finite non-bool number, str, or datetime), so both sides of
+    # the comparison pass through identical type discipline and fail closed.
+    expected = _typed_comparand(node["value"], "value")
 
     if "left" in node:
-        # The `left` value (an aggregation result, always a finite float) meets
-        # the expected literal through the SAME type/finiteness chokepoint as a
-        # resolved commitment field, keyed on the expected literal. Without the
-        # type-class match, a malformed non-numeric expected literal fails open:
-        # operator.eq(1.0, "two") is False, so not(count == "two") would invert
-        # to satisfied on a cross-type comparison. Keying the guard on
-        # [expected] rejects a number-vs-str (or any mismatched-class) pairing
-        # before the comparator runs, so the whole comparison fails closed.
-        actual = _guard_field_scalar(
+        # The `left` value is an aggregation result (always a finite float). It
+        # meets the expected literal through the SAME typed chokepoint as a
+        # resolved commitment field, so a malformed non-numeric expected literal
+        # cannot fail open: operator.eq(1.0, "two") is False, so not(count ==
+        # "two") would otherwise invert to satisfied on a cross-type comparison.
+        actual = _typed_comparand(
             _evaluate_node(_require_node(node["left"]), chain_session, commitments),
-            [expected],
             "left",
         )
-        return bool(comparator(actual, expected))
+        return _typed_compare(op, comparator, actual, expected, "left")
 
     field_path = node.get("field")
     if not isinstance(field_path, str):
@@ -465,132 +463,155 @@ def _evaluate_comparison(
     # resolution into the all(...) generator would let all()'s short-circuit on
     # the first legitimately-False comparator skip resolution on every later
     # commitment, so a malformed comparand in a non-first commitment would evade
-    # the type/finiteness guard. Resolve all comparands first (the guard is
-    # applied inside _get_field, the single field-resolution chokepoint, keyed on
-    # the expected literal so a type-mismatched commitment field fails closed),
-    # then run the comparison over the materialized list.
-    comparands = [
-        _get_field(commitment, field_path, expected=[expected]) for commitment in commitments
-    ]
-    return all(bool(comparator(comparand, expected)) for comparand in comparands)
+    # the typed chokepoint. Resolve all comparands first (each through _get_field,
+    # the single field-resolution chokepoint, which discriminates the value's
+    # type), then run the typed comparison over the materialized list.
+    comparands = [_get_field(commitment, field_path) for commitment in commitments]
+    return all(
+        _typed_compare(op, comparator, comparand, expected, field_path)
+        for comparand in comparands
+    )
 
 
-def _finite_comparand(value: Any, field_path: str) -> Any:
-    """Reject a non-finite numeric comparand so comparisons fail closed.
+@dataclass(frozen=True)
+class _TypedComparand:
+    """A commitment/literal value discriminated into a comparison type-class.
 
-    Non-numeric values pass through unchanged (string/set/time comparisons are
-    handled by their own operators). A numeric value that is NaN or infinite is
-    rejected: every ordering/inequality comparison against NaN returns False, so
-    a cap guard written as not(field <op> bound) would otherwise invert to
-    satisfied. json.loads accepts the bare NaN/Infinity/-Infinity tokens, so an
-    attacker-controlled commitment can carry one; this guard mirrors the
-    finiteness checks on the aggregation and bilateral quantity paths.
+    ``type_class`` is one of ``"number"``, ``"str"``, or ``"datetime"``; ``value``
+    is the underlying comparand. Two typed comparands are equal iff BOTH their
+    type-class and value are equal, which is exactly the cross-type-strict,
+    bool-de-aliased semantics the closure language requires: ``True`` (rejected
+    outright, never a comparand) can never reach a ``number`` key, ``"60"`` and
+    ``60`` land in different classes so they never match, and ``60`` and ``60.0``
+    share the ``number`` class and value so they do match.
     """
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)) and not math.isfinite(value):
-        raise PredicateEvaluationError(f"non_finite_comparand:{field_path}")
-    return value
+
+    type_class: str
+    value: Any
+
+    def key(self) -> tuple[str, Any]:
+        return (self.type_class, self.value)
 
 
-def _scalar_type_class(value: Any) -> str:
-    """Classify a scalar into a comparison type-class.
+def _typed_comparand(raw: Any, field_path: str) -> _TypedComparand:
+    """Resolve a raw value to a discriminated typed comparand or fail closed.
 
-    ``bool`` is deliberately its OWN class, distinct from ``number``, so a
-    commitment field ``True`` never aliases to the numeric literal ``1`` (in
-    Python ``True == 1`` and ``True in {1}``). ``int``/``float`` collapse into
-    one ``number`` class so ``60`` and ``60.0`` compare equal. Everything else
-    that is not a recognised scalar is keyed by its concrete Python type name
-    (``other:NoneType``, ``other:dict``, ``other:list``, ...) so it can only
-    type-match another value of the SAME Python type. Collapsing every
-    non-scalar into a single ``other`` class would let a dict field type-match a
-    ``None`` / ``list`` / ``dict`` literal of a different type, re-opening the
-    wrong-type fail-open: ``operator.ne({"nested": 1}, None)`` is True, so a
-    ``field != None`` guard would be satisfied by an arbitrary structured field.
+    THE strict chokepoint for every comparand in the closure language (both sides
+    of a comparison, every membership literal, and every resolved commitment
+    field). A value is accepted only if it is exactly one of:
+
+    * a finite ``int``/``float`` that is NOT a ``bool`` -> ``number``;
+    * a ``str`` -> ``str``;
+    * a ``datetime`` -> ``datetime``.
+
+    Everything else fails closed with ``PredicateEvaluationError``. This single
+    boundary closes three fail-open classes at once:
+
+    * finiteness: NaN / Infinity / -Infinity (json.loads accepts the bare tokens)
+      are rejected, so a cap ``not(field <op> bound)`` or blocklist
+      ``not(field in {...})`` cannot invert to satisfied;
+    * type-strictness: a wrong-type scalar (a string ``"60"`` where a number is
+      declared, or vice versa) never silently compares via Python's lexicographic
+      or cross-type equality, because comparands only ever match on
+      ``(type_class, value)`` keys and ordering requires both sides ``number``;
+    * bool-aliasing: ``bool`` is not a ``number`` (nor any accepted class), so
+      ``True`` is rejected outright and can never alias to the numeric ``1``
+      (``True == 1`` and ``True in {1}`` are both True in raw Python).
     """
-    if isinstance(value, bool):
-        return "bool"
-    if isinstance(value, (int, float)):
-        return "number"
-    if isinstance(value, str):
-        return "str"
-    return f"other:{type(value).__name__}"
-
-
-def _guard_field_scalar(value: Any, expected: list[Any] | None, field_path: str) -> Any:
-    """Single type/finiteness guard for a resolved commitment field value.
-
-    This is the one boundary every operator's field resolution passes through
-    (comparison, membership ``in``, aggregation, before/after), so a malformed
-    commitment field fails closed once here instead of per operator.
-
-    Two classes are closed:
-
-    * Non-finite numbers (NaN / Infinity / -Infinity, which json.loads accepts
-      as bare tokens) are rejected outright. Every ordering/inequality
-      comparison against NaN is False and NaN is not a member of any set, so a
-      cap ``not(field <op> bound)`` or blocklist ``not(field in {...})`` would
-      otherwise invert to satisfied.
-    * A field whose scalar type-class does not match ANY expected literal is
-      rejected. Without this, a string field ``"sixty"`` satisfies
-      ``quantity != 0`` (``operator.ne("sixty", 0)`` is True) and a boolean
-      field ``True`` satisfies ``quantity in [1]`` (``True in {1}`` is True) by
-      Python cross-type equality / numeric aliasing. ``bool`` is its own class
-      so it never aliases to ``number``.
-
-    ``expected`` is the operator's reference literal(s): the comparison ``value``
-    or the membership ``values``. When ``expected`` is ``None`` (an aggregation,
-    where the numeric requirement is enforced by the caller) only the finiteness
-    guard applies.
-    """
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        if not math.isfinite(value):
+    if isinstance(raw, bool):
+        raise PredicateEvaluationError(f"boolean_comparand:{field_path}")
+    if isinstance(raw, (int, float)):
+        if not math.isfinite(raw):
             raise PredicateEvaluationError(f"non_finite_comparand:{field_path}")
-    if not expected:
-        return value
-    value_class = _scalar_type_class(value)
-    expected_classes = {_scalar_type_class(ref) for ref in expected}
-    if value_class not in expected_classes:
+        return _TypedComparand("number", raw)
+    if isinstance(raw, str):
+        return _TypedComparand("str", raw)
+    if isinstance(raw, datetime):
+        return _TypedComparand("datetime", raw)
+    raise PredicateEvaluationError(f"unsupported_comparand_type:{field_path}:{type(raw).__name__}")
+
+
+def _typed_compare(
+    op: str,
+    comparator: Callable[[Any, Any], bool],
+    actual: _TypedComparand,
+    expected: _TypedComparand,
+    field_path: str,
+) -> bool:
+    """Apply a comparison operator over two typed comparands, fail-closed.
+
+    Ordering operators (>, >=, <, <=) require BOTH operands to be ``number``:
+    lexicographic string ordering ("60" > "100") and any cross-type ordering are
+    rejected rather than silently evaluated, so a wrong-type commitment value can
+    never reach operator.gt/ge/lt/le.
+
+    Equality operators (==, !=) require BOTH operands to share a type-class. A
+    cross-type pairing is a malformed predicate, not a validly-unequal one: a
+    predicate author who writes ``count == "two"`` or ``field != None`` made a
+    type error, and returning ``!=`` -> True for it would let a cap written as
+    ``not(count == "two")`` or a guard written as ``field != None`` invert to
+    satisfied by cross-type inequality. Rejecting the mismatched pairing fails
+    closed; a same-class pairing then compares on value so "60" never equals 60
+    and 60 equals 60.0.
+    """
+    if op in _ORDERING_OPS:
+        if actual.type_class != "number" or expected.type_class != "number":
+            raise PredicateEvaluationError(
+                f"non_numeric_ordering:{field_path}:{actual.type_class}<{op}>{expected.type_class}"
+            )
+        return bool(comparator(actual.value, expected.value))
+    if actual.type_class != expected.type_class:
         raise PredicateEvaluationError(
-            f"type_mismatch:{field_path}:{value_class}!={sorted(expected_classes)}"
+            f"cross_type_equality:{field_path}:{actual.type_class}{op}{expected.type_class}"
         )
-    return value
+    return bool(comparator(actual.value, expected.value))
 
 
 def _evaluate_membership(node: dict[str, Any], commitments: list[dict[str, Any]]) -> bool:
     values = node.get("values")
     if not isinstance(values, list):
         raise PredicateEvaluationError("missing_values")
-    # Reject a non-finite membership LITERAL (NaN / Infinity / -Infinity, which
-    # json.loads accepts as bare tokens) before building the accepted set. A NaN
-    # left in the set is never a member of itself, so a blocklist written as
-    # not(field in {..., NaN}) would leave the NaN inert and invert to satisfied
-    # on a finite field. This mirrors the comparison-side literal guard so both
-    # the comparison `value` and the membership `values` literals fail closed.
-    for reference in values:
-        _finite_comparand(reference, "values")
-    accepted = set(values)
+    # Resolve every membership LITERAL through the strict typed chokepoint, then
+    # key the accepted set on the discriminated (type_class, value) keys. Raw
+    # set(values) semantics reintroduce Python's numeric/bool aliasing: with a
+    # declared set [1, False], set([1, False]) keeps 1 and False as distinct
+    # members, but a field True still matches member 1 because True == 1, and a
+    # field "60" cannot be excluded from a numeric set by type. Keying on the
+    # typed comparand closes both: the literal set and the resolved field are
+    # compared on identical (type_class, value) keys.
+    typed_literals = [_typed_comparand(reference, "values") for reference in values]
+    if not typed_literals:
+        raise PredicateEvaluationError("missing_values")
+    accepted = {literal.key() for literal in typed_literals}
+    accepted_classes = {literal.type_class for literal in typed_literals}
     field_path = node.get("field")
     if not isinstance(field_path, str):
         raise PredicateEvaluationError("missing_field")
     if not commitments:
         raise PredicateEvaluationError("no_commitments_for_membership")
-    # Resolve the field on EVERY commitment before applying the membership
-    # test. Folding _get_field into the all(...) generator would let the
-    # short-circuit on a first not-in-set commitment skip field resolution on
-    # later commitments, so a later commitment with a missing / non-finite /
-    # type-mismatched field would evade the fail-closed PredicateEvaluationError
-    # _get_field raises. _get_field is the single field-resolution chokepoint,
-    # keyed here on the declared membership set: a NaN / Infinity field is
-    # rejected (NaN is not a member of any set, so not(field in {...}) would
-    # otherwise invert to satisfied) and a type-mismatched field is rejected
-    # before the set lookup (a boolean True must not alias to the numeric member
-    # 1, since True in {1} is True in Python). This closes the same class the
-    # comparison, aggregation, and before/after paths close.
-    field_values = [
-        _get_field(commitment, field_path, expected=values) for commitment in commitments
-    ]
-    return all(value in accepted for value in field_values)
+    # Resolve the field on EVERY commitment before applying the membership test.
+    # Folding _get_field into the all(...) generator would let the short-circuit
+    # on a first not-in-set commitment skip field resolution on later
+    # commitments, so a later commitment with a missing / non-finite / wrong-type
+    # field would evade the fail-closed PredicateEvaluationError _get_field
+    # raises. _get_field routes through the same typed chokepoint, so the field
+    # is discriminated identically to the literals before the keyed set lookup: a
+    # boolean True is rejected outright (never aliases to member 1) and a NaN
+    # field is rejected (never a member of any set).
+    field_comparands = [_get_field(commitment, field_path) for commitment in commitments]
+    for comparand in field_comparands:
+        # A field whose type-class matches NONE of the declared literal classes is
+        # a malformed pairing, not a validly-absent member: a string field against
+        # a numeric-only value set (or vice versa) must fail closed, mirroring the
+        # cross-type equality rule, so a blocklist `not(field in {...})` cannot
+        # invert to satisfied merely because the field is the wrong type to ever
+        # match.
+        if comparand.type_class not in accepted_classes:
+            raise PredicateEvaluationError(
+                f"cross_type_membership:{field_path}:"
+                f"{comparand.type_class}!={sorted(accepted_classes)}"
+            )
+    return all(comparand.key() in accepted for comparand in field_comparands)
 
 
 def _evaluate_time(node: dict[str, Any], commitments: list[dict[str, Any]]) -> bool:
@@ -608,7 +629,7 @@ def _evaluate_time(node: dict[str, Any], commitments: list[dict[str, Any]]) -> b
     # first time-not-before/after commitment skip parsing on later commitments,
     # so a later commitment with a missing or unparsable timestamp would evade
     # the fail-closed error _parse_iso_datetime / _get_field raise.
-    actual_times = [_parse_iso_datetime(_get_field(c, field_path)) for c in commitments]
+    actual_times = [_parse_iso_datetime(_resolve_field(c, field_path)) for c in commitments]
     if op == "before":
         return all(actual < expected for actual in actual_times)
     return all(actual > expected for actual in actual_times)
@@ -632,14 +653,15 @@ def _evaluate_aggregation(node: dict[str, Any], commitments: list[dict[str, Any]
         raise PredicateEvaluationError("missing_field")
     numeric_values: list[float] = []
     for commitment in commitments:
-        value = _get_field(commitment, field_path)
-        if (
-            not isinstance(value, (int, float))
-            or isinstance(value, bool)
-            or not math.isfinite(value)
-        ):
+        # Route the aggregand through the SAME strict typed chokepoint as every
+        # other comparand, then require the discriminated class be `number`. This
+        # rejects a bool (True is not a number), a NaN/Infinity, a string, and any
+        # non-scalar in one place, keeping the aggregation operand under identical
+        # type discipline to comparison and membership.
+        typed = _typed_comparand(_resolve_field(commitment, field_path), field_path)
+        if typed.type_class != "number":
             raise PredicateEvaluationError(f"non_numeric_aggregand:{field_path}")
-        numeric_values.append(float(value))
+        numeric_values.append(float(typed.value))
 
     if op == "sum":
         return float(sum(numeric_values))
@@ -650,30 +672,35 @@ def _evaluate_aggregation(node: dict[str, Any], commitments: list[dict[str, Any]
     return float(max(numeric_values))
 
 
-def _get_field(
-    commitment: dict[str, Any], field_path: str, expected: list[Any] | None = None
-) -> Any:
+def _resolve_field(commitment: dict[str, Any], field_path: str) -> Any:
+    """Walk a dotted field path to its raw value or fail closed on a miss.
+
+    Resolution ONLY: every consumer that needs a discriminated, type-checked
+    comparand wraps this in :func:`_typed_comparand` (comparison, membership `in`
+    -> :func:`_get_field`); aggregation applies its own numeric-non-bool check and
+    before/after parses the raw value as a datetime. Keeping the walk separate
+    from the typed guard lets each operator apply exactly the type discipline it
+    requires while sharing one path-resolution + missing-field chokepoint.
+    """
     current: Any = commitment
     for segment in field_path.split("."):
         if not isinstance(current, dict) or segment not in current:
             raise PredicateEvaluationError(f"missing_field:{field_path}")
         current = current[segment]
-    # Single chokepoint for commitment field-value resolution: every consumer
-    # (comparison, membership `in`, aggregation, before/after) reads its
-    # comparand through here, so applying one type/finiteness guard at this one
-    # boundary makes the whole class fail closed instead of patching each
-    # operator. A NaN / Infinity / -Infinity numeric field (json.loads accepts
-    # the bare tokens, so an attacker-controlled commitment can carry one) is
-    # rejected on every path: NaN is not a member of any value set and every
-    # ordering / inequality comparison against NaN returns False, so a blocklist
-    # written as not(field in {...}) or a cap written as not(field <op> bound)
-    # would otherwise invert to satisfied. When the caller passes the operator's
-    # reference literal(s) (`expected`), a field whose scalar type-class does not
-    # match any reference is also rejected here, so a string field cannot satisfy
-    # a numeric != by Python cross-type inequality and a boolean field cannot
-    # satisfy numeric membership by True-aliases-1. Booleans stay their own class
-    # and pass through unchanged only where a boolean reference is expected.
-    return _guard_field_scalar(current, expected, field_path)
+    return current
+
+
+def _get_field(commitment: dict[str, Any], field_path: str) -> _TypedComparand:
+    """Resolve a commitment field to a strict, discriminated typed comparand.
+
+    THE single field-resolution chokepoint for the comparison and membership
+    operators: it walks the dotted path and then routes the raw value through
+    :func:`_typed_comparand`, so every comparand a comparison or membership test
+    sees is a finite non-bool number, a str, or a datetime, keyed by type-class.
+    A NaN / Infinity field, a boolean field (which would alias to numeric 1), and
+    any unsupported-type field all fail closed here on every path.
+    """
+    return _typed_comparand(_resolve_field(commitment, field_path), field_path)
 
 
 def _parse_iso_datetime(value: Any) -> datetime:

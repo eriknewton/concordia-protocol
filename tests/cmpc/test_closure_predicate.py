@@ -1225,3 +1225,138 @@ def test_closure_language_count_ne_str_left_path_fails_closed() -> None:
     result = evaluate_predicate(predicate, _chain_session(), [_commitment(RETAILER, 60)])
     assert result.result == "unsatisfied"
     assert result.reason == "malformed_predicate"
+
+
+# --------------------------------------------------------------------------
+# Fail-closed (finding C1-round-3 HIGH #1): ordering operators (>, >=, <, <=)
+# must require BOTH sides be finite non-bool numbers. A same-type non-numeric
+# scalar (string "60" vs "100", or True vs False) previously reached
+# operator.gt/lt because the type-class guard matched string-to-string and
+# bool-to-bool, so "60" > "100" evaluated lexicographically (True) and a bool
+# ordering evaluated by 0/1. The strict typed chokepoint rejects any ordering
+# where either side is not `number`. These fail before / pass after.
+# --------------------------------------------------------------------------
+
+
+def test_closure_language_string_ordering_lexicographic_fails_closed() -> None:
+    # quantity > "100" over a string quantity "60": "60" > "100" is True
+    # lexicographically, so before the ordering guard this reported satisfied and
+    # let a wrong-type commitment value clear a numeric floor. Both sides must be
+    # numeric, so the string-vs-string ordering fails closed.
+    predicate = _closure_language_predicate(
+        {"op": ">", "field": "commitment_terms.quantity", "value": "100"}
+    )
+    result = evaluate_predicate(predicate, _chain_session(), [_commitment(RETAILER, "60")])
+    assert isinstance(result, PredicateResult)
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_predicate"
+
+    # A genuine numeric field still orders correctly against a numeric literal.
+    numeric_pass = evaluate_predicate(
+        _closure_language_predicate(
+            {"op": ">", "field": "commitment_terms.quantity", "value": 100}
+        ),
+        _chain_session(),
+        [_commitment(RETAILER, 150)],
+    )
+    assert numeric_pass.result == "satisfied"
+
+    numeric_fail = evaluate_predicate(
+        _closure_language_predicate(
+            {"op": ">", "field": "commitment_terms.quantity", "value": 100}
+        ),
+        _chain_session(),
+        [_commitment(RETAILER, 60)],
+    )
+    assert numeric_fail.result == "unsatisfied"
+    assert numeric_fail.reason == "expression_not_satisfied"
+
+
+def test_closure_language_bool_ordering_fails_closed() -> None:
+    # quantity >= False over a boolean quantity True: True >= False is True by
+    # 1 >= 0, so before the guard a boolean field cleared a numeric floor by
+    # bool-to-int aliasing. Both a boolean field and a boolean literal are
+    # rejected outright (bool is not a number), so the ordering fails closed.
+    predicate = _closure_language_predicate(
+        {"op": ">=", "field": "commitment_terms.quantity", "value": False}
+    )
+    result = evaluate_predicate(predicate, _chain_session(), [_commitment(RETAILER, True)])
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_predicate"
+
+    # A boolean field against a numeric ordering literal also fails closed: True
+    # must never satisfy `quantity > 0` by aliasing to 1.
+    aliasing = evaluate_predicate(
+        _closure_language_predicate(
+            {"op": ">", "field": "commitment_terms.quantity", "value": 0}
+        ),
+        _chain_session(),
+        [_commitment(RETAILER, True)],
+    )
+    assert aliasing.result == "unsatisfied"
+    assert aliasing.reason == "malformed_predicate"
+
+
+# --------------------------------------------------------------------------
+# Fail-closed (finding C1-round-3 HIGH #2): membership must not fall back to raw
+# Python set semantics. A mixed bool/number value set (the declared literal
+# [1, False]) previously reintroduced True == 1 aliasing: a field True matched
+# numeric member 1. The strict typed chokepoint rejects a bool literal (and a
+# bool field) outright, so the aliasing set can never form. This fails before /
+# passes after.
+# --------------------------------------------------------------------------
+
+
+def test_closure_language_membership_mixed_bool_number_set_fails_closed() -> None:
+    # values [1, false] with a field true: set([1, False]) lets True match member
+    # 1 (True == 1 in Python), so not(qty in [1, false]) would invert to
+    # satisfied. The bool literal `false` is rejected by the typed chokepoint, so
+    # the malformed mixed-class set fails closed before any field is compared.
+    predicate = _closure_language_predicate(
+        {"op": "in", "field": "commitment_terms.quantity", "values": [1, False]}
+    )
+    result = evaluate_predicate(predicate, _chain_session(), [_commitment(RETAILER, True)])
+    assert isinstance(result, PredicateResult)
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_predicate"
+
+    # The same set behind a `not` also fails closed rather than inverting to
+    # satisfied (the blocklist-bypass shape).
+    blocklist = evaluate_predicate(
+        _closure_language_predicate(
+            {
+                "op": "not",
+                "arg": {
+                    "op": "in",
+                    "field": "commitment_terms.quantity",
+                    "values": [1, False],
+                },
+            }
+        ),
+        _chain_session(),
+        [_commitment(RETAILER, True)],
+    )
+    assert blocklist.result == "unsatisfied"
+    assert blocklist.reason == "malformed_predicate"
+
+    # A clean numeric membership set still matches a numeric field.
+    numeric_member = evaluate_predicate(
+        _closure_language_predicate(
+            {"op": "in", "field": "commitment_terms.quantity", "values": [1, 60]}
+        ),
+        _chain_session(),
+        [_commitment(RETAILER, 60)],
+    )
+    assert numeric_member.result == "satisfied"
+
+
+def test_closure_language_membership_bool_field_numeric_set_fails_closed() -> None:
+    # Even with an all-numeric declared set [1, 2], a boolean field True must not
+    # match member 1 by aliasing. The typed chokepoint rejects the boolean field
+    # outright, so the membership fails closed.
+    predicate = _closure_language_predicate(
+        {"op": "in", "field": "commitment_terms.quantity", "values": [1, 2]}
+    )
+    result = evaluate_predicate(predicate, _chain_session(), [_commitment(RETAILER, True)])
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_predicate"
