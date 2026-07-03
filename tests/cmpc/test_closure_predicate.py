@@ -625,6 +625,121 @@ def test_closure_language_time_unparsable_later_commitment_fails_closed() -> Non
 
 
 # --------------------------------------------------------------------------
+# Fail-closed (finding C1-1): boolean and/or must evaluate every branch, not
+# short-circuit. A malformed branch reached only after an earlier true (OR) or
+# false (AND) branch must fail closed rather than let all()/any() skip it.
+# --------------------------------------------------------------------------
+
+
+def test_closure_language_or_true_then_malformed_fails_closed() -> None:
+    # any()'s short-circuit would evaluate only the first (true) OR branch and
+    # skip the malformed {"op": "bogus"} branch, reporting satisfied on a
+    # malformed expression tree. Every branch must be evaluated so the malformed
+    # branch's PredicateEvaluationError fails closed.
+    predicate = _closure_language_predicate(
+        {
+            "op": "or",
+            "args": [
+                {"op": "==", "field": "commitment_terms.quantity", "value": 60},
+                {"op": "bogus"},
+            ],
+        }
+    )
+    result = evaluate_predicate(predicate, _chain_session(), [_commitment(RETAILER, 60)])
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_predicate"
+
+    # A well-formed OR whose first branch is true still satisfies (the fix does
+    # not over-reject legitimate short-circuit-eligible trees).
+    legit = _closure_language_predicate(
+        {
+            "op": "or",
+            "args": [
+                {"op": "==", "field": "commitment_terms.quantity", "value": 60},
+                {"op": "==", "field": "commitment_terms.quantity", "value": 999},
+            ],
+        }
+    )
+    legit_result = evaluate_predicate(legit, _chain_session(), [_commitment(RETAILER, 60)])
+    assert legit_result.result == "satisfied"
+
+
+def test_closure_language_and_false_then_malformed_fails_closed() -> None:
+    # all()'s short-circuit would evaluate only the first (false) AND branch and
+    # skip the malformed branch, returning False (unsatisfied) by luck. The
+    # contract is that a malformed tree fails closed with a malformed reason, not
+    # that it happens to be unsatisfied; every branch must be evaluated.
+    predicate = _closure_language_predicate(
+        {
+            "op": "and",
+            "args": [
+                {"op": "==", "field": "commitment_terms.quantity", "value": 99},
+                {"op": "bogus"},
+            ],
+        }
+    )
+    result = evaluate_predicate(predicate, _chain_session(), [_commitment(RETAILER, 60)])
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_predicate"
+
+
+# --------------------------------------------------------------------------
+# Fail-closed (finding C1-2): a non-finite EXPECTED comparison literal (NaN /
+# Infinity / -Infinity carried in the predicate's `value`) must be rejected
+# before comparison. Every comparison against NaN returns False, so a cap
+# written as not(field <op> NaN) would otherwise invert to satisfied.
+# --------------------------------------------------------------------------
+
+
+def test_closure_language_not_equal_nan_expected_fails_closed() -> None:
+    # not(qty == NaN): operator.eq(60, nan) is False, so not(False) would report
+    # satisfied. The expected literal must be rejected as non-finite so the tree
+    # fails closed.
+    predicate = _closure_language_predicate(
+        {
+            "op": "not",
+            "arg": {"op": "==", "field": "commitment_terms.quantity", "value": float("nan")},
+        }
+    )
+    result = evaluate_predicate(predicate, _chain_session(), [_commitment(RETAILER, 60)])
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_predicate"
+
+
+def test_closure_language_infinite_expected_fails_closed() -> None:
+    # not(qty >= Infinity): operator.ge(60, inf) is False, so not(False) would
+    # report satisfied. An infinite expected literal must fail closed too.
+    predicate = _closure_language_predicate(
+        {
+            "op": "not",
+            "arg": {"op": ">=", "field": "commitment_terms.quantity", "value": float("inf")},
+        }
+    )
+    result = evaluate_predicate(predicate, _chain_session(), [_commitment(RETAILER, 60)])
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_predicate"
+
+
+def test_closure_language_left_node_nan_expected_fails_closed() -> None:
+    # The `left`-node comparison path (an aggregation result compared to an
+    # expected literal) must also reject a non-finite expected literal.
+    # not(sum(qty) == NaN) would otherwise invert to satisfied.
+    predicate = _closure_language_predicate(
+        {
+            "op": "not",
+            "arg": {
+                "op": "==",
+                "left": {"op": "sum", "field": "commitment_terms.quantity"},
+                "value": float("nan"),
+            },
+        }
+    )
+    result = evaluate_predicate(predicate, _chain_session(), [_commitment(RETAILER, 60)])
+    assert result.result == "unsatisfied"
+    assert result.reason == "malformed_predicate"
+
+
+# --------------------------------------------------------------------------
 # Fail-closed: a deeply nested closure-language tree yields unsatisfied, not a
 # raised RecursionError out of evaluate_predicate.
 # --------------------------------------------------------------------------

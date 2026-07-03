@@ -325,15 +325,29 @@ def _evaluate_node(
 ) -> Any:
     op = node.get("op")
     if op == "and":
-        return all(
+        # Materialize EVERY child result before applying truth semantics. all()'s
+        # short-circuit on the first False child would otherwise skip evaluation
+        # of later children, so a malformed later branch (which raises
+        # PredicateEvaluationError) would be silently skipped and the AND could
+        # report the tree satisfied on a malformed expression. Evaluating every
+        # branch first makes any branch's failure fail closed.
+        child_values = [
             bool(_evaluate_node(_require_node(arg), chain_session, commitments))
             for arg in _require_args(node)
-        )
+        ]
+        return all(child_values)
     if op == "or":
-        return any(
+        # Materialize EVERY child result before applying truth semantics. any()'s
+        # short-circuit on the first True child would otherwise skip evaluation
+        # of later children, so a true-then-malformed OR (a valid true branch
+        # followed by a malformed branch that raises PredicateEvaluationError)
+        # would report the tree satisfied instead of failing closed. Evaluating
+        # every branch first makes any branch's failure fail closed.
+        child_values = [
             bool(_evaluate_node(_require_node(arg), chain_session, commitments))
             for arg in _require_args(node)
-        )
+        ]
+        return any(child_values)
     if op == "not":
         return not bool(_evaluate_node(_require_node(node.get("arg")), chain_session, commitments))
     if op in _COMPARATORS:
@@ -369,10 +383,19 @@ def _evaluate_comparison(
     comparator = _COMPARATORS[op]
     if "value" not in node:
         raise PredicateEvaluationError("missing_value")
-    expected = node["value"]
+    # Reject a non-finite EXPECTED literal (NaN / Infinity / -Infinity) before
+    # comparing. json.loads accepts the bare NaN/Infinity/-Infinity tokens, so a
+    # predicate can carry one as its `value`. Every ordering/equality comparison
+    # against NaN returns False, so a cap guard written as not(field <op> NaN)
+    # would otherwise invert to satisfied. This mirrors the comparand-side
+    # finiteness guard so both sides of the comparison fail closed.
+    expected = _finite_comparand(node["value"], "value")
 
     if "left" in node:
-        actual = _evaluate_node(_require_node(node["left"]), chain_session, commitments)
+        actual = _finite_comparand(
+            _evaluate_node(_require_node(node["left"]), chain_session, commitments),
+            "left",
+        )
         return bool(comparator(actual, expected))
 
     field_path = node.get("field")
