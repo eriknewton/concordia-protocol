@@ -14,6 +14,12 @@ A third party runs this against the retained JSON bytes in this directory
      renders the UNCHANGED child B inadmissible/revoked through the shipped
      cascade verifier: REJECT, with the ancestor status read named in the
      receipt's evidence refs.
+  6. The revocation terminal is a COMMITTED CascadeDecisionRecord: its
+     decision_id recomputes from bytes and commits to the ancestor read, its
+     signature verifies under the issuer key, a mutated ancestor status
+     diverges the id, and a one-byte tamper rejects. The allow (the still-valid
+     ApprovalReceipt at its own coordinate) stays valid while the deny
+     terminates current execution.
 
 Exit code 0 == every assertion held; nonzero == a check failed.
 
@@ -34,9 +40,13 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from concordia import verify_approval_receipt
 from concordia.canonicalization import canonicalize_jcs
 from concordia.cmpc import (
+    AncestorRead,
     CandidateArtifact,
+    CascadeDecisionRecord,
     RevocationRecord,
+    canonicalize_cascade_decision_record,
     cascade_revocation,
+    verify_cascade_decision_record,
     verify_revocation_record,
 )
 
@@ -56,6 +66,37 @@ def b64url_pubkey(value: str) -> Ed25519PublicKey:
 
 def sha256_jcs(obj: Any) -> str:
     return hashlib.sha256(canonicalize_jcs(obj)).hexdigest()
+
+
+def dataclasses_replace_ancestor(
+    deny: CascadeDecisionRecord, *, status: str
+) -> CascadeDecisionRecord:
+    """Return a copy of `deny` with its first ancestor read's status changed.
+
+    The stated `decision_id` and `signature` are carried over unchanged, so the
+    forged record claims the original id over a mutated body -- exactly what a
+    recomputing verifier must catch.
+    """
+    read = deny.ancestor_reads[0]
+    mutated = AncestorRead(
+        element_digest=read.element_digest,
+        status=status,
+        source_digest=read.source_digest,
+        coordinate=read.coordinate,
+    )
+    return CascadeDecisionRecord(
+        capability_digest=deny.capability_digest,
+        request_digest=deny.request_digest,
+        boundary_id=deny.boundary_id,
+        decision=deny.decision,
+        verifier=deny.verifier,
+        policy_version=deny.policy_version,
+        ancestor_reads=[mutated],
+        decision_id=deny.decision_id,
+        signature=deny.signature,
+        approval_receipt_ref=deny.approval_receipt_ref,
+        revocation_record_ref=deny.revocation_record_ref,
+    )
 
 
 def main() -> int:
@@ -200,8 +241,109 @@ def main() -> int:
         None if child_hit is None else child_hit.evidence,
     )
 
+    # 6. The revocation terminal is a COMMITTED, recomputable CascadeDecisionRecord.
+    deny_dict = load("cascade_decision_deny.json")
+    deny = CascadeDecisionRecord.from_dict(deny_dict)
+
+    # 6a. decision_id recomputes from the retained bytes (SHA-256 of JCS(preimage)).
+    deny_recomputed = "sha256:" + hashlib.sha256(
+        canonicalize_cascade_decision_record(deny)
+    ).hexdigest()
+    deny_expected = vector["hashes"]["deny_decision_id"]
+    check(
+        "committed deny: decision_id recomputes from bytes",
+        deny_recomputed == deny_expected,
+        deny_recomputed,
+    )
+
+    # 6b. Independent rfc8785 cross-check: it is the RFC 8785 STANDARD hash, so
+    # it cross-runs byte-for-byte with any conformant decision-log family.
+    try:
+        import rfc8785  # type: ignore
+
+        deny_ref = "sha256:" + hashlib.sha256(
+            rfc8785.dumps(deny.preimage())
+        ).hexdigest()
+        check(
+            "committed deny: decision_id matches INDEPENDENT rfc8785 JCS",
+            deny_ref == deny_expected,
+            deny_ref,
+        )
+    except ImportError:
+        print("[SKIP] rfc8785 not installed; deny standard-JCS cross-check skipped")
+
+    # 6c. The deny is a terminal deny that COMMITS to the ancestor read: the
+    # exact {element_digest, status, source_digest, coordinate} is in the
+    # preimage, and it names the parent A revocation the verifier read.
+    check(
+        "committed deny: decision == 'deny' (terminal)",
+        deny.decision == "deny",
+    )
+    read = deny.ancestor_reads[0]
+    check(
+        "committed deny: commits to ancestor A read (status=revoked)",
+        read.element_digest == revocation_dict["revoked_artifact_id"]
+        and read.status == "revoked"
+        and deny.revocation_record_ref == revocation_dict["revocation_id"],
+        f"element={read.element_digest} status={read.status}",
+    )
+    check(
+        "committed deny: ancestor coordinate is a source-ordered integer, "
+        "not a wall clock",
+        isinstance(read.coordinate, int) and not isinstance(read.coordinate, bool),
+        f"coordinate={read.coordinate!r}",
+    )
+
+    # 6d. The signature verifies under the issuer key (the same key that signed
+    # the revocation record; the verifier is the issuer of the terminal).
+    check(
+        "committed deny: signature verifies under issuer key",
+        verify_cascade_decision_record(deny, issuer_pk),
+    )
+
+    # 6e. Recomputable, not asserted: mutating the CLAIMED ancestor status
+    # diverges the recomputed id, so the verifier rejects the forged record.
+    mutated_status = dataclasses_replace_ancestor(deny, status="active")
+    check(
+        "committed deny: mutated ancestor status diverges id -> REJECT",
+        (
+            "sha256:"
+            + hashlib.sha256(
+                canonicalize_cascade_decision_record(mutated_status)
+            ).hexdigest()
+        )
+        != deny_expected
+        and not verify_cascade_decision_record(mutated_status, issuer_pk),
+    )
+
+    # 6f. A one-byte tamper of the signed body flips the verifier to REJECT.
+    tampered_deny_dict = json.loads(json.dumps(deny_dict))
+    cd = tampered_deny_dict["capability_digest"]
+    tampered_deny_dict["capability_digest"] = cd[:-1] + (
+        "0" if cd[-1] != "0" else "1"
+    )
+    tampered_deny = CascadeDecisionRecord.from_dict(tampered_deny_dict)
+    check(
+        "committed deny: one-byte tamper of signed body -> REJECT",
+        not verify_cascade_decision_record(tampered_deny, issuer_pk),
+    )
+
+    # 6g. The allow stays valid at its own coordinate while the deny terminates
+    # current execution: the still-signed ApprovalReceipt B verifies at
+    # FIXED_NOW (A live, B live), i.e. the historical allow is not invalidated
+    # by the later terminal deny (which is a separate, new record).
+    allow_still_valid = verify_approval_receipt(
+        receipt, offer, now=FIXED_NOW, issuer_public_key=approver_pk
+    )
+    check(
+        "allow historically valid at its coordinate while deny terminates now",
+        allow_still_valid.valid and ("sha256:" + deny.decision_id) != expected,
+        f"allow.valid={allow_still_valid.valid}",
+    )
+
     print()
-    print("decision_id =", expected)
+    print("decision_id      =", expected)
+    print("deny_decision_id =", deny_expected)
     print("OVERALL:", "PASS" if ok else "FAIL")
     return 0 if ok else 1
 

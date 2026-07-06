@@ -9,6 +9,7 @@ Emits, into this directory:
   - delegation_A.json             parent delegation (an ApprovalReceipt)
   - delegation_B.json             child delegation referencing A (allowed)
   - revocation_A.json             a shipped RevocationRecord revoking A (cascade)
+  - cascade_decision_deny.json    the COMMITTED terminal deny for child B
   - vector.json                   the recomputable expectations (hashes etc.)
 
 Everything is derived from FIXED Ed25519 seeds so the bytes and the
@@ -35,7 +36,14 @@ from typing import Any
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from concordia.canonicalization import canonicalize_jcs
-from concordia.cmpc import RevocationRecord, RevocationScope, sign_revocation_record
+from concordia.cmpc import (
+    CandidateArtifact,
+    CascadeBoundary,
+    RevocationRecord,
+    RevocationScope,
+    cascade_revocation,
+    sign_revocation_record,
+)
 from concordia.signing import KeyPair, canonical_json, sign_message
 
 HERE = Path(__file__).resolve().parent
@@ -230,6 +238,54 @@ def main() -> None:
     )
     revocation = sign_revocation_record(unsigned_revocation, issuer)
 
+    # -- The COMMITTED terminal deny ------------------------------------------
+    # Re-running the cascade verifier over the unchanged child B, with a boundary
+    # context + the issuer key, emits a committed CascadeDecisionRecord for each
+    # inadmissible artifact. We keep the one for child B: a recomputable terminal
+    # deny whose decision_id content-addresses the ancestor status read (parent A
+    # observed `revoked` at the status source's own ordering coordinate). The
+    # source coordinate is source-ordered (a log sequence number), never a wall
+    # clock. capability_digest / request_digest reuse the child's #1404 digests
+    # so the deny's six-field object matches the approve object's field shape.
+    boundary = CascadeBoundary(
+        boundary_id=decision_object["boundary_id"],
+        verifier=decision_object["verifier"],
+        policy_version=decision_object["policy_version"],
+        # Digest of the status source the verifier read (the revocation record's
+        # canonical bytes), content-addressed so authority stays verifier-side.
+        source_digest="sha256:"
+        + hashlib.sha256(canonicalize_jcs(revocation.to_dict())).hexdigest(),
+        # Source-ordered coordinate: the status log sequence number at which A's
+        # revocation was fixed. A fixed integer here, NOT a wall clock.
+        coordinate=42,
+        capability_digest=capability_digest,
+        request_digest=request_digest,
+        approval_receipt_ref="sha256:"
+        + hashlib.sha256(canonical_json(receipt)).hexdigest(),
+    )
+    cascade = cascade_revocation(
+        revocation,
+        [
+            CandidateArtifact(
+                artifact_id=delegation_A["id"],
+                artifact_type="approval_receipt",
+                references=delegation_A["references"],
+            ),
+            CandidateArtifact(
+                artifact_id=delegation_B_candidate["artifact_id"],
+                artifact_type="approval_receipt",
+                references=delegation_B_candidate["references"],
+            ),
+        ],
+        boundary=boundary,
+        signing_key=issuer,
+    )
+    committed_deny = next(
+        d
+        for d, a in zip(cascade.decisions, cascade.inadmissible)
+        if a.artifact_id == delegation_B_candidate["artifact_id"]
+    )
+
     # -- Emit fixture bytes ---------------------------------------------------
     write_json("offer.json", offer)
     write_json("capability.json", capability)
@@ -238,6 +294,7 @@ def main() -> None:
     write_json("delegation_A.json", delegation_A)
     write_json("delegation_B_candidate.json", delegation_B_candidate)
     write_json("revocation_A.json", revocation.to_dict())
+    write_json("cascade_decision_deny.json", committed_deny.to_dict())
 
     vector = {
         "description": (
@@ -258,6 +315,8 @@ def main() -> None:
             "request_digest": request_digest,
             "decision_id": "sha256:" + decision_id,
             "receipt_offer_hash": receipt["scope"]["offer_hash"],
+            # The COMMITTED terminal deny's own recomputable id.
+            "deny_decision_id": "sha256:" + committed_deny.decision_id,
         },
         "native_vs_wrapped": {
             "native_receipt_fields": ["decision", "request_digest"],
@@ -273,12 +332,13 @@ def main() -> None:
 
     # Human-readable console echo of the load-bearing hashes.
     print("decision_id           =", "sha256:" + decision_id)
+    print("deny_decision_id      =", "sha256:" + committed_deny.decision_id)
     print("capability_digest     =", capability_digest)
     print("request_digest        =", request_digest)
     print("receipt.offer_hash    =", receipt["scope"]["offer_hash"])
     print("approver pubkey (b64u)=", approver.public_key_b64())
     print("issuer   pubkey (b64u)=", issuer.public_key_b64())
-    print("wrote 8 files to", HERE)
+    print("wrote 9 files to", HERE)
 
 
 if __name__ == "__main__":

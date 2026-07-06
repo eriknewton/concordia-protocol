@@ -274,6 +274,75 @@ REVOCATION_RECORD_SCHEMA: dict[str, Any] = {
 }
 
 
+ANCESTOR_READ_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["element_digest", "status", "source_digest", "coordinate"],
+    "additionalProperties": False,
+    "properties": {
+        "element_digest": {"type": "string", "minLength": 1},
+        "status": {"type": "string", "minLength": 1},
+        "source_digest": {"type": "string", "minLength": 1},
+        # Source-ordered coordinate: an integer sequence number / block height /
+        # log index. NOT a wall clock. `integer` (not `number`) rejects a float;
+        # a JSON string (an ISO timestamp) is a type error here, so a wall-clock
+        # coordinate cannot even be expressed. minimum: 0 refuses a negative
+        # placeholder; an unpinned/future coordinate is supplied by the caller
+        # from the pinned history or the read is refused, never defaulted.
+        "coordinate": {"type": "integer", "minimum": 0},
+    },
+}
+
+CASCADE_DECISION_RECORD_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "urn:concordia:schema:cascade_decision_record:v0.7",
+    "type": "object",
+    "required": [
+        "capability_digest",
+        "request_digest",
+        "boundary_id",
+        "decision",
+        "verifier",
+        "policy_version",
+        "ancestor_reads",
+        "decision_id",
+        "signature",
+    ],
+    "additionalProperties": False,
+    "properties": {
+        "capability_digest": {"type": "string", "minLength": 1},
+        "request_digest": {"type": "string", "minLength": 1},
+        "boundary_id": {"type": "string", "minLength": 1},
+        # Categorical terminal decision. This record exists only to commit a
+        # terminal deny; the withdrawal cause is evidenced by ancestor_reads,
+        # not a free-text reason. Enumerated so a non-deny cannot be committed
+        # through this shape.
+        "decision": {"type": "string", "enum": ["deny"]},
+        "verifier": {"type": "string", "minLength": 1},
+        "policy_version": {"type": "string", "minLength": 1},
+        # At least one ancestor read: a terminal deny that commits to NO
+        # ancestor read is meaningless (it would not recompute against the
+        # status it claims to depend on). rpelevin's control.
+        "ancestor_reads": {
+            "type": "array",
+            "minItems": 1,
+            "items": ANCESTOR_READ_SCHEMA,
+        },
+        "decision_id": {"type": "string", "minLength": 1},
+        "approval_receipt_ref": {"type": "string", "minLength": 1},
+        "revocation_record_ref": {"type": "string", "minLength": 1},
+        "signature": {
+            "type": "object",
+            "required": ["alg", "value"],
+            "additionalProperties": False,
+            "properties": {
+                "alg": {"type": "string", "enum": ["EdDSA"]},
+                "value": {"type": "string", "minLength": 1},
+            },
+        },
+    },
+}
+
+
 def _validate(schema: dict[str, Any], data: dict[str, Any]) -> None:
     try:
         Draft202012Validator(schema).validate(data)
@@ -312,3 +381,7 @@ def validate_revocation_record(data: dict[str, Any]) -> None:
         if isinstance(ref, dict)
     ):
         raise SchemaValidationError("references must include a revokes link to revoked_artifact_id")
+
+
+def validate_cascade_decision_record(data: dict[str, Any]) -> None:
+    _validate(CASCADE_DECISION_RECORD_SCHEMA, data)

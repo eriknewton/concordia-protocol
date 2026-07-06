@@ -1,20 +1,29 @@
-# A2A #1404 worked vector: recomputable decision_id + negative revocation vector
+# A2A #1404 worked vector: recomputable decision_id + committed terminal deny
 
 A byte-checkable conformance vector for the A2A capability-authorization SEP
-thread (#1404). It shows two things a third party can reproduce offline from
+thread (#1404). It shows three things a third party can reproduce offline from
 the retained JSON in this directory:
 
-1. A recomputable **`decision_id`**: `SHA-256` over the RFC 8785 JCS
-   serialization of a canonical object binding six fields
+1. A recomputable **`decision_id`** for the allow: `SHA-256` over the RFC 8785
+   JCS serialization of a canonical object binding six fields
    (`capability_digest`, `request_digest`, `boundary_id`, `verifier`,
    `policy_version`, `decision`), carried by a shipped Concordia
    **ApprovalReceipt**, Ed25519-signed, offline-verifiable from bytes.
 2. A **negative revocation vector**: a parent delegation `A` and a child
    delegation `B` where `B` derives an allowed decision through `A`; a single
    status write marks `A` revoked; re-verifying the **unchanged** `B` through
-   Concordia's cascade verifier yields a terminal `deny` / `revoked` /
-   `no-effect` result, with the ancestor status read named in the receipt's
-   evidence refs. Revocation stays propagation-free / content-addressed.
+   Concordia's cascade verifier yields a terminal `deny` / `revoked` result,
+   with the ancestor status read named in the receipt's evidence refs.
+   Revocation stays propagation-free / content-addressed.
+3. A **committed terminal deny**: the revocation terminal is itself a
+   content-addressed `CascadeDecisionRecord`, not a live verifier verdict. Its
+   `deny_decision_id` is `SHA-256` over the RFC 8785 JCS bytes of the same
+   six-field object plus an `ancestor_reads` array binding the exact
+   `{element_digest, status, source_digest, coordinate}` the verifier
+   re-derived through. It recomputes from bytes, commits to the ancestor read
+   (mutating the claimed ancestor status diverges the id), verifies under the
+   issuer key, and a one-byte tamper rejects. The deny **recomputes rather than
+   asserts**: this is the last mile committed to on #1404.
 
 Everything uses only shipped Concordia v0.7.0a1 primitives and the shipped
 RFC 8785 JCS canonicalizer. Nothing here patches or extends the SDK.
@@ -24,7 +33,7 @@ RFC 8785 JCS canonicalizer. Nothing here patches or extends the SDK.
 | File | What it is |
 |------|------------|
 | `generate.py` | Deterministic generator (fixed seeds). Rewrites every file below. |
-| `verify.py` | Offline byte-check: recompute `decision_id`, sign/verify PASS, one-byte tamper REJECT, revoke, child re-verify REJECT. |
+| `verify.py` | Offline byte-check: recompute both ids, sign/verify PASS, one-byte tamper REJECT, revoke, child re-verify REJECT, committed-deny recompute + commit-to-ancestor + tamper REJECT. |
 | `offer.json` | The request/offer the approver evaluated. Drives `request_digest`. |
 | `capability.json` | The authorized capability. Drives `capability_digest`. |
 | `decision_object.json` | The six-field #1404 decision object. `decision_id = SHA-256(JCS(this))`. |
@@ -32,7 +41,8 @@ RFC 8785 JCS canonicalizer. Nothing here patches or extends the SDK.
 | `delegation_A.json` | Parent delegation `A`: a shipped ApprovalReceipt. |
 | `delegation_B_candidate.json` | `B` projected as a cascade candidate artifact (references `A` via `fulfills`). Not a rewrite of `B`; the same id. |
 | `revocation_A.json` | The single status write: a shipped RevocationRecord revoking `A`, scope `cascade_to_dependents`. |
-| `vector.json` | Recomputable expectations: seeds, public keys, the load-bearing hashes. |
+| `cascade_decision_deny.json` | The **committed terminal deny** for `B`: a shipped `CascadeDecisionRecord`, `deny_decision_id = SHA-256(JCS(preimage))`, Ed25519-signed, committing to the ancestor read. |
+| `vector.json` | Recomputable expectations: seeds, public keys, the load-bearing hashes (incl. `deny_decision_id`). |
 
 ## Reproduce it
 
@@ -61,6 +71,7 @@ century; a production receipt sets a realistic window.
 
 ```
 decision_id        = sha256:15f84f2cf53ba52a6d0ba7d859d7c1a7bb6c21cfd5be7d036d2d998fd2eec28e
+deny_decision_id   = sha256:fcc6d3daf182dc5eb0e68ce25ef5e7ef9bc764899d17824518158a01917a1d34
 capability_digest  = sha256:dddfb8f55c9ff12ccd3ff0a5b065956b3a508b4be38eee74ad90c91c74aca932
 request_digest     = sha256:2cf9882e0ceee36278318a376117cc03da510c6994c3679a57eb4777dc8e06cb
 receipt.offer_hash = sha256:2cf9882e0ceee36278318a376117cc03da510c6994c3679a57eb4777dc8e06cb
@@ -131,6 +142,45 @@ as its native analog.
   and propagation-free: no field inside `B` is touched to make `B`
   inadmissible.
 
+## The committed terminal deny (`cascade_decision_deny.json`)
+
+The step above proves `B` becomes inadmissible, but the terminal result there
+is the cascade verifier's LIVE verdict (an `InadmissibleArtifact`: a reason
+enum plus a free-text evidence string). A third party who cross-ran this vector
+observed that the allow commits but the deny did not yet. This file closes that
+gap: the terminal deny is now a **committed, recomputable**
+`CascadeDecisionRecord`.
+
+- Its `deny_decision_id` is `SHA-256` over the RFC 8785 JCS bytes of the record
+  preimage (everything except `decision_id` and `signature`). It recomputes
+  offline from the retained bytes, no callback.
+- It binds the same six fields as the approve object
+  (`capability_digest`, `request_digest`, `boundary_id`, `decision`,
+  `verifier`, `policy_version`) plus an `ancestor_reads` array. The six-field
+  shape is identical to the allow's, so the deny cross-runs byte-for-byte with
+  the same decision-log family.
+- `ancestor_reads[0]` binds `{element_digest, status, source_digest,
+  coordinate}`: the exact ancestor observation the verifier re-derived through
+  (parent `A` seen `revoked`, at the status source's own ordering
+  `coordinate`). The `coordinate` is a source-ordered integer (a log sequence
+  number), **never a wall clock**: a wall clock is not re-askable, so it cannot
+  anchor a recomputable decision.
+- The record proves **what** was read and **which** source (by
+  `source_digest`); the verifier policy proves whether that source is
+  authoritative for the element. Naming a source confers no authority.
+- `ancestor_reads` carries digests, status, and coordinate only, never any
+  underlying deal terms (the audit-privacy invariant).
+- The withdrawal (`revocation_record_ref`) and the prior allow
+  (`approval_receipt_ref`) sit **inside** the preimage, so `deny_decision_id`
+  commits to them: a ref that could be swapped without diverging the id would
+  be untrustworthy.
+
+The deny **recomputes rather than asserts**: mutating any bound field,
+including the claimed ancestor `status` or `coordinate`, diverges the
+recomputed id, and the verifier rejects the forged record. The child `B` is
+never mutated across the revocation; a NEW immutable deny with a NEW id is
+derived, and the historical allow stays valid at its own coordinate.
+
 ## What `verify.py` proves (the exact sequence)
 
 1. `decision_id` recomputes from the bytes of `decision_object.json`.
@@ -143,5 +193,11 @@ as its native analog.
 5. The RevocationRecord verifies under the issuer key.
 6. After the single status write, the shipped `cascade_revocation` marks the
    unchanged child `B` inadmissible/`revoked`: **REJECT**.
+7. The committed `CascadeDecisionRecord` deny: `deny_decision_id` recomputes
+   from bytes (and matches the independent rfc8785 reference JCS), the decision
+   is a terminal `deny` that commits to the ancestor read, its coordinate is a
+   source-ordered integer, its signature verifies under the issuer key, a
+   mutated ancestor status diverges the id (**REJECT**), and a one-byte tamper
+   of the signed body is **REJECT**. The allow stays valid at its coordinate.
 
 Author: Erik Newton.
