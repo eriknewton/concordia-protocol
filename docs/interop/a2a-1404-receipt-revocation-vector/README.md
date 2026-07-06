@@ -51,6 +51,12 @@ python verify.py        # byte-checks everything; exit 0 == all PASS
 `a2a-1404-revoc-issuer-seed-00001`), so rerunning it reproduces the same
 bytes, the same signatures, and the same `decision_id`.
 
+The receipt and delegation A carry a deliberately far-future `expires_at` (year
+2126) against a contemporary `issued_at` (2026-05-10, recorded in the bytes), so
+the vector verifies at any wall-clock time without a stale-expiry failure. This
+is a fixture-stability choice, not a claim that a real procurement grant runs a
+century; a production receipt sets a realistic window.
+
 ## The load-bearing hash values
 
 ```
