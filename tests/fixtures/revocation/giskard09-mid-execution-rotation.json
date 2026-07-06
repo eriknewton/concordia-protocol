@@ -1,4 +1,31 @@
 {
+  "_meta": {
+    "fixture_id": "giskard09-mid-execution-rotation",
+    "fixture_version": "1.0.0",
+    "concordia_version": "0.7.0a1",
+    "scenario_source": "https://github.com/a2aproject/A2A/discussions/1734",
+    "scenario_named_by": "@giskard09 (https://github.com/giskard09)",
+    "payload_reference": {
+      "name": "HAHS v1 (Hashes-as-Histories)",
+      "canonical_schema_url": "https://hivetrust.onrender.com/.well-known/schemas/hahs-v1.json",
+      "issuer_did": "did:hive:hivetrust-issuer-001",
+      "issuer_pubkey_endpoint": "https://hivetrust.onrender.com/v1/audit/pubkey",
+      "note": "This fixture uses placeholder URNs (urn:a2cn:mandate:xyz, urn:concordia:receipt:abc) to demonstrate the cascade-revocation primitive without depending on live HAHS schema validation. A production HAHS-payload fixture lands as Deliverable B in a follow-up PR once a signed sample is provided over the live HiveTrust pubkey."
+    },
+    "co_authors": [
+      {
+        "identity": "Erik Newton",
+        "github": "@eriknewton",
+        "project": "Concordia Protocol"
+      },
+      {
+        "identity": "Steve Rotzin",
+        "github": "@srotzin",
+        "project": "HiveTrust / The Hivery Inc.",
+        "did": "did:hive:hivetrust-issuer-001"
+      }
+    ]
+  },
   "approval_receipt": {
     "approver": {
       "identity": "did:web:principal.example#approval",

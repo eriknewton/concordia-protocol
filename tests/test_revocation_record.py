@@ -185,6 +185,19 @@ def test_giskard09_cascade_fixture_returns_revoked_evidence() -> None:
     assert "urn:a2cn:mandate:xyz" in receipt.evidence
 
 
+def test_giskard09_fixture_has_hahs_payload_attribution() -> None:
+    """Backfill assertion: the fixture metadata names HAHS v1 as the payload reference."""
+    fixture_path = Path("tests/fixtures/revocation/giskard09-mid-execution-rotation.json")
+    fixture = json.loads(fixture_path.read_text())
+    assert "_meta" in fixture
+    assert fixture["_meta"]["payload_reference"]["name"] == "HAHS v1 (Hashes-as-Histories)"
+    assert fixture["_meta"]["payload_reference"]["canonical_schema_url"].startswith("https://hivetrust.onrender.com/")
+    assert fixture["_meta"]["payload_reference"]["issuer_did"] == "did:hive:hivetrust-issuer-001"
+    co_authors = fixture["_meta"]["co_authors"]
+    assert any(author.get("identity") == "Erik Newton" for author in co_authors)
+    assert any(author.get("identity") == "Steve Rotzin" for author in co_authors)
+
+
 def test_predicate_verifier_revocation_records_kwarg() -> None:
     key_pair = KeyPair.generate()
     record = _record("giskard09-mid-execution-rotation.json")
