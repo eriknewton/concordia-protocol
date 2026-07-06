@@ -24,10 +24,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   the optional `approval_receipt_ref` / `revocation_record_ref` (both inside
   the preimage), so mutating any bound field, including a claimed ancestor
   `status` or `coordinate`, diverges the recomputed id and the verifier rejects
-  it. The ancestor `coordinate` is a source-ordered integer (a sequence number
-  or log index), never a wall clock. `ancestor_reads` carries digests, status,
-  and coordinate only, never underlying deal terms (the SPEC 9.6.6
-  audit-privacy invariant). `cascade_revocation()` gains optional `boundary` +
+  it. The ancestor `coordinate` is COMMITTED (tampering it diverges the id) and
+  is a non-negative integer; the primitive does not prove it is a genuine pinned
+  source ordinal rather than, e.g., a wall-clock epoch value — source
+  authenticity is verifier-side policy. `verify_cascade_decision_record`
+  operates on the RAW retained bytes (strict-parse with
+  `additionalProperties: false` at the top level and inside every ancestor
+  read), so an injected unknown field such as a raw `deal_terms` is rejected,
+  never silently dropped by a normalizing round-trip. `ancestor_reads` carries
+  digests, status, and coordinate only, never underlying deal terms (the SPEC
+  9.6.6 audit-privacy invariant). `cascade_revocation()` gains optional
+  `boundary` +
   `signing_key` arguments: when both are supplied it emits a committed, signed
   `CascadeDecisionRecord` per inadmissible artifact in the new
   `CascadeResult.decisions` list; with neither, behavior is unchanged and

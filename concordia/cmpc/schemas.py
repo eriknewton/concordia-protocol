@@ -282,12 +282,16 @@ ANCESTOR_READ_SCHEMA: dict[str, Any] = {
         "element_digest": {"type": "string", "minLength": 1},
         "status": {"type": "string", "minLength": 1},
         "source_digest": {"type": "string", "minLength": 1},
-        # Source-ordered coordinate: an integer sequence number / block height /
-        # log index. NOT a wall clock. `integer` (not `number`) rejects a float;
-        # a JSON string (an ISO timestamp) is a type error here, so a wall-clock
-        # coordinate cannot even be expressed. minimum: 0 refuses a negative
-        # placeholder; an unpinned/future coordinate is supplied by the caller
-        # from the pinned history or the read is refused, never defaulted.
+        # Committed source coordinate: a non-negative integer intended to be a
+        # sequence number / block height / log index. `integer` (not `number`)
+        # rejects a float and a JSON string (an ISO-8601 wall clock is a string,
+        # so it is a type error here); minimum: 0 refuses a negative placeholder.
+        # NOTE: the schema constrains SHAPE only (non-negative integer). It does
+        # NOT prove the value is a genuine pinned source ordinal rather than,
+        # e.g., a wall-clock epoch integer — a numeric epoch passes this shape.
+        # Source authenticity (that the coordinate names a real position in an
+        # authoritative source) is VERIFIER-SIDE POLICY. The coordinate is
+        # mandatory, not defaulted: the builder synthesizes no default.
         "coordinate": {"type": "integer", "minimum": 0},
     },
 }

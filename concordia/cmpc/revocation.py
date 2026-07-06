@@ -129,26 +129,60 @@ def sign_cascade_decision_record(
 
 
 def verify_cascade_decision_record(
-    record: CascadeDecisionRecord, public_key: Ed25519PublicKey
+    record: CascadeDecisionRecord | Mapping[str, Any], public_key: Ed25519PublicKey
 ) -> bool:
-    """Fail-closed verify: schema, recomputed ``decision_id``, and signature.
+    """Fail-closed verify over the RETAINED BYTES, not a normalized round-trip.
 
-    Returns True only if the record is schema-valid, its ``decision_id``
-    recomputes exactly from the bound bytes (so a mutated field — including a
-    claimed ancestor ``status`` or ``coordinate``, or a swapped ref — is
-    rejected because the id no longer matches), and the Ed25519 signature
-    verifies over the same preimage bytes under ``public_key``. ANY failure
-    (validation, hash mismatch, bad signature, malformed input) returns False;
-    it never raises and never degrades to allow.
+    Accepts either the RAW mapping as received (the JSON a third party retained)
+    or an already-parsed ``CascadeDecisionRecord``. In BOTH cases the check runs
+    against the raw field set — it never routes through ``from_dict().to_dict()``
+    (which would silently DROP an unknown field, e.g. a smuggled ``deal_terms``,
+    and let a mutated body pass). The steps, all on the raw bytes:
+
+      1. STRICT schema-validate the raw object. ``additionalProperties: false``
+         at the top level AND inside every ``ancestor_reads[]`` element means an
+         unknown/extra field is REJECTED here, never dropped — this is what
+         defends the no-raw-deal-terms privacy invariant and fail-closed
+         mutation rejection.
+      2. Recompute ``decision_id = SHA-256(JCS(preimage))`` over the raw bytes
+         (preimage = the raw object minus ``decision_id`` + ``signature``) and
+         require it equals the claimed ``decision_id``. A mutated field —
+         including a claimed ancestor ``status`` or ``coordinate``, or a swapped
+         ref — diverges the id and is rejected.
+      3. Verify the Ed25519 signature over those SAME raw preimage bytes.
+
+    ANY failure (validation, hash mismatch, bad signature, malformed input)
+    returns False; it never raises and never degrades to allow. A typed record
+    is only constructed AFTER all three pass; this function returns a bool, so it
+    constructs none.
     """
     try:
-        validate_cascade_decision_record(record.to_dict())
-        preimage_bytes = canonicalize_cascade_decision_record(record)
-        recomputed = hashlib.sha256(preimage_bytes).hexdigest()
-        if recomputed != record.decision_id:
+        # Operate on the raw mapping. A typed record is serialized to its raw
+        # shape ONCE here for uniformity, but a raw mapping input is used AS-IS
+        # (never re-parsed through from_dict), so a smuggled field survives to
+        # the strict validator below instead of being dropped.
+        raw: Mapping[str, Any] = (
+            record.to_dict() if isinstance(record, CascadeDecisionRecord) else record
+        )
+        if not isinstance(raw, Mapping):
             return False
-        signature = record.signature or {}
-        raw_signature = base64.urlsafe_b64decode(signature.get("value", "").encode())
+        # 1. Strict-validate the RAW object: extra/unknown fields are rejected.
+        validate_cascade_decision_record(dict(raw))
+        # 2. Recompute over the raw preimage bytes (strips decision_id +
+        #    signature only; every OTHER field, incl. any that slipped past a
+        #    non-strict caller, is inside the preimage).
+        preimage_bytes = canonicalize_cascade_decision_record(raw)
+        recomputed = hashlib.sha256(preimage_bytes).hexdigest()
+        claimed_id = raw.get("decision_id", "")
+        if not isinstance(claimed_id, str) or recomputed != claimed_id:
+            return False
+        # 3. Verify the signature over the SAME raw preimage bytes.
+        signature = raw.get("signature") or {}
+        if not isinstance(signature, Mapping):
+            return False
+        raw_signature = base64.urlsafe_b64decode(
+            str(signature.get("value", "")).encode()
+        )
         public_key.verify(raw_signature, preimage_bytes)
         return True
     except Exception:

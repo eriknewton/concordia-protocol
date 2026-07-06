@@ -170,11 +170,17 @@ class AncestorRead:
     (``coordinate``). It carries digests + status + coordinate ONLY; never any
     underlying deal terms (the audit-privacy invariant).
 
-    ``coordinate`` is the status source's OWN ordering coordinate (a sequence
-    number / block height / log index). It is NEVER a wall clock: a wall clock
-    is not re-askable, so a wall-clock coordinate cannot anchor a recomputable
-    decision. A coordinate the pinned history has not fixed yet is refused, not
-    defaulted (enforced by the schema + the builder).
+    ``coordinate`` is a non-negative integer intended to be the status source's
+    OWN ordering coordinate (a sequence number / block height / log index). It
+    is COMMITTED (inside the ``decision_id`` preimage, so tampering it diverges
+    the id) and is a non-negative integer — that is ALL the primitive proves.
+    The primitive does NOT prove the integer is a real pinned source ordinal
+    rather than, say, a wall-clock epoch value; source authenticity (that the
+    coordinate names a genuine pinned position in an authoritative source) is
+    the VERIFIER'S POLICY, not something this schema or the builder enforces.
+    The coordinate is mandatory, not defaulted: the builder synthesizes no
+    default, so a caller that cannot pin one refuses to emit rather than
+    fabricate a placeholder.
     """
 
     element_digest: str
@@ -220,6 +226,9 @@ class CascadeDecisionRecord:
     Authority stays verifier-side: the record proves *what* was read and *which*
     source (by digest); the verifier policy proves whether that source is
     authoritative for the element. Naming a source here confers no authority.
+    The ``coordinate`` is likewise COMMITTED but not authenticated: the primitive
+    proves the coordinate cannot be tampered without diverging the id, not that
+    it names a genuine pinned source ordinal — that is verifier-side policy.
     """
 
     capability_digest: str

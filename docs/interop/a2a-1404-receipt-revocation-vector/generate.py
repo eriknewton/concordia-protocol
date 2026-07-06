@@ -302,7 +302,17 @@ def main() -> None:
             "revocation vector, using shipped Concordia ApprovalReceipt + "
             "RevocationRecord and the RFC 8785 JCS canonicalizer."
         ),
-        "seeds": {
+        # PUBLIC, TEST-ONLY, NON-PRODUCTION Ed25519 signing seeds. These are
+        # private-key material BY FORM (a seed derives the private key), but they
+        # are deliberately published so a third party can regenerate the fixture
+        # byte-for-byte. They MUST NEVER be reused for any real key. `_PUBLIC_`
+        # and `test_only` in the key names make that unambiguous at a glance.
+        "signing_seeds_PUBLIC_test_only_do_not_reuse": {
+            "_warning": (
+                "PUBLIC test-vector seeds. Private-key material by form; "
+                "published only to reproduce this fixture. NEVER use in "
+                "production or reuse for any real key."
+            ),
             "approver_ed25519_seed_ascii": APPROVER_SEED.decode(),
             "revocation_issuer_ed25519_seed_ascii": ISSUER_SEED.decode(),
         },

@@ -33,7 +33,7 @@ RFC 8785 JCS canonicalizer. Nothing here patches or extends the SDK.
 | File | What it is |
 |------|------------|
 | `generate.py` | Deterministic generator (fixed seeds). Rewrites every file below. |
-| `verify.py` | Offline byte-check: recompute both ids, sign/verify PASS, one-byte tamper REJECT, revoke, child re-verify REJECT, committed-deny recompute + commit-to-ancestor + tamper REJECT. |
+| `verify.py` | Offline byte-check: recompute both ids, sign/verify PASS over RAW retained bytes, one-byte tamper REJECT, revoke, child re-verify REJECT, committed-deny recompute + commit-to-ancestor + coordinate/ref-swap REJECT + injected-deal-terms REJECT + tamper REJECT. |
 | `offer.json` | The request/offer the approver evaluated. Drives `request_digest`. |
 | `capability.json` | The authorized capability. Drives `capability_digest`. |
 | `decision_object.json` | The six-field #1404 decision object. `decision_id = SHA-256(JCS(this))`. |
@@ -42,7 +42,7 @@ RFC 8785 JCS canonicalizer. Nothing here patches or extends the SDK.
 | `delegation_B_candidate.json` | `B` projected as a cascade candidate artifact (references `A` via `fulfills`). Not a rewrite of `B`; the same id. |
 | `revocation_A.json` | The single status write: a shipped RevocationRecord revoking `A`, scope `cascade_to_dependents`. |
 | `cascade_decision_deny.json` | The **committed terminal deny** for `B`: a shipped `CascadeDecisionRecord`, `deny_decision_id = SHA-256(JCS(preimage))`, Ed25519-signed, committing to the ancestor read. |
-| `vector.json` | Recomputable expectations: seeds, public keys, the load-bearing hashes (incl. `deny_decision_id`). |
+| `vector.json` | Recomputable expectations: PUBLIC test-only signing seeds (`signing_seeds_PUBLIC_test_only_do_not_reuse`, never reuse), public keys, the load-bearing hashes (incl. `deny_decision_id`). |
 
 ## Reproduce it
 
@@ -56,10 +56,18 @@ python verify.py        # byte-checks everything; exit 0 == all PASS
 ```
 
 `generate.py` is fully deterministic: the Ed25519 keys come from the fixed
-32-byte ASCII seeds recorded in `vector.json`
+32-byte ASCII seeds recorded in `vector.json` under
+`signing_seeds_PUBLIC_test_only_do_not_reuse`
 (`a2a-1404-approver-seed-000000001`,
 `a2a-1404-revoc-issuer-seed-00001`), so rerunning it reproduces the same
 bytes, the same signatures, and the same `decision_id`.
+
+> **These seeds are PUBLIC, TEST-ONLY, NON-PRODUCTION key material.** An
+> Ed25519 seed derives a private key, so these are private-key material *by
+> form*. They are published on purpose, only so a third party can regenerate
+> this fixture byte-for-byte. They MUST NEVER be reused for any real key or in
+> any production context. The `_PUBLIC_test_only_do_not_reuse` field name in
+> `vector.json` marks them unambiguously.
 
 The receipt and delegation A carry a deliberately far-future `expires_at` (year
 2126) against a contemporary `issued_at` (2026-05-10, recorded in the bytes), so
@@ -162,14 +170,21 @@ gap: the terminal deny is now a **committed, recomputable**
 - `ancestor_reads[0]` binds `{element_digest, status, source_digest,
   coordinate}`: the exact ancestor observation the verifier re-derived through
   (parent `A` seen `revoked`, at the status source's own ordering
-  `coordinate`). The `coordinate` is a source-ordered integer (a log sequence
-  number), **never a wall clock**: a wall clock is not re-askable, so it cannot
-  anchor a recomputable decision.
+  `coordinate`). The `coordinate` is **committed** (inside the preimage, so
+  tampering it diverges the id) and is a non-negative integer. That is all the
+  primitive proves: it does NOT prove the integer is a genuine pinned source
+  ordinal rather than, say, a wall-clock epoch value. Whether the coordinate
+  names a real position in an authoritative source is the **verifier's policy**,
+  not something the schema or the builder establishes.
 - The record proves **what** was read and **which** source (by
   `source_digest`); the verifier policy proves whether that source is
   authoritative for the element. Naming a source confers no authority.
 - `ancestor_reads` carries digests, status, and coordinate only, never any
-  underlying deal terms (the audit-privacy invariant).
+  underlying deal terms (the audit-privacy invariant). The shipped verifier
+  enforces this at the boundary: it strict-parses the RAW retained bytes with
+  `additionalProperties: false` at the top level AND inside every ancestor
+  read, so an injected `deal_terms` (or any unknown field) is **rejected**,
+  never silently dropped by a normalizing round-trip.
 - The withdrawal (`revocation_record_ref`) and the prior allow
   (`approval_receipt_ref`) sit **inside** the preimage, so `deny_decision_id`
   commits to them: a ref that could be swapped without diverging the id would
@@ -196,8 +211,13 @@ derived, and the historical allow stays valid at its own coordinate.
 7. The committed `CascadeDecisionRecord` deny: `deny_decision_id` recomputes
    from bytes (and matches the independent rfc8785 reference JCS), the decision
    is a terminal `deny` that commits to the ancestor read, its coordinate is a
-   source-ordered integer, its signature verifies under the issuer key, a
-   mutated ancestor status diverges the id (**REJECT**), and a one-byte tamper
-   of the signed body is **REJECT**. The allow stays valid at its coordinate.
+   committed non-negative integer (committed, not source-authenticated; that is
+   verifier policy), its signature verifies under the issuer key over the RAW
+   retained bytes, mutating the ancestor `status` OR `coordinate` diverges the
+   id (**REJECT**), swapping a committed ref diverges the id (**REJECT**),
+   injecting a raw `deal_terms` (or any unknown field), at the top level OR
+   inside an ancestor read, is **REJECT** (strict-parse, never silently
+   dropped), and a one-byte tamper of the signed body is **REJECT**. The allow
+   stays valid at its coordinate.
 
 Author: Erik Newton.

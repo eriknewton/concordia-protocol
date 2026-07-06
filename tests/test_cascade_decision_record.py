@@ -332,6 +332,110 @@ def test_extra_top_level_field_is_rejected() -> None:
 
 
 # ---------------------------------------------------------------------------
+# BLOCKER regression: verify over RETAINED BYTES + strict-parse, never a
+# normalized round-trip. `from_dict()` DROPS unknown fields, so a verifier that
+# checks `from_dict().to_dict()` would silently accept a smuggled `deal_terms`.
+# The verifier MUST take the RAW mapping and reject any unknown field.
+# ---------------------------------------------------------------------------
+
+
+def test_verify_rejects_injected_deal_terms_inside_ancestor_read_raw() -> None:
+    """The exact reproduced attack: a raw deal term appended to an ancestor read.
+
+    A normalizing verifier drops it and wrongly PASSes; the shipped verifier
+    strict-parses the RAW mapping and REJECTS (defends the no-raw-deal-terms
+    privacy invariant + fail-closed mutation rejection + recompute-from-bytes).
+    """
+    key = _key(ISSUER_SEED)
+    raw = _signed(key).to_dict()
+    raw["ancestor_reads"][0]["deal_terms"] = {"total": "150000.00 USD"}
+    assert not verify_cascade_decision_record(raw, key.public_key)
+    # Cross-check the failure mode: from_dict() DROPS the field (which is exactly
+    # why a normalizing verify path was unsafe). So the raw path is load-bearing.
+    reparsed = CascadeDecisionRecord.from_dict(raw)
+    assert not any(
+        hasattr(r, "deal_terms") for r in reparsed.ancestor_reads
+    ), "from_dict silently drops the smuggled field; verify must not normalize"
+
+
+def test_verify_rejects_injected_top_level_field_raw() -> None:
+    key = _key(ISSUER_SEED)
+    raw = _signed(key).to_dict()
+    raw["deal_terms"] = {"total": "150000.00 USD"}
+    assert not verify_cascade_decision_record(raw, key.public_key)
+
+
+def test_verify_accepts_clean_raw_mapping() -> None:
+    """The raw-mapping path verifies a well-formed record (no false negatives)."""
+    key = _key(ISSUER_SEED)
+    raw = _signed(key).to_dict()
+    assert verify_cascade_decision_record(raw, key.public_key)
+
+
+def test_verify_raw_mutated_field_diverges_and_rejects() -> None:
+    """A mutated bound field in the RAW mapping diverges the recomputed id."""
+    key = _key(ISSUER_SEED)
+    raw = _signed(key).to_dict()
+    raw["ancestor_reads"][0]["coordinate"] += 1  # committed field, id diverges
+    assert not verify_cascade_decision_record(raw, key.public_key)
+
+
+def test_verify_raw_swapped_ref_diverges_and_rejects() -> None:
+    key = _key(ISSUER_SEED)
+    raw = _signed(key).to_dict()
+    raw["revocation_record_ref"] = raw["revocation_record_ref"] + "-SWAPPED"
+    assert not verify_cascade_decision_record(raw, key.public_key)
+
+
+def test_verify_does_not_normalize_before_checking() -> None:
+    """Guard the property directly: a raw record with an extra field whose
+    NORMALIZED round-trip (from_dict().to_dict()) is byte-identical to a clean,
+    validly-signed record must STILL be rejected, because the verifier checks
+    the raw bytes, not the round-trip.
+    """
+    key = _key(ISSUER_SEED)
+    clean = _signed(key).to_dict()
+    # A raw record whose from_dict()/to_dict() equals `clean` but carries an
+    # extra field on the wire. If verify normalized first, this would PASS.
+    smuggled = copy.deepcopy(clean)
+    smuggled["ancestor_reads"][0]["deal_terms"] = {"total": "150000.00 USD"}
+    assert CascadeDecisionRecord.from_dict(smuggled).to_dict() == clean
+    assert not verify_cascade_decision_record(smuggled, key.public_key)
+
+
+# ---------------------------------------------------------------------------
+# Honesty: a wall-clock epoch integer VERIFIES as committed (the true property);
+# the primitive does NOT prove it is "not a wall clock". Source authenticity is
+# verifier-side policy, not something the schema/builder establishes.
+# ---------------------------------------------------------------------------
+
+
+def test_wall_clock_epoch_integer_coordinate_still_verifies_as_committed() -> None:
+    """A wall-clock epoch-SECONDS integer is a valid non-negative integer, so it
+    passes the schema and verifies as COMMITTED. This is the honest framing: the
+    primitive commits the coordinate (tampering it diverges the id) but does NOT
+    prove it is a genuine pinned source ordinal rather than a wall clock. The
+    schema constrains SHAPE (non-negative integer) only.
+    """
+    key = _key(ISSUER_SEED)
+    epoch_seconds = 1_778_589_000  # 2026-05-12T... as epoch seconds: an INTEGER
+    read = AncestorRead(
+        element_digest="urn:concordia:receipt:A",
+        status="revoked",
+        source_digest="sha256:" + "aa" * 16,
+        coordinate=epoch_seconds,
+    )
+    record = _signed(key, ancestor_reads=[read])
+    # It VERIFIES (honest: a numeric epoch is a valid non-negative integer)...
+    assert verify_cascade_decision_record(record, key.public_key)
+    assert verify_cascade_decision_record(record.to_dict(), key.public_key)
+    # ...and it is COMMITTED: tampering the coordinate diverges the id.
+    tampered = record.to_dict()
+    tampered["ancestor_reads"][0]["coordinate"] = epoch_seconds + 1
+    assert not verify_cascade_decision_record(tampered, key.public_key)
+
+
+# ---------------------------------------------------------------------------
 # Cascade verifier emit path: child never mutates, allow stays valid
 # ---------------------------------------------------------------------------
 

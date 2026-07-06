@@ -287,18 +287,27 @@ def main() -> int:
         and deny.revocation_record_ref == revocation_dict["revocation_id"],
         f"element={read.element_digest} status={read.status}",
     )
+    # The coordinate is COMMITTED (it is inside the preimage, so tampering it
+    # diverges the id — proven at 6e-i) and is a non-negative integer. The
+    # primitive does NOT prove the integer is a real pinned source ordinal;
+    # source authenticity is the VERIFIER's policy, not something this check
+    # establishes. So the PASS line states only what the assertion establishes.
     check(
-        "committed deny: ancestor coordinate is a source-ordered integer, "
-        "not a wall clock",
-        isinstance(read.coordinate, int) and not isinstance(read.coordinate, bool),
-        f"coordinate={read.coordinate!r}",
+        "committed deny: ancestor coordinate is a committed non-negative integer",
+        isinstance(read.coordinate, int)
+        and not isinstance(read.coordinate, bool)
+        and read.coordinate >= 0,
+        f"coordinate={read.coordinate!r} (source authenticity is verifier policy)",
     )
 
     # 6d. The signature verifies under the issuer key (the same key that signed
-    # the revocation record; the verifier is the issuer of the terminal).
+    # the revocation record; the verifier is the issuer of the terminal). We
+    # pass the RAW retained bytes (deny_dict), not a normalized round-trip: the
+    # shipped verifier strict-parses the raw object and recomputes from those
+    # exact bytes.
     check(
-        "committed deny: signature verifies under issuer key",
-        verify_cascade_decision_record(deny, issuer_pk),
+        "committed deny: signature verifies under issuer key (raw bytes)",
+        verify_cascade_decision_record(deny_dict, issuer_pk),
     )
 
     # 6e. Recomputable, not asserted: mutating the CLAIMED ancestor status
@@ -313,7 +322,65 @@ def main() -> int:
             ).hexdigest()
         )
         != deny_expected
-        and not verify_cascade_decision_record(mutated_status, issuer_pk),
+        and not verify_cascade_decision_record(mutated_status.to_dict(), issuer_pk),
+    )
+
+    # 6e-i. Mutating the ancestor COORDINATE diverges the id -> REJECT. (The
+    # public vector must prove what the README claims: the coordinate is
+    # committed, so tampering it is caught.)
+    coord_mutated = json.loads(json.dumps(deny_dict))
+    coord_mutated["ancestor_reads"][0]["coordinate"] += 1
+    check(
+        "committed deny: mutated ancestor coordinate diverges id -> REJECT",
+        (
+            "sha256:"
+            + hashlib.sha256(
+                canonicalize_cascade_decision_record(coord_mutated)
+            ).hexdigest()
+        )
+        != deny_expected
+        and not verify_cascade_decision_record(coord_mutated, issuer_pk),
+    )
+
+    # 6e-ii. Swapping a committed REF diverges the id -> REJECT. Both the
+    # withdrawal (revocation_record_ref) and the prior allow
+    # (approval_receipt_ref) sit inside the preimage, so neither can be swapped
+    # without diverging the id.
+    for ref_field in ("revocation_record_ref", "approval_receipt_ref"):
+        if ref_field not in deny_dict:
+            continue
+        ref_swapped = json.loads(json.dumps(deny_dict))
+        ref_swapped[ref_field] = ref_swapped[ref_field] + "-SWAPPED"
+        check(
+            f"committed deny: swapped {ref_field} diverges id -> REJECT",
+            (
+                "sha256:"
+                + hashlib.sha256(
+                    canonicalize_cascade_decision_record(ref_swapped)
+                ).hexdigest()
+            )
+            != deny_expected
+            and not verify_cascade_decision_record(ref_swapped, issuer_pk),
+        )
+
+    # 6e-iii. Injecting a RAW DEAL TERM (or any unknown field), at the top level
+    # OR inside an ancestor read, is REJECTED by the strict verifier, never
+    # silently dropped. This is the no-raw-deal-terms privacy invariant enforced
+    # at the verify boundary, and the recompute-over-retained-bytes property: a
+    # normalizing verifier would drop the field and wrongly PASS.
+    deal_term_in_ancestor = json.loads(json.dumps(deny_dict))
+    deal_term_in_ancestor["ancestor_reads"][0]["deal_terms"] = {
+        "total": "150000.00 USD"
+    }
+    check(
+        "committed deny: injected deal_terms inside ancestor_reads[] -> REJECT",
+        not verify_cascade_decision_record(deal_term_in_ancestor, issuer_pk),
+    )
+    smuggled_top_level = json.loads(json.dumps(deny_dict))
+    smuggled_top_level["deal_terms"] = {"total": "150000.00 USD"}
+    check(
+        "committed deny: injected top-level unknown field -> REJECT",
+        not verify_cascade_decision_record(smuggled_top_level, issuer_pk),
     )
 
     # 6f. A one-byte tamper of the signed body flips the verifier to REJECT.
@@ -322,10 +389,9 @@ def main() -> int:
     tampered_deny_dict["capability_digest"] = cd[:-1] + (
         "0" if cd[-1] != "0" else "1"
     )
-    tampered_deny = CascadeDecisionRecord.from_dict(tampered_deny_dict)
     check(
         "committed deny: one-byte tamper of signed body -> REJECT",
-        not verify_cascade_decision_record(tampered_deny, issuer_pk),
+        not verify_cascade_decision_record(tampered_deny_dict, issuer_pk),
     )
 
     # 6g. The allow stays valid at its own coordinate while the deny terminates

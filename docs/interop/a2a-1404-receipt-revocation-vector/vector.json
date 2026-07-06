@@ -23,7 +23,8 @@
     "approver": "szdsCKnt0TmHvv7kNquTvNClkueL9mUp_pQAhARSFt0=",
     "revocation_issuer": "KDtj8MqsbbinL-FtuaCFscndcPH_-2pomq_qX6Fd5KU="
   },
-  "seeds": {
+  "signing_seeds_PUBLIC_test_only_do_not_reuse": {
+    "_warning": "PUBLIC test-vector seeds. Private-key material by form; published only to reproduce this fixture. NEVER use in production or reuse for any real key.",
     "approver_ed25519_seed_ascii": "a2a-1404-approver-seed-000000001",
     "revocation_issuer_ed25519_seed_ascii": "a2a-1404-revoc-issuer-seed-00001"
   }

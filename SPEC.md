@@ -1007,11 +1007,17 @@ Canonical object (the fields the `decision_id` commits to):
   `verifier`, `policy_version` (the six-field decision object; `decision` is
   the enum `"deny"`).
 - `ancestor_reads[]`, an ordered array where each element binds
-  `{element_digest, status, source_digest, coordinate}`. `coordinate` is the
-  status source's OWN ordering coordinate (a sequence number / block height /
-  log index), a non-negative integer. It MUST NOT be a wall clock: a wall
-  clock is not re-askable. A coordinate the pinned history has not fixed yet
-  is refused, not defaulted.
+  `{element_digest, status, source_digest, coordinate}`. `coordinate` is a
+  non-negative integer intended to be the status source's OWN ordering
+  coordinate (a sequence number / block height / log index). It is COMMITTED:
+  it sits inside the preimage, so tampering it diverges the `decision_id`. The
+  primitive does NOT prove the integer is a real pinned source ordinal rather
+  than, say, a wall-clock epoch value: the schema constrains it to a
+  non-negative integer only. The coordinate MUST be supplied from pinned source
+  history, but that authenticity is enforced by the VERIFIER'S POLICY, not by
+  the schema or the builder. A builder synthesizes no default coordinate (it is
+  mandatory, not defaulted), so a caller that cannot pin one must refuse to
+  emit rather than fabricate a placeholder.
 - `approval_receipt_ref` and `revocation_record_ref` (optional). When present,
   they sit INSIDE the preimage so `decision_id` commits to them.
 
