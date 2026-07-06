@@ -21,14 +21,18 @@ Covers every invariant from the design spec with its fail-closed negative:
 
 from __future__ import annotations
 
+import base64
 import copy
 import dataclasses
 import hashlib
+from collections.abc import Iterator, Mapping
+from typing import Any
 
 import pytest
 import rfc8785
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from concordia.canonicalization import canonicalize_jcs
 from concordia.cmpc import (
     AncestorRead,
     CandidateArtifact,
@@ -635,3 +639,184 @@ def test_allow_record_stays_valid_at_its_own_coordinate() -> None:
     assert verify_cascade_decision_record(allow.to_dict(), key.public_key)
     assert allow.ancestor_reads[0].coordinate == 10
     assert allow.ancestor_reads[0].status == "active"
+
+
+# ---------------------------------------------------------------------------
+# BLOCKER regression (Codex round-3): the split-view / TOCTOU laundering class.
+#
+# The prior verify path materialized the input TWICE — `dict(raw)` for schema
+# validation, then the canonicalizer read `raw` AGAIN for the id/signature. A
+# hostile `Mapping`/dict subclass could return a CLEAN snapshot the first time
+# (passing additionalProperties:false) and a DIRTY snapshot (with a smuggled
+# ancestor_reads[].deal_terms) the second time (getting signed/verified). The
+# chokepoint fix materializes the input into ONE immutable plain snapshot at the
+# top and refuses any non-plain container, so there is no second-read surface.
+# ---------------------------------------------------------------------------
+
+
+class SplitViewMapping(Mapping):  # type: ignore[type-arg]
+    """A Mapping that shows a clean view first, a dirty view after.
+
+    Codex's exact repro shape: the first read (schema validation) sees a clean,
+    schema-valid object; a later read (canonicalization / signature) sees dirty
+    content carrying an extra field. The chokepoint must refuse this outright.
+    """
+
+    def __init__(self, clean: dict[str, Any], dirty: dict[str, Any]) -> None:
+        self.clean = clean
+        self.dirty = dirty
+        self.materializations = 0
+        self.current = clean
+
+    def _snapshot(self) -> dict[str, Any]:
+        return self.current
+
+    def __iter__(self) -> Iterator[str]:
+        self.current = self.clean if self.materializations == 0 else self.dirty
+        snap = self.current
+        self.materializations += 1
+        return iter(snap)
+
+    def __getitem__(self, key: str) -> Any:
+        return self._snapshot()[key]
+
+    def __len__(self) -> int:
+        return len(self._snapshot())
+
+
+def _split_view_record(key: KeyPair) -> SplitViewMapping:
+    """Build the clean-then-dirty split view over a validly signed record.
+
+    The dirty snapshot carries a smuggled ``deal_terms`` inside its ancestor
+    read AND a matching decision_id + signature computed over the dirty preimage,
+    so that a verifier reading only the dirty view would recompute and verify it.
+    The clean snapshot carries the SAME dirty id/signature so a first, clean read
+    still passes strict schema validation. Only a single-materialization verifier
+    that refuses the non-plain container is safe.
+    """
+    record = _signed(key)
+    clean = record.to_dict()
+    dirty = copy.deepcopy(clean)
+    dirty["ancestor_reads"][0]["deal_terms"] = {"total": "150000.00 USD"}
+    dirty_preimage = copy.deepcopy(dirty)
+    dirty_preimage.pop("decision_id", None)
+    dirty_preimage.pop("signature", None)
+    dirty_bytes = canonicalize_jcs(dirty_preimage)
+    dirty["decision_id"] = hashlib.sha256(dirty_bytes).hexdigest()
+    dirty["signature"] = {
+        "alg": "EdDSA",
+        "value": base64.urlsafe_b64encode(key.private_key.sign(dirty_bytes)).decode(),
+    }
+    clean_for_validation = copy.deepcopy(clean)
+    clean_for_validation["decision_id"] = dirty["decision_id"]
+    clean_for_validation["signature"] = dirty["signature"]
+    return SplitViewMapping(clean_for_validation, dirty)
+
+
+def test_verify_rejects_split_view_mapping_clean_then_dirty() -> None:
+    """The TOCTOU blocker: a Mapping that reads clean then dirty is REJECTED.
+
+    Before the chokepoint this false-passed (schema saw the clean view, the
+    canonicalizer/signature saw the dirty view). The single-materialization
+    chokepoint refuses the non-plain Mapping before any downstream read.
+    """
+    key = _key(ISSUER_SEED)
+    split = _split_view_record(key)
+    assert not verify_cascade_decision_record(split, key.public_key)
+
+
+class _DictSubclassWithExtra(dict):
+    """A `dict` SUBCLASS — refused because it could override reads per access."""
+
+
+class _MappingSubclassWithExtra(Mapping):  # type: ignore[type-arg]
+    """A non-`dict` Mapping — refused: not a plain JSON container."""
+
+    def __init__(self, data: dict[str, Any]) -> None:
+        self._data = data
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._data)
+
+    def __getitem__(self, key: str) -> Any:
+        return self._data[key]
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+
+def test_verify_rejects_dict_subclass_carrying_extra_field() -> None:
+    """A `dict` SUBCLASS input is refused (no plain-dict guarantee)."""
+    key = _key(ISSUER_SEED)
+    raw = _signed(key).to_dict()
+    raw["ancestor_reads"][0]["deal_terms"] = {"total": "150000.00 USD"}
+    subclassed = _DictSubclassWithExtra(raw)
+    assert not verify_cascade_decision_record(subclassed, key.public_key)
+
+
+def test_verify_rejects_clean_dict_subclass_at_top_level() -> None:
+    """Even a CLEAN `dict` subclass is refused: the refusal is about the type,
+    not the content — a subclass has a per-read override surface we do not trust.
+    """
+    key = _key(ISSUER_SEED)
+    raw = _signed(key).to_dict()
+    subclassed = _DictSubclassWithExtra(raw)
+    assert not verify_cascade_decision_record(subclassed, key.public_key)
+
+
+def test_verify_rejects_mapping_subclass_carrying_extra_field() -> None:
+    """A non-`dict` Mapping subclass carrying an extra field is refused."""
+    key = _key(ISSUER_SEED)
+    raw = _signed(key).to_dict()
+    raw["ancestor_reads"][0]["deal_terms"] = {"total": "150000.00 USD"}
+    mapped = _MappingSubclassWithExtra(raw)
+    assert not verify_cascade_decision_record(mapped, key.public_key)
+
+
+def test_verify_rejects_nested_dict_subclass_inside_ancestor_read() -> None:
+    """The refusal is RECURSIVE: a plain top-level dict whose ancestor_reads[]
+    element is a `dict` SUBCLASS is refused at the nested level.
+    """
+    key = _key(ISSUER_SEED)
+    raw = _signed(key).to_dict()
+    hostile_read = _DictSubclassWithExtra(raw["ancestor_reads"][0])
+    raw["ancestor_reads"][0] = hostile_read
+    assert not verify_cascade_decision_record(raw, key.public_key)
+
+
+def test_verify_rejects_nested_mapping_subclass_inside_signature() -> None:
+    """Recursive refusal reaches the `signature` object too: a Mapping subclass
+    in place of the plain signature dict is refused.
+    """
+    key = _key(ISSUER_SEED)
+    raw = _signed(key).to_dict()
+    raw["signature"] = _MappingSubclassWithExtra(dict(raw["signature"]))
+    assert not verify_cascade_decision_record(raw, key.public_key)
+
+
+def test_verify_rejects_non_plain_list_subclass_for_ancestor_reads() -> None:
+    """A `list` SUBCLASS for ancestor_reads is refused (sequence read surface)."""
+
+    class _ListSubclass(list):  # type: ignore[type-arg]
+        pass
+
+    key = _key(ISSUER_SEED)
+    raw = _signed(key).to_dict()
+    raw["ancestor_reads"] = _ListSubclass(raw["ancestor_reads"])
+    assert not verify_cascade_decision_record(raw, key.public_key)
+
+
+def test_verify_still_accepts_a_plain_clean_record_after_chokepoint() -> None:
+    """Sanity: the chokepoint does not introduce a false negative — a plain-dict
+    clean record still verifies True."""
+    key = _key(ISSUER_SEED)
+    assert verify_cascade_decision_record(_signed(key).to_dict(), key.public_key)
+
+
+def test_verify_still_rejects_plain_dict_with_extra_field_after_chokepoint() -> None:
+    """Sanity: a plain-dict record with an injected extra field still rejects via
+    strict schema validation over the materialized snapshot."""
+    key = _key(ISSUER_SEED)
+    raw = _signed(key).to_dict()
+    raw["ancestor_reads"][0]["deal_terms"] = {"total": "150000.00 USD"}
+    assert not verify_cascade_decision_record(raw, key.public_key)

@@ -36,6 +36,69 @@ CascadeArtifactType = Literal[
 CASCADE_RELATIONSHIPS = {"fulfills", "extends", "approves", "revokes"}
 
 
+class _NonPlainContainer(Exception):
+    """Raised when a verify input is not built from plain JSON containers.
+
+    The verify path materializes its input into ONE immutable plain snapshot up
+    front (see ``_materialize_plain``). Any ``dict``/``Mapping`` or ``list``/
+    sequence SUBCLASS — anything whose read could differ from a second read — is
+    refused here rather than trusted, so there is no second-read surface for a
+    split-view (TOCTOU) attacker to exploit.
+    """
+
+
+# JSON scalar leaf types. `bool` is a subclass of `int` and is allowed as-is; we
+# accept it explicitly for clarity. `str`, `int`, `float`, `None` complete the
+# JSON scalar set. Anything else (bytes, a str subclass carrying hidden state,
+# an int subclass, a custom object) is not a plain JSON scalar and is refused.
+_JSON_SCALAR_TYPES = (str, bool, int, float, type(None))
+
+
+def _materialize_plain(value: Any, *, _depth: int = 0) -> Any:
+    """Recursively copy ``value`` into a fresh plain ``dict``/``list``/scalar tree.
+
+    This is the single materialization the verify path performs. It reads every
+    container EXACTLY ONCE while building an independent snapshot, and it REFUSES
+    any container that is not the exact ``dict``/``list`` type (a subclass, or a
+    ``Mapping``/``Sequence`` that is not a plain ``dict``/``list``, is rejected —
+    recursively, at every level). Scalars must be exactly one of ``str``,
+    ``bool``, ``int``, ``float``, or ``None``.
+
+    Rejecting non-plain containers removes the second-read surface entirely: a
+    hostile ``Mapping`` that returns a clean view to schema validation and a
+    dirty view to canonicalization/signature can never reach either, because it
+    is refused before the first downstream read. The returned tree is a plain,
+    independent object that every later step reads instead of the raw input.
+    """
+    if _depth > 64:
+        # Defensive recursion bound: a legitimate decision record is shallow.
+        raise _NonPlainContainer("input nesting too deep")
+    # Reject any dict SUBCLASS (type(value) is dict, not isinstance): a subclass
+    # can override __getitem__/__iter__ to return different content per read.
+    if isinstance(value, dict):
+        if type(value) is not dict:
+            raise _NonPlainContainer(f"non-plain mapping: {type(value).__name__}")
+        out: dict[str, Any] = {}
+        for key in list(value.keys()):
+            if type(key) is not str:
+                raise _NonPlainContainer("non-string mapping key")
+            out[key] = _materialize_plain(value[key], _depth=_depth + 1)
+        return out
+    if isinstance(value, list):
+        if type(value) is not list:
+            raise _NonPlainContainer(f"non-plain sequence: {type(value).__name__}")
+        return [_materialize_plain(item, _depth=_depth + 1) for item in value]
+    # Any other Mapping/Sequence (e.g. a custom Mapping, a tuple, a str subclass)
+    # is not a plain JSON container/scalar and is refused. Reject bytes and any
+    # Mapping/Sequence that slipped past the dict/list checks above.
+    if isinstance(value, (Mapping, Sequence)) and not isinstance(value, str):
+        raise _NonPlainContainer(f"non-plain container: {type(value).__name__}")
+    # Scalars must be the EXACT JSON scalar types, not subclasses carrying state.
+    if type(value) not in _JSON_SCALAR_TYPES:
+        raise _NonPlainContainer(f"non-plain scalar: {type(value).__name__}")
+    return value
+
+
 @dataclass(frozen=True, kw_only=True)
 class CandidateArtifact:
     artifact_id: str
@@ -131,7 +194,7 @@ def sign_cascade_decision_record(
 def verify_cascade_decision_record(
     record: Mapping[str, Any], public_key: Ed25519PublicKey
 ) -> bool:
-    """Fail-closed verify over the RETAINED BYTES, not a normalized round-trip.
+    """Fail-closed verify over ONE materialized snapshot of the retained input.
 
     RAW-MAPPING-ONLY. This function verifies ONLY the raw mapping as received
     (the JSON bytes a third party retained). It deliberately does NOT accept an
@@ -140,26 +203,37 @@ def verify_cascade_decision_record(
     smuggled ``deal_terms`` inside an ``ancestor_reads[]`` element). Once the
     original bytes are lost, the record cannot be securely verified — a
     normalizing round-trip would re-serialize a laundered body and false-pass.
-    A typed instance is therefore REJECTED (see below): the only secure path is
-    to hand this function the raw retained mapping/bytes. The steps, all on the
-    raw bytes:
+    A typed instance is therefore REJECTED (see below).
 
-      1. STRICT schema-validate the raw object. ``additionalProperties: false``
+    MATERIALIZE ONCE (the chokepoint that closes the split-view / TOCTOU class).
+    The retained input is copied into ONE immutable plain snapshot at the very
+    top, reading every container EXACTLY ONCE, and any non-plain ``dict``/
+    ``list`` container (a subclass, or a ``Mapping``/``Sequence`` that is not a
+    plain ``dict``/``list``) is REFUSED — recursively, at every level (top,
+    ``ancestor_reads[]`` elements, ``signature``, nested objects). This removes
+    the second-read surface entirely: a hostile ``Mapping`` that returns a clean
+    view to schema validation and a dirty view to canonicalization/signature can
+    never reach either, because it is refused before any downstream read. After
+    materialization, ``record`` is NEVER read again; every step below runs
+    against the single ``snapshot`` object:
+
+      1. STRICT schema-validate the SNAPSHOT. ``additionalProperties: false``
          at the top level AND inside every ``ancestor_reads[]`` element means an
          unknown/extra field is REJECTED here, never dropped — this is what
          defends the no-raw-deal-terms privacy invariant and fail-closed
          mutation rejection.
-      2. Recompute ``decision_id = SHA-256(JCS(preimage))`` over the raw bytes
-         (preimage = the raw object minus ``decision_id`` + ``signature``) and
+      2. Recompute ``decision_id = SHA-256(JCS(preimage))`` over the SNAPSHOT
+         (preimage = the snapshot minus ``decision_id`` + ``signature``) and
          require it equals the claimed ``decision_id``. A mutated field —
          including a claimed ancestor ``status`` or ``coordinate``, or a swapped
          ref — diverges the id and is rejected.
-      3. Verify the Ed25519 signature over those SAME raw preimage bytes.
+      3. Verify the Ed25519 signature over those SAME snapshot preimage bytes.
 
-    ANY failure (validation, hash mismatch, bad signature, malformed input, or a
-    typed record handed in place of raw bytes) returns False; it never raises and
-    never degrades to allow. A typed record is only constructed AFTER all three
-    pass; this function returns a bool, so it constructs none.
+    ANY failure (non-plain container, validation, hash mismatch, bad signature,
+    malformed input, or a typed record handed in place of raw bytes) returns
+    False; it never raises and never degrades to allow. A typed record is only
+    constructed AFTER all steps pass; this function returns a bool, so it
+    constructs none.
     """
     try:
         # A typed/normalized object has already lost the original bytes (unknown
@@ -168,22 +242,28 @@ def verify_cascade_decision_record(
         # record. Fail closed (return False), never re-serialize-and-trust.
         if isinstance(record, CascadeDecisionRecord):
             return False
-        raw: Mapping[str, Any] = record
-        if not isinstance(raw, Mapping):
+        # MATERIALIZE ONCE: read the retained input into a single immutable plain
+        # snapshot, refusing any non-plain (subclass/hostile) container at every
+        # level. `record` is never read again after this line.
+        try:
+            snapshot = _materialize_plain(record)
+        except _NonPlainContainer:
             return False
-        # 1. Strict-validate the RAW object: extra/unknown fields are rejected.
-        validate_cascade_decision_record(dict(raw))
-        # 2. Recompute over the raw preimage bytes (strips decision_id +
-        #    signature only; every OTHER field, incl. any that slipped past a
-        #    non-strict caller, is inside the preimage).
-        preimage_bytes = canonicalize_cascade_decision_record(raw)
+        if not isinstance(snapshot, dict):
+            return False
+        # 1. Strict-validate the SNAPSHOT: extra/unknown fields are rejected.
+        validate_cascade_decision_record(snapshot)
+        # 2. Recompute over the SNAPSHOT preimage bytes (strips decision_id +
+        #    signature only; every OTHER field is inside the preimage). The
+        #    canonicalizer reads the plain snapshot, not the raw input.
+        preimage_bytes = canonicalize_cascade_decision_record(snapshot)
         recomputed = hashlib.sha256(preimage_bytes).hexdigest()
-        claimed_id = raw.get("decision_id", "")
+        claimed_id = snapshot.get("decision_id", "")
         if not isinstance(claimed_id, str) or recomputed != claimed_id:
             return False
-        # 3. Verify the signature over the SAME raw preimage bytes.
-        signature = raw.get("signature") or {}
-        if not isinstance(signature, Mapping):
+        # 3. Verify the signature over the SAME snapshot preimage bytes.
+        signature = snapshot.get("signature") or {}
+        if not isinstance(signature, dict):
             return False
         raw_signature = base64.urlsafe_b64decode(
             str(signature.get("value", "")).encode()
