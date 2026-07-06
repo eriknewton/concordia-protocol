@@ -7,6 +7,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **`CascadeDecisionRecord`: a committed, recomputable terminal-deny decision
+  object (A2A #1404 last mile).** The cascade verifier's terminal deny was a
+  live `InadmissibleArtifact` (a `reason` enum plus a free-text `evidence`
+  string): not content-addressed, so a denial asserted rather than recomputed.
+  The new `concordia.cmpc.CascadeDecisionRecord` primitive makes the terminal
+  deny content-addressed. Its `decision_id` is `SHA-256` over the RFC 8785 JCS
+  bytes of a canonical object binding the six #1404 decision fields
+  (`capability_digest`, `request_digest`, `boundary_id`, `decision`,
+  `verifier`, `policy_version`) plus an ordered `ancestor_reads[]` array, where
+  each read binds `{element_digest, status, source_digest, coordinate}`. The
+  record is Ed25519-signed over the same JCS preimage via the existing signing
+  path (no parallel crypto). `decision_id` commits to the ancestor read and to
+  the optional `approval_receipt_ref` / `revocation_record_ref` (both inside
+  the preimage), so mutating any bound field, including a claimed ancestor
+  `status` or `coordinate`, diverges the recomputed id and the verifier rejects
+  it. The ancestor `coordinate` is COMMITTED (tampering it diverges the id) and
+  is a non-negative integer; the primitive does not prove it is a genuine pinned
+  source ordinal rather than, e.g., a wall-clock epoch value — source
+  authenticity is verifier-side policy. `verify_cascade_decision_record`
+  operates on the RAW retained bytes ONLY (strict-parse with
+  `additionalProperties: false` at the top level AND inside every nested object,
+  including each ancestor read and the `signature` object), so an injected
+  unknown field such as a raw `deal_terms` is rejected, never silently dropped by
+  a normalizing round-trip. It refuses an already-parsed
+  `CascadeDecisionRecord`: a typed/normalized object has passed through a parser
+  that drops unknown fields, so it has lost the original bytes and cannot be
+  securely verified; callers MUST pass the raw retained mapping/bytes. `ancestor_reads` carries
+  digests, status, and coordinate only, never underlying deal terms (the SPEC
+  9.6.6 audit-privacy invariant). `cascade_revocation()` gains optional
+  `boundary` +
+  `signing_key` arguments: when both are supplied it emits a committed, signed
+  `CascadeDecisionRecord` per inadmissible artifact in the new
+  `CascadeResult.decisions` list; with neither, behavior is unchanged and
+  `decisions` is empty (backward-compatible). New API:
+  `CascadeDecisionRecord`, `AncestorRead`, `CascadeBoundary`,
+  `emit_cascade_decision`, `sign_cascade_decision_record`,
+  `verify_cascade_decision_record`, `canonicalize_cascade_decision_record`,
+  and `validate_cascade_decision_record`. Documented in SPEC 9.6.4d; the
+  `docs/interop/a2a-1404-receipt-revocation-vector/` vector now emits and
+  verifies the committed deny offline in one command.
+
 ### Security
 
 - **Attestation context is validated fail-closed at issuance (audit

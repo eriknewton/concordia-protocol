@@ -64,6 +64,67 @@ def test_1404_native_fields_equal_decision_object() -> None:
     assert receipt["scope"]["offer_hash"] == decision_object["request_digest"]
 
 
+def test_1404_committed_deny_id_matches_reference_jcs() -> None:
+    """The committed terminal deny's decision_id is the RFC 8785 STANDARD hash.
+
+    Recomputed over the record preimage (all fields except decision_id and
+    signature) with the INDEPENDENT rfc8785 reference library, so the deny
+    cross-runs byte-for-byte with any conformant decision-log family.
+    """
+    from concordia.cmpc import CascadeDecisionRecord
+
+    deny = CascadeDecisionRecord.from_dict(
+        _json(INTEROP_1404 / "cascade_decision_deny.json")
+    )
+    vector = _json(INTEROP_1404 / "vector.json")
+    reference = "sha256:" + hashlib.sha256(rfc8785.dumps(deny.preimage())).hexdigest()
+    assert reference == vector["hashes"]["deny_decision_id"]
+    assert reference == "sha256:" + deny.decision_id
+
+
+def test_1404_committed_deny_commits_to_ancestor_read() -> None:
+    """The deny binds the exact ancestor status read (rpelevin's control)."""
+    deny = _json(INTEROP_1404 / "cascade_decision_deny.json")
+    revocation = _json(INTEROP_1404 / "revocation_A.json")
+    assert deny["decision"] == "deny"
+    read = deny["ancestor_reads"][0]
+    assert read["element_digest"] == revocation["revoked_artifact_id"]
+    assert read["status"] == "revoked"
+    assert deny["revocation_record_ref"] == revocation["revocation_id"]
+    # Committed coordinate: a non-negative integer (the schema constrains shape
+    # only; source authenticity is verifier-side policy, not proven here).
+    assert isinstance(read["coordinate"], int) and not isinstance(
+        read["coordinate"], bool
+    )
+    assert read["coordinate"] >= 0
+
+
+def test_1404_committed_deny_carries_no_raw_terms() -> None:
+    """The deny leaks no underlying deal terms (audit-privacy invariant)."""
+    from concordia.schema_validator import _RAW_TERM_PATTERNS
+
+    deny = _json(INTEROP_1404 / "cascade_decision_deny.json")
+
+    def walk(obj: object) -> list[str]:
+        out: list[str] = []
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if isinstance(k, str) and k != "signature":
+                    out.append(k)
+                if k != "signature":
+                    out.extend(walk(v))
+        elif isinstance(obj, list):
+            for v in obj:
+                out.extend(walk(v))
+        elif isinstance(obj, str):
+            out.append(obj)
+        return out
+
+    for s in walk(deny):
+        for pat in _RAW_TERM_PATTERNS:
+            assert pat.search(s) is None, f"raw term leaked: {s!r}"
+
+
 def test_1920_verify_script_passes() -> None:
     """The published #1920 verify.py returns exit code 0 (all checks PASS)."""
     verify = _load_module(INTEROP_1920 / "verify.py", "interop_1920_verify")

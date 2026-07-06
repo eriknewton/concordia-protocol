@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass, replace
+import hashlib
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Literal, Mapping, Sequence
 
@@ -12,9 +13,17 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from concordia.predicate import PredicateFailureReason
 from concordia.signing import KeyPair
 
-from .canonical import canonicalize_revocation_record
-from .schemas import validate_revocation_record
-from .types import RevocationRecord, RevocationScope
+from .canonical import (
+    canonicalize_cascade_decision_record,
+    canonicalize_revocation_record,
+)
+from .schemas import validate_cascade_decision_record, validate_revocation_record
+from .types import (
+    AncestorRead,
+    CascadeDecisionRecord,
+    RevocationRecord,
+    RevocationScope,
+)
 
 CascadeArtifactType = Literal[
     "mandate",
@@ -25,6 +34,69 @@ CascadeArtifactType = Literal[
 ]
 
 CASCADE_RELATIONSHIPS = {"fulfills", "extends", "approves", "revokes"}
+
+
+class _NonPlainContainer(Exception):
+    """Raised when a verify input is not built from plain JSON containers.
+
+    The verify path materializes its input into ONE immutable plain snapshot up
+    front (see ``_materialize_plain``). Any ``dict``/``Mapping`` or ``list``/
+    sequence SUBCLASS — anything whose read could differ from a second read — is
+    refused here rather than trusted, so there is no second-read surface for a
+    split-view (TOCTOU) attacker to exploit.
+    """
+
+
+# JSON scalar leaf types. `bool` is a subclass of `int` and is allowed as-is; we
+# accept it explicitly for clarity. `str`, `int`, `float`, `None` complete the
+# JSON scalar set. Anything else (bytes, a str subclass carrying hidden state,
+# an int subclass, a custom object) is not a plain JSON scalar and is refused.
+_JSON_SCALAR_TYPES = (str, bool, int, float, type(None))
+
+
+def _materialize_plain(value: Any, *, _depth: int = 0) -> Any:
+    """Recursively copy ``value`` into a fresh plain ``dict``/``list``/scalar tree.
+
+    This is the single materialization the verify path performs. It reads every
+    container EXACTLY ONCE while building an independent snapshot, and it REFUSES
+    any container that is not the exact ``dict``/``list`` type (a subclass, or a
+    ``Mapping``/``Sequence`` that is not a plain ``dict``/``list``, is rejected —
+    recursively, at every level). Scalars must be exactly one of ``str``,
+    ``bool``, ``int``, ``float``, or ``None``.
+
+    Rejecting non-plain containers removes the second-read surface entirely: a
+    hostile ``Mapping`` that returns a clean view to schema validation and a
+    dirty view to canonicalization/signature can never reach either, because it
+    is refused before the first downstream read. The returned tree is a plain,
+    independent object that every later step reads instead of the raw input.
+    """
+    if _depth > 64:
+        # Defensive recursion bound: a legitimate decision record is shallow.
+        raise _NonPlainContainer("input nesting too deep")
+    # Reject any dict SUBCLASS (type(value) is dict, not isinstance): a subclass
+    # can override __getitem__/__iter__ to return different content per read.
+    if isinstance(value, dict):
+        if type(value) is not dict:
+            raise _NonPlainContainer(f"non-plain mapping: {type(value).__name__}")
+        out: dict[str, Any] = {}
+        for key in list(value.keys()):
+            if type(key) is not str:
+                raise _NonPlainContainer("non-string mapping key")
+            out[key] = _materialize_plain(value[key], _depth=_depth + 1)
+        return out
+    if isinstance(value, list):
+        if type(value) is not list:
+            raise _NonPlainContainer(f"non-plain sequence: {type(value).__name__}")
+        return [_materialize_plain(item, _depth=_depth + 1) for item in value]
+    # Any other Mapping/Sequence (e.g. a custom Mapping, a tuple, a str subclass)
+    # is not a plain JSON container/scalar and is refused. Reject bytes and any
+    # Mapping/Sequence that slipped past the dict/list checks above.
+    if isinstance(value, (Mapping, Sequence)) and not isinstance(value, str):
+        raise _NonPlainContainer(f"non-plain container: {type(value).__name__}")
+    # Scalars must be the EXACT JSON scalar types, not subclasses carrying state.
+    if type(value) not in _JSON_SCALAR_TYPES:
+        raise _NonPlainContainer(f"non-plain scalar: {type(value).__name__}")
+    return value
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -46,6 +118,160 @@ class InadmissibleArtifact:
 @dataclass(frozen=True, kw_only=True)
 class CascadeResult:
     inadmissible: list[InadmissibleArtifact]
+    # Committed, recomputable terminal-deny records — one per inadmissible
+    # artifact — emitted alongside the live `inadmissible` list. Defaults to an
+    # empty list so existing consumers that read only `inadmissible` are
+    # unaffected; callers that want the durable, offline-recomputable terminal
+    # read `decisions`. Populated only when the caller supplies the boundary
+    # context needed to build a committed record (see `cascade_revocation`).
+    decisions: list[CascadeDecisionRecord] = field(default_factory=list)
+
+
+def _decision_id(record: CascadeDecisionRecord) -> str:
+    """SHA-256 hex over the RFC 8785 JCS bytes of the bound preimage."""
+    return hashlib.sha256(canonicalize_cascade_decision_record(record)).hexdigest()
+
+
+def emit_cascade_decision(
+    *,
+    capability_digest: str,
+    request_digest: str,
+    boundary_id: str,
+    verifier: str,
+    policy_version: str,
+    ancestor_reads: Sequence[AncestorRead],
+    approval_receipt_ref: str | None = None,
+    revocation_record_ref: str | None = None,
+) -> CascadeDecisionRecord:
+    """Build an UNSIGNED committed terminal-deny record from the re-derived reads.
+
+    The decision is always ``"deny"``: this primitive exists only to commit a
+    terminal deny. ``ancestor_reads`` is the exact set of ancestor observations
+    the verifier re-derived through (proving what/which-source-at-which-
+    coordinate was read), and must be non-empty — a deny that commits to no
+    ancestor read is refused by the schema. ``decision_id`` and ``signature``
+    are filled in by ``sign_cascade_decision_record``.
+    """
+    return CascadeDecisionRecord(
+        capability_digest=capability_digest,
+        request_digest=request_digest,
+        boundary_id=boundary_id,
+        decision="deny",
+        verifier=verifier,
+        policy_version=policy_version,
+        ancestor_reads=list(ancestor_reads),
+        approval_receipt_ref=approval_receipt_ref,
+        revocation_record_ref=revocation_record_ref,
+    )
+
+
+def sign_cascade_decision_record(
+    record: CascadeDecisionRecord, key_pair: KeyPair
+) -> CascadeDecisionRecord:
+    """Compute ``decision_id`` and sign a ``CascadeDecisionRecord``.
+
+    ``decision_id = SHA-256(JCS(preimage))`` and the Ed25519 signature covers
+    the SAME preimage bytes (excluding ``decision_id`` and ``signature``), via
+    the shared cascade canonicalizer — the identical signing path as
+    ``sign_revocation_record``. The signed record is schema-validated before it
+    is returned, so an ill-formed record never leaves this function.
+    """
+    unsigned = replace(record, decision_id="", signature={"alg": "EdDSA", "value": ""})
+    preimage_bytes = canonicalize_cascade_decision_record(unsigned)
+    decision_id = hashlib.sha256(preimage_bytes).hexdigest()
+    signature = base64.urlsafe_b64encode(
+        key_pair.private_key.sign(preimage_bytes)
+    ).decode()
+    signed = replace(
+        unsigned,
+        decision_id=decision_id,
+        signature={"alg": "EdDSA", "value": signature},
+    )
+    validate_cascade_decision_record(signed.to_dict())
+    return signed
+
+
+def verify_cascade_decision_record(
+    record: Mapping[str, Any], public_key: Ed25519PublicKey
+) -> bool:
+    """Fail-closed verify over ONE materialized snapshot of the retained input.
+
+    RAW-MAPPING-ONLY. This function verifies ONLY the raw mapping as received
+    (the JSON bytes a third party retained). It deliberately does NOT accept an
+    already-parsed ``CascadeDecisionRecord``: a typed record has ALREADY passed
+    through ``from_dict``, which silently DROPS any unknown field (e.g. a
+    smuggled ``deal_terms`` inside an ``ancestor_reads[]`` element). Once the
+    original bytes are lost, the record cannot be securely verified — a
+    normalizing round-trip would re-serialize a laundered body and false-pass.
+    A typed instance is therefore REJECTED (see below).
+
+    MATERIALIZE ONCE (the chokepoint that closes the split-view / TOCTOU class).
+    The retained input is copied into ONE immutable plain snapshot at the very
+    top, reading every container EXACTLY ONCE, and any non-plain ``dict``/
+    ``list`` container (a subclass, or a ``Mapping``/``Sequence`` that is not a
+    plain ``dict``/``list``) is REFUSED — recursively, at every level (top,
+    ``ancestor_reads[]`` elements, ``signature``, nested objects). This removes
+    the second-read surface entirely: a hostile ``Mapping`` that returns a clean
+    view to schema validation and a dirty view to canonicalization/signature can
+    never reach either, because it is refused before any downstream read. After
+    materialization, ``record`` is NEVER read again; every step below runs
+    against the single ``snapshot`` object:
+
+      1. STRICT schema-validate the SNAPSHOT. ``additionalProperties: false``
+         at the top level AND inside every ``ancestor_reads[]`` element means an
+         unknown/extra field is REJECTED here, never dropped — this is what
+         defends the no-raw-deal-terms privacy invariant and fail-closed
+         mutation rejection.
+      2. Recompute ``decision_id = SHA-256(JCS(preimage))`` over the SNAPSHOT
+         (preimage = the snapshot minus ``decision_id`` + ``signature``) and
+         require it equals the claimed ``decision_id``. A mutated field —
+         including a claimed ancestor ``status`` or ``coordinate``, or a swapped
+         ref — diverges the id and is rejected.
+      3. Verify the Ed25519 signature over those SAME snapshot preimage bytes.
+
+    ANY failure (non-plain container, validation, hash mismatch, bad signature,
+    malformed input, or a typed record handed in place of raw bytes) returns
+    False; it never raises and never degrades to allow. A typed record is only
+    constructed AFTER all steps pass; this function returns a bool, so it
+    constructs none.
+    """
+    try:
+        # A typed/normalized object has already lost the original bytes (unknown
+        # fields dropped by from_dict), so it CANNOT be securely verified. Refuse
+        # it explicitly: callers must pass the raw retained mapping, not a parsed
+        # record. Fail closed (return False), never re-serialize-and-trust.
+        if isinstance(record, CascadeDecisionRecord):
+            return False
+        # MATERIALIZE ONCE: read the retained input into a single immutable plain
+        # snapshot, refusing any non-plain (subclass/hostile) container at every
+        # level. `record` is never read again after this line.
+        try:
+            snapshot = _materialize_plain(record)
+        except _NonPlainContainer:
+            return False
+        if not isinstance(snapshot, dict):
+            return False
+        # 1. Strict-validate the SNAPSHOT: extra/unknown fields are rejected.
+        validate_cascade_decision_record(snapshot)
+        # 2. Recompute over the SNAPSHOT preimage bytes (strips decision_id +
+        #    signature only; every OTHER field is inside the preimage). The
+        #    canonicalizer reads the plain snapshot, not the raw input.
+        preimage_bytes = canonicalize_cascade_decision_record(snapshot)
+        recomputed = hashlib.sha256(preimage_bytes).hexdigest()
+        claimed_id = snapshot.get("decision_id", "")
+        if not isinstance(claimed_id, str) or recomputed != claimed_id:
+            return False
+        # 3. Verify the signature over the SAME snapshot preimage bytes.
+        signature = snapshot.get("signature") or {}
+        if not isinstance(signature, dict):
+            return False
+        raw_signature = base64.urlsafe_b64decode(
+            str(signature.get("value", "")).encode()
+        )
+        public_key.verify(raw_signature, preimage_bytes)
+        return True
+    except Exception:
+        return False
 
 
 def sign_revocation_record(record: RevocationRecord, key_pair: KeyPair) -> RevocationRecord:
@@ -91,11 +317,103 @@ def _evidence(
     )
 
 
+@dataclass(frozen=True, kw_only=True)
+class CascadeBoundary:
+    """Verifier-side boundary context for emitting committed terminal denies.
+
+    Supplied by the caller to ``cascade_revocation`` when it wants a committed
+    ``CascadeDecisionRecord`` alongside each live ``InadmissibleArtifact``. It
+    carries the boundary-wide identity fields of the decision object
+    (``boundary_id``, ``verifier``, ``policy_version``) plus the ancestor
+    ``source_digest`` and ``coordinate`` that the verifier read the revocation
+    status FROM.
+
+    The ``source_digest`` + ``coordinate`` are the verifier's re-derived read of
+    the status source: the ``coordinate`` is intended to be that source's own
+    ordering position, which the caller obtains from the pinned status history.
+    It is COMMITTED (inside the ``decision_id`` preimage) and a non-negative
+    integer; the primitive does not prove the integer is a genuine pinned source
+    ordinal rather than, e.g., a wall-clock epoch value. Whether it names a real
+    position in an authoritative source is verifier-side policy. A caller that
+    cannot pin the coordinate must not synthesize one; it refuses to emit rather
+    than default (this dataclass makes ``coordinate`` mandatory).
+
+    ``capability_digest`` and ``request_digest`` describe the child artifact and
+    invocation being evaluated at the boundary; they default to the child's own
+    ``artifact_id`` digest when the caller does not resolve them per artifact.
+    """
+
+    boundary_id: str
+    verifier: str
+    policy_version: str
+    source_digest: str
+    coordinate: int
+    capability_digest: str | None = None
+    request_digest: str | None = None
+    approval_receipt_ref: str | None = None
+
+
+def _sha256_hex(value: str) -> str:
+    return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _emit_committed_deny(
+    *,
+    artifact_id: str,
+    revocation: RevocationRecord,
+    boundary: CascadeBoundary,
+    signing_key: KeyPair,
+) -> CascadeDecisionRecord:
+    """Build + sign the committed terminal deny for one inadmissible artifact.
+
+    The ancestor read binds the revoked element digest, its observed status
+    (``revoked``), the status source read, and the committed coordinate (a
+    non-negative integer; source authenticity is verifier-side policy) — the
+    exact tuple the verifier re-derived through. The withdrawal is carried as
+    ``revocation_record_ref`` inside the preimage so the id commits to it.
+    """
+    ancestor_read = AncestorRead(
+        element_digest=revocation.revoked_artifact_id,
+        status="revoked",
+        source_digest=boundary.source_digest,
+        coordinate=boundary.coordinate,
+    )
+    record = emit_cascade_decision(
+        capability_digest=boundary.capability_digest or _sha256_hex(artifact_id),
+        request_digest=boundary.request_digest or _sha256_hex(artifact_id),
+        boundary_id=boundary.boundary_id,
+        verifier=boundary.verifier,
+        policy_version=boundary.policy_version,
+        ancestor_reads=[ancestor_read],
+        approval_receipt_ref=boundary.approval_receipt_ref,
+        revocation_record_ref=revocation.revocation_id,
+    )
+    return sign_cascade_decision_record(record, signing_key)
+
+
 def cascade_revocation(
     revocation: RevocationRecord,
     candidate_artifacts: Sequence[CandidateArtifact],
+    *,
+    boundary: CascadeBoundary | None = None,
+    signing_key: KeyPair | None = None,
 ) -> CascadeResult:
+    """Return the artifacts rendered inadmissible by ``revocation``.
+
+    Backward-compatible default: with no ``boundary``/``signing_key``, the
+    result's ``decisions`` list is empty and only the live ``inadmissible``
+    list is populated (the pre-existing behavior).
+
+    When BOTH ``boundary`` and ``signing_key`` are supplied, each inadmissible
+    artifact ALSO gets a committed, recomputable ``CascadeDecisionRecord`` in
+    ``result.decisions`` — the durable terminal deny whose ``decision_id``
+    commits to the ancestor read. Emitting a committed record needs the boundary
+    identity + the ancestor coordinate (committed, a non-negative integer; its
+    source authenticity is verifier-side policy), which is why it is opt-in and
+    fails closed (no committed record without both).
+    """
     validate_revocation_record(revocation.to_dict())
+    emit = boundary is not None and signing_key is not None
     max_depth = min(max(revocation.cascade_depth, 0), 8)
     revoked_id = revocation.revoked_artifact_id
     by_id: Mapping[str, CandidateArtifact] = {
@@ -110,11 +428,22 @@ def cascade_revocation(
             evidence=f"artifact {revoked_id} is revoked by {revocation.revocation_id}",
         )
     ]
+    decisions: list[CascadeDecisionRecord] = []
+    if emit:
+        assert boundary is not None and signing_key is not None
+        decisions.append(
+            _emit_committed_deny(
+                artifact_id=revoked_id,
+                revocation=revocation,
+                boundary=boundary,
+                signing_key=signing_key,
+            )
+        )
     seen = {revoked_id}
     frontier = [(revoked_id, 0, {revoked_id})]
 
     if revocation.revocation_scope == RevocationScope.SINGLE_ARTIFACT.value:
-        return CascadeResult(inadmissible=inadmissible)
+        return CascadeResult(inadmissible=inadmissible, decisions=decisions)
 
     while frontier:
         current_id, current_depth, path = frontier.pop(0)
@@ -138,9 +467,19 @@ def cascade_revocation(
                     )
                 )
                 seen.add(candidate.artifact_id)
+                if emit:
+                    assert boundary is not None and signing_key is not None
+                    decisions.append(
+                        _emit_committed_deny(
+                            artifact_id=candidate.artifact_id,
+                            revocation=revocation,
+                            boundary=boundary,
+                            signing_key=signing_key,
+                        )
+                    )
             frontier.append((candidate.artifact_id, next_depth, path | {candidate.artifact_id}))
 
-    return CascadeResult(inadmissible=inadmissible)
+    return CascadeResult(inadmissible=inadmissible, decisions=decisions)
 
 
 def find_revocation_for_references(
@@ -173,10 +512,14 @@ def find_revocation_for_references(
 __all__ = [
     "CASCADE_RELATIONSHIPS",
     "CandidateArtifact",
+    "CascadeBoundary",
     "CascadeResult",
     "InadmissibleArtifact",
     "cascade_revocation",
+    "emit_cascade_decision",
     "find_revocation_for_references",
+    "sign_cascade_decision_record",
     "sign_revocation_record",
+    "verify_cascade_decision_record",
     "verify_revocation_record",
 ]

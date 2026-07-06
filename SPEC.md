@@ -991,6 +991,74 @@ Cascade invariants:
 - Verifiers MUST NOT consider an artifact revoked before the
   RevocationRecord's `effective_at` timestamp.
 
+#### 9.6.4d Cascade Decision Record: committed terminal deny (v0.7)
+
+`cascade_revocation()` returns a live `InadmissibleArtifact` per revoked
+artifact (a `reason` enum plus a free-text `evidence` string). That result
+is not itself content-addressed, so a terminal deny asserts rather than
+recomputes. The `CascadeDecisionRecord` primitive makes the terminal deny a
+committed, recomputable decision object: a third party recomputes its
+`decision_id` offline from the retained bytes and confirms it commits to the
+exact ancestor status read the verifier re-derived through.
+
+Canonical object (the fields the `decision_id` commits to):
+
+- `capability_digest`, `request_digest`, `boundary_id`, `decision`,
+  `verifier`, `policy_version` (the six-field decision object; `decision` is
+  the enum `"deny"`).
+- `ancestor_reads[]`, an ordered array where each element binds
+  `{element_digest, status, source_digest, coordinate}`. `coordinate` is a
+  non-negative integer intended to be the status source's OWN ordering
+  coordinate (a sequence number / block height / log index). It is COMMITTED:
+  it sits inside the preimage, so tampering it diverges the `decision_id`. The
+  primitive does NOT prove the integer is a real pinned source ordinal rather
+  than, say, a wall-clock epoch value: the schema constrains it to a
+  non-negative integer only. The coordinate MUST be supplied from pinned source
+  history, but that authenticity is enforced by the VERIFIER'S POLICY, not by
+  the schema or the builder. A builder synthesizes no default coordinate (it is
+  mandatory, not defaulted), so a caller that cannot pin one must refuse to
+  emit rather than fabricate a placeholder.
+- `approval_receipt_ref` and `revocation_record_ref` (optional). When present,
+  they sit INSIDE the preimage so `decision_id` commits to them.
+
+Identity and signature:
+
+- `decision_id = SHA-256(JCS(preimage))` where the preimage is exactly the
+  bound fields above, excluding `decision_id` and `signature`. It is the
+  RFC 8785 JCS standard hash, recomputable with any conformant JCS library.
+- The record is Ed25519-signed over the same JCS preimage bytes with the
+  verifier / issuer key, using the same signing path as `RevocationRecord`.
+
+Invariants (all fail-closed):
+
+- Recomputable, not asserted. Mutating ANY bound field, including a claimed
+  ancestor `status` or `coordinate`, or a swapped ref, MUST diverge the
+  recomputed `decision_id`, and the verifier MUST reject the record.
+- The deny commits to the ancestor read. `ancestor_reads` MUST be non-empty; a
+  terminal deny that commits to no ancestor read is rejected.
+- The child artifact never mutates. A revocation derives a NEW immutable
+  record with a NEW id; it never edits an existing decision. The historical
+  allow stays valid at its own coordinate.
+- Authority stays verifier-side. The record proves what was read and which
+  source (by `source_digest`); the verifier policy proves whether that source
+  is authoritative for the element. Naming a source confers no authority.
+- `ancestor_reads` carries digests, status, and coordinate only, never
+  underlying deal terms (the §9.6.6 audit-privacy invariant).
+- Verification is over the RAW retained bytes ONLY. `verify_cascade_decision_record`
+  takes the raw mapping/bytes as received and strict-parses them
+  (`additionalProperties: false` at the top level AND inside every nested object,
+  so an injected unknown field, e.g. a raw `deal_terms` inside an ancestor read
+  or a `kid` inside `signature`, is rejected, never silently dropped). It MUST
+  NOT be handed an already-parsed record: a typed/normalized object has passed
+  through a parser that drops unknown fields, so it has lost the original bytes
+  and cannot be securely verified. A typed record supplied in place of the raw
+  bytes is refused (fail-closed), so verification never trusts a laundered body.
+
+Schema `$id`: `urn:concordia:schema:cascade_decision_record:v0.7`. Worked
+vector: `docs/interop/a2a-1404-receipt-revocation-vector/`
+(`cascade_decision_deny.json`), runnable offline with
+`python generate.py && python verify.py`.
+
 #### 9.6.5 Attestation Integrity
 
 Attestations inherit the security properties of the transcript:

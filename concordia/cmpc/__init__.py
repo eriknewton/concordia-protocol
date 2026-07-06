@@ -7,6 +7,7 @@ scoring-dimension wire-up land in later stages.
 
 from .canonical import (
     canonicalize_atomic_activation_proof,
+    canonicalize_cascade_decision_record,
     canonicalize_chain_session,
     canonicalize_closure_predicate,
     canonicalize_conditional_commitment,
@@ -34,10 +35,14 @@ from .predicate import (
 )
 from .revocation import (
     CandidateArtifact,
+    CascadeBoundary,
     CascadeResult,
     InadmissibleArtifact,
     cascade_revocation,
+    emit_cascade_decision,
+    sign_cascade_decision_record,
     sign_revocation_record,
+    verify_cascade_decision_record,
     verify_revocation_record,
 )
 from .signing import (
@@ -49,7 +54,9 @@ from .signing import (
     verify_unwind_record,
 )
 from .types import (
+    AncestorRead,
     AtomicActivationProof,
+    CascadeDecisionRecord,
     ClosurePredicate,
     ConditionalCommitment,
     RevocationRecord,
@@ -69,7 +76,10 @@ __all__ = [
     "UnwindRecord",
     "RevocationRecord",
     "RevocationScope",
+    "AncestorRead",
+    "CascadeDecisionRecord",
     "CandidateArtifact",
+    "CascadeBoundary",
     "CascadeResult",
     "InadmissibleArtifact",
     "canonicalize_chain_session",
@@ -78,6 +88,7 @@ __all__ = [
     "canonicalize_atomic_activation_proof",
     "canonicalize_unwind_record",
     "canonicalize_revocation_record",
+    "canonicalize_cascade_decision_record",
     "sign_conditional_commitment",
     "verify_conditional_commitment",
     "sign_atomic_activation_proof",
@@ -86,6 +97,9 @@ __all__ = [
     "verify_unwind_record",
     "sign_revocation_record",
     "verify_revocation_record",
+    "sign_cascade_decision_record",
+    "verify_cascade_decision_record",
+    "emit_cascade_decision",
     "cascade_revocation",
     "CMPCError",
     "InvalidPrimitiveError",

@@ -162,6 +162,136 @@ class UnwindRecord:
 
 
 @dataclass(kw_only=True)
+class AncestorRead:
+    """One ancestor status observation the terminal deny re-derived through.
+
+    Binds *what* was read (``element_digest``, ``status``) and *which source*
+    was read (``source_digest``) at *which point in that source's own ordering*
+    (``coordinate``). It carries digests + status + coordinate ONLY; never any
+    underlying deal terms (the audit-privacy invariant).
+
+    ``coordinate`` is a non-negative integer intended to be the status source's
+    OWN ordering coordinate (a sequence number / block height / log index). It
+    is COMMITTED (inside the ``decision_id`` preimage, so tampering it diverges
+    the id) and is a non-negative integer — that is ALL the primitive proves.
+    The primitive does NOT prove the integer is a real pinned source ordinal
+    rather than, say, a wall-clock epoch value; source authenticity (that the
+    coordinate names a genuine pinned position in an authoritative source) is
+    the VERIFIER'S POLICY, not something this schema or the builder enforces.
+    The coordinate is mandatory, not defaulted: the builder synthesizes no
+    default, so a caller that cannot pin one refuses to emit rather than
+    fabricate a placeholder.
+    """
+
+    element_digest: str
+    status: str
+    source_digest: str
+    coordinate: int
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "AncestorRead":
+        return cls(
+            element_digest=data["element_digest"],
+            status=data["status"],
+            source_digest=data["source_digest"],
+            coordinate=data["coordinate"],
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "element_digest": self.element_digest,
+            "status": self.status,
+            "source_digest": self.source_digest,
+            "coordinate": self.coordinate,
+        }
+
+
+@dataclass(kw_only=True)
+class CascadeDecisionRecord:
+    """A committed, recomputable terminal-deny decision object.
+
+    Emitted when the cascade verifier terminates an artifact as inadmissible
+    due to an ancestor revocation. Unlike ``InadmissibleArtifact`` (a live
+    ``reason`` enum + free-text ``evidence`` string), this record is
+    content-addressed: its ``decision_id`` is ``SHA-256`` over the RFC 8785 JCS
+    serialization of exactly the bound fields (everything except ``decision_id``
+    and ``signature`` themselves), so a third party recomputes it offline from
+    the retained bytes with no callback.
+
+    The ``decision_id`` commits to the ancestor read: ``ancestor_reads`` is
+    inside the preimage, so mutating any claimed ancestor ``status`` or
+    ``coordinate`` diverges the recomputed id. Optional refs, when present, also
+    sit inside the preimage so a ref cannot be swapped without diverging the id.
+
+    Authority stays verifier-side: the record proves *what* was read and *which*
+    source (by digest); the verifier policy proves whether that source is
+    authoritative for the element. Naming a source here confers no authority.
+    The ``coordinate`` is likewise COMMITTED but not authenticated: the primitive
+    proves the coordinate cannot be tampered without diverging the id, not that
+    it names a genuine pinned source ordinal — that is verifier-side policy.
+    """
+
+    capability_digest: str
+    request_digest: str
+    boundary_id: str
+    decision: str
+    verifier: str
+    policy_version: str
+    ancestor_reads: list[AncestorRead]
+    decision_id: str = ""
+    signature: dict[str, str] | None = None
+    approval_receipt_ref: str | None = None
+    revocation_record_ref: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "CascadeDecisionRecord":
+        return cls(
+            capability_digest=data["capability_digest"],
+            request_digest=data["request_digest"],
+            boundary_id=data["boundary_id"],
+            decision=data["decision"],
+            verifier=data["verifier"],
+            policy_version=data["policy_version"],
+            ancestor_reads=[
+                AncestorRead.from_dict(read) for read in data["ancestor_reads"]
+            ],
+            decision_id=data.get("decision_id", ""),
+            signature=data.get("signature"),
+            approval_receipt_ref=data.get("approval_receipt_ref"),
+            revocation_record_ref=data.get("revocation_record_ref"),
+        )
+
+    def preimage(self) -> dict[str, Any]:
+        """The bound fields the ``decision_id`` commits to.
+
+        Excludes ``decision_id`` and ``signature`` (a hash/signature cannot
+        commit to itself). Optional refs are INCLUDED when present so the id
+        commits to them. This is the exact object fed to the JCS canonicalizer
+        for both the ``decision_id`` digest and the signing bytes.
+        """
+        data: dict[str, Any] = {
+            "capability_digest": self.capability_digest,
+            "request_digest": self.request_digest,
+            "boundary_id": self.boundary_id,
+            "decision": self.decision,
+            "verifier": self.verifier,
+            "policy_version": self.policy_version,
+            "ancestor_reads": [read.to_dict() for read in self.ancestor_reads],
+        }
+        if self.approval_receipt_ref is not None:
+            data["approval_receipt_ref"] = self.approval_receipt_ref
+        if self.revocation_record_ref is not None:
+            data["revocation_record_ref"] = self.revocation_record_ref
+        return data
+
+    def to_dict(self) -> dict[str, Any]:
+        data = self.preimage()
+        data["decision_id"] = self.decision_id
+        data["signature"] = self.signature or {"alg": "EdDSA", "value": ""}
+        return data
+
+
+@dataclass(kw_only=True)
 class RevocationRecord:
     revocation_id: str
     revoked_artifact_id: str
