@@ -1,0 +1,11 @@
+{
+  "artifact_id": "urn:concordia:receipt:a2a-1404-B",
+  "artifact_type": "approval_receipt",
+  "references": [
+    {
+      "id": "urn:concordia:receipt:a2a-1404-A",
+      "relationship": "fulfills",
+      "type": "approval_receipt"
+    }
+  ]
+}
