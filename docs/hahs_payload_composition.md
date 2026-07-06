@@ -12,7 +12,7 @@ This document is the integrator-facing composition guide. The authoritative
 Concordia carrier shape is at `SPEC.md` §9.6.4b. The authoritative HAHS payload
 shape is at
 `https://hivetrust.onrender.com/.well-known/schemas/hahs-v1.json`
-(verbatim title: "HAHS — Hashes-as-Histories v1").
+(verbatim title: "HAHS - Hashes-as-Histories v1").
 
 ## Composition pattern
 
@@ -184,8 +184,8 @@ The `anchor` block is optional pre-finalization (batch state machine: open → r
 
 ### Reference implementations
 
-- TS: `@hive-protocol/sdk` (npm) — `Receipt.verify()` + `Receipt.compose()`
-- Python: `hive-py` (PyPI) — `hive.receipts.verify` + `hive.receipts.compose`
+- TS: `@hive-protocol/sdk` (npm) - `Receipt.verify()` + `Receipt.compose()`
+- Python: `hive-py` (PyPI) - `hive.receipts.verify` + `hive.receipts.compose`
 - Anchor worker (open spec, closed impl): https://thehiveryiq.com/sdk/anchor/
 
 Last revised by: Steve Rotzin (HiveTrust) and Erik Newton (Concordia) 2026-05-25.
