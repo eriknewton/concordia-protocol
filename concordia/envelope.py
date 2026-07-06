@@ -6,19 +6,20 @@ with the multi-provider trust evidence format (A2A Discussion #1734).
 
 from __future__ import annotations
 
+import base64
 import uuid
 import warnings
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .signing import (
     ES256KeyPair,
     KeyPair,
-    canonical_json,
     _check_no_special_floats,
+    _is_low_s_es256_der_signature,
+    _normalize_es256_der_signature,
+    canonical_json,
 )
-
-import base64
 
 # Outcome status mapping: Concordia internal -> envelope standard
 _OUTCOME_MAP = {
@@ -38,7 +39,6 @@ def _map_attestation_to_payload(attestation: dict[str, Any]) -> dict[str, Any]:
 
     outcome = attestation.get("outcome", {})
     parties = attestation.get("parties", [])
-    meta = attestation.get("meta", {})
     fulfillment = attestation.get("fulfillment")
 
     # Find the initiator (first party) behavior for quality signals
@@ -214,11 +214,12 @@ def build_trust_evidence_envelope(
     _check_no_special_floats(envelope)
     sig_payload = canonical_json(envelope)
 
-    if alg == "ES256":
+    if isinstance(key_pair, ES256KeyPair):
         from cryptography.hazmat.primitives.asymmetric.ec import ECDSA
         from cryptography.hazmat.primitives.hashes import SHA256
 
         raw_sig = key_pair.private_key.sign(sig_payload, ECDSA(SHA256()))
+        raw_sig = _normalize_es256_der_signature(raw_sig)
     else:
         raw_sig = key_pair.private_key.sign(sig_payload)
 
@@ -254,14 +255,16 @@ def verify_envelope_signature(
 
     # Reconstruct the signed payload (envelope without signature)
     signable = {k: v for k, v in envelope.items() if k != "signature"}
-    payload = canonical_json(signable)
-    raw_sig = base64.urlsafe_b64decode(sig_block["value"])
 
     try:
+        payload = canonical_json(signable)
+        raw_sig = base64.urlsafe_b64decode(sig_block["value"])
         if alg == "ES256":
             from cryptography.hazmat.primitives.asymmetric.ec import ECDSA
             from cryptography.hazmat.primitives.hashes import SHA256
 
+            if not _is_low_s_es256_der_signature(raw_sig):
+                return False
             public_key.verify(raw_sig, payload, ECDSA(SHA256()))
         else:
             public_key.verify(raw_sig, payload)

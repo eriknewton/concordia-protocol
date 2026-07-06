@@ -1,6 +1,6 @@
 """Tests for the Concordia MCP Server (§10.2).
 
-Covers all 48 MCP tools, session lifecycle flows, error handling,
+Covers all 59 MCP tools, session lifecycle flows, error handling,
 tool dispatch, receipt generation, and SDK integration.
 """
 
@@ -9,6 +9,7 @@ import pytest
 
 from concordia.mcp_server import (
     SessionStore,
+    MAX_TTL_SECONDS,
     handle_tool_call,
     get_tool_definitions,
     tool_open_session,
@@ -22,6 +23,7 @@ from concordia.mcp_server import (
     mcp,
     _store,
     _auth,
+    _registry,
 )
 from concordia.types import SessionState
 
@@ -72,11 +74,13 @@ COUNTER_TERMS = {
 def clean_store():
     """Reset the global session store and auth tokens between tests."""
     _store._sessions.clear()
+    _registry._agents.clear()
     _auth._agent_tokens.clear()
     _auth._session_tokens.clear()
     _auth._token_to_agent.clear()
     yield
     _store._sessions.clear()
+    _registry._agents.clear()
     _auth._agent_tokens.clear()
     _auth._session_tokens.clear()
     _auth._token_to_agent.clear()
@@ -153,6 +157,86 @@ class TestSessionStore:
         ctx = store.create("agent_a", "agent_b", SAMPLE_TERMS)
         # open + accept_session = 2 messages
         assert len(ctx.session.transcript) == 2
+
+    def test_create_rejects_when_session_store_at_capacity(self):
+        store = SessionStore()
+        original_max = store.MAX_SESSIONS
+        store.MAX_SESSIONS = 2
+        try:
+            store.create("agent_a", "agent_b", SAMPLE_TERMS)
+            store.create("agent_c", "agent_d", SAMPLE_TERMS)
+
+            with pytest.raises(ValueError, match="Session store capacity reached"):
+                store.create("agent_e", "agent_f", SAMPLE_TERMS)
+        finally:
+            store.MAX_SESSIONS = original_max
+
+    def test_create_rejects_when_initiator_at_quota(self, monkeypatch):
+        import concordia.mcp_server as mcp_server
+
+        monkeypatch.setattr(
+            mcp_server, "MAX_ACTIVE_NEGOTIATION_SESSIONS_PER_INITIATOR", 2,
+        )
+        store = SessionStore()
+        store.create("agent_a", "agent_b", SAMPLE_TERMS)
+        store.create("agent_a", "agent_c", SAMPLE_TERMS)
+
+        with pytest.raises(ValueError, match="Session store capacity reached"):
+            store.create("agent_a", "agent_d", SAMPLE_TERMS)
+
+    def test_create_quota_does_not_count_ttl_elapsed_sessions(self, monkeypatch):
+        import concordia.mcp_server as mcp_server
+        from concordia.types import TimingConfig
+
+        monkeypatch.setattr(
+            mcp_server, "MAX_ACTIVE_NEGOTIATION_SESSIONS_PER_INITIATOR", 1,
+        )
+        store = SessionStore()
+        old = store.create(
+            "agent_a", "agent_b", SAMPLE_TERMS,
+            timing=TimingConfig(session_ttl=1),
+        )
+        old.session.created_at = old.session.created_at.replace(year=1970)
+
+        ctx = store.create("agent_a", "agent_c", SAMPLE_TERMS)
+
+        assert ctx.initiator.agent_id == "agent_a"
+
+    def test_create_quota_isolated_by_initiator(self, monkeypatch):
+        import concordia.mcp_server as mcp_server
+
+        monkeypatch.setattr(
+            mcp_server, "MAX_ACTIVE_NEGOTIATION_SESSIONS_PER_INITIATOR", 1,
+        )
+        store = SessionStore()
+        store.create("agent_a", "agent_b", SAMPLE_TERMS)
+
+        ctx = store.create("agent_b", "agent_a", SAMPLE_TERMS)
+
+        assert ctx.initiator.agent_id == "agent_b"
+
+    def test_create_rejects_session_ttl_above_max(self):
+        from concordia.types import TimingConfig
+
+        store = SessionStore()
+
+        with pytest.raises(ValueError, match="TTL exceeds maximum"):
+            store.create(
+                "agent_a", "agent_b", SAMPLE_TERMS,
+                timing=TimingConfig(session_ttl=MAX_TTL_SECONDS + 1),
+            )
+
+    def test_create_accepts_session_ttl_at_max(self):
+        from concordia.types import TimingConfig
+
+        store = SessionStore()
+
+        ctx = store.create(
+            "agent_a", "agent_b", SAMPLE_TERMS,
+            timing=TimingConfig(session_ttl=MAX_TTL_SECONDS),
+        )
+
+        assert ctx.session.timing.session_ttl == MAX_TTL_SECONDS
 
 
 # ---------------------------------------------------------------------------
@@ -586,9 +670,12 @@ class TestSessionReceipt:
         ))
         assert "receipt" in result
         receipt = result["receipt"]
-        assert receipt["concordia_attestation"] == "0.1.0"
+        assert receipt["concordia_attestation"] == "0.2.0"
         assert receipt["outcome"]["status"] == "agreed"
         assert len(receipt["parties"]) == 2
+        # C-H2: a v0.2.0 receipt carries the issuance countersignature map.
+        assert isinstance(receipt.get("countersignatures"), dict)
+        assert receipt["countersignatures"]
         assert result["transcript_valid"] is True
 
     def test_receipt_with_category(self, active_session):

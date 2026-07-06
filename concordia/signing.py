@@ -3,6 +3,10 @@
 Concordia messages are signed with Ed25519 (default) or ES256 (ECDSA P-256).
 The signature covers the canonical JSON serialization of all fields except
 the signature itself.
+
+ES256 signatures are normalized to low-S and high-S signatures are rejected
+because the transcript chain hashes over the signature field, making ECDSA
+malleability (RFC 6979/BIP-62-style canonicalization) transcript-visible.
 """
 
 from __future__ import annotations
@@ -17,6 +21,14 @@ from typing import Any
 SUPPORTED_JWS_ALGORITHMS = ("EdDSA", "ES256")
 JWS_ALG_ENV_VAR = "CONCORDIA_JWS_ALG"
 DEFAULT_JWS_ALGORITHM = "EdDSA"
+
+# SEC 2 P-256 / secp256r1 group order. ES256 ECDSA signatures must use
+# low-S form so the alternate valid signature (r, n-s) is rejected.
+P256_ORDER = int(
+    "FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551",
+    16,
+)
+P256_HALF_ORDER = P256_ORDER // 2
 
 
 def resolve_algorithm(explicit: str | None = None) -> str:
@@ -46,6 +58,10 @@ from cryptography.hazmat.primitives.asymmetric.ec import (
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
     Ed25519PublicKey,
+)
+from cryptography.hazmat.primitives.asymmetric.utils import (
+    decode_dss_signature,
+    encode_dss_signature,
 )
 from cryptography.hazmat.primitives.hashes import SHA256
 from cryptography.hazmat.primitives.serialization import (
@@ -112,6 +128,20 @@ class ES256KeyPair:
         return self.private_key.private_bytes(
             Encoding.DER, PrivateFormat.PKCS8, NoEncryption()
         )
+
+
+def _normalize_es256_der_signature(raw_sig: bytes) -> bytes:
+    """Return a DER-encoded ES256 signature in canonical low-S form."""
+    r, s = decode_dss_signature(raw_sig)
+    if s > P256_HALF_ORDER:
+        s = P256_ORDER - s
+    return encode_dss_signature(r, s)
+
+
+def _is_low_s_es256_der_signature(raw_sig: bytes) -> bool:
+    """Return True only for well-formed DER ES256 signatures with low-S."""
+    r, s = decode_dss_signature(raw_sig)
+    return 0 < r < P256_ORDER and 0 < s <= P256_HALF_ORDER
 
 
 def _check_no_special_floats(data: Any) -> None:
@@ -214,6 +244,26 @@ def _format_number_ecmascript(value: int | float) -> str:
     return sign + result
 
 
+def _reject_lone_surrogates(value: str) -> None:
+    """Reject strings containing an unpaired UTF-16 surrogate.
+
+    Python ``str`` can hold lone surrogates (code points U+D800-U+DFFF that
+    are not part of a valid pair). ``json.dumps(...).encode("utf-8")`` then
+    raises ``UnicodeEncodeError`` at the very end of canonicalization — which,
+    on the verify path, would crash instead of returning ``False`` and which
+    diverges from the JS SDK (whose ``JSON.stringify`` happily emits the
+    ``\\udXXX`` escape, so JS would *accept* the same input). Reject up front
+    with a clean ``ValueError`` so both languages fail closed identically.
+    """
+    for ch in value:
+        if 0xD800 <= ord(ch) <= 0xDFFF:
+            raise ValueError(
+                "Cannot canonicalize string with unpaired UTF-16 surrogate "
+                f"U+{ord(ch):04X}; surrogates are not serializable to UTF-8 "
+                "and diverge across language implementations."
+            )
+
+
 def _utf16_sort_key(value: str) -> bytes:
     """Return RFC 8785 object-key sort bytes for a property name."""
     # RFC 8785 §3.2.3 sorts raw property names as UTF-16 code units.
@@ -245,11 +295,15 @@ def _stable_stringify(value: Any) -> str:
         # string escaping: control chars U+0000-U+001F are \uXXXX-escaped,
         # quote and backslash are escaped, all other characters (including
         # non-ASCII) are emitted as raw UTF-8.
+        _reject_lone_surrogates(value)
         return json.dumps(value, ensure_ascii=False)
     if isinstance(value, (list, tuple)):
         return "[" + ",".join(_stable_stringify(v) for v in value) + "]"
     if isinstance(value, dict):
         keys = sorted(value.keys(), key=_utf16_sort_key)
+        for k in keys:
+            if isinstance(k, str):
+                _reject_lone_surrogates(k)
         pairs = (
             json.dumps(k, ensure_ascii=False) + ":" + _stable_stringify(value[k])
             for k in keys
@@ -294,6 +348,7 @@ def sign_message(
         if not isinstance(key_pair, ES256KeyPair):
             raise TypeError("ES256 requires an ES256KeyPair")
         raw_sig = key_pair.private_key.sign(payload, ECDSA(SHA256()))
+        raw_sig = _normalize_es256_der_signature(raw_sig)
     elif alg == "EdDSA":
         if not isinstance(key_pair, KeyPair):
             raise TypeError("EdDSA requires an Ed25519 KeyPair")
@@ -321,11 +376,17 @@ def verify_signature(
     Returns True if valid, False if the signature does not match.
     """
     signable = {k: v for k, v in data.items() if k != "signature"}
-    payload = canonical_json(signable)
-    raw_sig = base64.urlsafe_b64decode(signature)
     try:
+        # Canonicalization (special-float / lone-surrogate rejection) and
+        # base64 decoding are done INSIDE the try so malformed input yields a
+        # clean False rather than propagating ValueError / binascii.Error /
+        # UnicodeEncodeError out of a function documented to return a bool.
+        payload = canonical_json(signable)
+        raw_sig = base64.urlsafe_b64decode(signature)
         if alg == "ES256":
             if not isinstance(public_key, EllipticCurvePublicKey):
+                return False
+            if not _is_low_s_es256_der_signature(raw_sig):
                 return False
             public_key.verify(raw_sig, payload, ECDSA(SHA256()))
         elif alg == "EdDSA":

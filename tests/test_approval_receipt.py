@@ -8,13 +8,19 @@ import json
 from datetime import datetime, timezone
 
 from concordia.approval_receipt import (
+    ApprovalReceiptResult,
     EXPIRED,
     MISSING_APPROVES_REFERENCE,
     OFFER_HASH_MISMATCH,
+    REVOKED,
     SCHEMA_INVALID,
     SIGNATURE_INVALID,
+    _has_approves_reference,
+    _parse_datetime,
+    _public_key_from_bytes,
     verify_approval_receipt,
 )
+from concordia.cmpc.types import RevocationRecord, RevocationScope
 from concordia.schema_validator import validate_approval_receipt
 from concordia.signing import KeyPair, canonical_json, sign_message
 
@@ -111,6 +117,59 @@ def test_valid_deny_receipt_returns_typed_decision():
     assert result.failure_reason is None
 
 
+def test_result_to_dict_includes_default_collections():
+    result = ApprovalReceiptResult(valid=False, failure_reason=SIGNATURE_INVALID)
+
+    assert result.to_dict() == {
+        "valid": False,
+        "decision": None,
+        "failure_reason": SIGNATURE_INVALID,
+        "receipt_id": None,
+        "approver": None,
+        "references": [],
+        "checks": {},
+        "errors": [],
+    }
+
+
+def test_approves_reference_helper_skips_non_dict_references():
+    assert _has_approves_reference({"references": ["opaque-reference"]}) is False
+    receipt = {
+        "references": [
+            "opaque-reference",
+            {
+                "type": "a2cn:negotiation_session",
+                "id": "a2cn:session:9e4d2c11",
+                "relationship": "approves",
+            },
+        ]
+    }
+
+    assert _has_approves_reference(receipt) is True
+
+
+def test_parse_datetime_treats_naive_value_as_utc():
+    parsed = _parse_datetime("2026-05-14T13:00:00")
+
+    assert parsed == datetime(2026, 5, 14, 13, 0, tzinfo=timezone.utc)
+
+
+def test_valid_receipt_accepts_public_key_object_and_naive_now():
+    key_pair = KeyPair.generate()
+    offer = _offer()
+    receipt = _receipt(key_pair, offer)
+
+    result = verify_approval_receipt(
+        receipt,
+        offer,
+        now=datetime(2026, 5, 14, 12, 0),
+        issuer_public_key=key_pair.public_key,
+    )
+
+    assert result.valid is True
+    assert result.checks["not_expired"] is True
+
+
 def test_expired_receipt_is_rejected():
     key_pair = KeyPair.generate()
     offer = _offer()
@@ -135,6 +194,45 @@ def test_offer_hash_mismatch_is_rejected():
     assert result.failure_reason == OFFER_HASH_MISMATCH
 
 
+def test_revoked_reference_is_rejected_before_offer_hash_check():
+    key_pair = KeyPair.generate()
+    offer = _offer()
+    receipt = _receipt(key_pair, offer, expires_at="2099-05-14T13:00:00Z")
+    revocation = RevocationRecord(
+        revocation_id="urn:concordia:revocation:approval-001",
+        revoked_artifact_id="a2cn:session:9e4d2c11",
+        revoked_artifact_type="approval_receipt",
+        revocation_scope=RevocationScope.SINGLE_ARTIFACT.value,
+        issuer_did="did:web:principal.example",
+        issued_at="2026-05-14T11:00:00Z",
+        effective_at="2026-05-14T11:30:00Z",
+        reason="principal_revoked",
+        references=[
+            {
+                "id": "a2cn:session:9e4d2c11",
+                "type": "approval_receipt",
+                "relationship": "revokes",
+            }
+        ],
+        signature={"alg": "EdDSA", "value": "placeholder"},
+    )
+
+    result = verify_approval_receipt(
+        receipt,
+        offer,
+        now=NOW,
+        issuer_public_key=key_pair.public_key_bytes(),
+        revocation_records={"a2cn:session:9e4d2c11": revocation},
+    )
+
+    assert result.valid is False
+    assert result.failure_reason == REVOKED
+    assert result.checks["revocation_records"] is False
+    assert result.errors == [
+        "Referenced artifact revoked by urn:concordia:revocation:approval-001"
+    ]
+
+
 def test_missing_approves_reference_is_rejected_with_specific_reason():
     key_pair = KeyPair.generate()
     offer = _offer()
@@ -153,6 +251,55 @@ def test_missing_approves_reference_is_rejected_with_specific_reason():
     assert result.failure_reason == MISSING_APPROVES_REFERENCE
 
 
+def test_schema_invalid_without_approves_reference_keeps_specific_reason():
+    key_pair = KeyPair.generate()
+    offer = _offer()
+    receipt = _receipt(key_pair, offer)
+    receipt["references"] = "not-a-list"
+
+    result = _verify(receipt, offer, key_pair)
+
+    assert result.valid is False
+    assert result.failure_reason == MISSING_APPROVES_REFERENCE
+    assert result.checks["schema"] is False
+    assert result.checks["approves_reference"] is False
+
+
+def test_non_ed25519_signature_algorithm_is_schema_invalid():
+    key_pair = KeyPair.generate()
+    offer = _offer()
+    receipt = _receipt(key_pair, offer)
+    receipt["signature"]["alg"] = "ES256"
+
+    result = _verify(receipt, offer, key_pair)
+
+    assert result.valid is False
+    assert result.failure_reason == SCHEMA_INVALID
+    assert result.checks["schema"] is False
+
+
+def test_invalid_public_key_bytes_are_rejected():
+    key_pair = KeyPair.generate()
+    offer = _offer()
+    receipt = _receipt(key_pair, offer)
+
+    result = verify_approval_receipt(
+        receipt,
+        offer,
+        now=NOW,
+        issuer_public_key=b"not-a-raw-ed25519-public-key",
+    )
+
+    assert result.valid is False
+    assert result.failure_reason == SIGNATURE_INVALID
+    assert result.checks["signature"] is False
+    assert result.errors == ["Missing or invalid Ed25519 issuer public key"]
+
+
+def test_public_key_helper_returns_none_for_missing_key():
+    assert _public_key_from_bytes(None) is None
+
+
 def test_bad_signature_is_rejected():
     key_pair = KeyPair.generate()
     offer = _offer()
@@ -163,6 +310,41 @@ def test_bad_signature_is_rejected():
 
     assert result.valid is False
     assert result.failure_reason == SIGNATURE_INVALID
+
+
+def test_nonmatching_revocation_records_mark_check_as_true():
+    key_pair = KeyPair.generate()
+    offer = _offer()
+    receipt = _receipt(key_pair, offer, expires_at="2099-05-14T13:00:00Z")
+    revocation = RevocationRecord(
+        revocation_id="urn:concordia:revocation:approval-002",
+        revoked_artifact_id="a2cn:session:not-this-one",
+        revoked_artifact_type="approval_receipt",
+        revocation_scope=RevocationScope.SINGLE_ARTIFACT.value,
+        issuer_did="did:web:principal.example",
+        issued_at="2026-05-14T11:00:00Z",
+        effective_at="2026-05-14T11:30:00Z",
+        reason="principal_revoked",
+        references=[
+            {
+                "id": "a2cn:session:not-this-one",
+                "type": "approval_receipt",
+                "relationship": "revokes",
+            }
+        ],
+        signature={"alg": "EdDSA", "value": "placeholder"},
+    )
+
+    result = verify_approval_receipt(
+        receipt,
+        offer,
+        now=NOW,
+        issuer_public_key=key_pair.public_key_bytes(),
+        revocation_records={"a2cn:session:not-this-one": revocation},
+    )
+
+    assert result.valid is True
+    assert result.checks["revocation_records"] is True
 
 
 def test_missing_offer_hash_is_schema_invalid():
@@ -240,7 +422,7 @@ def test_schema_validator_requires_approves_reference():
     errors = validate_approval_receipt(receipt)
 
     assert errors
-    assert any("does not contain items matching the given schema" in error for error in errors)
+    assert any("violates 'contains' constraint" in error for error in errors)
 
 
 def test_mcp_tool_returns_typed_decision():

@@ -1,0 +1,79 @@
+name: Publish JS SDK to npm (manual)
+
+# MANUAL ONLY. This workflow never fires on a push or a tag; it runs solely when
+# a maintainer triggers it from the Actions tab (workflow_dispatch). That keeps
+# publishing a deliberate, reviewed act rather than an automatic side effect of
+# a merge or tag.
+#
+# It publishes @concordia-protocol/sdk with npm provenance (--provenance), which
+# attaches a signed SLSA build-provenance attestation to the published package
+# so consumers can verify the package was built from this repository by this
+# workflow. Provenance requires the `id-token: write` permission and a build
+# that runs on a public GitHub-hosted runner.
+#
+# Before publishing, the same gate the CI runs (install -> typecheck -> lint ->
+# format -> test -> test-floor -> build) must pass, so a broken build cannot be
+# published.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'npm dist-tag to publish under (e.g. alpha, latest)'
+        required: true
+        default: 'alpha'
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # Required for npm provenance (SLSA attestation).
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6.0.2 (resolved 2026-05-18)
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v4.4.0 (resolved 2026-05-18)
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        working-directory: js-sdk
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: js-sdk
+        run: npm run typecheck
+
+      - name: Lint (eslint)
+        working-directory: js-sdk
+        run: npm run lint
+
+      - name: Format check (prettier)
+        working-directory: js-sdk
+        run: npm run format:check
+
+      - name: Test
+        working-directory: js-sdk
+        run: npm test
+
+      - name: Test-count floor
+        working-directory: js-sdk
+        run: node scripts/test-floor.mjs
+
+      - name: Build
+        working-directory: js-sdk
+        run: npm run build
+
+      - name: Publish with provenance
+        working-directory: js-sdk
+        # --provenance attaches a signed SLSA build-provenance attestation.
+        # --access public is required for a scoped package's first publish and
+        # is harmless thereafter. The dist-tag comes from the manual input.
+        run: npm publish --provenance --access public --tag "${{ github.event.inputs.tag }}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

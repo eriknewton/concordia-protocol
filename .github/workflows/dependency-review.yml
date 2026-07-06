@@ -1,0 +1,27 @@
+name: Dependency Review
+
+# Scans dependency manifest changes on every PR for known-vulnerable or
+# disallowed-license dependencies before they merge. Free on public repos.
+# Runs on pull_request only: the action diffs the PR's dependency graph
+# against the base branch, which has no meaning on a direct push.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6.0.2 (resolved 2026-05-18)
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294  # v5.0.0 (resolved 2026-06-16)
+        with:
+          # Fail the PR on high-or-worse advisories; surface a summary comment.
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure

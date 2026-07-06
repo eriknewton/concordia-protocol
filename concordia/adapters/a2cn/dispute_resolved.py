@@ -58,13 +58,15 @@ from jsonschema import Draft202012Validator, FormatChecker, ValidationError
 # repo at A2CN PR #12 (commit 06c33d0). Refreshed by re-running the
 # upstream curl and committing the new schema; the validator below
 # tracks whatever JSON sits at the canonical path.
-_SCHEMA_PATH = (
-    Path(__file__).resolve().parents[2]
-    / ".."
-    / "schemas"
-    / "a2cn"
-    / "dispute_resolved.schema.json"
-).resolve()
+#
+# Resolve the packaged copy first (force-included at ``concordia/schemas`` in
+# an installed wheel), then fall back to the repo-root ``schemas/`` tree in a
+# source checkout. This load happens at import time, so before the fix simply
+# importing this adapter from a pip-installed wheel raised FileNotFoundError.
+_pkg_dir = Path(__file__).resolve().parents[2]  # the ``concordia`` package dir
+_packaged_schema = _pkg_dir / "schemas" / "a2cn" / "dispute_resolved.schema.json"
+_repo_schema = (_pkg_dir / ".." / "schemas" / "a2cn" / "dispute_resolved.schema.json").resolve()
+_SCHEMA_PATH = _packaged_schema if _packaged_schema.is_file() else _repo_schema
 
 with _SCHEMA_PATH.open(encoding="utf-8") as _fp:
     DISPUTE_RESOLVED_SCHEMA: dict[str, Any] = json.load(_fp)

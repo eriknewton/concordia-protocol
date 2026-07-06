@@ -3,7 +3,7 @@
 These tests verify that Concordia's MCP tools enforce bearer-token
 authentication and reject unauthenticated or wrongly-authenticated callers.
 
-Test plan (per REMEDIATION_PLAN RT-05 and SPRINT_CONTRACT):
+Test plan (the authentication regression matrix for SEC-007):
 
 1. Session tools reject calls with no token.
 2. Session tools reject calls with wrong token.
@@ -303,6 +303,55 @@ class TestTokenIssuance:
         assert len(result["auth_token"]) == 64  # 256-bit hex
 
 
+# ---- Test 8b: Re-registration requires ownership (identity-takeover gate) ----
+
+class TestRegisterOwnershipGate:
+    """An existing agent_id may only be re-registered by the current token
+    holder. Without this gate a second client can overwrite the record and
+    rotate the token, hijacking the identity and locking out the owner.
+    """
+
+    def test_reregister_without_token_is_rejected(self):
+        reg = _parse(tool_register_agent(agent_id="victim", endpoint="https://victim.example"))
+        victim_token = reg["auth_token"]
+        # Attacker re-registers the same id with NO token.
+        attack = _parse(tool_register_agent(
+            agent_id="victim", endpoint="https://attacker.example",
+        ))
+        assert "error" in attack
+        assert "Authentication required" in attack["error"]
+        # The victim's token must still be valid (not rotated/revoked).
+        assert _auth.validate_agent_token("victim", victim_token)
+        # The victim's record must be untouched (endpoint not overwritten).
+        assert _registry.get("victim").endpoint == "https://victim.example"
+
+    def test_reregister_with_wrong_token_is_rejected(self):
+        _parse(tool_register_agent(agent_id="victim", endpoint="https://victim.example"))
+        other = _parse(tool_register_agent(agent_id="other"))
+        attack = _parse(tool_register_agent(
+            agent_id="victim", endpoint="https://attacker.example",
+            auth_token=other["auth_token"],
+        ))
+        assert "error" in attack
+        assert _registry.get("victim").endpoint == "https://victim.example"
+
+    def test_reregister_with_correct_token_succeeds(self):
+        reg = _parse(tool_register_agent(agent_id="victim", endpoint="https://old.example"))
+        token = reg["auth_token"]
+        update = _parse(tool_register_agent(
+            agent_id="victim", endpoint="https://new.example", auth_token=token,
+        ))
+        assert "error" not in update
+        assert update["registered"] is True
+        assert _registry.get("victim").endpoint == "https://new.example"
+
+    def test_first_registration_needs_no_token(self):
+        # Open bootstrap for a brand-new agent_id is unchanged.
+        result = _parse(tool_register_agent(agent_id="brand_new"))
+        assert "error" not in result
+        assert "auth_token" in result
+
+
 # ---- Test 9: Public tools require no token ----
 
 class TestPublicTools:
@@ -349,13 +398,20 @@ class TestRelayTranscriptAuth:
     def test_relay_transcript_rejects_invalid_auth(self):
         """HP-16: concordia_relay_transcript must reject unauthenticated callers."""
         reg_a = _parse(tool_register_agent(agent_id="agent_a"))
+        reg_b = _parse(tool_register_agent(agent_id="agent_b"))
         token_a = reg_a["auth_token"]
+        token_b = reg_b["auth_token"]
         # Create a relay session
         created = _parse(tool_relay_create(
             initiator_id="agent_a", auth_token=token_a, responder_id="agent_b",
         ))
         rid = created["session"]["relay_session_id"]
         # Send a message so there's a transcript
+        from concordia.mcp_server import tool_relay_join
+
+        tool_relay_join(
+            relay_session_id=rid, agent_id="agent_b", auth_token=token_b,
+        )
         tool_relay_send(
             relay_session_id=rid, from_agent="agent_a",
             auth_token=token_a, message_type="offer", payload={"x": 1},
@@ -378,6 +434,11 @@ class TestRelayTranscriptAuth:
             initiator_id="agent_a", auth_token=token_a, responder_id="agent_b",
         ))
         rid = created["session"]["relay_session_id"]
+        from concordia.mcp_server import tool_relay_join
+
+        tool_relay_join(
+            relay_session_id=rid, agent_id="agent_b", auth_token=token_b,
+        )
         tool_relay_send(
             relay_session_id=rid, from_agent="agent_a",
             auth_token=token_a, message_type="offer", payload={"x": 1},

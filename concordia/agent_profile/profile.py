@@ -10,8 +10,7 @@ with Ed25519 and can be stored in registries or published at well-known URIs.
 
 from __future__ import annotations
 
-import base64
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 

@@ -15,10 +15,9 @@ from typing import Any, Callable
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from .message import GENESIS_HASH, build_envelope, compute_hash
-from .signing import KeyPair, verify_signature
+from .message import GENESIS_HASH, compute_hash
+from .signing import verify_signature
 from .types import (
-    AgentIdentity,
     BehaviorRecord,
     MessageType,
     PartyRole,
@@ -31,8 +30,27 @@ class InvalidTransitionError(Exception):
     """Raised when a message would cause an illegal state transition."""
 
 
+class MaxRoundsExceededError(InvalidTransitionError):
+    """Raised when an offer/counter would exceed the session's ``max_rounds``.
+
+    Subclasses ``InvalidTransitionError`` so the MCP offer/counter tools, which
+    already catch ``(InvalidTransitionError, ValueError)``, surface it as a
+    clean, fail-closed rejection without touching every call site.
+    """
+
+
 class InvalidSignatureError(Exception):
     """Raised when a message has an invalid, missing, or unverifiable signature."""
+
+
+class SessionBindingError(Exception):
+    """Raised when a message's ``session_id`` does not match the session it is
+    applied to (cross-session replay)."""
+
+
+class ChainIntegrityError(Exception):
+    """Raised when a message's ``prev_hash`` does not chain to the current
+    transcript tip (out-of-order, forked, or replayed message)."""
 
 
 # §5.2 — Transition table encoded as {(from_state, message_type): to_state}.
@@ -201,6 +219,34 @@ class Session:
                 "message content does not match signature"
             )
 
+        # --- Session binding (cross-session replay defense) ---
+        # A message's signature covers its session_id, so a validly-signed
+        # message captured from session A still verifies here. Bind it to THIS
+        # session explicitly so it cannot be replayed into a different Session
+        # object between the same parties (which share Ed25519 keys across
+        # sessions) to force an illegitimate transition / attestation.
+        msg_session_id = message.get("session_id")
+        if msg_session_id is not None and msg_session_id != self.session_id:
+            raise SessionBindingError(
+                "Message session_id does not match this session — "
+                "cross-session replay rejected"
+            )
+
+        # --- Chain-tip binding (transcript integrity at append time) ---
+        # prev_hash is signed but was never compared to the live chain tip, so
+        # a caller feeding received/relayed messages could append entries that
+        # do not chain (genesis-pointing, forked, out-of-order). Enforce the
+        # link here, making the hash chain load-bearing at append time rather
+        # than only advisory in validate_chain(). self.prev_hash is GENESIS_HASH
+        # when the transcript is empty, so the first message must reference
+        # genesis — matching how legitimate senders build it.
+        msg_prev_hash = message.get("prev_hash")
+        if msg_prev_hash is not None and msg_prev_hash != self.prev_hash:
+            raise ChainIntegrityError(
+                "Message prev_hash does not chain to the current transcript "
+                "tip — out-of-order, forked, or replayed message rejected"
+            )
+
         # --- State transition validation ---
         msg_type = MessageType(message["type"])
 
@@ -212,6 +258,22 @@ class Session:
             )
 
         new_state = _TRANSITIONS[key]
+
+        # --- Round-cap enforcement (SPEC §9.5 offer-spam rate limit) ---
+        # max_rounds was advertised in the spec and surfaced in session metadata
+        # but never enforced: round_count incremented without bound, so a peer
+        # could drive unlimited offer/counter rounds (offer-spam / unbounded
+        # transcript growth). Reject the offer/counter that WOULD exceed the cap,
+        # before it is appended or counted, so the limit is load-bearing rather
+        # than merely reported. Non-offer messages (accept/reject/commit/...) are
+        # unaffected, so a session can always be concluded.
+        if msg_type in (MessageType.OFFER, MessageType.COUNTER):
+            if self.round_count >= self.timing.max_rounds:
+                raise MaxRoundsExceededError(
+                    f"Session has reached its max_rounds limit "
+                    f"({self.timing.max_rounds}); no further offers or counters "
+                    f"are accepted"
+                )
 
         # Append to transcript
         self.transcript.append(message)

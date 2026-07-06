@@ -18,14 +18,11 @@ schema uses JSON Schema for expressiveness and interoperability.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
-
 
 # ---------------------------------------------------------------------------
 # Temporal validity modes (three-mode enum per #1734 consensus)
@@ -104,6 +101,10 @@ class ValidityWindow:
     - sequence: valid for a specific sequence_key (e.g. a session ID)
     - windowed: valid between not_before and not_after timestamps
     - state_bound: valid while a named state condition holds
+
+    Provenance: the three-mode shape follows the cross-category
+    ``validity_temporal`` framing by @nanookclaw (with @douglasborthwick-crypto)
+    in A2A discussion #1734 (2026-04).
     """
     mode: TemporalMode
     not_before: str | None = None       # ISO 8601 (windowed mode)

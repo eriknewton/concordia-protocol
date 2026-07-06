@@ -10,6 +10,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 import pytest
@@ -211,6 +212,128 @@ class TestAgentRegistry:
         d = agent.to_dict()
         assert d["concordia_preferred"] is True
         assert d["agent_id"] == "agent_1"
+
+    def test_to_dict_includes_optional_registration_fields(self):
+        reg = AgentRegistry()
+        agent = reg.register(
+            "agent_1",
+            endpoint="https://agent.example/mcp",
+            metadata={"tier": "gold"},
+            public_key="pub_1",
+        )
+
+        d = agent.to_dict()
+
+        assert d["endpoint"] == "https://agent.example/mcp"
+        assert d["metadata"] == {"tier": "gold"}
+        assert d["public_key"] == "pub_1"
+
+    def test_register_update_preserves_optional_fields_when_omitted(self):
+        reg = AgentRegistry()
+        reg.register(
+            "agent_1",
+            endpoint="https://agent.example/mcp",
+            description="First description",
+            metadata={"tier": "gold"},
+            public_key="pub_1",
+        )
+
+        updated = reg.register("agent_1", categories=["electronics"])
+
+        assert updated.endpoint == "https://agent.example/mcp"
+        assert updated.description == "First description"
+        assert updated.metadata == {"tier": "gold"}
+        assert updated.public_key == "pub_1"
+        assert updated.capabilities.categories == ["electronics"]
+
+    def test_get_expired_agent_prunes_registration(self):
+        reg = AgentRegistry()
+        agent = reg.register("agent_1", ttl=1)
+        agent.last_seen = "1970-01-01T00:00:00Z"
+
+        assert reg.get("agent_1") is None
+        assert reg.count() == 0
+
+    def test_search_prunes_expired_agents_before_filtering(self):
+        reg = AgentRegistry()
+        expired = reg.register("old_seller", roles=["seller"], ttl=1)
+        expired.last_seen = "1970-01-01T00:00:00Z"
+        reg.register("active_seller", roles=["seller"])
+
+        results = reg.search(role="seller")
+
+        assert [agent.agent_id for agent in results] == ["active_seller"]
+        assert reg.get("old_seller") is None
+
+    def test_list_all_include_expired_does_not_prune(self):
+        reg = AgentRegistry()
+        expired = reg.register("old_agent", ttl=1)
+        expired.last_seen = "1970-01-01T00:00:00Z"
+
+        assert [agent.agent_id for agent in reg.list_all(include_expired=True)] == ["old_agent"]
+        assert "old_agent" in reg._agents
+
+    def test_list_all_prunes_expired_agents_by_default(self):
+        reg = AgentRegistry()
+        expired = reg.register("old_agent", ttl=1)
+        expired.last_seen = "1970-01-01T00:00:00Z"
+        reg.register("active_agent")
+
+        active = reg.list_all()
+
+        assert [agent.agent_id for agent in active] == ["active_agent"]
+        assert "old_agent" not in reg._agents
+
+    def test_invalid_last_seen_is_treated_as_expired_with_warning(self, caplog):
+        caplog.set_level(logging.WARNING, logger="concordia.registry")
+        reg = AgentRegistry()
+        agent = reg.register("agent_1", ttl=1)
+        agent.last_seen = "not-a-timestamp"
+
+        assert agent.is_expired() is True
+        assert reg.get("agent_1") is None
+        assert "agent_1" not in reg._agents
+
+        record = next(
+            r
+            for r in caplog.records
+            if r.message == "agent_registry_invalid_last_seen_fail_closed"
+        )
+        assert record.agent_id == "agent_1"
+        assert record.last_seen == "not-a-timestamp"
+        assert record.error_type == "ValueError"
+
+    def test_corrupt_last_seen_cannot_keep_agent_alive_in_registry(self):
+        reg = AgentRegistry()
+        corrupt = reg.register("corrupt_agent", roles=["seller"], ttl=1)
+        corrupt.last_seen = "not-a-timestamp"
+        reg.register("active_agent", roles=["seller"])
+
+        assert [agent.agent_id for agent in reg.search(role="seller")] == [
+            "active_agent"
+        ]
+        assert "corrupt_agent" not in reg._agents
+        assert reg.count() == 1
+
+    def test_badge_and_public_key_helpers(self):
+        reg = AgentRegistry()
+        reg.register(
+            "agent_1",
+            roles=["seller"],
+            categories=["electronics"],
+            resolution_mechanisms=["tradeoff"],
+            public_key="pub_1",
+            metadata={"sanctuary_enabled": True},
+        )
+
+        badge = reg.get_badge("agent_1")
+
+        assert badge is not None
+        assert badge["public_key"] == "pub_1"
+        assert badge["features"]["sanctuary_bridge"] is True
+        assert reg.get_public_key("agent_1") == "pub_1"
+        assert reg.get_badge("missing") is None
+        assert reg.get_public_key("missing") is None
 
 
 # ===================================================================
@@ -477,7 +600,11 @@ class TestDiscoveryMcpTools:
         badge = result["badge"]
         assert badge["type"] == "concordia.preferred"
         assert badge["agent_id"] == "badge_agent"
-        assert badge["verified"] is True
+        # Honesty: a self-asserted, unsigned registration is `registered`, NOT
+        # `verified`. `verified` is reserved for cryptographically signed records.
+        assert badge["registered"] is True
+        assert badge["signed"] is False
+        assert badge["verified"] is False
         assert badge["capabilities"]["roles"] == ["seller"]
         assert badge["capabilities"]["categories"] == ["electronics"]
         assert badge["features"]["structured_offers"] is True
@@ -491,6 +618,24 @@ class TestDiscoveryMcpTools:
         result = self._parse(tool_concordia_preferred_badge(agent_id="nobody"))
         assert result["found"] is False
         assert result["concordia_preferred"] is False
+
+    def test_preferred_badge_unsigned_is_not_verified(self):
+        """An unsigned, self-asserted registration must never claim `verified: true`.
+
+        Regression for H4: the badge surfaced unsigned self-asserted capabilities
+        as `verified: true`, which a consumer could mistake for a cryptographic
+        guarantee. Until signed capability records exist, an ordinary registration
+        is `registered: true` / `signed: false` / `verified: false`.
+        """
+        from concordia.mcp_server import tool_register_agent, tool_concordia_preferred_badge
+        tool_register_agent(
+            agent_id="unsigned_agent",
+            roles=["buyer"],
+        )
+        badge = self._parse(tool_concordia_preferred_badge(agent_id="unsigned_agent"))["badge"]
+        assert badge["registered"] is True
+        assert badge["signed"] is False
+        assert badge["verified"] is False
 
     def test_preferred_badge_sanctuary_flag(self):
         from concordia.mcp_server import _registry, tool_concordia_preferred_badge

@@ -11,10 +11,10 @@ A2CN cross-protocol references use the SPEC.md §11.5.7 URN forms
 `urn:a2cn:session:<session_id>` and `urn:a2cn:mandate:<mandate_id>` in new
 artifacts. Older `a2cn:*` identifiers remain readable for compatibility.
 
-## Two fulfillment shapes — when to use which
+## Two fulfillment shapes: when to use which
 
 Concordia v0.5 supports two fulfillment-recording patterns. They are
-NOT alternatives — they cover different boundaries.
+NOT alternatives; they cover different boundaries.
 
 ### 1. In-line fulfillment block on a reputation attestation (SPEC §9.6.4)
 
@@ -102,17 +102,17 @@ DELIVERY_ACKNOWLEDGED event fires
 
 Every Concordia-shaped Fulfillment Attestation MUST carry:
 
-1. `attestation_type` — literal `"FulfillmentAttestation"`
-2. `id` — URN-shaped per SPEC §11.5.7
-3. `issued_at` — ISO 8601
-4. `agreement_attestation_id` — denormalized pointer
-5. `fulfillment.status` — one of the four enum values
-6. `references[]` — at least one entry with `relationship: "fulfills"`
-7. `signature` — Ed25519 over canonicalized JSON
+1. `attestation_type`: literal `"FulfillmentAttestation"`
+2. `id`: URN-shaped per SPEC §11.5.7
+3. `issued_at`: ISO 8601
+4. `agreement_attestation_id`: denormalized pointer
+5. `fulfillment.status`: one of the four enum values
+6. `references[]`: at least one entry with `relationship: "fulfills"`
+7. `signature`: Ed25519 over canonicalized JSON
 
 Optional `meta` fields (populate when applicable):
 
-- `meta.mediator_invoked` (boolean — MUST be `true` if `status` is `fulfilled_with_mediation`)
+- `meta.mediator_invoked` (boolean, MUST be `true` if `status` is `fulfilled_with_mediation`)
 - `meta.resolution_outcome` (short label)
 - `meta.resolver_did`
 - `meta.resolution_timestamp`
@@ -121,7 +121,7 @@ Optional `meta` fields (populate when applicable):
 The full schema is `schemas/fulfillment_attestation.schema.json` (`$id`
 `urn:concordia:schema:fulfillment_attestation:v0.5`).
 
-## Worked example — fulfilled_clean
+## Worked example: fulfilled_clean
 
 ```json
 {
@@ -155,7 +155,7 @@ The full schema is `schemas/fulfillment_attestation.schema.json` (`$id`
 }
 ```
 
-## Worked example — fulfilled_with_mediation
+## Worked example: fulfilled_with_mediation
 
 ```json
 {
@@ -196,7 +196,7 @@ The full schema is `schemas/fulfillment_attestation.schema.json` (`$id`
 }
 ```
 
-## Worked example — failed (delivery not honored)
+## Worked example: failed (delivery not honored)
 
 ```json
 {
@@ -231,7 +231,7 @@ The full schema is `schemas/fulfillment_attestation.schema.json` (`$id`
 }
 ```
 
-## ApprovalReceipt — HITL pause-resume composition
+## ApprovalReceipt: HITL pause-resume composition
 
 For A2CN Section 14 HITL flows (operator pauses negotiation when an
 amount crosses a policy threshold; operator approves or denies; A2CN
@@ -282,7 +282,7 @@ Worked example (matches A2A Discussion #1737 Draft A):
 - `expires_at` is mandatory at v0.5; verifiers MUST reject expired
   receipts at verification time.
 - `scope.decision` is `approve` or `deny`. A `deny` receipt is
-  cryptographically binding the same way an `approve` is — the
+  cryptographically binding the same way an `approve` is; the
   counterparty cannot retry the same offer without crossing the
   threshold afresh.
 - `scope.offer_hash` is the sha256 of the canonicalized offer the
@@ -294,14 +294,14 @@ Worked example (matches A2A Discussion #1737 Draft A):
 
 ## Cross-references
 
-- `schemas/fulfillment_attestation.schema.json` — Fulfillment Attestation schema
-- `schemas/approval_receipt.schema.json` — ApprovalReceipt schema
-- `SPEC.md` §9.6.4 — In-line fulfillment block (original pattern)
-- `SPEC.md` §9.6.4a — Standalone Fulfillment Attestation (v0.5)
-- `SPEC.md` §9.6.4b — ApprovalReceipt (v0.5)
-- `SPEC.md` §11.5 — Reference linkages (envelope vs. attestation level)
-- `SPEC.md` §11.5.5 — Relationship vocabulary (`supersedes`, `extends`,
+- `schemas/fulfillment_attestation.schema.json`: Fulfillment Attestation schema
+- `schemas/approval_receipt.schema.json`: ApprovalReceipt schema
+- `SPEC.md` §9.6.4: In-line fulfillment block (original pattern)
+- `SPEC.md` §9.6.4a: Standalone Fulfillment Attestation (v0.5)
+- `SPEC.md` §9.6.4b: ApprovalReceipt (v0.5)
+- `SPEC.md` §11.5: Reference linkages (envelope vs. attestation level)
+- `SPEC.md` §11.5.5: Relationship vocabulary (`supersedes`, `extends`,
   `fulfills`, `references`)
-- `SPEC.md` §11.5.7 — URN schemes for cross-protocol linkage
-- A2A Discussion #1737 Draft A — public commit underlying v0.5
+- `SPEC.md` §11.5.7: URN schemes for cross-protocol linkage
+- A2A Discussion #1737 Draft A: public commit underlying v0.5
   ApprovalReceipt + Fulfillment Attestation work

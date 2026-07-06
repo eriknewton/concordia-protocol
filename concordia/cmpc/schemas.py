@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from jsonschema import Draft202012Validator, ValidationError  # type: ignore[import-untyped]
+from jsonschema import Draft202012Validator, ValidationError
 
 from .errors import SchemaValidationError
-
 
 URN = r"^urn:concordia:"
 ANY_ARTIFACT_URN = r"^urn:(concordia|a2cn|ap2|x402|erc8004):"

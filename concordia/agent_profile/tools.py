@@ -12,7 +12,6 @@ These tools are registered via register_discovery_tools(mcp, profile_store, want
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from typing import Annotated, Any
 
 from .profile import (

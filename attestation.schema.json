@@ -71,7 +71,8 @@
           "enum": ["direct", "split", "foa", "tradeoff", "escalation", "none"],
           "description": "How agreement was reached (or 'none' if not reached)."
         }
-      }
+      },
+      "additionalProperties": false
     },
 
     "parties": {
@@ -139,13 +140,15 @@
                 "minimum": 0,
                 "description": "Average time to respond to counterparty messages."
               }
-            }
+            },
+            "additionalProperties": false
           },
           "signature": {
             "type": "string",
             "description": "Ed25519 signature over this party's behavioral record, confirming accuracy."
           }
-        }
+        },
+        "additionalProperties": false
       }
     },
 
@@ -155,12 +158,15 @@
       "properties": {
         "category": {
           "type": "string",
-          "description": "Dot-separated category (e.g., 'electronics.cameras'). MAY be omitted for privacy."
+          "maxLength": 64,
+          "pattern": "^[a-z0-9_-]+(\\.[a-z0-9_-]+)*$",
+          "description": "Dot-separated lowercase taxonomy path (e.g., 'electronics.cameras'), max 64 chars. Free text is rejected so raw deal terms cannot ride in it (SPEC 9.6.6). MAY be omitted for privacy."
         },
         "value_range": {
           "type": "string",
-          "pattern": "^\\d+-\\d+_[A-Z]{3}$",
-          "description": "Logarithmic value bucket (e.g., '1000-5000_USD'). Preserves privacy while enabling size-weighted scoring."
+          "maxLength": 32,
+          "pattern": "^(0-100|100-500|500-1000|1000-5000|5000-10000|10000-50000|50000-100000|100000-500000|500000-1000000|1000000\\+)_[A-Z]{3}$",
+          "description": "Logarithmic value bucket from the fixed enumerated vocabulary, suffixed with a 3-letter uppercase currency code (e.g., '1000-5000_USD'). The bands are enumerated rather than free-form so an exact price cannot be encoded as a degenerate range (SPEC 9.6.6). Preserves privacy while enabling size-weighted scoring."
         },
         "extensions_used": {
           "type": "array",
@@ -171,13 +177,20 @@
           "type": "boolean",
           "description": "Whether a mediator was used."
         }
-      }
+      },
+      "additionalProperties": false
     },
 
     "transcript_hash": {
       "type": "string",
       "pattern": "^sha256:[a-f0-9]{64}$",
       "description": "SHA-256 hash of the complete negotiation transcript. Allows independent verification."
+    },
+
+    "summary": {
+      "type": "string",
+      "maxLength": 1024,
+      "description": "Plaintext receipt summary generated from behavioral metadata and transcript hash prefix. Structured raw term fields are rejected by this schema. This free-text field is a behavioral-signal summary and, by caller contract, MUST NOT contain raw deal terms; validators apply best-effort checks for obvious raw-term patterns as defense in depth."
     },
 
     "fulfillment": {
@@ -190,15 +203,24 @@
 
     "references": {
       "type": "array",
-      "description": "Generalized references to other signed artifacts (receipts or CMPC primitives) that this attestation relates to. Added in v0.4.0 (WP2). Forward-compatible with CMPC v0.5 primitive types.",
+      "maxItems": 32,
+      "description": "Generalized references to other signed artifacts (receipts or CMPC primitives) that this attestation relates to. Capped at 32 entries (SPEC §11.5.8). Added in v0.4.0 (WP2). Forward-compatible with CMPC v0.5 primitive types.",
       "items": { "$ref": "#/$defs/reference" }
     },
 
     "validity_temporal": {
       "$ref": "#/$defs/validity_temporal",
       "description": "Optional temporal validity window for the attestation. Added in v0.4.0 (WP3)."
+    },
+
+    "countersignatures": {
+      "type": "object",
+      "description": "C-H2 outcome-binding (Option B): map of party agent_id -> base64url-padded Ed25519 signature over canonical_json(strip_signatures(attestation minus countersignatures)). Binds the issuance snapshot (outcome, meta, session_id, transcript_hash) so the outcome is not merely prover-asserted. One entry per party that had a signing key at issuance; parties without a key get no entry. Added in v0.2.0 (C-H2). Soundness (a >=0.2.0 attestation MUST carry a valid map) is enforced by the bundle verifier, not by this shape schema; <0.2.0 attestations validate without it.",
+      "additionalProperties": { "type": "string", "minLength": 1 },
+      "propertyNames": { "minLength": 1 }
     }
   },
+  "additionalProperties": false,
 
   "$defs": {
     "fulfillment_attestation": {
@@ -245,13 +267,14 @@
               "description": {
                 "type": "string",
                 "maxLength": 1024,
-                "description": "Brief description of the dispute. No deal specifics — just the nature of the issue."
+                "description": "Brief behavioral description of the dispute. Structured raw term fields are rejected by this schema. This free-text field, by caller contract, MUST NOT contain raw deal terms; validators apply best-effort checks for obvious raw-term patterns as defense in depth."
               },
               "resolution": {
                 "type": ["string", "null"],
                 "enum": ["resolved_favor_complainant", "resolved_favor_respondent", "resolved_compromise", "unresolved", null]
               }
-            }
+            },
+            "additionalProperties": false
           },
           "description": "Disputes raised about specific terms. Empty array if no disputes."
         },
@@ -264,13 +287,15 @@
             "notes": {
               "type": "string",
               "maxLength": 512,
-              "description": "Optional brief note about the experience."
+              "description": "Optional brief behavioral note about the experience. Structured raw term fields are rejected by this schema. This free-text field, by caller contract, MUST NOT contain raw deal terms; validators apply best-effort checks for obvious raw-term patterns as defense in depth."
             },
             "signature": { "type": "string" }
           },
-          "required": ["agent_id", "confirms_fulfillment", "signature"]
+          "required": ["agent_id", "confirms_fulfillment", "signature"],
+          "additionalProperties": false
         }
-      }
+      },
+      "additionalProperties": false
     },
 
     "reference": {
@@ -281,36 +306,67 @@
         "id": {
           "type": "string",
           "minLength": 1,
-          "description": "Identifier of the referenced artifact. URN-shaped where possible (SPEC §11.5.7)."
+          "maxLength": 256,
+          "pattern": "^\\S+$",
+          "description": "Identifier of the referenced artifact. URN-shaped where possible (SPEC §11.5.7). Max 256 chars, whitespace-free so prose deal terms cannot ride in identifier fields (SPEC §9.6.6)."
         },
         "type": {
           "type": "string",
           "minLength": 1,
-          "description": "Kind of artifact referenced. Canonical emit vocabulary is receipt, chain_session, predicate, mandate. Read-side validators accept non-empty strings and preserve unknown values per SPEC §11.5.5 and §11.5.8."
+          "maxLength": 64,
+          "pattern": "^\\S+$",
+          "description": "Kind of artifact referenced. Canonical emit vocabulary is receipt, chain_session, predicate, mandate. Read-side validators accept non-empty whitespace-free strings of at most 64 chars and preserve unknown values per SPEC §11.5.5 and §11.5.8."
         },
         "relationship": {
           "type": "string",
           "minLength": 1,
-          "description": "Semantic relationship per SPEC §11.5.5. Canonical emit vocabulary is supersedes, extends, fulfills, references. Read-side validators accept non-empty strings and preserve unknown values per SPEC §11.5.8."
+          "maxLength": 64,
+          "pattern": "^\\S+$",
+          "description": "Semantic relationship per SPEC §11.5.5. Canonical emit vocabulary is supersedes, extends, fulfills, references. Read-side validators accept non-empty whitespace-free strings of at most 64 chars and preserve unknown values per SPEC §11.5.8."
         },
         "version": {
           "type": "string",
-          "description": "Optional. Version of the referenced artifact when known."
+          "maxLength": 256,
+          "pattern": "^\\S+$",
+          "description": "Optional. Version of the referenced artifact when known. Whitespace-free, max 256 chars."
         },
         "signed_at": {
           "type": "string",
           "format": "date-time",
-          "description": "Optional. Timestamp of the referenced artifact's signature when known."
+          "maxLength": 256,
+          "pattern": "^\\S+$",
+          "description": "Optional. Timestamp of the referenced artifact's signature when known. Whitespace-free, max 256 chars."
         },
         "signer_did": {
           "type": "string",
-          "description": "Optional. DID of the signer of the referenced artifact when known."
+          "maxLength": 256,
+          "pattern": "^\\S+$",
+          "description": "Optional. DID of the signer of the referenced artifact when known. Whitespace-free, max 256 chars."
         },
         "extensions": {
           "type": "object",
-          "description": "Optional. Forward-compatibility map for v0.x extension keys. Implementations SHOULD preserve unknown keys verbatim across roundtrips."
+          "properties": {
+            "profile": { "type": "string" },
+            "custom_key": { "type": "string" },
+            "future_field": { "type": "string" },
+            "future_v0x_field": { "type": "string" },
+            "another_extension": {
+              "type": "object",
+              "properties": {
+                "nested": { "type": "boolean" }
+              },
+              "additionalProperties": false
+            },
+            "tl_leaf_canonical_hash": { "type": "string" },
+            "verified_signing_key_hex": { "type": "string" },
+            "leaf_index": { "type": "integer", "minimum": 0 },
+            "tl_url": { "type": "string" }
+          },
+          "additionalProperties": false,
+          "description": "Optional. Forward-compatibility map for v0.x extension keys, capped at 2048 canonical-JSON bytes at issuance. Implementations SHOULD preserve unknown keys verbatim across roundtrips."
         }
-      }
+      },
+      "additionalProperties": false
     },
 
     "validity_temporal": {
@@ -323,6 +379,7 @@
             "from": { "type": "string", "format": "date-time" },
             "until": { "type": "string", "format": "date-time" }
           },
+          "additionalProperties": false,
           "description": "Absolute clock-bounded validity. Added in v0.4.0 (WP3)."
         },
         {
@@ -333,6 +390,7 @@
             "from": { "type": "string", "format": "date-time" },
             "duration_seconds": { "type": "integer", "minimum": 1 }
           },
+          "additionalProperties": false,
           "description": "Validity is N seconds after the anchor timestamp. Added in v0.4.0 (WP3)."
         },
         {
@@ -344,6 +402,7 @@
             "end": { "type": "string", "format": "date-time" },
             "duration_seconds": { "type": "integer", "minimum": 1 }
           },
+          "additionalProperties": false,
           "description": "Valid during any N-second window within [start, end]. Added in v0.4.0 (WP3)."
         }
       ]

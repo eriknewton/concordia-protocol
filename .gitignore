@@ -7,6 +7,7 @@ dist/
 build/
 .eggs/
 *.egg
+node_modules/
 .venv/
 venv/
 env/
@@ -24,3 +25,25 @@ SERVICE_ARCHITECTURE.md
 .mcpregistry_github_token
 .mcpregistry_registry_token
 .gstack/
+
+# Internal back-office docs (security review, sprint, and handoff artifacts).
+# These live in a private coordinator workspace and must never re-enter the
+# public repository. Patterns chosen so they cannot match a kept root doc
+# (SECURITY.md, README.md, SPEC.md, AGENTS.md, etc.).
+SECURITY_AUDIT.md
+REVIEW_MAP.md
+BUG_REPORT.md
+SPRINT_*.md
+*_HANDOFF.md
+*_PR_BODY.md
+MERGE_GATE_REPORT.md
+KNOWN_ISSUES.md
+COWORK_CONTEXT.md
+
+# Internal launch-marketing drafts and build-summary artifacts. These are
+# coordinator-workspace material, not product or spec documentation, and must
+# never re-enter the public repository.
+launch/
+review/
+*_BUILD_SUMMARY.md
+*_SUMMARY.md

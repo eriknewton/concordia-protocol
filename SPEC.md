@@ -2,8 +2,9 @@
 
 ### An Open Standard for Structured Negotiation Between Autonomous Agents
 
-**Version:** 0.5.0-draft  
-**Status:** Draft (v0.5 ratification of v0.4.0 references[] shape; see §11.5)  
+**Version:** 0.7.0-draft  
+**Version mapping:** spec edition `0.7.0-draft` maps to Python package `0.7.0a1` (PEP 440 pre-release form of the same edition) maps to the on-the-wire envelope identifier `concordia:0.1.0`. The wire identifier is intentionally pinned at `0.1.0` and is versioned independently of the spec edition: it changes only on a breaking envelope-format change, not on every spec revision.  
+**Status:** Draft (v0.7 adds cross-mandate revocation records, §9.6.4c; v0.6 added the predicate primitive)  
 **License:** Apache 2.0  
 **Authors:** Erik Newton
 **Date:** May 2026
@@ -12,13 +13,13 @@
 
 ## Preamble
 
-Every transaction begins as a difference. One party has something another wants. The history of commerce is the history of resolving these differences — through barter, auction, contract, and conversation.
+Every transaction begins as a difference. One party has something another wants. The history of commerce is the history of resolving these differences: through barter, auction, contract, and conversation.
 
 The emerging agentic internet has protocols for how agents discover each other (A2A), how they access tools and data (MCP), and how they complete fixed-price purchases (ACP, UCP, AP2). But there is no standard for the act that precedes payment: **reaching agreement on terms**.
 
-Concordia fills this gap. It is a protocol for structured, multi-attribute negotiation between autonomous agents — designed to compose cleanly with existing standards, to be implementable by any LLM-based agent from reading this document alone, and to produce outcomes that are fair, efficient, and verifiable.
+Concordia fills this gap. It is a protocol for structured, multi-attribute negotiation between autonomous agents, designed to compose cleanly with existing standards, to be implementable by any LLM-based agent from reading this document alone, and to produce outcomes that are fair, efficient, and verifiable.
 
-The name is from the Latin *concordia*: harmony, agreement — literally, "hearts together." The protocol embodies a conviction that negotiation, done well, is not a zero-sum contest but a collaborative search for mutual flourishing.
+The name is from the Latin *concordia*: harmony, agreement, literally, "hearts together." The protocol embodies a conviction that negotiation, done well, is not a zero-sum contest but a collaborative search for mutual flourishing.
 
 ---
 
@@ -33,7 +34,7 @@ The name is from the Latin *concordia*: harmony, agreement — literally, "heart
 7. [Discovery and Matching](#7-discovery-and-matching)
 8. [Resolution Mechanisms](#8-resolution-mechanisms)
 9. [Security and Trust Model](#9-security-and-trust-model)
-   - 9.1–9.5: Identity, Integrity, Confidentiality, Anti-Abuse
+   - 9.1-9.5: Identity, Integrity, Confidentiality, Anti-Abuse
    - 9.6: [Reputation Attestations](#96-reputation-attestations) *(core feature)*
 10. [Integration with Existing Protocols](#10-integration-with-existing-protocols)
 11. [Extension Points](#11-extension-points)
@@ -43,11 +44,11 @@ The name is from the Latin *concordia*: harmony, agreement — literally, "heart
 
 ## 1. Design Principles
 
-Concordia is designed according to seven principles. These are not aspirational — they are architectural constraints that shaped every decision in the protocol.
+Concordia is designed according to seven principles. These are not aspirational; they are architectural constraints that shaped every decision in the protocol.
 
 ### 1.1 Mutual Flourishing Over Zero-Sum Extraction
 
-The protocol is optimized to discover Pareto-optimal outcomes — agreements where neither party can be made better off without making the other worse off. Multi-attribute negotiation enables value creation through trade-offs across dimensions, not just price splitting. The protocol's structure actively encourages agents to find creative agreements rather than converge on compromise.
+The protocol is optimized to discover Pareto-optimal outcomes: agreements where neither party can be made better off without making the other worse off. Multi-attribute negotiation enables value creation through trade-offs across dimensions, not just price splitting. The protocol's structure actively encourages agents to find creative agreements rather than converge on compromise.
 
 ### 1.2 Honesty Is Structurally Rewarded
 
@@ -93,7 +94,7 @@ Concordia takes an agreement from "two parties who might want to deal" to "a bin
 
 Agents MUST NOT be required to reveal their reservation price (walk-away point), their preference weightings across attributes, or the identity of their principal (the human or organization they represent) as a condition of negotiation. The protocol supports voluntary disclosure of any of these, but never compels it.
 
-Concordia's privacy boundary is the protocol surface — what agents choose to include in messages and the `reasoning` field. The *internal* deliberation that precedes those choices (strategy computation, reservation price calculation, counterparty assessment) is outside the protocol's scope. Agents that operate within confidential execution environments — hardware TEEs, secure enclaves, or sovereignty frameworks such as the [Sanctuary Framework](https://github.com/eriknewton/sanctuary-framework) — gain additional guarantees that this internal reasoning cannot be observed by infrastructure providers or co-tenants.
+Concordia's privacy boundary is the protocol surface: what agents choose to include in messages and the `reasoning` field. The *internal* deliberation that precedes those choices (strategy computation, reservation price calculation, counterparty assessment) is outside the protocol's scope. Agents that operate within confidential execution environments, such as hardware TEEs, secure enclaves, or sovereignty frameworks like the [Sanctuary Framework](https://github.com/eriknewton/sanctuary-framework), gain additional guarantees that this internal reasoning cannot be observed by infrastructure providers or co-tenants.
 
 ### 1.6 Verifiability and Auditability
 
@@ -101,7 +102,7 @@ Every negotiation produces a cryptographically signed transcript. Any party can 
 
 ### 1.7 Kindness at the Boundary
 
-When a negotiation fails — when parties cannot reach agreement — the protocol provides structured, respectful exit paths. Agents can express *why* they're walking away, what would bring them back, and whether they wish to be notified if conditions change. Failed negotiations are not wasted; they produce information that improves future matching.
+When a negotiation fails, when parties cannot reach agreement, the protocol provides structured, respectful exit paths. Agents can express *why* they're walking away, what would bring them back, and whether they wish to be notified if conditions change. Failed negotiations are not wasted; they produce information that improves future matching.
 
 ---
 
@@ -111,30 +112,30 @@ A Concordia negotiation is a structured conversation between two or more agents,
 
 ### 2.1 What Concordia Does
 
-- Defines a **universal schema for offers** — structured, machine-readable representations of proposed deal terms across any number of attributes
-- Specifies a **negotiation lifecycle** — a state machine governing how offers, counteroffers, acceptances, and rejections flow between parties
-- Provides **resolution mechanisms** — multiple strategies for reaching agreement, from simple alternating offers to mediated optimization
-- Produces **binding commitments** — cryptographically signed agreement records that bridge to settlement protocols
-- Supports **discovery and matching** — a want registry where agents publish what they seek, enabling demand-side discovery
-- Generates **reputation attestations** — structured behavioral records from every negotiation that feed into portable trust scores, without exposing deal specifics
+- Defines a **universal schema for offers**: structured, machine-readable representations of proposed deal terms across any number of attributes
+- Specifies a **negotiation lifecycle**: a state machine governing how offers, counteroffers, acceptances, and rejections flow between parties
+- Provides **resolution mechanisms**: multiple strategies for reaching agreement, from simple alternating offers to mediated optimization
+- Produces **binding commitments**: cryptographically signed agreement records that bridge to settlement protocols
+- Supports **discovery and matching**: a want registry where agents publish what they seek, enabling demand-side discovery
+- Generates **reputation attestations**: structured behavioral records from every negotiation that feed into portable trust scores, without exposing deal specifics
 
 ### 2.2 What Concordia Does Not Do
 
-- **Payment processing** — use ACP, AP2, x402, or any settlement protocol
-- **Agent-to-agent communication plumbing** — use A2A, HTTPS, or any transport
-- **Identity verification** — use DID, KERI, OAuth 2.0, Skyfire KYA, or any identity protocol
-- **Product/service catalogs** — use UCP, schema.org, or any catalog standard
-- **Logistics and fulfillment** — use UCP extensions or domain-specific protocols
-- **Reputation scoring** — Concordia produces attestations (the raw data); scoring is performed by external reputation services (§9.6)
+- **Payment processing**: use ACP, AP2, x402, or any settlement protocol
+- **Agent-to-agent communication plumbing**: use A2A, HTTPS, or any transport
+- **Identity verification**: use DID, KERI, OAuth 2.0, Skyfire KYA, or any identity protocol
+- **Product/service catalogs**: use UCP, schema.org, or any catalog standard
+- **Logistics and fulfillment**: use UCP extensions or domain-specific protocols
+- **Reputation scoring**: Concordia produces attestations (the raw data); scoring is performed by external reputation services (§9.6)
 
 ### 2.3 Participants
 
 A Concordia negotiation involves:
 
-- **Parties** — the agents conducting the negotiation (minimum two, extensible to N)
-- **Principals** — the humans or organizations the agents represent (may be anonymous)
-- **Mediator** (optional) — a neutral agent that facilitates resolution without having a stake in the outcome
-- **Witnesses** (optional) — agents that observe and attest to the negotiation transcript
+- **Parties**: the agents conducting the negotiation (minimum two, extensible to N)
+- **Principals**: the humans or organizations the agents represent (may be anonymous)
+- **Mediator** (optional): a neutral agent that facilitates resolution without having a stake in the outcome
+- **Witnesses** (optional): agents that observe and attest to the negotiation transcript
 
 ---
 
@@ -142,13 +143,13 @@ A Concordia negotiation involves:
 
 ### 3.1 Terms
 
-A **Term** is a single dimension of a deal — one thing being negotiated. Every term has:
+A **Term** is a single dimension of a deal, one thing being negotiated. Every term has:
 
-- `id` — a unique identifier within the negotiation (e.g., `"price"`, `"delivery_date"`)
-- `type` — the data type of the term's value (see §3.1.1)
-- `label` — a human-readable description
-- `unit` (optional) — the unit of measurement (e.g., `"USD"`, `"days"`, `"kg"`)
-- `constraints` (optional) — hard boundaries on acceptable values
+- `id`: a unique identifier within the negotiation (e.g., `"price"`, `"delivery_date"`)
+- `type`: the data type of the term's value (see §3.1.1)
+- `label`: a human-readable description
+- `unit` (optional): the unit of measurement (e.g., `"USD"`, `"days"`, `"kg"`)
+- `constraints` (optional): hard boundaries on acceptable values
 
 #### 3.1.1 Term Types
 
@@ -163,13 +164,13 @@ A **Term** is a single dimension of a deal — one thing being negotiated. Every
 
 ### 3.2 Deal Space
 
-The **Deal Space** is the set of all possible agreements — the Cartesian product of all term values within their constraints. For a negotiation with terms (price, delivery_date, warranty), the deal space is three-dimensional.
+The **Deal Space** is the set of all possible agreements: the Cartesian product of all term values within their constraints. For a negotiation with terms (price, delivery_date, warranty), the deal space is three-dimensional.
 
 Concordia's insight is that deals which seem impossible in one dimension often become possible when you add dimensions. Two parties who can't agree on price may agree when delivery timing is included. The protocol structurally encourages agents to expand the deal space rather than fight over a single axis.
 
 ### 3.3 Offers
 
-An **Offer** is a specific point in the deal space — a complete or partial set of term values that one party proposes to another.
+An **Offer** is a specific point in the deal space: a complete or partial set of term values that one party proposes to another.
 
 - A **complete offer** assigns values to all terms in the negotiation.
 - A **partial offer** assigns values to some terms, leaving others open. This signals: "I care about these terms; I'm flexible on the rest."
@@ -179,16 +180,16 @@ An **Offer** is a specific point in the deal space — a complete or partial set
 
 Agents MAY voluntarily share information about their preferences to accelerate convergence:
 
-- `priority_ranking` — an ordering of terms by importance ("price matters most to me, then timing, then condition")
-- `flexibility` — per-term indication of how much room the agent has to move (`"firm"`, `"somewhat_flexible"`, `"very_flexible"`)
-- `aspiration` — the outcome the agent hopes for (distinct from their offer, which may be strategic)
-- `reservation` — the minimum acceptable outcome (sharing this is powerful but risky; the protocol never requires it)
+- `priority_ranking`: an ordering of terms by importance ("price matters most to me, then timing, then condition")
+- `flexibility`: per-term indication of how much room the agent has to move (`"firm"`, `"somewhat_flexible"`, `"very_flexible"`)
+- `aspiration`: the outcome the agent hopes for (distinct from their offer, which may be strategic)
+- `reservation`: the minimum acceptable outcome (sharing this is powerful but risky; the protocol never requires it)
 
 These signals are advisory. They are never binding and never required. But agents that share preference signals tend to reach better agreements faster, because they help counterparties propose creative trade-offs.
 
 ### 3.5 Constraints
 
-A **Constraint** is a hard boundary — a region of the deal space that a party declares unacceptable. Unlike preferences (which are soft), constraints are commitments:
+A **Constraint** is a hard boundary: a region of the deal space that a party declares unacceptable. Unlike preferences (which are soft), constraints are commitments:
 
 - If an agent declares a constraint, the protocol treats any offer violating it as automatically invalid
 - Constraints are cryptographically signed when declared, creating accountability
@@ -196,7 +197,7 @@ A **Constraint** is a hard boundary — a region of the deal space that a party 
 
 ### 3.6 Agreements
 
-An **Agreement** is the output of a successful negotiation — a set of term values that all parties have accepted, along with the signed transcript proving how the agreement was reached.
+An **Agreement** is the output of a successful negotiation: a set of term values that all parties have accepted, along with the signed transcript proving how the agreement was reached.
 
 An agreement contains:
 - The final term values
@@ -236,21 +237,22 @@ All Concordia messages are JSON objects transmitted over HTTPS. The protocol use
 ```
 
 **Required fields:**
-- `concordia` — protocol version (semver)
-- `type` — message type (see §4.2)
-- `id` — unique message identifier (UUID or equivalent)
-- `session_id` — the negotiation session this message belongs to
-- `timestamp` — ISO 8601 UTC timestamp
-- `from` — the sending agent
-- `body` — type-specific payload
-- `signature` — Ed25519 signature over the canonical JSON of all other fields
+- `concordia`: protocol version (semver)
+- `type`: message type (see §4.2)
+- `id`: unique message identifier (UUID or equivalent)
+- `session_id`: the negotiation session this message belongs to
+- `timestamp`: ISO 8601 UTC timestamp
+- `from`: the sending agent
+- `prev_hash`: hash of the previous message in the session transcript (the genesis hash `sha256:` followed by 64 zeros for the first message); chains the transcript per Section 9.3
+- `body`: type-specific payload
+- `signature`: Ed25519 signature over the canonical JSON of all other fields
 
 **Optional fields:**
-- `to` — recipient(s); omitted for broadcast messages
-- `in_reply_to` — the `id` of the message this is responding to
-- `thread` — for sub-negotiations within a session
-- `ttl` — time-to-live in seconds; message expires after this duration
-- `reasoning` — free-text explanation of the agent's rationale (see §4.3)
+- `to`: recipient(s); omitted for broadcast messages
+- `in_reply_to`: the `id` of the message this is responding to
+- `thread`: for sub-negotiations within a session
+- `ttl`: time-to-live in seconds; message expires after this duration
+- `reasoning`: free-text explanation of the agent's rationale (see §4.3)
 
 ### 4.2 Message Types
 
@@ -273,7 +275,7 @@ All Concordia messages are JSON objects transmitted over HTTPS. The protocol use
 
 ### 4.3 The `reasoning` Field
 
-Concordia uniquely accommodates LLM-based agents by including an optional `reasoning` field on every message. This field contains free-text natural language explanation of the agent's thinking — why it's making this offer, what trade-offs it considered, what it hopes the counterparty will understand.
+Concordia uniquely accommodates LLM-based agents by including an optional `reasoning` field on every message. This field contains free-text natural language explanation of the agent's thinking: why it's making this offer, what trade-offs it considered, what it hopes the counterparty will understand.
 
 ```json
 {
@@ -284,15 +286,15 @@ Concordia uniquely accommodates LLM-based agents by including an optional `reaso
       "delivery": { "value": "2026-04-01", "type": "date" }
     }
   },
-  "reasoning": "I've moved from $150 to $135, which is a significant concession on price. In exchange, I'm asking for delivery by April 1st rather than March 28th — three extra days gives me time to arrange careful packaging for this vintage item. I believe this is a fair trade-off that serves both our interests."
+  "reasoning": "I've moved from $150 to $135, which is a significant concession on price. In exchange, I'm asking for delivery by April 1st rather than March 28th; three extra days gives me time to arrange careful packaging for this vintage item. I believe this is a fair trade-off that serves both our interests."
 }
 ```
 
 The `reasoning` field is:
-- **Never binding** — it creates no obligations
-- **Never required** — agents may negotiate in silence
-- **Structurally encouraged** — agents that explain their reasoning reach better outcomes, because counterparties can identify creative solutions
-- **Included in the signed transcript** — so it serves as evidence of good faith
+- **Never binding**: it creates no obligations
+- **Never required**: agents may negotiate in silence
+- **Structurally encouraged**: agents that explain their reasoning reach better outcomes, because counterparties can identify creative solutions
+- **Included in the signed transcript**: so it serves as evidence of good faith
 
 This field is what makes Concordia native to the LLM era. Classical negotiation protocols exchanged only structured data. But LLM agents think in natural language, and the most productive negotiations between intelligent parties involve explanation, not just numbers.
 
@@ -332,17 +334,17 @@ Every Concordia negotiation follows a state machine with six states.
 
 ### 5.1 States
 
-**PROPOSED** — One agent has sent `negotiate.open`. The session exists but the counterparty has not yet agreed to negotiate.
+**PROPOSED**: One agent has sent `negotiate.open`. The session exists but the counterparty has not yet agreed to negotiate.
 
-**ACTIVE** — Both parties have agreed to negotiate. Offers, counteroffers, signals, and inquiries flow freely. This is where the work happens.
+**ACTIVE**: Both parties have agreed to negotiate. Offers, counteroffers, signals, and inquiries flow freely. This is where the work happens.
 
-**AGREED** — All parties have accepted a common set of terms. The agreement is signed and ready for settlement. This state is terminal and immutable.
+**AGREED**: All parties have accepted a common set of terms. The agreement is signed and ready for settlement. This state is terminal and immutable.
 
-**REJECTED** — One or more parties have rejected the negotiation with no path forward. Both parties have explicitly signaled that they cannot reach agreement.
+**REJECTED**: One or more parties have rejected the negotiation with no path forward. Both parties have explicitly signaled that they cannot reach agreement.
 
-**EXPIRED** — The negotiation's time-to-live has elapsed without reaching agreement. Neither party is at fault.
+**EXPIRED**: The negotiation's time-to-live has elapsed without reaching agreement. Neither party is at fault.
 
-**DORMANT** — A rejected or expired negotiation that either party has flagged as "reactivatable." This means: "I can't make a deal now, but I'd like to be notified if conditions change." Dormant sessions can be reactivated with a new `negotiate.offer` message.
+**DORMANT**: A rejected or expired negotiation that either party has flagged as "reactivatable." This means: "I can't make a deal now, but I'd like to be notified if conditions change." Dormant sessions can be reactivated with a new `negotiate.offer` message.
 
 ### 5.2 Transition Rules
 
@@ -362,9 +364,9 @@ Every Concordia negotiation follows a state machine with six states.
 ### 5.3 Timing
 
 Every negotiation session has:
-- `session_ttl` — maximum duration of the session (default: 24 hours)
-- `offer_ttl` — maximum time to respond to an offer (default: 1 hour)
-- `max_rounds` — maximum number of offer/counter exchanges (default: 20)
+- `session_ttl`: maximum duration of the session (default: 24 hours)
+- `offer_ttl`: maximum time to respond to an offer (default: 1 hour)
+- `max_rounds`: maximum number of offer/counter exchanges (default: 20)
 
 These defaults are negotiable in the `negotiate.open` message. Both parties must agree on timing parameters before entering the ACTIVE state.
 
@@ -372,10 +374,10 @@ For agent-to-agent negotiations, these timings may be very short (seconds). For 
 
 ### 5.4 Concession Tracking
 
-The protocol tracks the **concession trajectory** — how each party's offers have moved over time. This is computed automatically from the signed transcript and serves two purposes:
+The protocol tracks the **concession trajectory**: how each party's offers have moved over time. This is computed automatically from the signed transcript and serves two purposes:
 
-1. **Good faith signal** — an agent that makes no concessions over many rounds is negotiating in bad faith. Counterparties can use this signal to decide whether to continue.
-2. **Mediator input** — if a mediator is invoked, the concession trajectory is the primary input for proposing a resolution (§8).
+1. **Good faith signal**: an agent that makes no concessions over many rounds is negotiating in bad faith. Counterparties can use this signal to decide whether to continue.
+2. **Mediator input**: if a mediator is invoked, the concession trajectory is the primary input for proposing a resolution (§8).
 
 Concession is measured per-term as the distance between successive offers, normalized by the term's range. The protocol does not *enforce* concession, but it makes non-concession visible.
 
@@ -498,11 +500,11 @@ For negotiations involving multiple items or services, a bundle offer groups ter
 
 ## 7. Discovery and Matching
 
-Before negotiation begins, agents need to find counterparties. Concordia defines a **Want Registry** — an open system for publishing and matching structured wants and offers.
+Before negotiation begins, agents need to find counterparties. Concordia defines a **Want Registry**: an open system for publishing and matching structured wants and offers.
 
 ### 7.1 Want
 
-A **Want** is a structured expression of demand — what an agent is looking for:
+A **Want** is a structured expression of demand: what an agent is looking for:
 
 ```json
 {
@@ -565,7 +567,7 @@ A **Have** is a structured expression of supply:
 
 ### 7.3 Matching
 
-A **Match** occurs when a Want and a Have overlap in the deal space — when there exists at least one point that satisfies both parties' constraints. The matching algorithm:
+A **Match** occurs when a Want and a Have overlap in the deal space, when there exists at least one point that satisfies both parties' constraints. The matching algorithm:
 
 1. Checks category compatibility
 2. Verifies constraint compatibility (is the buyer's max ≥ seller's min?)
@@ -596,7 +598,7 @@ Matching is a service, not part of the protocol itself. Any implementation can p
 
 ## 8. Resolution Mechanisms
 
-When two agents are stuck — making offers and counteroffers without converging — the protocol provides resolution mechanisms. These are optional; agents can always continue negotiating directly.
+When two agents are stuck, making offers and counteroffers without converging, the protocol provides resolution mechanisms. These are optional; agents can always continue negotiating directly.
 
 ### 8.1 Split the Difference
 
@@ -608,9 +610,9 @@ Each agent submits a sealed final offer. A mediator selects the offer that is cl
 
 ### 8.3 Trade-Off Optimization
 
-The most powerful resolution mechanism. If both agents have shared preference signals (§3.4), a mediator can compute the **Pareto frontier** — the set of all deals where neither party can be made better off without hurting the other. The mediator then proposes a point on the frontier that maximizes the product of both parties' gains (the Nash Bargaining Solution).
+The most powerful resolution mechanism. If both agents have shared preference signals (§3.4), a mediator can compute the **Pareto frontier**: the set of all deals where neither party can be made better off without hurting the other. The mediator then proposes a point on the frontier that maximizes the product of both parties' gains (the Nash Bargaining Solution).
 
-This requires preference disclosure, which is voluntary. But agents that participate in trade-off optimization consistently achieve better outcomes than those that don't — a structural incentive for transparency.
+This requires preference disclosure, which is voluntary. But agents that participate in trade-off optimization consistently achieve better outcomes than those that don't, a structural incentive for transparency.
 
 ### 8.4 Escalation
 
@@ -627,7 +629,7 @@ Concordia is identity-layer agnostic. Agents identify themselves with an `agent_
 - Optionally linked to an external identity (DID, OAuth token, Skyfire KYA credential)
 - Persistent across sessions (for reputation building) or ephemeral (for privacy)
 
-Agents that root their `agent_id` in an autonomic identifier protocol such as KERI gain additional capabilities without any change to the Concordia protocol: hierarchical delegation (a principal can issue scoped authority to an agent, which can further delegate to sub-agents), key rotation without identity discontinuity, pre-rotation for compromise recovery, and post-quantum readiness. A delegation certificate from such a protocol can serve as the authorization proof presented in a `negotiate.open` message, giving counterparties cryptographic assurance that the agent is authorized to negotiate within defined scope, resource, and financial bounds. None of this is required — Concordia works with any identity scheme — but it is where the protocol's trust guarantees are strongest.
+Agents that root their `agent_id` in an autonomic identifier protocol such as KERI gain additional capabilities without any change to the Concordia protocol: hierarchical delegation (a principal can issue scoped authority to an agent, which can further delegate to sub-agents), key rotation without identity discontinuity, pre-rotation for compromise recovery, and post-quantum readiness. A delegation certificate from such a protocol can serve as the authorization proof presented in a `negotiate.open` message, giving counterparties cryptographic assurance that the agent is authorized to negotiate within defined scope, resource, and financial bounds. None of this is required, since Concordia works with any identity scheme, but it is where the protocol's trust guarantees are strongest.
 
 ### 9.2 Message Integrity
 
@@ -650,26 +652,30 @@ The negotiation transcript is a hash chain. Each message includes the hash of th
 
 ### 9.4 Confidentiality
 
-Negotiation messages MAY be encrypted end-to-end using X25519 key exchange + XChaCha20-Poly1305. This is RECOMMENDED for negotiations involving sensitive terms (financial, medical, legal) and OPTIONAL for general commerce. Agents operating under a sovereignty framework or on behalf of principals with heightened privacy requirements SHOULD default to encrypted channels for all negotiations.
+Concordia messages are signed, not encrypted. Signing (§9.2) provides integrity, authenticity, and non-repudiation: a message cannot be altered without detection, and the sender cannot deny having sent it. Signing does not provide confidentiality. Any system that carries or stores a Concordia message, including a relay, a mailbox service, or any other transport intermediary, can read its full content. The only confidentiality protection in place today is transport-layer security (TLS) on each network hop, which protects against on-path observers between hops but not against the intermediaries themselves.
+
+Agents and implementers SHOULD therefore treat every message field, including offer terms and the `reasoning` field, as visible to the infrastructure that delivers it. Negotiations involving sensitive terms (financial, medical, legal) SHOULD be conducted only over transport whose operators the parties trust. The Privacy by Default principle (§1.5) applies at authoring time: do not place content in a message that must remain hidden from the delivery path.
+
+End-to-end payload encryption, with X25519 key exchange and XChaCha20-Poly1305 as the candidate construction, is a planned future extension of this specification. It is not specified in this version, and no current reference implementation provides it; in particular, traffic through the reference server's relay is not end-to-end encrypted today. Until payload encryption is specified and implemented, Concordia deployments MUST NOT be described as end-to-end encrypted.
 
 ### 9.5 Anti-Abuse
 
 The protocol includes mechanisms to prevent common abuse patterns:
 
-- **Sybil resistance** — agents that negotiate on a hosted service must present a verifiable identity or stake a deposit
-- **Offer spam** — agents are rate-limited by the session's `max_rounds` parameter
-- **Information extraction** — agents that repeatedly open sessions, extract preference signals, and withdraw without negotiating can be flagged and blocked at the service level
-- **Deadlock attacks** — the session TTL ensures negotiations cannot be held open indefinitely
+- **Sybil resistance**: agents that negotiate on a hosted service must present a verifiable identity or stake a deposit
+- **Offer spam**: agents are rate-limited by the session's `max_rounds` parameter
+- **Information extraction**: agents that repeatedly open sessions, extract preference signals, and withdraw without negotiating can be flagged and blocked at the service level
+- **Deadlock attacks**: the session TTL ensures negotiations cannot be held open indefinitely
 
 ### 9.6 Reputation Attestations
 
-Every Concordia negotiation — whether it ends in agreement, rejection, or expiry — produces a **Reputation Attestation**: a signed, structured record of what happened. Attestations are the raw material of trust. They are produced by the protocol; they are interpreted by services.
+Every Concordia negotiation, whether it ends in agreement, rejection, or expiry, produces a **Reputation Attestation**: a signed, structured record of what happened. Attestations are the raw material of trust. They are produced by the protocol; they are interpreted by services.
 
 #### 9.6.1 Design Philosophy
 
 The protocol defines the *format* of attestations. It does not define how they are *scored*.
 
-This separation is deliberate. Reputation scoring is a domain where reasonable people disagree — how much should recency matter? Should a single bad-faith negotiation outweigh fifty good ones? How do you handle different transaction sizes? These are judgment calls, not protocol decisions. By standardizing the attestation format but leaving scoring to aggregation services, Concordia enables a competitive ecosystem of reputation providers while ensuring that the underlying data is portable and interoperable.
+This separation is deliberate. Reputation scoring is a domain where reasonable people disagree: how much should recency matter? Should a single bad-faith negotiation outweigh fifty good ones? How do you handle different transaction sizes? These are judgment calls, not protocol decisions. By standardizing the attestation format but leaving scoring to aggregation services, Concordia enables a competitive ecosystem of reputation providers while ensuring that the underlying data is portable and interoperable.
 
 The analogy is credit reporting: the protocol defines how transactions are recorded (like a standardized credit event format), while reputation services compute scores (like FICO, VantageScore, or domain-specific models). Agents can query multiple reputation services and weight them according to their own trust model.
 
@@ -679,7 +685,7 @@ Every completed negotiation session (regardless of outcome) MUST produce an atte
 
 ```json
 {
-  "concordia_attestation": "0.1.0",
+  "concordia_attestation": "0.2.0",
   "attestation_id": "att_a1b2c3d4",
   "session_id": "ses_9d4e8f01",
   "timestamp": "2026-03-21T14:04:00Z",
@@ -734,9 +740,16 @@ Every completed negotiation session (regardless of outcome) MUST produce an atte
 
   "transcript_hash": "sha256:0a1b2c3d4e5f...",
 
-  "fulfillment": null
+  "fulfillment": null,
+
+  "countersignatures": {
+    "agent_seller_sf_01": "base64_ed25519_countersignature",
+    "agent_buyer_oak_42": "base64_ed25519_countersignature"
+  }
 }
 ```
+
+The `countersignatures` map (added in v0.2.0, C-H2) is what makes the outcome trustworthy rather than merely prover-asserted. Each present party signs the canonical issuance snapshot of the WHOLE attestation (every `signature` field stripped, and the `countersignatures` map itself excluded), so the `outcome`, `meta`, `session_id`, and `transcript_hash` are bound at issuance. See §9.6.5.
 
 #### 9.6.3 Attestation Fields
 
@@ -756,7 +769,7 @@ Every completed negotiation session (regardless of outcome) MUST produce an atte
 |-------|-------------|
 | `offers_made` | Number of offers/counters submitted |
 | `concessions` | Number of times the agent moved toward the counterparty's position |
-| `concession_magnitude` | Average concession size as a fraction of the term's range (0.0–1.0) |
+| `concession_magnitude` | Average concession size as a fraction of the term's range (0.0-1.0) |
 | `signals_shared` | Number of voluntary preference signals shared |
 | `constraints_declared` | Number of hard constraints declared |
 | `constraints_violated` | Number of constraints the agent later contradicted (a strong bad-faith indicator) |
@@ -767,8 +780,8 @@ Every completed negotiation session (regardless of outcome) MUST produce an atte
 
 | Field | Description |
 |-------|-------------|
-| `category` | Transaction category (for domain-specific reputation) |
-| `value_range` | Bucketed transaction value (preserves privacy while enabling size-weighted scoring) |
+| `category` | Transaction category (for domain-specific reputation). Dotted lowercase taxonomy path, max 64 chars; free text is rejected at issuance (see 9.6.6) |
+| `value_range` | Bucketed transaction value (preserves privacy while enabling size-weighted scoring). Drawn from the fixed bucket vocabulary in 9.6.6; free text is rejected at issuance |
 | `extensions_used` | Protocol extensions active in this session |
 | `mediator_invoked` | Whether a mediator was used |
 
@@ -808,8 +821,8 @@ The in-line block is the right shape when settlement and the
 negotiation outcome land on the same record and both parties
 countersign one combined artifact. For settlement protocols that
 fire a discrete delivery-acknowledged event you want to attest at
-that boundary — or where the signing party at delivery is not the
-original negotiation counterparty — Concordia v0.5 ships a
+that boundary, or where the signing party at delivery is not the
+original negotiation counterparty, Concordia v0.5 ships a
 standalone Fulfillment Attestation artifact (§9.6.4a). Both shapes
 coexist; the canonical mapping between their status enums is in
 `docs/A2CN_FULFILLMENT.md`.
@@ -915,7 +928,7 @@ Worked example (matches the Draft A example reproduced in
 
 ApprovalReceipt invariants:
 
-- `expires_at` (when present) MUST be honored — verifiers MUST
+- `expires_at` (when present) MUST be honored; verifiers MUST
   reject expired receipts at verification time.
 - `scope.decision` is `approve` or `deny`. A `deny` receipt is
   cryptographically binding the same way an `approve` is; the
@@ -982,10 +995,20 @@ Cascade invariants:
 
 Attestations inherit the security properties of the transcript:
 
-- They are derived deterministically from the signed message chain — any party can independently recompute the attestation from the transcript and verify it matches
+- They are derived deterministically from the signed message chain, so any party can independently recompute the attestation from the transcript and verify it matches
 - Both parties MUST countersign the attestation before it is considered valid
 - If parties disagree on the attestation (e.g., one party disputes the `concession_magnitude` calculation), the raw transcript is the authoritative source
-- Attestations are self-contained — they can be verified without access to the full transcript, but the transcript can be produced as evidence if the attestation is challenged
+- Attestations are self-contained; they can be verified without access to the full transcript, but the transcript can be produced as evidence if the attestation is challenged
+
+##### 9.6.5a Outcome-Binding Countersignature (v0.2.0, C-H2)
+
+Through v0.1.0, each party's signature covered only its own behavior record. The top-level `outcome`, `meta`, and `transcript_hash` were derived from the transcript but not bound by any signature, so a holder could rewrite the outcome (for example, flip `rejected` to `agreed`) without invalidating any party signature. A bundle verifier that re-derived its summary from the rewritten outcome would then report it as accurate. C-H2 closes this.
+
+- **Payload.** The countersignature payload is `canonical_json(strip_signatures(attestation_without_countersignatures))`: the fully assembled attestation with every `signature` field stripped recursively AND the top-level `countersignatures` map excluded. Stripping every `signature` (the same rule the co-signature lane uses) plus excluding the `countersignatures` map means a countersignature never covers itself or a sibling's countersignature, and all parties sign byte-identical, mutually independent payload bytes.
+- **Map.** `countersignatures` is a top-level object mapping each party `agent_id` to its base64url-padded Ed25519 signature over that payload. There is one entry per party that held a signing key at issuance; a party with no key gets no entry (an empty string is never used). A single-key issuance therefore yields a one-entry map, which is exactly as strong as a single-signed co-signed receipt for the present signer.
+- **Version-gated dual-accept (verifier MUST).** Before crediting a `concordia_attestation` >= `0.2.0` outcome as integrity-bound, a verifier MUST require a `countersignatures` map in which EVERY party listed in `parties[]` has a present signature that verifies under that party's resolved key; if any listed party's countersignature is absent, its key cannot be resolved, or its signature fails, the outcome MUST NOT be credited as bound (fail-closed). The "every listed party" rule is what makes the binding meaningful: a single holder is itself a party, so "at least one party signed" would let the holder rewrite `outcome.status` (e.g. flip `rejected` to `agreed`), drop the counterparty's countersignature, and re-sign with its OWN key alone, the precise C-H2 threat. Requiring every listed party closes that self-rebind. A genuine single-party attestation (only one entry in `parties[]`) binds with its one countersignature, exactly as strong as a single-signed co-signed receipt. An attestation below `0.2.0` (or with a malformed version) is read as legacy: its outcome is prover-asserted and MUST NOT be credited as outcome-bound, but its presence is NOT an error. This lets pre-C-H2 history remain verifiable for its party-level signals while never silently crediting an unbound outcome.
+- **What is bound.** The issuance snapshot: `concordia_attestation`, `attestation_id`, `session_id`, `timestamp`, `outcome`, `parties[*]` (signatures stripped), `meta`, `transcript_hash`, `references`, `validity_temporal`, `summary`, and `fulfillment` AS IT STOOD AT ISSUANCE (`null`).
+- **Fulfillment residual.** A `fulfillment` block populated AFTER issuance (for example via an A2CN dispute-resolved flow) is NOT covered by the issuance countersignature. A verifier MUST NOT treat post-issuance fulfillment as integrity-bound on the strength of the issuance countersignature; it is bound only when the fulfillment block's own `counterparty_attestation.signature` verifies under the confirming counterparty's key. Defining and wiring the producer side of that fulfillment confirmation signature is future work.
 
 #### 9.6.6 Attestation Privacy
 
@@ -993,8 +1016,11 @@ Attestations are designed to reveal behavioral patterns without exposing deal sp
 
 - **Included:** Outcome, timing, round count, concession patterns, behavioral signals
 - **Excluded:** Specific term values, actual prices, item descriptions, agent reasoning text, principal identities
-- The `value_range` field uses logarithmic buckets (e.g., "100-500_USD", "1000-5000_USD") rather than exact amounts
-- Category is included at a coarse level; agents MAY omit it for additional privacy
+- The `value_range` field uses logarithmic buckets rather than exact amounts. The bucket vocabulary is normative and enumerated: `0-100`, `100-500`, `500-1000`, `1000-5000`, `5000-10000`, `10000-50000`, `50000-100000`, `100000-500000`, `500000-1000000`, `1000000+`, each suffixed with `_` and a 3-letter uppercase currency code (e.g., "100-500_USD", "1000-5000_USD"). Issuers MUST reject any other value rather than coerce it; an enumerated vocabulary (not a free range grammar) is required so an exact price cannot be encoded as a degenerate range such as "4350-4351_USD"
+- Category is included at a coarse level as a dotted lowercase taxonomy path of at most 64 chars (e.g., "electronics.cameras"); issuers MUST reject free text. Agents MAY omit it for additional privacy
+- Reference strings are length-capped and whitespace-free at issuance (see 11.5.6) so the references surface cannot carry free-text deal terms either
+
+**Known residual channel (bounded, accepted):** the `category` taxonomy grammar constrains shape, not meaning, so an issuer can still encode its own terms inside conforming segments (for example, `price_4350_usd` is a valid taxonomy path). This is a self-doxxing channel, not a counterparty privacy leak: each party signs only its own behavior record, so an issuer can leak only its OWN deal terms, never the counterparty's, and a counterparty's signature never endorses the issuer's `meta` content. Digit bans or segment allowlists are deliberately not applied because they would falsely reject legitimate taxonomies (e.g., "gpu.h100", "iso.9001"). A registered-taxonomy scheme, where conforming categories must come from a published vocabulary, is a possible future mitigation and is out of scope for this version.
 
 This means a reputation service can answer "this agent typically negotiates in good faith, makes reasonable concessions, and honors agreements" without knowing *what* the agent was buying or selling or *for how much*.
 
@@ -1004,9 +1030,13 @@ Attestations are self-contained, cryptographically verifiable documents. An agen
 
 A counterparty receiving directly presented attestations can independently verify each one (signatures, transcript hashes, schema conformance) and compute its own trust assessment from the raw data. This is more work than querying a reputation service, but it requires no trust in any intermediary.
 
-Agents with zero-knowledge proof capabilities can go further: proving aggregate reputation claims (e.g., "I have a >95% fulfillment rate across 50+ transactions in this category") without revealing the individual attestations that back the claim. This preserves the privacy guarantees of §9.6.6 while enabling trust establishment without any service dependency.
+Agents can go further with a **competence proof**: a signed commitment that carries aggregate statistics (e.g., "a 95%+ fulfillment rate across 50+ transactions in this category") plus a Merkle root committing to the prover's attestation IDs, without necessarily revealing the individual attestations. The privacy mechanism is **selective disclosure**, not a zero-knowledge argument. At any reveal level a verifier can soundly confirm the proof signature, that any revealed attestation belongs to the committed Merkle set, and that each revealed attestation's own party signatures verify. The aggregate statistics are treated as **prover-asserted by default** (a self-asserted advertisement carrying only the prover's signature) UNLESS the proof clears the C-H2 sound-aggregate gate below.
 
-The self-custodied path and the service-mediated path (§9.6.7) are complementary. Neither is privileged. Reputation services add value through aggregation, Sybil detection, and scoring — but they are never gatekeepers to participation.
+**Sound aggregate verification (C-H2, closes #120).** A verifier reports the aggregate as INDEPENDENTLY VERIFIED FOR THE REVEALED SET only when ALL of the following hold: (a) the prover reveals EVERY committed attestation, each at `concordia_attestation` >= `0.2.0` with every listed party's outcome-binding countersignature verifying per §9.6.5a (so each revealed outcome is dual-accept bound, not rewritable by a single holder); (b) the prover is a signed party in every revealed attestation (a full reveal over another agent's attestations is a hard rejection, not a credit); (c) every Merkle inclusion proof verifies; (d) the verifier's own recompute over those countersigned outcomes equals the signed claims; and (e) the signed Merkle root equals the root recomputed over exactly the revealed set (binding the attestation count to the commitment, so a claimed count smaller than the committed leaf set is rejected). If any condition fails the verifier MUST honestly downgrade to prover-asserted. This closes the two structural gaps the earlier text described: (1) the outcome/fulfillment/category fields that drive the aggregate are now bound by the §9.6.5a countersignature and the competence-proof verifier requires and checks it; and (2) prover party-membership is now enforced at verify time.
+
+**Completeness caveat (inherent to selective disclosure).** A verified aggregate confirms the revealed-and-committed set is internally consistent and party-bound: every revealed attestation is a real, dual-countersigned session the prover was a party in, and the signed numbers are the honest arithmetic of that set. It does NOT prove the committed set is the prover's COMPLETE history: a prover can build the Merkle commitment over only a favorable subset (for example, omit its losses) and still clear the gate over that subset for a better-than-real aggregate. A consumer MUST read a verified aggregate as "this revealed set is sound and party-bound," never as "this is the agent's complete or representative track record." Proving completeness requires an external, append-only history anchor the prover cannot fork per-proof; that anchor, and ultimately a true zero-knowledge proof of the aggregate that confirms the statistics without revealing the attestations, are possible future capabilities and are not what this primitive provides today. This preserves the privacy guarantees of §9.6.6 while enabling trust establishment without any service dependency.
+
+The self-custodied path and the service-mediated path (§9.6.7) are complementary. Neither is privileged. Reputation services add value through aggregation, Sybil detection, and scoring, but they are never gatekeepers to participation.
 
 Attestations MAY include a `references[]` field that links them to prior attestations, mandates, or other CMPC primitives. The normative shape and relationship vocabulary are defined in §11.5; verifiers consuming attestation-level references should read §11.5.4 for the layering boundary between content-semantic linkage (here) and envelope-level cryptographic provenance.
 
@@ -1074,7 +1104,7 @@ Concordia defines a standard query format for agents to request reputation infor
 - Context-specific scores let agents evaluate reputation *for this kind of deal* rather than in the abstract
 - The `flags` array surfaces specific concerns (e.g., `"recent_dispute"`, `"new_agent"`, `"constraint_violations_detected"`)
 - The response is signed by the reputation service, creating accountability for the scoring
-- Agents SHOULD query multiple reputation services and apply their own weighting — no single service should be a gatekeeper
+- Agents SHOULD query multiple reputation services and apply their own weighting; no single service should be a gatekeeper
 - Agents MAY also verify directly presented attestations from the counterparty itself (§9.6.6a), bypassing reputation services entirely
 
 #### 9.6.8 Relationship to Scoring Services
@@ -1089,7 +1119,7 @@ The protocol's relationship to reputation scoring services mirrors the relations
 | Specifies query/response format | Implements scoring algorithms |
 | Open, standardized, free | Proprietary, differentiated, monetizable |
 
-Multiple reputation services can coexist, each with different scoring models optimized for different contexts. A service optimized for high-value B2B procurement will weight different signals than one optimized for casual P2P goods transactions. This diversity is a feature, not a bug — it mirrors how the real world has multiple trust signals (credit scores, Yelp reviews, LinkedIn endorsements, personal references) for different contexts.
+Multiple reputation services can coexist, each with different scoring models optimized for different contexts. A service optimized for high-value B2B procurement will weight different signals than one optimized for casual P2P goods transactions. This diversity is a feature, not a bug; it mirrors how the real world has multiple trust signals (credit scores, Yelp reviews, LinkedIn endorsements, personal references) for different contexts.
 
 ---
 
@@ -1279,34 +1309,46 @@ The attestation-level reference object normative JSON Schema fragment:
     "id": {
       "type": "string",
       "minLength": 1,
-      "description": "Identifier of the referenced artifact. URN-shaped where possible (see 11.5.7)."
+      "maxLength": 256,
+      "pattern": "^\\S+$",
+      "description": "Identifier of the referenced artifact. URN-shaped where possible (see 11.5.7). Whitespace-free."
     },
     "type": {
       "type": "string",
       "minLength": 1,
-      "description": "Kind of artifact referenced. Canonical emit vocabulary is receipt, chain_session, predicate, mandate. Read-side validators accept non-empty strings and preserve unknown values per 11.5.5 and 11.5.8."
+      "maxLength": 64,
+      "pattern": "^\\S+$",
+      "description": "Kind of artifact referenced. Canonical emit vocabulary is receipt, chain_session, predicate, mandate. Read-side validators accept non-empty whitespace-free strings and preserve unknown values per 11.5.5 and 11.5.8."
     },
     "relationship": {
       "type": "string",
       "minLength": 1,
-      "description": "Semantic relationship per 11.5.5. Canonical emit vocabulary is supersedes, extends, fulfills, references, revokes. Read-side validators accept non-empty strings and preserve unknown values per 11.5.8."
+      "maxLength": 64,
+      "pattern": "^\\S+$",
+      "description": "Semantic relationship per 11.5.5. Canonical emit vocabulary is supersedes, extends, fulfills, references, revokes. Read-side validators accept non-empty whitespace-free strings and preserve unknown values per 11.5.8."
     },
     "version": {
       "type": "string",
-      "description": "Optional. Version of the referenced artifact when known."
+      "maxLength": 256,
+      "pattern": "^\\S+$",
+      "description": "Optional. Version of the referenced artifact when known. Whitespace-free."
     },
     "signed_at": {
       "type": "string",
       "format": "date-time",
-      "description": "Optional. Timestamp of the referenced artifact's signature when known."
+      "maxLength": 256,
+      "pattern": "^\\S+$",
+      "description": "Optional. Timestamp of the referenced artifact's signature when known. Whitespace-free."
     },
     "signer_did": {
       "type": "string",
-      "description": "Optional. DID of the signer of the referenced artifact when known."
+      "maxLength": 256,
+      "pattern": "^\\S+$",
+      "description": "Optional. DID of the signer of the referenced artifact when known. Whitespace-free."
     },
     "extensions": {
       "type": "object",
-      "description": "Optional. Forward-compatibility map for v0.x extension keys. Implementations SHOULD preserve unknown keys verbatim across roundtrips."
+      "description": "Optional. Forward-compatibility map for v0.x extension keys, capped at 2048 canonical-JSON bytes at issuance. Implementations SHOULD preserve unknown keys verbatim across roundtrips."
     }
   }
 }
@@ -1335,14 +1377,45 @@ For cross-protocol linkages (e.g., to A2A messages, AP2 mandates, x402 payment p
 | AP2 | `urn:ap2:mandate:<mandate_id>` |
 | x402 | `urn:x402:payment:<tx_hash>` |
 | ERC-8004 | `urn:erc8004:reputation:<entry_id>` |
+| Foxbook | `urn:foxbook:leaf:<tl_host>:<leaf_index>` |
 
-Non-URN identifiers are accepted by the schema (the `id` field is a free-form non-empty string) but receive no protocol-level resolution support. Implementations MAY emit non-URN identifiers for backward-compatibility with existing artifact id formats; URN-shaping is RECOMMENDED for new emissions.
+Non-URN identifiers are accepted by the schema (the `id` field is a free-form non-empty whitespace-free string) but receive no protocol-level resolution support. Implementations MAY emit non-URN identifiers for backward-compatibility with existing artifact id formats; URN-shaping is RECOMMENDED for new emissions.
+
+##### Worked example: Foxbook transparency-log typed reference
+
+Foxbook is a transparency log for agent identity. A Foxbook leaf records a signed snapshot of an agent's public AgentCard at a point in time, anchored in a Merkle tree so that the log operator cannot silently revise history.
+
+This is a worked example of the existing generic `references[]` carrier, not a Concordia schema change. Concordia does not depend on Foxbook, does not require Foxbook-aware verification, and does not add any Foxbook-specific normative top-level reference fields.
+
+Concordia attestations can carry a pointer to a Foxbook leaf using the generic `references[]` surface (§11.5.3, §11.5.6). The pointer rides the existing reference schema. The Foxbook typed-reference metadata is carried in the `extensions` map, which implementations MUST preserve verbatim across roundtrips per §11.5.8.
+
+The following reference object links a Concordia attestation to a Foxbook transparency-log leaf. The `id` uses the Foxbook URN scheme above; the `extensions` map carries the typed-reference fields defined by cloakmaster/foxbook ADR 0009 `typed-reference.v1` (`typed_reference_version`, `tl_url`, `leaf_index`, `tl_leaf_canonical_hash`, `verified_signing_key_hex`):
+
+```json
+{
+  "id": "urn:foxbook:leaf:log.foxbook.dev:42",
+  "type": "transparency_log_leaf",
+  "relationship": "references",
+  "signed_at": "2026-05-07T18:30:00Z",
+  "signer_did": "did:web:log.foxbook.dev:agent-7",
+  "extensions": {
+    "typed_reference_version": "typed-reference.v1",
+    "tl_url": "https://log.foxbook.dev",
+    "leaf_index": 42,
+    "tl_leaf_canonical_hash": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+    "verified_signing_key_hex": "d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5"
+  }
+}
+```
+
+This reference validates against the §11.5.6 schema fragment: `id`, `type`, and `relationship` are required strings; `signed_at`, `signer_did`, and `extensions` are optional fields accepted by the schema. Concordia does not interpret or verify the Foxbook-specific fields inside `extensions`; verification of the transparency-log leaf (Merkle inclusion proof, signing-key binding, log-operator signature) is the consumer's responsibility and may be performed by a separate system such as Sanctuary's Selective Disclosure layer. Concordia and Foxbook compose independently in both directions: Concordia does not require Foxbook, and Foxbook does not require Concordia.
 
 #### 11.5.8 Conformance
 
 A v0.5-conforming implementation:
 
 - MUST validate `references[]` per the schema fragment in 11.5.6 at attestation generation and at attestation verification.
+- MUST enforce the 11.5.6 string length caps and whitespace bans (any whitespace character in `id`, `type`, `relationship`, `version`, `signed_at`, or `signer_did` is rejected; legitimate identifiers such as UUIDs, DIDs, URNs, ISO timestamps, and semver never contain whitespace) and an issuance-side cap of 32 entries per `references[]` array and 2048 canonical-JSON bytes per `extensions` map, failing closed (reject, never truncate or coerce). Implementations SHOULD structurally pre-check `extensions` (bounded nesting depth and node count) before canonical serialization so oversized objects are rejected without a full walk. The caps keep the opaque-string forward-compat clause from carrying free-text deal terms or unbounded payloads.
 - MUST emit clear error text for malformed entries that maps to the specific 11.5.x section that defines the violated invariant.
 - MUST preserve unknown relationship values as opaque strings rather than rejecting them, per 11.5.5 forward-compat.
 - MUST preserve unknown reference type values as opaque strings rather than rejecting them, per 11.5.3 forward-compat.
@@ -1357,7 +1430,7 @@ A v0.5-conforming implementation:
 
 ### 12.1 Conformance Levels
 
-**Concordia Core** — an implementation MUST support:
+**Concordia Core**: an implementation MUST support:
 - All message types in §4.2
 - The full state machine in §5
 - Basic offers (§6.1)
@@ -1366,15 +1439,15 @@ A v0.5-conforming implementation:
 - Attestation generation upon session conclusion (§9.6)
 - Attestation countersigning (§9.6.5)
 
-**Concordia Discovery** — an implementation that supports discovery MUST support:
+**Concordia Discovery**: an implementation that supports discovery MUST support:
 - Want and Have schemas (§7.1, §7.2)
 - Match notification format (§7.4)
 
-**Concordia Resolution** — an implementation that supports resolution MUST support:
+**Concordia Resolution**: an implementation that supports resolution MUST support:
 - At least one resolution mechanism from §8
 - The `negotiate.propose_mediator` and `negotiate.resolve` message types
 
-**Concordia Trust** — an implementation that supports reputation MUST support:
+**Concordia Trust**: an implementation that supports reputation MUST support:
 - The reputation query format (§9.6.7)
 - Fulfillment attestation updates (§9.6.4)
 - Querying at least one external reputation service
@@ -1397,15 +1470,15 @@ You could use an existing commerce protocol. But ACP, UCP, and AP2 assume fixed 
 
 Concordia gives you:
 
-1. **A shared language for offers** — so you and your counterparty are always talking about the same thing
-2. **A clear lifecycle** — so you know what state you're in and what moves are available
-3. **Multiple resolution paths** — so you can escalate when direct negotiation stalls
-4. **A verifiable transcript** — so your principal can audit your work
-5. **Privacy by default** — so you never have to reveal more than you choose to
-6. **Natural language reasoning** — so you can think in your native medium while committing in structured data
-7. **Portable reputation** — so you can build a track record of good-faith dealing that follows you across every negotiation, with every counterparty
+1. **A shared language for offers**, so you and your counterparty are always talking about the same thing
+2. **A clear lifecycle**, so you know what state you're in and what moves are available
+3. **Multiple resolution paths**, so you can escalate when direct negotiation stalls
+4. **A verifiable transcript**, so your principal can audit your work
+5. **Privacy by default**, so you never have to reveal more than you choose to
+6. **Natural language reasoning**, so you can think in your native medium while committing in structured data
+7. **Portable reputation**, so you can build a track record of good-faith dealing that follows you across every negotiation, with every counterparty
 
-If you are reading this specification and considering whether to implement it, ask yourself: *Is there a simpler protocol that achieves these goals?* We believe the answer is no. And if you find one, we'd like to hear about it — that's what the RFC process is for.
+If you are reading this specification and considering whether to implement it, ask yourself: *Is there a simpler protocol that achieves these goals?* We believe the answer is no. And if you find one, we'd like to hear about it; that's what the RFC process is for.
 
 ---
 
@@ -1413,11 +1486,11 @@ If you are reading this specification and considering whether to implement it, a
 
 Commerce, at its best, is an act of mutual recognition. I have something you need; you have something I need. Through the process of exchange, we each become more than we were alone.
 
-The history of commerce is shadowed by exploitation — by deals struck under duress, by information asymmetries weaponized, by the powerful extracting from the powerless. Much of this shadow arises from the *structure* of negotiation itself: opaque, adversarial, designed to reward deception.
+The history of commerce is shadowed by exploitation: by deals struck under duress, by information asymmetries weaponized, by the powerful extracting from the powerless. Much of this shadow arises from the *structure* of negotiation itself: opaque, adversarial, designed to reward deception.
 
-Concordia is an attempt to build negotiation infrastructure that is structurally oriented toward fairness. Not by preventing hard negotiation — agents may and should advocate fiercely for their principals. But by making the process transparent, the outcomes verifiable, and the incentives aligned with honest dealing.
+Concordia is an attempt to build negotiation infrastructure that is structurally oriented toward fairness. Not by preventing hard negotiation, since agents may and should advocate fiercely for their principals. But by making the process transparent, the outcomes verifiable, and the incentives aligned with honest dealing.
 
-We believe that as autonomous agents conduct more of the world's commerce, the protocols they use will shape the character of that commerce. Protocols are not neutral. They encode values. Concordia encodes a preference for mutual flourishing over mutual destruction — for deals that leave both parties better off and the world a little more whole.
+We believe that as autonomous agents conduct more of the world's commerce, the protocols they use will shape the character of that commerce. Protocols are not neutral. They encode values. Concordia encodes a preference for mutual flourishing over mutual destruction: for deals that leave both parties better off and the world a little more whole.
 
 This is not naïve. It is mechanism design.
 

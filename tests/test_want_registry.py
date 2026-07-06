@@ -24,6 +24,7 @@ from concordia.want_registry import (
     Have,
     Match,
     WantRegistry,
+    MAX_TTL_SECONDS,
     categories_compatible,
     locations_compatible,
     compute_term_overlap,
@@ -80,6 +81,23 @@ class TestLocationCompatibility:
         )
         assert ok is True
 
+    def test_missing_coordinates_are_lenient(self):
+        ok, dist = locations_compatible(
+            {"within_km": 10, "label": "San Francisco"},
+            {"coordinates": {"lat": 37.78}},
+        )
+        assert ok is True
+        assert dist is None
+
+    def test_flat_lat_lng_coordinates(self):
+        ok, dist = locations_compatible(
+            {"within_km": 2, "lat": 37.7749, "lng": -122.4194},
+            {"lat": 37.775, "lng": -122.4195},
+        )
+        assert ok is True
+        assert dist is not None
+        assert dist < 2
+
     def test_close_enough(self):
         want_loc = {"within_km": 50, "of": {"lat": 37.7749, "lng": -122.4194}}
         have_loc = {"coordinates": {"lat": 37.7849, "lng": -122.4094}}
@@ -99,6 +117,93 @@ class TestLocationCompatibility:
         # SF to LA ≈ 559 km
         dist = _haversine_km(37.7749, -122.4194, 34.0522, -118.2437)
         assert 550 < dist < 570
+
+
+# ===================================================================
+# Malformed-location poison-pill DoS (audit 2026-06-09 / H2)
+# ===================================================================
+
+class TestMalformedLocationRejected:
+    """A Want/Have with a non-numeric location must be rejected at ingest so it
+    can never be stored and later crash the Haversine math for matching peers.
+    The matching path is also hardened to degrade malformed locations to "no
+    constraint" rather than crash.
+    """
+
+    def test_post_have_rejects_non_numeric_coordinates(self):
+        reg = WantRegistry()
+        with pytest.raises(ValueError, match="must be a number"):
+            reg.post_have(
+                agent_id="attacker", category="electronics", terms={},
+                location={"coordinates": {"lat": "x", "lng": "y"}},
+            )
+        assert reg.list_haves() == []  # nothing stored
+
+    def test_post_want_rejects_non_numeric_within_km(self):
+        reg = WantRegistry()
+        with pytest.raises(ValueError, match="within_km must be a number"):
+            reg.post_want(
+                agent_id="buyer", category="electronics", terms={},
+                location={"lat": 1.0, "lng": 2.0, "within_km": "50"},
+            )
+
+    def test_post_rejects_non_dict_location(self):
+        reg = WantRegistry()
+        with pytest.raises(ValueError, match="location must be an object"):
+            reg.post_have(
+                agent_id="a", category="electronics", terms={},
+                location=["not", "a", "dict"],  # type: ignore[arg-type]
+            )
+
+    def test_stored_bad_location_does_not_crash_matching(self):
+        # Defense-in-depth: even if a malformed Have bypassed ingest validation
+        # (e.g. built directly / legacy data), a victim's post must not crash.
+        reg = WantRegistry()
+        terms = {"price": {"value": 100}}
+        bad = Have(
+            id="h_bad", agent_id="atk", category="electronics", terms=terms,
+            location={"coordinates": {"lat": "x", "lng": "y"}},
+        )
+        reg._haves["h_bad"] = bad
+        reg._agent_haves.setdefault("atk", set()).add("h_bad")
+        # Should not raise; bad location degrades to "no constraint".
+        want, matches = reg.post_want(
+            agent_id="victim", category="electronics", terms=terms,
+            location={"lat": 1.0, "lng": 2.0, "within_km": 50},
+        )
+        assert len(matches) == 1
+
+    def test_non_numeric_term_bounds_do_not_crash_matching(self):
+        # The term-side analogue: a non-numeric min/max must fall through, not
+        # crash the `>=` comparison.
+        reg = WantRegistry()
+        bad = Have(
+            id="h2", agent_id="atk", category="electronics",
+            terms={"price": {"min": "abc"}},
+        )
+        reg._haves["h2"] = bad
+        reg._agent_haves.setdefault("atk", set()).add("h2")
+        want, matches = reg.post_want(
+            agent_id="v", category="electronics", terms={"price": {"max": 500}},
+        )
+        # No crash; the malformed numeric term simply does not produce a price
+        # overlap. (Match may or may not form on other grounds; the invariant
+        # under test is "no exception".)
+        assert isinstance(matches, list)
+
+    def test_valid_location_still_matches(self):
+        # Regression guard: the validation must not break legitimate locations.
+        reg = WantRegistry()
+        terms = {"price": {"value": 100}}
+        reg.post_have(
+            agent_id="seller", category="electronics", terms=terms,
+            location={"coordinates": {"lat": 37.77, "lng": -122.42}},
+        )
+        want, matches = reg.post_want(
+            agent_id="buyer", category="electronics", terms=terms,
+            location={"of": {"lat": 37.78, "lng": -122.41}, "within_km": 50},
+        )
+        assert len(matches) == 1
 
 
 # ===================================================================
@@ -151,6 +256,13 @@ class TestTermOverlap:
         overlap, score = compute_term_overlap(want, have)
         assert score == 0.0
 
+    def test_unknown_condition_values_are_lenient(self):
+        want = {"condition": {"min": "collector_grade"}}
+        have = {"condition": {"value": "archival"}}
+        overlap, score = compute_term_overlap(want, have)
+        assert overlap["condition"] == {"value": "archival", "meets_minimum": None}
+        assert score == 0.5
+
     def test_fuzzy_item(self):
         want = {"item": {"match": "fuzzy", "value": "Canon EOS R5"}}
         have = {"item": {"value": "Canon EOS R5"}}
@@ -200,6 +312,15 @@ class TestTermOverlap:
         _, score_full = compute_term_overlap(want2, have2)
 
         assert score_full > score_partial
+
+    def test_unrecognized_term_structure_is_preserved_with_neutral_score(self):
+        want = {"availability": {"window": ["morning", "evening"]}}
+        have = {"availability": {"timezone": "America/Los_Angeles"}}
+
+        overlap, score = compute_term_overlap(want, have)
+
+        assert overlap == {"availability": {"want": want["availability"], "have": have["availability"]}}
+        assert score == 0.5
 
 
 # ===================================================================
@@ -279,6 +400,21 @@ class TestWantModel:
         assert d["id"] == "w1"
         assert d["category"] == "electronics"
 
+    def test_to_dict_includes_optional_location_and_metadata(self):
+        w = Want(
+            id="w1",
+            agent_id="buyer",
+            category="electronics",
+            terms={},
+            location={"lat": 37.77, "lng": -122.42},
+            metadata={"source": "fixture"},
+        )
+
+        d = w.to_dict()
+
+        assert d["location"] == {"lat": 37.77, "lng": -122.42}
+        assert d["metadata"] == {"source": "fixture"}
+
     def test_expiration(self):
         w = Want(
             id="w1", agent_id="buyer", category="electronics",
@@ -298,6 +434,21 @@ class TestHaveModel:
         d = h.to_dict()
         assert d["type"] == "concordia.have"
         assert d["id"] == "h1"
+
+    def test_to_dict_includes_optional_location_and_metadata(self):
+        h = Have(
+            id="h1",
+            agent_id="seller",
+            category="electronics",
+            terms={},
+            location={"coordinates": {"lat": 37.77, "lng": -122.42}},
+            metadata={"condition_note": "boxed"},
+        )
+
+        d = h.to_dict()
+
+        assert d["location"] == {"coordinates": {"lat": 37.77, "lng": -122.42}}
+        assert d["metadata"] == {"condition_note": "boxed"}
 
     def test_expiration(self):
         h = Have(
@@ -498,6 +649,182 @@ class TestWantRegistry:
         assert stats["total_matches"] == 1
         assert stats["unique_agents"] == 2
 
+    def test_get_expired_want_removes_agent_index(self):
+        reg = WantRegistry()
+        want, _ = reg.post_want(agent_id="buyer", category="electronics", terms={}, ttl=60)
+        want.expires_at = time.time() - 1
+
+        assert reg.get_want(want.id) is None
+        assert reg.list_wants(agent_id="buyer") == []
+
+    def test_get_expired_have_removes_agent_index(self):
+        reg = WantRegistry()
+        have, _ = reg.post_have(agent_id="seller", category="electronics", terms={}, ttl=60)
+        have.expires_at = time.time() - 1
+
+        assert reg.get_have(have.id) is None
+        assert reg.list_haves(agent_id="seller") == []
+
+    def test_find_matches_filters_by_want_have_and_limit(self):
+        reg = WantRegistry()
+        want, _ = reg.post_want(
+            agent_id="buyer",
+            category="electronics",
+            terms={"price": {"max": 2000}},
+        )
+        have_1, _ = reg.post_have(
+            agent_id="seller_1",
+            category="electronics",
+            terms={"price": {"min": 1000}},
+        )
+        reg.post_have(
+            agent_id="seller_2",
+            category="electronics",
+            terms={"price": {"min": 1500}},
+        )
+
+        assert len(reg.find_matches(want_id=want.id)) == 2
+        assert len(reg.find_matches(have_id=have_1.id)) == 1
+        assert len(reg.find_matches(agent_id="seller_1")) == 1
+        assert len(reg.find_matches(want_id=want.id, limit=1)) == 1
+
+    def test_get_match_returns_stored_match(self):
+        reg = WantRegistry()
+        reg.post_want(agent_id="buyer", category="electronics", terms={"price": {"max": 2000}})
+        _, matches = reg.post_have(
+            agent_id="seller",
+            category="electronics",
+            terms={"price": {"min": 1000}},
+        )
+
+        assert reg.get_match(matches[0].match_id) is matches[0]
+        assert reg.get_match("missing") is None
+
+    def test_match_storage_cap_returns_matches_without_storing_over_cap(self):
+        reg = WantRegistry()
+        reg.MAX_MATCHES = 1
+        reg.post_have(
+            agent_id="seller_1",
+            category="electronics",
+            terms={"price": {"min": 1000}},
+        )
+        reg.post_have(
+            agent_id="seller_2",
+            category="electronics",
+            terms={"price": {"min": 1200}},
+        )
+
+        want, matches = reg.post_want(
+            agent_id="buyer",
+            category="electronics",
+            terms={"price": {"max": 2000}},
+        )
+
+        assert len(matches) == 2
+        assert len(reg.find_matches(want_id=want.id)) == 1
+        assert reg.stats()["total_matches"] == 1
+
+
+class TestWantRegistryQuotas:
+
+    def test_want_quota_rejects_at_cap(self, monkeypatch):
+        import concordia.want_registry as want_registry
+
+        monkeypatch.setattr(want_registry, "MAX_ACTIVE_WANTS_PER_AGENT", 2)
+        reg = WantRegistry()
+        reg.post_want(agent_id="buyer", category="electronics", terms={})
+        reg.post_want(agent_id="buyer", category="books", terms={})
+
+        with pytest.raises(ValueError, match="Want registry limit reached"):
+            reg.post_want(agent_id="buyer", category="furniture", terms={})
+
+    def test_want_quota_does_not_count_expired_entries(self, monkeypatch):
+        import concordia.want_registry as want_registry
+
+        monkeypatch.setattr(want_registry, "MAX_ACTIVE_WANTS_PER_AGENT", 1)
+        reg = WantRegistry()
+        want, _ = reg.post_want(
+            agent_id="buyer", category="electronics", terms={}, ttl=1,
+        )
+        want.expires_at = time.time() - 1
+
+        replacement, _ = reg.post_want(
+            agent_id="buyer", category="books", terms={},
+        )
+
+        assert replacement.agent_id == "buyer"
+        assert reg.list_wants(agent_id="buyer") == [replacement]
+
+    def test_want_quota_isolated_by_agent(self, monkeypatch):
+        import concordia.want_registry as want_registry
+
+        monkeypatch.setattr(want_registry, "MAX_ACTIVE_WANTS_PER_AGENT", 1)
+        reg = WantRegistry()
+        reg.post_want(agent_id="buyer_a", category="electronics", terms={})
+
+        want, _ = reg.post_want(
+            agent_id="buyer_b", category="electronics", terms={},
+        )
+
+        assert want.agent_id == "buyer_b"
+
+    def test_have_quota_rejects_at_cap(self, monkeypatch):
+        import concordia.want_registry as want_registry
+
+        monkeypatch.setattr(want_registry, "MAX_ACTIVE_HAVES_PER_AGENT", 2)
+        reg = WantRegistry()
+        reg.post_have(agent_id="seller", category="electronics", terms={})
+        reg.post_have(agent_id="seller", category="books", terms={})
+
+        with pytest.raises(ValueError, match="Have registry limit reached"):
+            reg.post_have(agent_id="seller", category="furniture", terms={})
+
+    def test_have_quota_does_not_count_expired_entries(self, monkeypatch):
+        import concordia.want_registry as want_registry
+
+        monkeypatch.setattr(want_registry, "MAX_ACTIVE_HAVES_PER_AGENT", 1)
+        reg = WantRegistry()
+        have, _ = reg.post_have(
+            agent_id="seller", category="electronics", terms={}, ttl=1,
+        )
+        have.expires_at = time.time() - 1
+
+        replacement, _ = reg.post_have(
+            agent_id="seller", category="books", terms={},
+        )
+
+        assert replacement.agent_id == "seller"
+        assert reg.list_haves(agent_id="seller") == [replacement]
+
+    def test_ttl_above_max_rejected(self):
+        reg = WantRegistry()
+
+        with pytest.raises(ValueError, match="TTL exceeds maximum"):
+            reg.post_want(
+                agent_id="buyer", category="electronics", terms={},
+                ttl=MAX_TTL_SECONDS + 1,
+            )
+        with pytest.raises(ValueError, match="TTL exceeds maximum"):
+            reg.post_have(
+                agent_id="seller", category="electronics", terms={},
+                ttl=MAX_TTL_SECONDS + 1,
+            )
+
+    def test_ttl_at_max_accepted(self):
+        reg = WantRegistry()
+
+        want, _ = reg.post_want(
+            agent_id="buyer", category="electronics", terms={},
+            ttl=MAX_TTL_SECONDS,
+        )
+        have, _ = reg.post_have(
+            agent_id="seller", category="electronics", terms={},
+            ttl=MAX_TTL_SECONDS,
+        )
+
+        assert want.ttl == MAX_TTL_SECONDS
+        assert have.ttl == MAX_TTL_SECONDS
+
 
 # ===================================================================
 # MCP Tool integration tests
@@ -507,7 +834,7 @@ class TestWantRegistryMcpTools:
 
     @pytest.fixture(autouse=True)
     def reset_registry(self):
-        from concordia.mcp_server import _want_registry
+        from concordia.mcp_server import _want_registry, _registry
         _want_registry._wants.clear()
         _want_registry._haves.clear()
         _want_registry._matches.clear()
@@ -516,6 +843,7 @@ class TestWantRegistryMcpTools:
         _auth._agent_tokens.clear()
         _auth._session_tokens.clear()
         _auth._token_to_agent.clear()
+        _registry._agents.clear()
         yield
 
     def _parse(self, result_str: str) -> dict:

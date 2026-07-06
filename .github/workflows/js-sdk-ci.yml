@@ -14,19 +14,34 @@ jobs:
       matrix:
         node-version: [20, 22]
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1 (resolved 2026-05-18)
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0 (resolved 2026-05-18)
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v4.3.1 (resolved 2026-05-18)
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v4.4.0 (resolved 2026-05-18)
         with:
           node-version: ${{ matrix.node-version }}
       - name: Install dependencies
         working-directory: js-sdk
-        run: npm install
+        run: npm ci
       - name: Typecheck
         working-directory: js-sdk
         run: npm run typecheck
+      - name: Lint (eslint)
+        # Hard-fail gate: a new lint finding blocks the merge. Config:
+        # js-sdk/eslint.config.js (typescript-eslint flat config).
+        working-directory: js-sdk
+        run: npm run lint
+      - name: Format check (prettier)
+        # Hard-fail gate: unformatted code blocks the merge. Run `npm run format`
+        # locally to fix. Config: js-sdk/.prettierrc.json.
+        working-directory: js-sdk
+        run: npm run format:check
       - name: Test
         working-directory: js-sdk
         run: npm test
+      - name: Test-count floor (no silent coverage loss)
+        # Hard-fail gate: fails if the vitest test count drops below the integer
+        # in js-sdk/.test-baseline. Catches silently-deleted or skipped tests.
+        working-directory: js-sdk
+        run: node scripts/test-floor.mjs
       - name: Build
         working-directory: js-sdk
         run: npm run build

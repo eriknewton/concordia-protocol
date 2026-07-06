@@ -40,6 +40,11 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=4.0",
     "rfc8785>=0.1.4",
+    "ruff>=0.6",
+    # Type stubs for the `jsonschema` runtime dependency so `mypy concordia`
+    # type-checks the schema-validation modules instead of treating the import
+    # as untyped.
+    "types-jsonschema>=4.20",
     "tomli; python_version < '3.11'",
 ]
 
@@ -54,10 +59,58 @@ concordia-mcp-server = "concordia.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["concordia"]
-force-include = { "concordia/py.typed" = "concordia/py.typed" }
+# Ship the JSON schemas INSIDE the package (concordia/schemas) so schema-backed
+# validators work in an installed wheel. Without this, schemas/ lived only at
+# the repo root and every pip user hit FileNotFoundError. See
+# concordia/schema_validator.py for the packaged-or-repo-root resolution.
+force-include = { "concordia/py.typed" = "concordia/py.typed", "schemas" = "concordia/schemas" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
     "integration: end-to-end multi-agent integration tests",
 ]
+
+[tool.ruff]
+# Lint-only adoption (no `ruff format` this pass — whole-tree reformatting would
+# be a giant unreviewable diff). target-version tracks requires-python = ">=3.10".
+target-version = "py310"
+# Generous to match the existing code; E501 (line-too-long) is disabled below so
+# this only bounds the few rules that respect it. Reformatting is a future option.
+line-length = 100
+
+[tool.ruff.lint]
+# Pyflakes (F), a curated pycodestyle subset (E), and import sorting (I).
+select = ["E", "F", "I"]
+ignore = [
+    # Line length is intentionally not enforced as a lint gate: the tree has many
+    # long lines and we are NOT running `ruff format` this pass. Revisit with a
+    # dedicated formatting wave.
+    "E501",
+    # Ambiguous-variable-name and module-import-position are noisy against the
+    # existing style without changing behavior; out of scope for this pass.
+    "E741",
+    "E402",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["concordia"]
+
+[tool.mypy]
+# Type-checks the shipped package (`mypy concordia`). The gate is honest: the
+# tree passes with these flags and zero blanket per-module `ignore_errors`.
+# `disallow_untyped_defs`/full `--strict` are intentionally NOT enabled here —
+# turning them on surfaces a large body of legacy untyped-def churn that is a
+# future hardening wave, not this one. The flags below are the strict-adjacent
+# subset the codebase already satisfies, so regressions (a new None deref, a
+# silent str/int equality bug, a stale `type: ignore`) fail CI.
+python_version = "3.10"
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true
+strict_equality = true
+check_untyped_defs = true
+# `warn_unreachable` is deliberately off: this protocol library keeps defensive
+# `isinstance` guards against malformed external JSON whose static type says the
+# branch is unreachable (e.g. concordia/cmpc/revocation.py). Those guards are
+# correct runtime behavior, not dead code.

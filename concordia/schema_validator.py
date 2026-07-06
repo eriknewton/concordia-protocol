@@ -7,19 +7,43 @@ and attestations against the attestation.schema.json.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+import re
 import warnings
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import jsonschema
 
 from .attestation import REFERENCE_RELATIONSHIPS, REFERENCE_TYPES
 
-# Path to the bundled schemas directory
-_SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
+# Path to the bundled schemas directory.
+#
+# In an installed wheel the schemas are force-included INSIDE the package at
+# ``concordia/schemas`` (see pyproject ``[tool.hatch.build.targets.wheel]``),
+# so they resolve next to this module. In a source checkout that packaged copy
+# does not exist on disk, so we fall back to the repo-root ``schemas/`` tree.
+# Without the packaged copy, every schema-backed validator (attestation,
+# approval-receipt, fulfillment, message) raised FileNotFoundError for pip
+# users while passing in dev — a silent product-breaking gap.
+_PACKAGED_SCHEMAS_DIR = Path(__file__).resolve().parent / "schemas"
+_REPO_SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
+_SCHEMAS_DIR = (
+    _PACKAGED_SCHEMAS_DIR if _PACKAGED_SCHEMAS_DIR.is_dir() else _REPO_SCHEMAS_DIR
+)
 _FORMAT_CHECKER = jsonschema.FormatChecker()
+_FREE_TEXT_TERM_ERROR = (
+    "free-text field must not contain obvious raw deal terms"
+)
+_RAW_TERM_PATTERNS = (
+    re.compile(r"[$€£¥]\s*\d", re.IGNORECASE),
+    re.compile(r"\b(?:USD|EUR|GBP|JPY|CAD|AUD|CHF|CNY|INR)\s*\d", re.IGNORECASE),
+    re.compile(r"\b\d+(?:[.,]\d+)?\s*(?:USD|EUR|GBP|JPY|CAD|AUD|CHF|CNY|INR)\b", re.IGNORECASE),
+    re.compile(r"\bprice\s*:", re.IGNORECASE),
+    re.compile(r"\b(?:qty|quantity)\s*[:=]?\s*\d+\b", re.IGNORECASE),
+    re.compile(r"\b\d+\s*(?:units?|items?|pcs|pieces)\b", re.IGNORECASE),
+)
 
 
 @_FORMAT_CHECKER.checks("date-time", raises=ValueError)
@@ -42,7 +66,39 @@ def _load_schema(name: str) -> dict[str, Any]:
     """Load a JSON schema from the schemas directory."""
     path = _SCHEMAS_DIR / name
     with open(path) as f:
-        return json.load(f)
+        return cast(dict[str, Any], json.load(f))
+
+
+# Schema-side constraint values (patterns, enum lists, subschemas) can be
+# long; truncate the rendering so error strings stay log-friendly. The
+# truncation only ever drops schema-side text, never instance content.
+_MAX_CONSTRAINT_RENDER_LENGTH = 120
+
+
+def _format_validation_error(error: jsonschema.ValidationError) -> str:
+    """Format a jsonschema ValidationError without echoing the instance.
+
+    jsonschema's default ``error.message`` embeds the rejected instance
+    value for pattern / maxLength / enum / type / oneOf failures, so
+    building errors from it can echo raw rejected deal text back through
+    MCP responses and logs (parse-boundary posture: never echo
+    attacker-controlled input). Instead, report the JSON path plus the
+    violated constraint: the validator keyword and its schema-side value.
+
+    ``required`` failures keep the upstream message because it names only
+    schema-side property names, never instance content, and the missing
+    property name is the whole diagnostic.
+    """
+    if error.validator == "required":
+        return f"{error.json_path}: {error.message}"
+    keyword = error.validator if error.validator is not None else "schema"
+    try:
+        rendered = json.dumps(error.validator_value, sort_keys=True)
+    except (TypeError, ValueError):
+        rendered = "<unrenderable>"
+    if len(rendered) > _MAX_CONSTRAINT_RENDER_LENGTH:
+        rendered = rendered[:_MAX_CONSTRAINT_RENDER_LENGTH] + "..."
+    return f"{error.json_path}: violates '{keyword}' constraint: {rendered}"
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +176,7 @@ def validate_message(message: dict[str, Any]) -> list[str]:
         format_checker=_FORMAT_CHECKER,
     )
     for error in validator.iter_errors(message):
-        errors.append(f"{error.json_path}: {error.message}")
+        errors.append(_format_validation_error(error))
     return errors
 
 
@@ -136,7 +192,8 @@ def validate_attestation(attestation: dict[str, Any]) -> list[str]:
         format_checker=_FORMAT_CHECKER,
     )
     for error in validator.iter_errors(attestation):
-        errors.append(f"{error.json_path}: {error.message}")
+        errors.append(_format_validation_error(error))
+    errors.extend(_validate_attestation_free_text(attestation))
     if not errors:
         _warn_on_noncanonical_references(attestation)
     return errors
@@ -153,7 +210,7 @@ def validate_fulfillment_attestation(attestation: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     validator = jsonschema.Draft202012Validator(schema)
     for error in validator.iter_errors(attestation):
-        errors.append(f"{error.json_path}: {error.message}")
+        errors.append(_format_validation_error(error))
 
     agreement_id = attestation.get("agreement_attestation_id")
     references = attestation.get("references", [])
@@ -184,7 +241,7 @@ def validate_approval_receipt(receipt: dict[str, Any]) -> list[str]:
         format_checker=_FORMAT_CHECKER,
     )
     for error in validator.iter_errors(receipt):
-        errors.append(f"{error.json_path}: {error.message}")
+        errors.append(_format_validation_error(error))
     return errors
 
 
@@ -215,6 +272,52 @@ def _warn_on_noncanonical_references(attestation: dict[str, Any]) -> None:
                 UserWarning,
                 stacklevel=3,
             )
+
+
+def _validate_attestation_free_text(attestation: Any) -> list[str]:
+    """Best-effort defense-in-depth check for raw terms in attestation text.
+
+    The schema rejects structured term fields. This scanner is intentionally
+    narrower: it catches obvious accidental raw-term strings without treating
+    free text as the privacy guarantee, and without echoing matched content.
+    """
+    if not isinstance(attestation, dict):
+        return []
+
+    errors: list[str] = []
+    candidates: list[tuple[str, Any]] = [
+        ("$.summary", attestation.get("summary")),
+    ]
+
+    fulfillment = attestation.get("fulfillment")
+    if isinstance(fulfillment, dict):
+        disputes = fulfillment.get("disputes")
+        if isinstance(disputes, list):
+            for index, dispute in enumerate(disputes):
+                if isinstance(dispute, dict):
+                    candidates.append(
+                        (
+                            f"$.fulfillment.disputes[{index}].description",
+                            dispute.get("description"),
+                        )
+                    )
+        counterparty = fulfillment.get("counterparty_attestation")
+        if isinstance(counterparty, dict):
+            candidates.append(
+                (
+                    "$.fulfillment.counterparty_attestation.notes",
+                    counterparty.get("notes"),
+                )
+            )
+
+    for path, value in candidates:
+        if isinstance(value, str) and _contains_obvious_raw_term(value):
+            errors.append(f"{path}: {_FREE_TEXT_TERM_ERROR}")
+    return errors
+
+
+def _contains_obvious_raw_term(value: str) -> bool:
+    return any(pattern.search(value) for pattern in _RAW_TERM_PATTERNS)
 
 
 def is_valid_message(message: dict[str, Any]) -> bool:

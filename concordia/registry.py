@@ -17,18 +17,18 @@ negotiate with, and what do they support?"
 
 from __future__ import annotations
 
-import time
-import uuid
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
-
 
 # ---------------------------------------------------------------------------
 # Data models
 # ---------------------------------------------------------------------------
 
 PROTOCOL_VERSION = "0.1.0"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -99,8 +99,16 @@ class RegisteredAgent:
             )
             age = (datetime.now(timezone.utc) - last).total_seconds()
             return age > self.ttl
-        except (ValueError, TypeError):
-            return False
+        except (ValueError, TypeError) as exc:
+            logger.warning(
+                "agent_registry_invalid_last_seen_fail_closed",
+                extra={
+                    "agent_id": self.agent_id,
+                    "last_seen": self.last_seen,
+                    "error_type": type(exc).__name__,
+                },
+            )
+            return True
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -141,8 +149,14 @@ class RegisteredAgent:
             "type": "concordia.preferred",
             "version": PROTOCOL_VERSION,
             "agent_id": self.agent_id,
+            # Honesty (H4): a registration is a self-asserted claim, not a
+            # cryptographic guarantee. `registered` says "this agent enrolled
+            # and speaks Concordia"; `verified` is reserved for signed
+            # capability records, which do not exist yet — so it stays False
+            # until a record is actually signed.
+            "registered": True,
             "signed": False,
-            "verified": True,
+            "verified": False,
             "registered_at": self.registered_at,
             "capabilities": {
                 "roles": self.capabilities.roles,

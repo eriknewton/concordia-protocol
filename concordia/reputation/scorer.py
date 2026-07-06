@@ -21,11 +21,10 @@ diversity.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from .store import AttestationStore, StoredAttestation
-
 
 # ---------------------------------------------------------------------------
 # Score components
@@ -255,7 +254,15 @@ class ReputationScorer:
 
             if status == "agreed":
                 agreements += 1
-                rounds_to_agreement.append(outcome.get("rounds", 0))
+                # Defense in depth: ingest validation (store._validate) already
+                # rejects a non-int / negative outcome.rounds, but outcome is an
+                # unsigned field. If any future path bypassed ingest, a stray
+                # non-int here would crash the sort below. Skip values that are
+                # not valid non-negative ints rather than crash (bool excluded,
+                # as it is an int subclass).
+                rounds = outcome.get("rounds", 0)
+                if isinstance(rounds, int) and not isinstance(rounds, bool) and rounds >= 0:
+                    rounds_to_agreement.append(rounds)
 
             # Fulfillment tracking
             fulfillment = att.get("fulfillment")

@@ -3,22 +3,25 @@
 Posts behavioral metadata from concluded Concordia sessions to the Verascore
 transaction ingestion API. Only behavioral signals are sent (rounds, duration,
 outcome, concession count) — never raw deal terms, prices, or counterparty
-names. This is a hard constraint from §9.6 and CLAUDE.md rule #8.
+names. This is a hard constraint from §9.6 and the no-raw-deal-terms privacy
+invariant (AGENTS.md rule #8).
 
 Requires VERASCORE_ENABLED=true environment variable to activate, ensuring
-no external data is transmitted without explicit user intent (CLAUDE.md rule #1).
+no external data is transmitted without explicit user intent (the
+no-external-transmit-without-intent invariant, AGENTS.md rule #1).
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
-import urllib.request
 import urllib.error
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Callable
+import urllib.request
+from typing import TYPE_CHECKING, Any, Callable, cast
 
+from .cosign import CounterpartySigner, build_cosigned_receipt, did_key_for
 from .signing import KeyPair, canonical_json
 
 if TYPE_CHECKING:
@@ -29,6 +32,12 @@ _logger = logging.getLogger("concordia.verascore")
 VERASCORE_ENABLED_ENV = "VERASCORE_ENABLED"
 VERASCORE_ENDPOINT_ENV = "VERASCORE_ENDPOINT"
 DEFAULT_VERASCORE_ENDPOINT = "https://verascore.ai"
+
+
+def _b64url(raw: bytes) -> str:
+    """Unpadded base64url, matching Verascore's bufferToBase64url / the decode
+    in base64urlToBuffer (src/lib/crypto.ts), which re-adds padding on verify."""
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 
 def compute_negotiation_competence(
@@ -65,6 +74,85 @@ def compute_negotiation_competence(
     return max(0, min(100, score))
 
 
+def build_publish_body(
+    session_data: dict[str, Any],
+    key_pair: KeyPair,
+    agent_did: str,
+    *,
+    counterparty_signer: CounterpartySigner | None = None,
+) -> dict[str, Any]:
+    """Build the complete signed ``/api/publish`` envelope (pure, no I/O).
+
+    This is the single source of truth for the Concordia→Verascore transport
+    envelope shape. ``VerascoreClient.report_concordia_receipt`` POSTs exactly
+    this object; the cross-repo fixture generator emits exactly this object so
+    Verascore's test suite can verify it with the real route-layer functions.
+
+    Raises:
+        ValueError: If the envelope cannot be built completely — e.g.
+            ``agent_did`` does not match the signing key's ``did:key``, or
+            the receipt is not canonicalizable. A partial or unverifiable
+            envelope is never produced (the fail-closed invariant, AGENTS.md
+            rule #5: never silently degrade to a less-secure behavior on error).
+    """
+    # ── Publisher identity must equal the signing key's did:key ──────────
+    # Verascore's /api/publish IGNORES any caller-supplied agentId and
+    # derives the publisher identity from the verified Ed25519 publicKey
+    # (deriveAgentId -> did:key:z<base64url(0xed01||pubkey)>, see
+    # src/lib/crypto.ts). The receipt's publisher party, the envelope's
+    # publicKey, and data.did must all resolve to that same identity or the
+    # publish is unverifiable. Fail closed if the caller passed a DID that
+    # is not this key's did:key.
+    expected_did = did_key_for(key_pair)
+    if agent_did != expected_did:
+        raise ValueError(
+            "agent_did does not match the signing key's did:key; Verascore "
+            "derives the publisher identity from the publicKey, so they must "
+            f"be identical (expected {expected_did!r}, got {agent_did!r})"
+        )
+
+    # Bilateral receipt (parties[] with the counterparty co-signature when
+    # available). This is the H1/H2 producer half: Verascore counts a
+    # receipt toward a trust-bearing score only if the named counterparty
+    # cryptographically co-signed it. Fail-closed to single-signed.
+    receipt = build_cosigned_receipt(
+        session_data,
+        agent_did,
+        counterparty_signer=counterparty_signer,
+    )
+
+    # ── Build the signed `data` object Verascore consumes ───────────────
+    # The route extracts the receipt from data.receipt (extractConcordia-
+    # ReceiptPayload) and canonicalizes THAT object for the co-signature
+    # check, so the receipt must be nested untouched (no sibling keys mixed
+    # in). data.did lets the route bind the publish to this publicKey and
+    # reject DID squatting.
+    data = {
+        "did": agent_did,
+        "receipt": receipt,
+    }
+
+    # The route verifies the publisher-envelope signature over
+    # JSON.stringify(data) (route.ts: `Buffer.from(JSON.stringify(data))`).
+    # canonical_json is byte-identical to ECMAScript JSON.stringify with
+    # sorted keys; because the route re-stringifies the object it parsed
+    # (preserving wire key order) and we send `data` with those same sorted
+    # keys, the server reproduces these exact bytes. Signature is base64url
+    # raw Ed25519 (NOT hex) and publicKey is base64url raw 32-byte key, both
+    # matching the route's base64urlToBuffer decode.
+    data_bytes = canonical_json(data)
+    raw_sig = key_pair.private_key.sign(data_bytes)
+    signature_b64url = _b64url(raw_sig)
+    public_key_b64url = _b64url(key_pair.public_key_bytes())
+
+    return {
+        "type": "concordia-receipt",
+        "publicKey": public_key_b64url,
+        "signature": signature_b64url,
+        "data": data,
+    }
+
+
 class VerascoreClient:
     """HTTP client for the Verascore transaction ingestion API.
 
@@ -72,6 +160,13 @@ class VerascoreClient:
     """
 
     def __init__(self, base_url: str = "https://verascore.ai") -> None:
+        # Require https so signed receipts are never POSTed over a downgraded
+        # cleartext transport. This is operator-configured (not attacker
+        # data), so a plain scheme check is sufficient here; the stronger
+        # private-range SSRF guard lives on the issuer-supplied mandate
+        # revocation endpoint in mandate.validate_revocation_endpoint.
+        if not base_url.startswith("https://"):
+            raise ValueError("VerascoreClient base_url must use https")
         self.base_url = base_url.rstrip("/")
 
     def report_concordia_receipt(
@@ -79,6 +174,8 @@ class VerascoreClient:
         session_data: dict[str, Any],
         key_pair: KeyPair,
         agent_did: str,
+        *,
+        counterparty_signer: CounterpartySigner | None = None,
     ) -> dict[str, Any]:
         """Sign and POST a Concordia receipt to Verascore.
 
@@ -89,41 +186,39 @@ class VerascoreClient:
                 fulfillment_status, negotiation_competence.
             key_pair: The agent's Ed25519 key pair for signing.
             agent_did: The agent's DID (e.g. "did:key:z6Mk...").
+            counterparty_signer: Optional collector for the counterparty's
+                Ed25519 co-signature (see ``concordia.cosign``). When supplied
+                and the counterparty signs, the emitted ``receipt`` carries the
+                counterparty signature on its ``parties[]`` entry, so Verascore
+                can verify it as bilateral (cryptographic-tier) evidence.
+                FAIL CLOSED: if omitted, or the counterparty is unavailable, the
+                receipt is emitted clearly single-signed — never with an empty or
+                fabricated co-signature (the fail-closed invariant, AGENTS.md rule #5).
 
         Returns:
             The parsed JSON response from Verascore, or an error dict.
 
         Raises:
-            ValueError: If signing fails.
+            ValueError: If the envelope cannot be built completely — e.g.
+                ``agent_did`` does not match the signing key's ``did:key``, or
+                the receipt is not canonicalizable. A partial or unverifiable
+                envelope is never transmitted (the fail-closed invariant, AGENTS.md
+                rule #5: never silently degrade to a less-secure behavior on error).
         """
-        payload = {
-            "session_id": session_data["session_id"],
-            "counterparty_did": session_data["counterparty_did"],
-            "outcome": session_data["outcome"],
-            "rounds": session_data["rounds"],
-            "duration_seconds": session_data["duration_seconds"],
-            "terms_count": session_data["terms_count"],
-            "concessions_made": session_data["concessions_made"],
-            "fulfillment_status": session_data["fulfillment_status"],
-            "negotiation_competence": session_data["negotiation_competence"],
-        }
+        # Envelope construction (identity check, co-signed receipt, signed
+        # data object) lives in build_publish_body — the single source of
+        # truth shared with the cross-repo fixture generator.
+        body = build_publish_body(
+            session_data,
+            key_pair,
+            agent_did,
+            counterparty_signer=counterparty_signer,
+        )
 
-        # Sign the canonical JSON of the payload
-        payload_bytes = canonical_json(payload)
-        raw_sig = key_pair.private_key.sign(payload_bytes)
-        signature_hex = raw_sig.hex()
-
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-        body = {
-            "type": "concordia-receipt",
-            "did": agent_did,
-            "timestamp": timestamp,
-            "signature": signature_hex,
-            "payload": payload,
-        }
-
-        body_bytes = json.dumps(body).encode("utf-8")
+        # Serialize with the same canonical serializer so the on-wire `data`
+        # sub-object is byte-identical to the signed `data_bytes` (sorted keys
+        # at every level). Never emit a partial envelope.
+        body_bytes = canonical_json(body)
         url = f"{self.base_url}/api/publish"
 
         req = urllib.request.Request(
@@ -137,7 +232,7 @@ class VerascoreClient:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 resp_body = resp.read().decode("utf-8")
                 try:
-                    return json.loads(resp_body)
+                    return cast(dict[str, Any], json.loads(resp_body))
                 except json.JSONDecodeError:
                     return {"status": "ok", "raw_response": resp_body}
         except urllib.error.HTTPError as e:
@@ -166,7 +261,8 @@ def _extract_session_data(session: "Session", agent_id: str) -> dict[str, Any]:
 
     Idempotency key for Verascore-side upsert is ``session_id``
     (see Verascore ``prisma.concordiaReceipt.upsert({where: {sessionId}})``).
-    Behavioral fields only; no terms or prices, per CLAUDE.md rule #8.
+    Behavioral fields only; no terms or prices, per the no-raw-deal-terms
+    privacy invariant (AGENTS.md rule #8).
     """
     from .types import OutcomeStatus, SessionState  # avoid circular import
 
@@ -209,6 +305,7 @@ def make_verascore_auto_hook(
     report_on: tuple[str, ...] = ("agreed",),
     endpoint: str | None = None,
     client: VerascoreClient | None = None,
+    counterparty_signer: CounterpartySigner | None = None,
 ) -> Callable[["Session"], None]:
     """Return a terminal-state callback that auto-reports to Verascore.
 
@@ -233,6 +330,11 @@ def make_verascore_auto_hook(
         endpoint: Optional base URL override. If provided, takes
             precedence over the ``VERASCORE_ENDPOINT`` env var.
         client: Optional injected ``VerascoreClient`` (for testing).
+        counterparty_signer: Optional collector for the counterparty's
+            Ed25519 co-signature (see ``concordia.cosign``). When supplied,
+            the auto-reported receipt is bilateral (counterparty-co-signed) and
+            can earn Verascore's cryptographic trust tier. Fail-closed to a
+            single-signed receipt when absent or the counterparty is unavailable.
 
     Returns:
         A ``Callable[[Session], None]`` suitable for ``Session.on_terminal``.
@@ -262,6 +364,7 @@ def make_verascore_auto_hook(
                 session_data=session_data,
                 key_pair=key_pair,
                 agent_did=agent_did,
+                counterparty_signer=counterparty_signer,
             )
         except Exception as exc:
             _logger.warning(

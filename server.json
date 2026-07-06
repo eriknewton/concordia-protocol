@@ -7,12 +7,12 @@
     "url": "https://github.com/eriknewton/concordia-protocol",
     "source": "github"
   },
-  "version": "0.3.0",
+  "version": "0.7.0a1",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "concordia-protocol",
-      "version": "0.3.0",
+      "version": "0.7.0a1",
       "transport": {
         "type": "stdio"
       },

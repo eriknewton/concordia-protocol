@@ -22,13 +22,15 @@ from .chain_session import (
     verify_transcript,
 )
 from .errors import CMPCError, InvalidPrimitiveError, SchemaValidationError
-from .signing import (
-    sign_atomic_activation_proof,
-    sign_conditional_commitment,
-    sign_unwind_record,
-    verify_atomic_activation_proof,
-    verify_conditional_commitment,
-    verify_unwind_record,
+from .predicate import (
+    BILATERAL_CHAIN_CLOSURE_V1,
+    CLOSURE_LANGUAGE_V1,
+    EvaluablePredicate,
+    PredicateEvaluationError,
+    PredicateResult,
+    evaluate_bilateral_chain_closure_v1,
+    evaluate_closure_language_v1,
+    evaluate_predicate,
 )
 from .revocation import (
     CandidateArtifact,
@@ -37,6 +39,14 @@ from .revocation import (
     cascade_revocation,
     sign_revocation_record,
     verify_revocation_record,
+)
+from .signing import (
+    sign_atomic_activation_proof,
+    sign_conditional_commitment,
+    sign_unwind_record,
+    verify_atomic_activation_proof,
+    verify_conditional_commitment,
+    verify_unwind_record,
 )
 from .types import (
     AtomicActivationProof,
@@ -81,4 +91,12 @@ __all__ = [
     "InvalidPrimitiveError",
     "SchemaValidationError",
     "verify_transcript",
+    "BILATERAL_CHAIN_CLOSURE_V1",
+    "CLOSURE_LANGUAGE_V1",
+    "EvaluablePredicate",
+    "PredicateEvaluationError",
+    "PredicateResult",
+    "evaluate_predicate",
+    "evaluate_bilateral_chain_closure_v1",
+    "evaluate_closure_language_v1",
 ]

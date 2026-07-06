@@ -1,6 +1,14 @@
 """Tests for message signing and verification (§9.2)."""
 
+import base64
+
+from cryptography.hazmat.primitives.asymmetric.utils import (
+    decode_dss_signature,
+    encode_dss_signature,
+)
+
 from concordia import KeyPair, ES256KeyPair, sign_message, verify_signature
+from concordia.signing import P256_HALF_ORDER, P256_ORDER
 
 
 class TestKeyPair:
@@ -154,6 +162,50 @@ class TestCrossLanguageCanonicalJSON:
         with pytest.raises(ValueError, match="special float"):
             canonical_json({"v": float("-inf")})
 
+    def test_rejects_lone_high_surrogate_value(self):
+        import pytest
+        from concordia.signing import canonical_json
+        # A lone surrogate cannot encode to UTF-8 and diverges from the JS SDK
+        # (whose JSON.stringify happily emits \udXXX). Reject with ValueError,
+        # NOT the bare UnicodeEncodeError that .encode("utf-8") would raise.
+        with pytest.raises(ValueError, match="surrogate"):
+            canonical_json({"v": "\ud834"})
+
+    def test_rejects_lone_low_surrogate_value(self):
+        import pytest
+        from concordia.signing import canonical_json
+        with pytest.raises(ValueError, match="surrogate"):
+            canonical_json({"v": "ab\udd1ecd"})
+
+    def test_rejects_lone_surrogate_in_key(self):
+        import pytest
+        from concordia.signing import canonical_json
+        with pytest.raises(ValueError, match="surrogate"):
+            canonical_json({"\ud834": "v"})
+
+    def test_accepts_valid_astral_pair(self):
+        # A properly paired surrogate (e.g. U+1D11E, emoji) is a real character
+        # and must still canonicalize cleanly.
+        from concordia.signing import canonical_json
+        out = canonical_json({"s": "\U0001D11E"})  # musical G-clef
+        assert out == '{"s":"\U0001D11E"}'.encode("utf-8")
+
+
+class TestVerifyFailsClosed:
+    """verify_signature must return False (never raise) on malformed input."""
+
+    def test_verify_returns_false_on_lone_surrogate(self):
+        from concordia.signing import KeyPair, verify_signature
+        kp = KeyPair.generate()
+        # Must not propagate UnicodeEncodeError — returns False instead.
+        assert verify_signature({"v": "\ud834"}, "AAAA", kp.public_key) is False
+
+    def test_verify_returns_false_on_malformed_base64(self):
+        from concordia.signing import KeyPair, verify_signature
+        kp = KeyPair.generate()
+        # Must not propagate binascii.Error — returns False instead.
+        assert verify_signature({"v": 1}, "not-base64!!!", kp.public_key) is False
+
     def test_shared_cross_language_vectors(self):
         """Exact byte-level vectors matching TypeScript test suite."""
         from concordia.signing import canonical_json
@@ -264,11 +316,63 @@ class TestES256KeyPair:
 
 
 class TestES256SignAndVerify:
+    @staticmethod
+    def _decode_signature_s(signature: str) -> int:
+        raw_sig = base64.urlsafe_b64decode(signature)
+        _r, s = decode_dss_signature(raw_sig)
+        return s
+
+    @staticmethod
+    def _malleate_signature(signature: str) -> str:
+        raw_sig = base64.urlsafe_b64decode(signature)
+        r, s = decode_dss_signature(raw_sig)
+        high_s_sig = encode_dss_signature(r, P256_ORDER - s)
+        return base64.urlsafe_b64encode(high_s_sig).decode()
+
     def test_sign_and_verify(self):
         kp = ES256KeyPair.generate()
         data = {"concordia": "0.1.0", "type": "negotiate.open", "body": {"terms": {}}}
         sig = sign_message(data, kp, alg="ES256")
         assert verify_signature(data, sig, kp.public_key, alg="ES256")
+        assert self._decode_signature_s(sig) <= P256_HALF_ORDER
+
+    def test_signer_output_is_always_low_s(self):
+        kp = ES256KeyPair.generate()
+        data = {
+            "concordia": "0.1.0",
+            "type": "negotiate.open",
+            "body": {"terms": {"price": 100}},
+        }
+        for _ in range(16):
+            sig = sign_message(data, kp, alg="ES256")
+            assert self._decode_signature_s(sig) <= P256_HALF_ORDER
+
+    def test_high_s_signature_rejected_before_verify(self):
+        kp = ES256KeyPair.generate()
+        data = {"concordia": "0.1.0", "type": "negotiate.open", "body": {"terms": {}}}
+        sig = sign_message(data, kp, alg="ES256")
+        high_s_sig = self._malleate_signature(sig)
+
+        assert self._decode_signature_s(high_s_sig) > P256_HALF_ORDER
+        assert not verify_signature(data, high_s_sig, kp.public_key, alg="ES256")
+
+    def test_malleated_variant_of_valid_signature_rejected(self):
+        kp = ES256KeyPair.generate()
+        data = {
+            "concordia": "0.1.0",
+            "type": "negotiate.accept",
+            "prev_hash": "sha256:" + "0" * 64,
+            "body": {"accepted": True},
+        }
+        sig = sign_message(data, kp, alg="ES256")
+
+        assert verify_signature(data, sig, kp.public_key, alg="ES256")
+        assert not verify_signature(
+            data,
+            self._malleate_signature(sig),
+            kp.public_key,
+            alg="ES256",
+        )
 
     def test_tampered_data_fails(self):
         kp = ES256KeyPair.generate()

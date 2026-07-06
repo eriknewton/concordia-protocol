@@ -16,6 +16,24 @@ python examples/demo_camera_negotiation.py
 python examples/demo_quick_negotiation.py
 ```
 
+## Lint and type check
+
+CI does not only run the tests. It also hard-fails on lint, type checking, and a test-count floor, so run these locally before opening a pull request. They mirror exactly what the CI workflow runs:
+
+```bash
+# Lint the package (config: [tool.ruff] in pyproject.toml)
+ruff check concordia
+
+# Type check the package (config: [tool.mypy] in pyproject.toml)
+mypy concordia
+
+# Test-count floor: fails if the collected pytest count drops below the
+# recorded floor, guarding against silent test loss
+bash scripts/test-floor.sh
+```
+
+A change that passes `pytest` but fails any of the above will be rejected by CI.
+
 ## Submitting Code Changes
 
 1. Fork the repository and create a branch from `main`.
@@ -27,7 +45,7 @@ python examples/demo_quick_negotiation.py
 ### Code Style
 
 - Type hints are required on all public functions and methods.
-- Keep dependencies minimal. The SDK depends only on `cryptography` and `jsonschema` — additions need strong justification.
+- Keep dependencies minimal. The SDK depends only on `cryptography` and `jsonschema`, so additions need strong justification.
 - Follow the existing module structure. Each module has a clear, single responsibility.
 - Docstrings should reference the relevant spec section (e.g. "§6.1").
 
@@ -36,7 +54,7 @@ python examples/demo_quick_negotiation.py
 Changes to the Concordia Protocol specification go through an RFC process:
 
 1. Create a file in `rfcs/` following the naming convention `NNNN-short-title.md`.
-2. Use the structure of `SPEC.md` as your guide — define the problem, propose the change, describe the message format and state transitions affected.
+2. Use the structure of `SPEC.md` as your guide: define the problem, propose the change, describe the message format and state transitions affected.
 3. Open a pull request with the RFC. Discussion happens on the PR.
 4. Once accepted, the RFC is merged and the spec is updated accordingly.
 

@@ -1,6 +1,6 @@
 # Concordia Protocol Plugin
 
-Structured negotiation protocol for autonomous agents — as a Cowork/Claude Code plugin.
+Structured negotiation protocol for autonomous agents, as a Cowork/Claude Code plugin.
 
 ## What it does
 
@@ -17,7 +17,7 @@ Install this plugin in Cowork or Claude Code. The plugin starts the Concordia MC
 
 ## Tools provided
 
-48 MCP tools across 8 categories: Negotiation (8), Reputation (3), Discovery (5), Want Registry (10), Relay (10), Adoption (5), Sanctuary Bridge (4), Receipt Bundles (3). See the skill documentation for the complete list.
+59 MCP tools across 9 categories: Negotiation (11), Session receipts and bundles (6), Competence proofs (2), Reputation (6), Discovery and agent profiles (8), Want registry (10), Relay (10), Sanctuary bridge (4), Mandate and approval verification (2). The set is 55 `concordia_*` tools plus 4 `agent_*` profile-discovery tools registered via `register_discovery_tools()`. See the skill documentation for the complete list.
 
 ## License
 
