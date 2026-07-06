@@ -91,10 +91,12 @@ def test_1404_committed_deny_commits_to_ancestor_read() -> None:
     assert read["element_digest"] == revocation["revoked_artifact_id"]
     assert read["status"] == "revoked"
     assert deny["revocation_record_ref"] == revocation["revocation_id"]
-    # Source-ordered coordinate: an integer, never a wall-clock string.
+    # Committed coordinate: a non-negative integer (the schema constrains shape
+    # only; source authenticity is verifier-side policy, not proven here).
     assert isinstance(read["coordinate"], int) and not isinstance(
         read["coordinate"], bool
     )
+    assert read["coordinate"] >= 0
 
 
 def test_1404_committed_deny_carries_no_raw_terms() -> None:

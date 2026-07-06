@@ -33,7 +33,7 @@ RFC 8785 JCS canonicalizer. Nothing here patches or extends the SDK.
 | File | What it is |
 |------|------------|
 | `generate.py` | Deterministic generator (fixed seeds). Rewrites every file below. |
-| `verify.py` | Offline byte-check: recompute both ids, sign/verify PASS over RAW retained bytes, one-byte tamper REJECT, revoke, child re-verify REJECT, committed-deny recompute + commit-to-ancestor + coordinate/ref-swap REJECT + injected-deal-terms REJECT + tamper REJECT. |
+| `verify.py` | Offline byte-check: recompute both ids, sign/verify PASS over RAW retained bytes, one-byte tamper REJECT, revoke, child re-verify REJECT, committed-deny recompute + commit-to-ancestor + coordinate/ref-swap REJECT + injected-unknown-field REJECT (top level, inside an ancestor read, AND inside a nested object such as `signature.kid`) + tamper REJECT. |
 | `offer.json` | The request/offer the approver evaluated. Drives `request_digest`. |
 | `capability.json` | The authorized capability. Drives `capability_digest`. |
 | `decision_object.json` | The six-field #1404 decision object. `decision_id = SHA-256(JCS(this))`. |

@@ -383,6 +383,20 @@ def main() -> int:
         not verify_cascade_decision_record(smuggled_top_level, issuer_pk),
     )
 
+    # 6e-iv. A GENERIC unknown field inside ANY nested object is REJECTED, not
+    # just inside an ancestor read. Here we inject `signature.kid` — an unknown
+    # key inside the nested `signature` object, whose schema is
+    # `additionalProperties: false`. This locks the nested-object strictness end
+    # to end: a smuggled field cannot hide inside a nested object either, so a
+    # normalizing verifier that dropped it (and false-PASSed) is ruled out at
+    # every level, not only the top level and the ancestor read.
+    nested_unknown = json.loads(json.dumps(deny_dict))
+    nested_unknown["signature"]["kid"] = "did:web:evil.example#smuggled"
+    check(
+        "committed deny: injected nested unknown field (signature.kid) -> REJECT",
+        not verify_cascade_decision_record(nested_unknown, issuer_pk),
+    )
+
     # 6f. A one-byte tamper of the signed body flips the verifier to REJECT.
     tampered_deny_dict = json.loads(json.dumps(deny_dict))
     cd = tampered_deny_dict["capability_digest"]

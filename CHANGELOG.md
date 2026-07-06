@@ -28,10 +28,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   is a non-negative integer; the primitive does not prove it is a genuine pinned
   source ordinal rather than, e.g., a wall-clock epoch value — source
   authenticity is verifier-side policy. `verify_cascade_decision_record`
-  operates on the RAW retained bytes (strict-parse with
-  `additionalProperties: false` at the top level and inside every ancestor
-  read), so an injected unknown field such as a raw `deal_terms` is rejected,
-  never silently dropped by a normalizing round-trip. `ancestor_reads` carries
+  operates on the RAW retained bytes ONLY (strict-parse with
+  `additionalProperties: false` at the top level AND inside every nested object,
+  including each ancestor read and the `signature` object), so an injected
+  unknown field such as a raw `deal_terms` is rejected, never silently dropped by
+  a normalizing round-trip. It refuses an already-parsed
+  `CascadeDecisionRecord`: a typed/normalized object has passed through a parser
+  that drops unknown fields, so it has lost the original bytes and cannot be
+  securely verified; callers MUST pass the raw retained mapping/bytes. `ancestor_reads` carries
   digests, status, and coordinate only, never underlying deal terms (the SPEC
   9.6.6 audit-privacy invariant). `cascade_revocation()` gains optional
   `boundary` +

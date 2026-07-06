@@ -1044,6 +1044,15 @@ Invariants (all fail-closed):
   is authoritative for the element. Naming a source confers no authority.
 - `ancestor_reads` carries digests, status, and coordinate only, never
   underlying deal terms (the §9.6.6 audit-privacy invariant).
+- Verification is over the RAW retained bytes ONLY. `verify_cascade_decision_record`
+  takes the raw mapping/bytes as received and strict-parses them
+  (`additionalProperties: false` at the top level AND inside every nested object,
+  so an injected unknown field, e.g. a raw `deal_terms` inside an ancestor read
+  or a `kid` inside `signature`, is rejected, never silently dropped). It MUST
+  NOT be handed an already-parsed record: a typed/normalized object has passed
+  through a parser that drops unknown fields, so it has lost the original bytes
+  and cannot be securely verified. A typed record supplied in place of the raw
+  bytes is refused (fail-closed), so verification never trusts a laundered body.
 
 Schema `$id`: `urn:concordia:schema:cascade_decision_record:v0.7`. Worked
 vector: `docs/interop/a2a-1404-receipt-revocation-vector/`

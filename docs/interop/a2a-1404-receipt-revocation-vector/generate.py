@@ -244,9 +244,11 @@ def main() -> None:
     # inadmissible artifact. We keep the one for child B: a recomputable terminal
     # deny whose decision_id content-addresses the ancestor status read (parent A
     # observed `revoked` at the status source's own ordering coordinate). The
-    # source coordinate is source-ordered (a log sequence number), never a wall
-    # clock. capability_digest / request_digest reuse the child's #1404 digests
-    # so the deny's six-field object matches the approve object's field shape.
+    # coordinate is COMMITTED (inside the preimage) and a non-negative integer;
+    # the primitive does not prove it is a genuine pinned source ordinal rather
+    # than, e.g., a wall-clock epoch value (that is verifier-side policy).
+    # capability_digest / request_digest reuse the child's #1404 digests so the
+    # deny's six-field object matches the approve object's field shape.
     boundary = CascadeBoundary(
         boundary_id=decision_object["boundary_id"],
         verifier=decision_object["verifier"],
@@ -255,8 +257,10 @@ def main() -> None:
         # canonical bytes), content-addressed so authority stays verifier-side.
         source_digest="sha256:"
         + hashlib.sha256(canonicalize_jcs(revocation.to_dict())).hexdigest(),
-        # Source-ordered coordinate: the status log sequence number at which A's
-        # revocation was fixed. A fixed integer here, NOT a wall clock.
+        # Committed coordinate: intended as the status log sequence number at
+        # which A's revocation was fixed. A non-negative integer, committed in
+        # the preimage; the primitive does not prove it is a genuine source
+        # ordinal rather than a wall-clock epoch value (verifier-side policy).
         coordinate=42,
         capability_digest=capability_digest,
         request_digest=request_digest,

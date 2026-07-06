@@ -12,8 +12,11 @@ Covers every invariant from the design spec with its fail-closed negative:
   - the child artifact never mutates across a revocation (a NEW immutable deny
     with a NEW id is derived);
   - the allow record stays valid at its own coordinate;
-  - a wall-clock coordinate is rejected; an unpinned/negative coordinate is
-    refused, not defaulted.
+  - the coordinate is a committed non-negative integer (schema constrains shape
+    only): a non-integer coordinate (ISO-8601 string, float) or a negative
+    placeholder is rejected, while a non-negative-integer epoch value still
+    verifies as committed — the primitive does not prove it is a genuine source
+    ordinal (source authenticity is verifier-side policy).
 """
 
 from __future__ import annotations
@@ -118,7 +121,9 @@ def test_from_dict_to_dict_round_trip_verifies() -> None:
     record = _signed(key)
     restored = CascadeDecisionRecord.from_dict(record.to_dict())
     assert restored == record
-    assert verify_cascade_decision_record(restored, key.public_key)
+    # verify is RAW-MAPPING-ONLY: it verifies the retained bytes, not a parsed
+    # record. Serialize the restored record back to its raw mapping to verify.
+    assert verify_cascade_decision_record(restored.to_dict(), key.public_key)
 
 
 def test_optional_refs_are_inside_the_preimage() -> None:
@@ -147,12 +152,14 @@ def test_optional_refs_are_inside_the_preimage() -> None:
 
 def test_signature_verifies_under_issuer_key() -> None:
     key = _key(ISSUER_SEED)
-    assert verify_cascade_decision_record(_signed(key), key.public_key)
+    assert verify_cascade_decision_record(_signed(key).to_dict(), key.public_key)
 
 
 def test_wrong_key_rejects() -> None:
     record = _signed(_key(ISSUER_SEED))
-    assert not verify_cascade_decision_record(record, _key(APPROVER_SEED).public_key)
+    assert not verify_cascade_decision_record(
+        record.to_dict(), _key(APPROVER_SEED).public_key
+    )
 
 
 def test_one_byte_tamper_of_signed_body_rejects() -> None:
@@ -161,7 +168,7 @@ def test_one_byte_tamper_of_signed_body_rejects() -> None:
     body = record.capability_digest
     flipped = body[:-1] + ("0" if body[-1] != "0" else "1")
     tampered = dataclasses.replace(record, capability_digest=flipped)
-    assert not verify_cascade_decision_record(tampered, key.public_key)
+    assert not verify_cascade_decision_record(tampered.to_dict(), key.public_key)
 
 
 def test_tamper_of_decision_id_only_rejects() -> None:
@@ -169,14 +176,14 @@ def test_tamper_of_decision_id_only_rejects() -> None:
     key = _key(ISSUER_SEED)
     record = _signed(key)
     forged = dataclasses.replace(record, decision_id="00" * 32)
-    assert not verify_cascade_decision_record(forged, key.public_key)
+    assert not verify_cascade_decision_record(forged.to_dict(), key.public_key)
 
 
 def test_empty_signature_rejects() -> None:
     key = _key(ISSUER_SEED)
     record = _signed(key)
     unsigned = dataclasses.replace(record, signature={"alg": "EdDSA", "value": ""})
-    assert not verify_cascade_decision_record(unsigned, key.public_key)
+    assert not verify_cascade_decision_record(unsigned.to_dict(), key.public_key)
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +209,7 @@ def test_mutating_any_top_level_bound_field_diverges_and_rejects(
     record = _signed(key)
     mutated = dataclasses.replace(record, **{field: value})
     assert _digest(mutated) != record.decision_id
-    assert not verify_cascade_decision_record(mutated, key.public_key)
+    assert not verify_cascade_decision_record(mutated.to_dict(), key.public_key)
 
 
 @pytest.mark.parametrize(
@@ -224,7 +231,7 @@ def test_mutating_any_ancestor_read_field_diverges_and_rejects(
     read = dataclasses.replace(record.ancestor_reads[0], **{field: value})
     mutated = dataclasses.replace(record, ancestor_reads=[read])
     assert _digest(mutated) != record.decision_id
-    assert not verify_cascade_decision_record(mutated, key.public_key)
+    assert not verify_cascade_decision_record(mutated.to_dict(), key.public_key)
 
 
 # ---------------------------------------------------------------------------
@@ -253,7 +260,7 @@ def test_deny_not_committing_to_any_ancestor_read_is_rejected() -> None:
     record = _signed(key)
     empty = dataclasses.replace(record, ancestor_reads=[])
     # The schema (invoked inside verify) refuses an empty ancestor_reads set.
-    assert not verify_cascade_decision_record(empty, key.public_key)
+    assert not verify_cascade_decision_record(empty.to_dict(), key.public_key)
     with pytest.raises(SchemaValidationError):
         validate_cascade_decision_record(empty.to_dict())
 
@@ -266,12 +273,19 @@ def test_signing_an_empty_ancestor_read_set_is_refused() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Coordinate is source-ordered, never wall clock
+# Coordinate is a committed non-negative integer (source authenticity is
+# verifier-side policy). The schema constrains SHAPE only: an integer is
+# required, so a non-integer (an ISO-8601 string, a float) or a negative
+# placeholder is rejected. A non-negative-integer epoch value still passes
+# (see the honesty test below) — the primitive does not prove it is a genuine
+# pinned source ordinal.
 # ---------------------------------------------------------------------------
 
 
-def test_wall_clock_coordinate_is_rejected() -> None:
-    """An ISO-8601 wall clock in coordinate is a type error: not re-askable."""
+def test_iso8601_string_coordinate_is_rejected() -> None:
+    """An ISO-8601 string in coordinate is a type error: the schema requires an
+    integer, so a string coordinate is rejected (a shape constraint, not a
+    proof that the integer is a genuine source ordinal)."""
     key = _key(ISSUER_SEED)
     record = _signed(key)
     data = record.to_dict()
@@ -307,7 +321,7 @@ def test_zero_coordinate_is_a_valid_source_ordinal() -> None:
         coordinate=0,
     )
     record = _signed(key, ancestor_reads=[read])
-    assert verify_cascade_decision_record(record, key.public_key)
+    assert verify_cascade_decision_record(record.to_dict(), key.public_key)
 
 
 # ---------------------------------------------------------------------------
@@ -403,6 +417,43 @@ def test_verify_does_not_normalize_before_checking() -> None:
     assert not verify_cascade_decision_record(smuggled, key.public_key)
 
 
+def test_verify_rejects_typed_record_laundering_smuggled_field() -> None:
+    """BLOCKER regression (the TYPED pre-parse bypass Codex reproduced).
+
+    ``verify`` is RAW-MAPPING-ONLY. Handing it a parsed
+    ``CascadeDecisionRecord`` built from a SMUGGLED raw mapping must NOT return
+    True: ``from_dict`` silently drops the injected ``deal_terms`` before strict
+    validation, so a verifier that trusted the typed record would false-pass a
+    tampered body. The raw path rejects the same smuggled bytes; the typed path
+    must NOT launder them into an accept.
+    """
+    key = _key(ISSUER_SEED)
+    raw = _signed(key).to_dict()
+    smuggled = copy.deepcopy(raw)
+    smuggled["ancestor_reads"][0]["deal_terms"] = {"total": "150000.00 USD"}
+    # The raw smuggled mapping is rejected (strict-parse over retained bytes)...
+    assert not verify_cascade_decision_record(smuggled, key.public_key)
+    # ...and the TYPED record parsed from those same smuggled bytes, which has
+    # already LOST the injected field, must NOT verify True. Passing a typed
+    # record is refused outright (it cannot carry the retained bytes).
+    laundered = CascadeDecisionRecord.from_dict(smuggled)
+    assert "deal_terms" not in laundered.ancestor_reads[0].to_dict()
+    assert not verify_cascade_decision_record(laundered, key.public_key)
+
+
+def test_verify_refuses_typed_record_even_when_clean() -> None:
+    """A typed record is refused outright, clean or not: verify needs the raw
+    retained bytes, not a normalized object (which has lost the original bytes).
+    The secure flow is raw-bytes-first, so a caller must pass ``.to_dict()``."""
+    key = _key(ISSUER_SEED)
+    record = _signed(key)
+    # The typed record is refused (raw-only contract) even though its raw form
+    # verifies cleanly — proving the refusal is about the INPUT TYPE, not the
+    # record's validity.
+    assert not verify_cascade_decision_record(record, key.public_key)
+    assert verify_cascade_decision_record(record.to_dict(), key.public_key)
+
+
 # ---------------------------------------------------------------------------
 # Honesty: a wall-clock epoch integer VERIFIES as committed (the true property);
 # the primitive does NOT prove it is "not a wall clock". Source authenticity is
@@ -427,7 +478,6 @@ def test_wall_clock_epoch_integer_coordinate_still_verifies_as_committed() -> No
     )
     record = _signed(key, ancestor_reads=[read])
     # It VERIFIES (honest: a numeric epoch is a valid non-negative integer)...
-    assert verify_cascade_decision_record(record, key.public_key)
     assert verify_cascade_decision_record(record.to_dict(), key.public_key)
     # ...and it is COMMITTED: tampering the coordinate diverges the id.
     tampered = record.to_dict()
@@ -514,7 +564,7 @@ def test_cascade_with_boundary_emits_committed_verifiable_denies() -> None:
     assert len(result.decisions) == len(result.inadmissible) == 2
     for decision in result.decisions:
         assert decision.decision == "deny"
-        assert verify_cascade_decision_record(decision, key.public_key)
+        assert verify_cascade_decision_record(decision.to_dict(), key.public_key)
         assert decision.ancestor_reads[0].element_digest == (
             "urn:concordia:receipt:a2a-1404-A"
         )
@@ -582,6 +632,6 @@ def test_allow_record_stays_valid_at_its_own_coordinate() -> None:
     deny_ids = {d.decision_id for d in result.decisions}
     assert allow.decision_id not in deny_ids
     # The allow still verifies at its own coordinate, unmutated.
-    assert verify_cascade_decision_record(allow, key.public_key)
+    assert verify_cascade_decision_record(allow.to_dict(), key.public_key)
     assert allow.ancestor_reads[0].coordinate == 10
     assert allow.ancestor_reads[0].status == "active"

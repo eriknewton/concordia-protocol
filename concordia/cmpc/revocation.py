@@ -129,15 +129,20 @@ def sign_cascade_decision_record(
 
 
 def verify_cascade_decision_record(
-    record: CascadeDecisionRecord | Mapping[str, Any], public_key: Ed25519PublicKey
+    record: Mapping[str, Any], public_key: Ed25519PublicKey
 ) -> bool:
     """Fail-closed verify over the RETAINED BYTES, not a normalized round-trip.
 
-    Accepts either the RAW mapping as received (the JSON a third party retained)
-    or an already-parsed ``CascadeDecisionRecord``. In BOTH cases the check runs
-    against the raw field set — it never routes through ``from_dict().to_dict()``
-    (which would silently DROP an unknown field, e.g. a smuggled ``deal_terms``,
-    and let a mutated body pass). The steps, all on the raw bytes:
+    RAW-MAPPING-ONLY. This function verifies ONLY the raw mapping as received
+    (the JSON bytes a third party retained). It deliberately does NOT accept an
+    already-parsed ``CascadeDecisionRecord``: a typed record has ALREADY passed
+    through ``from_dict``, which silently DROPS any unknown field (e.g. a
+    smuggled ``deal_terms`` inside an ``ancestor_reads[]`` element). Once the
+    original bytes are lost, the record cannot be securely verified — a
+    normalizing round-trip would re-serialize a laundered body and false-pass.
+    A typed instance is therefore REJECTED (see below): the only secure path is
+    to hand this function the raw retained mapping/bytes. The steps, all on the
+    raw bytes:
 
       1. STRICT schema-validate the raw object. ``additionalProperties: false``
          at the top level AND inside every ``ancestor_reads[]`` element means an
@@ -151,19 +156,19 @@ def verify_cascade_decision_record(
          ref — diverges the id and is rejected.
       3. Verify the Ed25519 signature over those SAME raw preimage bytes.
 
-    ANY failure (validation, hash mismatch, bad signature, malformed input)
-    returns False; it never raises and never degrades to allow. A typed record
-    is only constructed AFTER all three pass; this function returns a bool, so it
-    constructs none.
+    ANY failure (validation, hash mismatch, bad signature, malformed input, or a
+    typed record handed in place of raw bytes) returns False; it never raises and
+    never degrades to allow. A typed record is only constructed AFTER all three
+    pass; this function returns a bool, so it constructs none.
     """
     try:
-        # Operate on the raw mapping. A typed record is serialized to its raw
-        # shape ONCE here for uniformity, but a raw mapping input is used AS-IS
-        # (never re-parsed through from_dict), so a smuggled field survives to
-        # the strict validator below instead of being dropped.
-        raw: Mapping[str, Any] = (
-            record.to_dict() if isinstance(record, CascadeDecisionRecord) else record
-        )
+        # A typed/normalized object has already lost the original bytes (unknown
+        # fields dropped by from_dict), so it CANNOT be securely verified. Refuse
+        # it explicitly: callers must pass the raw retained mapping, not a parsed
+        # record. Fail closed (return False), never re-serialize-and-trust.
+        if isinstance(record, CascadeDecisionRecord):
+            return False
+        raw: Mapping[str, Any] = record
         if not isinstance(raw, Mapping):
             return False
         # 1. Strict-validate the RAW object: extra/unknown fields are rejected.
@@ -244,10 +249,14 @@ class CascadeBoundary:
     status FROM.
 
     The ``source_digest`` + ``coordinate`` are the verifier's re-derived read of
-    the status source (NOT wall clock): the ``coordinate`` is that source's own
+    the status source: the ``coordinate`` is intended to be that source's own
     ordering position, which the caller obtains from the pinned status history.
-    A caller that cannot pin the coordinate must not synthesize one — it refuses
-    to emit rather than default (this dataclass makes ``coordinate`` mandatory).
+    It is COMMITTED (inside the ``decision_id`` preimage) and a non-negative
+    integer; the primitive does not prove the integer is a genuine pinned source
+    ordinal rather than, e.g., a wall-clock epoch value. Whether it names a real
+    position in an authoritative source is verifier-side policy. A caller that
+    cannot pin the coordinate must not synthesize one; it refuses to emit rather
+    than default (this dataclass makes ``coordinate`` mandatory).
 
     ``capability_digest`` and ``request_digest`` describe the child artifact and
     invocation being evaluated at the boundary; they default to the child's own
@@ -278,9 +287,10 @@ def _emit_committed_deny(
     """Build + sign the committed terminal deny for one inadmissible artifact.
 
     The ancestor read binds the revoked element digest, its observed status
-    (``revoked``), the status source read, and the source-ordered coordinate —
-    the exact tuple the verifier re-derived through. The withdrawal is carried
-    as ``revocation_record_ref`` inside the preimage so the id commits to it.
+    (``revoked``), the status source read, and the committed coordinate (a
+    non-negative integer; source authenticity is verifier-side policy) — the
+    exact tuple the verifier re-derived through. The withdrawal is carried as
+    ``revocation_record_ref`` inside the preimage so the id commits to it.
     """
     ancestor_read = AncestorRead(
         element_digest=revocation.revoked_artifact_id,
@@ -318,7 +328,8 @@ def cascade_revocation(
     artifact ALSO gets a committed, recomputable ``CascadeDecisionRecord`` in
     ``result.decisions`` — the durable terminal deny whose ``decision_id``
     commits to the ancestor read. Emitting a committed record needs the boundary
-    identity + the source-ordered coordinate, which is why it is opt-in and
+    identity + the ancestor coordinate (committed, a non-negative integer; its
+    source authenticity is verifier-side policy), which is why it is opt-in and
     fails closed (no committed record without both).
     """
     validate_revocation_record(revocation.to_dict())
