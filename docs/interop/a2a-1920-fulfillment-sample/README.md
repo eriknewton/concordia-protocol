@@ -88,4 +88,25 @@ PASS is meaningful rather than vacuous.
 5. The `charge_ref` / `action_ref` join keys are present and match
    `sample.json`.
 
+## Second-implementation reproductions
+
+An independent implementation reproduced the load-bearing digest with its own
+RFC 8785 JCS canonicalizer, so a reader can diff two canonicalizers against the
+one digest with no shared SDK and no issuer callback.
+
+| Implementation | Method | Result | Date | Source |
+|----------------|--------|--------|------|--------|
+| AgentID (`haroldmalikfrimpong-ops`) | Independent RFC 8785 JCS over the attestation minus `signature`, then SHA-256, then Ed25519 verify against `public_key_b64url` | Canonical digest matched `sha256:47ec4298…085bf508`; Ed25519 signature VALID over those bytes; a one-byte tamper of the signed body flips to REJECT; privacy shape holds (behavioral signals plus hash refs, no terms); `charge_ref` (`urn:a2a:charge:2026-05-10-tx-88f01c`) byte-matches on both sides | 2026-07-20 | [A2A #1920 comment 17706287](https://github.com/a2aproject/A2A/discussions/1920#discussioncomment-17706287) |
+
+The full digest is
+`sha256:47ec4298e210d3aa18832b30f8cc087b84bfebf1f664eced187918de085bf508`.
+Concordia's shipped canonicalizer, the independent `rfc8785` reference library,
+and AgentID's independent recompute all land on that same value, which confirms
+the published hash is the RFC 8785 JCS standard digest and not a
+Concordia-specific artifact. Only the `charge_ref` URN join key is expected to
+byte-match across the two artifacts; each side keeps its own `action_ref`
+representation (Concordia's opaque URN handle for correlation, AgentID's content
+digest for tamper-binding), which is the complementary-by-design seam recorded
+in the thread.
+
 Author: Erik Newton.
