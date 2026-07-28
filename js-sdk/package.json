@@ -34,21 +34,21 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@noble/curves": "1.9.7",
+    "@noble/curves": "2.2.0",
     "ajv": "^8.16",
     "ajv-formats": "^3.0"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.4",
-    "@types/node": "^20",
-    "eslint": "^9.39.4",
-    "eslint-config-prettier": "^9.1.2",
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26",
+    "eslint": "^10.8.0",
+    "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.8.4",
     "tsup": "^8.5.1",
     "tsx": "^4",
-    "typescript": "^5.3",
+    "typescript": "^7.0",
     "typescript-eslint": "^8.61.1",
-    "vitest": "^3.2.6"
+    "vitest": "^4.1.10"
   },
   "overrides": {
     "esbuild": "^0.28.1",
