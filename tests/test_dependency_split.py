@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import builtins
 import pathlib
+import re
 import sys
 
 try:
@@ -16,16 +17,33 @@ def _pyproject() -> dict:
     return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
+def _mcp_requirements(specs: list[str]) -> list[str]:
+    """Every requirement string in ``specs`` whose distribution name is ``mcp``.
+
+    Matched on the distribution name rather than on an exact requirement string,
+    so tightening or loosening the version specifier (adding an upper cap, for
+    example) does not fail a test that is about WHERE the dependency lives.
+    """
+    names = (re.match(r"\s*([A-Za-z0-9._-]+)", s) for s in specs)
+    return [
+        s for s, m in zip(specs, names) if m is not None and m.group(1).lower() == "mcp"
+    ]
+
+
 def test_core_dependencies_do_not_include_mcp() -> None:
+    """`mcp` is a server EXTRA, never a core runtime dependency."""
     project = _pyproject()["project"]
 
-    assert "mcp>=1.0" not in project["dependencies"]
+    assert _mcp_requirements(project["dependencies"]) == []
 
 
 def test_server_extra_declares_mcp() -> None:
+    """The `server` extra declares `mcp` with at least the 1.0 floor."""
     extras = _pyproject()["project"]["optional-dependencies"]
 
-    assert "mcp>=1.0" in extras["server"]
+    mcp_specs = _mcp_requirements(extras["server"])
+    assert len(mcp_specs) == 1, f"expected exactly one mcp requirement, got {mcp_specs}"
+    assert ">=1.0" in mcp_specs[0], f"mcp floor must remain >=1.0, got {mcp_specs[0]!r}"
 
 
 def test_console_entrypoint_import_defers_mcp(monkeypatch) -> None:
