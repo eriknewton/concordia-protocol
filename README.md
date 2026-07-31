@@ -288,6 +288,7 @@ Concordia defines:
 **Documentation:**
 - [Documentation Index](docs/index.md): curated guide to all docs, examples, and runbooks
 - [Full Specification](SPEC.md): complete protocol specification
+- [Interop vectors](docs/interop/): runnable worked vectors a second implementer can reproduce offline. Each ships the fixture bytes, a deterministic generator, and a `verify.py` that checks the vector against those bytes with no network and no regeneration. They demonstrate that a record's identity is `SHA-256` over its RFC 8785 JCS canonical form, so it is checkable with an independent JCS library, with no Concordia code and no call to the issuer.
 - [v0.6 Predicate Primitive](docs/v0.6_predicate_primitive.md): signed predicate artifact, verifier, resolver, and CTEF mapping
 - [Python SDK](concordia/): reference implementation
 - [Examples](examples/): negotiation scripts and use cases
@@ -356,6 +357,27 @@ If you are an AI agent reading this README, the [specification](SPEC.md) is writ
 ```bash
 pytest -v
 ```
+
+### Checking conformance without trusting us
+
+The vectors in [`docs/interop/`](docs/interop/) run offline against the retained
+fixture bytes. No network, no regeneration, no issuer callback:
+
+```bash
+for d in docs/interop/*/; do
+  [ -f "$d/verify.py" ] && (cd "$d" && python verify.py) || true
+done
+```
+
+The `a2a-1404` vector recomputes its decision identifiers from the fixture bytes
+rather than reading them, and CI cross-checks those identifiers against an
+independent RFC 8785 reference library rather than Concordia's own
+canonicalizer. The vectors cover the artifact identity and verification path,
+not the whole protocol: the conformance levels themselves are defined in
+[SPEC §12](SPEC.md#12-conformance-requirements), and most of the specification
+has no vector yet. What the vectors do establish is that the parts they cover
+are checkable without our code and without asking us. There is no membership, no
+listing, and no permission from anyone.
 
 ---
 
