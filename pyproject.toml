@@ -30,12 +30,17 @@ dependencies = [
 
 [project.optional-dependencies]
 server = [
-    "mcp>=1.0",
+    # Upper-capped at <2: mcp 2.0.0 removed `mcp.server.fastmcp` (the FastMCP
+    # entry point `concordia/mcp_server.py` imports) in favour of
+    # `mcp.server.mcpserver`. The floor-only pin resolved to 2.0.0 and broke
+    # every CI job on every branch. This cap is a HOLD, not a decision to stay
+    # on 1.x: migrating to the mcp 2.x server API is its own change.
+    "mcp>=1.0,<2",
 ]
 dev = [
     "build>=1.2",
     "hatchling>=1.27",
-    "mcp>=1.0",
+    "mcp>=1.0,<2",
     "mypy>=1.8",
     "pytest>=8.0",
     "pytest-cov>=4.0",
