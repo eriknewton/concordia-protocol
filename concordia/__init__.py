@@ -3,6 +3,9 @@
 An open standard for structured negotiation between autonomous agents.
 """
 
+import warnings
+from typing import Any
+
 __version__ = "0.7.0a1"
 
 from .agent import Agent
@@ -79,7 +82,23 @@ from .types import (
     TermType,
     TimingConfig,
 )
-from .verascore import VerascoreClient, make_verascore_auto_hook
+
+
+def __getattr__(name: str) -> Any:
+    if name in {"VerascoreClient", "make_verascore_auto_hook"}:
+        warnings.warn(
+            f"concordia.{name} is deprecated; import from concordia.verascore instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        from .verascore import VerascoreClient, make_verascore_auto_hook
+
+        return {
+            "VerascoreClient": VerascoreClient,
+            "make_verascore_auto_hook": make_verascore_auto_hook,
+        }[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     # Agent
@@ -112,9 +131,6 @@ __all__ = [
     # Envelope
     "build_trust_evidence_envelope",
     "verify_envelope_signature",
-    # Verascore
-    "VerascoreClient",
-    "make_verascore_auto_hook",
     # Attestation
     "ATTESTATION_VERSION",
     "generate_attestation",

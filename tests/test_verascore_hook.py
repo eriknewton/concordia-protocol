@@ -13,19 +13,47 @@ Verifies:
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from typing import Any
 
 import pytest
 
+import concordia
 from concordia import (
     Agent,
     BasicOffer,
     KeyPair,
-    Session,
     SessionState,
-    VerascoreClient,
-    make_verascore_auto_hook,
 )
+from concordia.verascore import VerascoreClient, make_verascore_auto_hook
+
+
+def test_import_concordia_does_not_import_verascore_in_fresh_subprocess():
+    code = (
+        "import sys\n"
+        "import concordia\n"
+        "print('concordia.verascore' in sys.modules)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.strip() == "False"
+
+
+def test_top_level_verascore_client_path_is_deprecated():
+    with pytest.warns(DeprecationWarning, match="concordia.VerascoreClient"):
+        assert concordia.VerascoreClient is VerascoreClient
+    with pytest.warns(DeprecationWarning, match="concordia.make_verascore_auto_hook"):
+        assert concordia.make_verascore_auto_hook is make_verascore_auto_hook
+
+
+def test_unknown_top_level_attribute_still_raises_attribute_error():
+    with pytest.raises(AttributeError, match="NoSuchThing"):
+        concordia.NoSuchThing
 
 
 class _StubClient:
