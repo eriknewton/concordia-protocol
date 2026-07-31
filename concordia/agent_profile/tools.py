@@ -20,6 +20,7 @@ from .profile import (
     Endpoints,
     Location,
     NegotiationProfile,
+    ReputationAssertion,
     Sovereignty,
     TrustSignals,
 )
@@ -116,6 +117,19 @@ def register_discovery_tools(
             )
 
             # Build trust signals
+            reputation: list[ReputationAssertion] | None = None
+            if any(
+                value is not None
+                for value in (verascore_did, verascore_tier, verascore_composite)
+            ):
+                reputation = [
+                    ReputationAssertion(
+                        provider="verascore.ai",
+                        subject_did=verascore_did,
+                        tier=verascore_tier,
+                        composite=verascore_composite,
+                    )
+                ]
             trust = TrustSignals(
                 verascore_did=verascore_did,
                 verascore_tier=verascore_tier,
@@ -124,6 +138,7 @@ def register_discovery_tools(
                 concordia_sessions_completed=concordia_sessions_completed or 0,
                 attestation_count=attestation_count or 0,
                 concordia_preferred=concordia_preferred if concordia_preferred is not None else True,
+                reputation=reputation,
             )
 
             # Build endpoints
@@ -224,31 +239,31 @@ def register_discovery_tools(
         name="agent_discovery_search",
         description=(
             "Search for agents matching filter criteria. "
-            "Filters include categories, Verascore tier/score, offer types, jurisdictions, "
+            "Filters include categories, reputation composite, sovereignty tier, offer types, jurisdictions, "
             "and Concordia preference. Results are scored and sorted by match quality. "
             "Returns list of (profile, match_score) tuples."
         ),
     )
     def tool_agent_discovery_search_impl(
         categories: Annotated[list[str] | None, "Filter by capability categories (prefix-match)"] = None,
-        min_verascore: Annotated[int | None, "Minimum Verascore composite score (0-100)"] = None,
-        min_sovereignty_tier: Annotated[str | None, "Minimum Verascore tier: unverified, self-attested, verified-degraded, verified-sovereign"] = None,
+        min_reputation_composite: Annotated[int | None, "Minimum reputation composite score (0-100)"] = None,
+        min_sovereignty_tier: Annotated[str | None, "Minimum legacy sovereignty tier: unverified, self-attested, verified-degraded, verified-sovereign"] = None,
         offer_types_required: Annotated[list[str] | None, "Agent must support all these offer types"] = None,
         jurisdictions: Annotated[list[str] | None, "Filter by jurisdiction (overlap match)"] = None,
         concordia_preferred: Annotated[bool | None, "Filter by Concordia Preferred badge"] = None,
-        sort_by: Annotated[str | None, "Sort field: verascore_composite, agreement_rate, sessions_completed"] = None,
+        sort_by: Annotated[str | None, "Sort field: reputation_composite, agreement_rate, sessions_completed"] = None,
         limit: Annotated[int | None, "Maximum results to return (default: 20)"] = None,
     ) -> str:
         """Search for agents matching criteria."""
         try:
             results = profile_store.search(
                 categories=categories,
-                min_verascore=min_verascore,
+                min_reputation_composite=min_reputation_composite,
                 min_sovereignty_tier=min_sovereignty_tier,
                 offer_types_required=offer_types_required,
                 jurisdictions=jurisdictions,
                 concordia_preferred=concordia_preferred,
-                sort_by=sort_by or "verascore_composite",
+                sort_by=sort_by or "reputation_composite",
                 limit=limit or 20,
             )
 
@@ -264,7 +279,7 @@ def register_discovery_tools(
                 "filters": {
                     k: v for k, v in {
                         "categories": categories,
-                        "min_verascore": min_verascore,
+                        "min_reputation_composite": min_reputation_composite,
                         "min_sovereignty_tier": min_sovereignty_tier,
                         "offer_types_required": offer_types_required,
                         "jurisdictions": jurisdictions,
@@ -317,7 +332,7 @@ def register_discovery_tools(
             # Search for agents matching category
             results = profile_store.search(
                 categories=[want_category],
-                sort_by="verascore_composite",
+                sort_by="reputation_composite",
                 limit=20,
             )
 

@@ -1086,7 +1086,7 @@ class TestAgentProfileStore:
         agent_ids = {p[0].agent_id for p in results}
         assert agent_ids == {"agent_0", "agent_2"}
 
-    def test_store_search_by_verascore_min(self):
+    def test_store_search_by_reputation_composite_min(self):
         from concordia.agent_profile import (
             AgentCapabilityProfile,
             AgentProfileStore,
@@ -1103,7 +1103,7 @@ class TestAgentProfileStore:
             )
             store.publish(profile, verify_signature=False)
 
-        results = store.search(min_verascore=75)
+        results = store.search(min_reputation_composite=75)
         assert len(results) == 2
         agent_ids = {p[0].agent_id for p in results}
         assert agent_ids == {"agent_1", "agent_2"}
@@ -1220,15 +1220,15 @@ class TestAgentProfileStore:
         )
         store.publish(profile2, verify_signature=False)
 
-        # Filter: electronics category AND min_verascore 75
+        # Filter: electronics category AND min_reputation_composite 75
         results = store.search(
             categories=["electronics"],
-            min_verascore=75,
+            min_reputation_composite=75,
         )
         assert len(results) == 1
         assert results[0][0].agent_id == "agent_1"
 
-    def test_store_search_sorting_by_verascore(self):
+    def test_store_search_sorting_by_reputation_composite(self):
         from concordia.agent_profile import (
             AgentCapabilityProfile,
             AgentProfileStore,
@@ -1245,7 +1245,7 @@ class TestAgentProfileStore:
             )
             store.publish(profile, verify_signature=False)
 
-        results = store.search(sort_by="verascore_composite")
+        results = store.search(sort_by="reputation_composite")
         # Should be sorted by score descending: 90, 75, 60
         assert results[0][0].agent_id == "agent_1"  # 90
         assert results[1][0].agent_id == "agent_2"  # 75
@@ -1376,7 +1376,7 @@ class TestAgentProfileStore:
 
         stats = store.get_stats()
         assert stats["total_profiles"] == 3
-        assert stats["average_verascore"] == 80.0
+        assert stats["average_reputation_composite"] == 80.0
         assert stats["total_categories"] == 2  # electronics, infrastructure.compute
         assert stats["concordia_preferred_count"] == 3
 
@@ -1491,6 +1491,13 @@ class TestAgentProfileMCPTools:
         profile = result["profile"]
         assert profile["trust_signals"]["verascore_composite"] == 85
         assert profile["trust_signals"]["verascore_tier"] == "verified-sovereign"
+        assert profile["trust_signals"]["reputation"] == [
+            {
+                "provider": "verascore.ai",
+                "tier": "verified-sovereign",
+                "composite": 85,
+            }
+        ]
         assert profile["trust_signals"]["concordia_sessions_completed"] == 10
 
     def test_tool_agent_profile_get_found(self):
@@ -1606,8 +1613,8 @@ class TestAgentProfileMCPTools:
             for r in result["results"]
         )
 
-    def test_tool_agent_discovery_search_by_verascore(self):
-        """Test searching for agents by Verascore threshold."""
+    def test_tool_agent_discovery_search_by_reputation_composite(self):
+        """Test searching for agents by reputation threshold."""
         from concordia.agent_profile import (
             AgentProfileStore,
             AgentCapabilityProfile,
@@ -1644,7 +1651,7 @@ class TestAgentProfileMCPTools:
         tool_functions = register_discovery_tools(mcp_mock, profile_store, want_registry_mock)
 
         tool_func = tool_functions["agent_discovery_search"]
-        result_str = tool_func(min_verascore=75)
+        result_str = tool_func(min_reputation_composite=75)
         result = json.loads(result_str)
 
         assert result["count"] == 2
@@ -1714,10 +1721,10 @@ class TestAgentProfileMCPTools:
 
         tool_func = tool_functions["agent_discovery_search"]
 
-        # Search: electronics, min_verascore 75, jurisdiction EU
+        # Search: electronics, min_reputation_composite 75, jurisdiction EU
         result_str = tool_func(
             categories=["electronics"],
-            min_verascore=75,
+            min_reputation_composite=75,
             jurisdictions=["EU"],
         )
         result = json.loads(result_str)
