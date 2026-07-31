@@ -139,17 +139,19 @@ def main() -> int:
     # available, prove the decision_id is the RFC 8785 STANDARD hash, not a
     # Concordia-specific one. Skipped (not failed) if rfc8785 is absent, so a
     # third party with only `concordia` installed still gets a clean run.
+    # Only the import is optional. The comparison runs outside the try so a real
+    # failure inside rfc8785 cannot be swallowed and reported as a skip.
     try:
         import rfc8785  # type: ignore
-
+    except ImportError:
+        print("[SKIP] rfc8785 not installed; standard-JCS cross-check skipped")
+    else:
         ref = "sha256:" + hashlib.sha256(rfc8785.dumps(decision_object)).hexdigest()
         check(
             "decision_id matches INDEPENDENT rfc8785 reference JCS",
             ref == expected,
             ref,
         )
-    except ImportError:
-        print("[SKIP] rfc8785 not installed; standard-JCS cross-check skipped")
 
     # 1c. Every OTHER digest vector.json publishes also recomputes from the
     # shipped bytes. A recorded digest that no verifier derives is an answer
@@ -285,7 +287,9 @@ def main() -> int:
     # it cross-runs byte-for-byte with any conformant decision-log family.
     try:
         import rfc8785  # type: ignore
-
+    except ImportError:
+        print("[SKIP] rfc8785 not installed; deny standard-JCS cross-check skipped")
+    else:
         deny_ref = "sha256:" + hashlib.sha256(
             rfc8785.dumps(deny.preimage())
         ).hexdigest()
@@ -294,8 +298,6 @@ def main() -> int:
             deny_ref == deny_expected,
             deny_ref,
         )
-    except ImportError:
-        print("[SKIP] rfc8785 not installed; deny standard-JCS cross-check skipped")
 
     # 6c. The deny is a terminal deny that COMMITS to the ancestor read: the
     # exact {element_digest, status, source_digest, coordinate} is in the

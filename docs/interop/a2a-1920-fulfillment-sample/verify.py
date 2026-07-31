@@ -140,9 +140,14 @@ def main() -> int:
     # artifact of Concordia's own canonicalizer. Skipped (not failed) if
     # rfc8785 is absent, so a third party with only `concordia` installed still
     # gets a clean run. Mirrors the same cross-check in the #1404 vector.
+    # The import is the ONLY thing allowed to be optional here. Everything after
+    # it runs outside the try, so a genuine failure inside rfc8785 surfaces as a
+    # failure rather than being swallowed and reported as a skip.
     try:
         import rfc8785  # type: ignore
-
+    except ImportError:
+        print("[SKIP] rfc8785 not installed; standard-JCS cross-check skipped")
+    else:
         reference_canonical = (
             "sha256:" + hashlib.sha256(rfc8785.dumps(signable)).hexdigest()
         )
@@ -151,32 +156,32 @@ def main() -> int:
             reference_canonical == recorded_canonical,
             reference_canonical,
         )
-    except ImportError:
-        print("[SKIP] rfc8785 not installed; standard-JCS cross-check skipped")
 
-    # 2c. The published signature string is an expectation too, not an input:
-    # the artifact's own signature member must equal what sample.json records.
-    check(
-        "signature_b64url in sample.json equals the artifact's signature",
-        att["signature"]["value"] == sample["signature_b64url"],
-        att["signature"]["value"],
+    # 2c. The private key RE-DERIVES from the published seed, and the published
+    # signature RE-DERIVES from that key over the same canonical bytes. Ed25519
+    # is deterministic (RFC 8032), so this is a derivation, not a comparison of
+    # two recorded strings: the fixture is reproducible end to end from
+    # sample.json alone. (The seed is a PUBLIC test-vector seed. It is
+    # private-key material by form and must never be reused for anything real.)
+    derived_private = Ed25519PrivateKey.from_private_bytes(
+        sample["seed_ed25519_ascii"].encode()
     )
-
-    # 2d. The published public key RE-DERIVES from the published seed, so the
-    # fixture is reproducible end to end from sample.json alone. (The seed is a
-    # PUBLIC test-vector seed; it is private-key material by form and must never
-    # be reused for anything real.)
     derived_pubkey_b64 = base64.urlsafe_b64encode(
-        Ed25519PrivateKey.from_private_bytes(
-            sample["seed_ed25519_ascii"].encode()
-        )
-        .public_key()
-        .public_bytes_raw()
+        derived_private.public_key().public_bytes_raw()
     ).decode()
     check(
         "public_key_b64url RE-DERIVES from the published seed",
         derived_pubkey_b64 == sample["public_key_b64url"],
         derived_pubkey_b64,
+    )
+    derived_sig_b64 = base64.urlsafe_b64encode(
+        derived_private.sign(canonical_bytes)
+    ).decode()
+    check(
+        "signature RE-DERIVES from the seed and matches artifact and sample.json",
+        derived_sig_b64 == att["signature"]["value"]
+        and derived_sig_b64 == sample["signature_b64url"],
+        derived_sig_b64,
     )
 
     # 3. One-byte tamper -> signature REJECT.

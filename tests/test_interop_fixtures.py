@@ -166,23 +166,36 @@ def test_1920_canonical_sha256_diverges_on_tamper() -> None:
 
 
 def test_1920_published_signature_and_key_are_derived_not_asserted() -> None:
-    """sample.json's signature and public key are checkable, not just recorded.
+    """sample.json's signature and public key are DERIVED, not just recorded.
 
-    The signature string must equal the artifact's own signature member, and the
-    public key must re-derive from the published test seed, so no field in
-    sample.json is a value a reader has to take on trust.
+    Both are re-derived from the published test seed rather than compared
+    against each other: the public key from the seed, and the signature by
+    actually re-signing the canonical bytes with the key the seed produces
+    (Ed25519 is deterministic per RFC 8032). Comparing the artifact's signature
+    string to sample.json's copy of the same string would be self-confirming,
+    since one was written from the other.
     """
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+    from concordia.signing import canonical_json
+
     att = _json(INTEROP_1920 / "fulfillment_attestation.json")
     sample = _json(INTEROP_1920 / "sample.json")
-    assert att["signature"]["value"] == sample["signature_b64url"]
-    derived = base64.urlsafe_b64encode(
-        Ed25519PrivateKey.from_private_bytes(sample["seed_ed25519_ascii"].encode())
-        .public_key()
-        .public_bytes_raw()
+    private = Ed25519PrivateKey.from_private_bytes(
+        sample["seed_ed25519_ascii"].encode()
+    )
+
+    derived_key = base64.urlsafe_b64encode(
+        private.public_key().public_bytes_raw()
     ).decode()
-    assert derived == sample["public_key_b64url"]
+    assert derived_key == sample["public_key_b64url"]
+
+    signable = {k: v for k, v in att.items() if k != "signature"}
+    derived_sig = base64.urlsafe_b64encode(
+        private.sign(canonical_json(signable))
+    ).decode()
+    assert derived_sig == att["signature"]["value"]
+    assert derived_sig == sample["signature_b64url"]
 
 
 def test_1404_published_digests_all_recompute() -> None:
