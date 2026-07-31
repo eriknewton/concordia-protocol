@@ -288,7 +288,7 @@ Concordia defines:
 **Documentation:**
 - [Documentation Index](docs/index.md): curated guide to all docs, examples, and runbooks
 - [Full Specification](SPEC.md): complete protocol specification
-- [Interop vectors](docs/interop/): runnable worked vectors a second implementer can reproduce offline. Each ships the fixture bytes, a deterministic generator, and a `verify.py` that recomputes every published digest from those bytes. They demonstrate that a record's identity is `SHA-256` over its RFC 8785 JCS canonical form, so it is checkable with any conformant JCS library, with no Concordia code and no call to the issuer.
+- [Interop vectors](docs/interop/): runnable worked vectors a second implementer can reproduce offline. Each ships the fixture bytes, a deterministic generator, and a `verify.py` that checks the vector against those bytes with no network and no regeneration. They demonstrate that a record's identity is `SHA-256` over its RFC 8785 JCS canonical form, so it is checkable with an independent JCS library, with no Concordia code and no call to the issuer.
 - [v0.6 Predicate Primitive](docs/v0.6_predicate_primitive.md): signed predicate artifact, verifier, resolver, and CTEF mapping
 - [Python SDK](concordia/): reference implementation
 - [Examples](examples/): negotiation scripts and use cases
@@ -369,9 +369,9 @@ for d in docs/interop/*/; do
 done
 ```
 
-Every digest a vector publishes is recomputed from the fixture bytes and
-compared, and the load-bearing ones are additionally cross-checked in CI against
-an independent RFC 8785 reference library rather than Concordia's own
+The `a2a-1404` vector recomputes its decision identifiers from the fixture bytes
+rather than reading them, and CI cross-checks those identifiers against an
+independent RFC 8785 reference library rather than Concordia's own
 canonicalizer. The vectors cover the artifact identity and verification path,
 not the whole protocol: the conformance levels themselves are defined in
 [SPEC §12](SPEC.md#12-conformance-requirements), and most of the specification

@@ -1084,7 +1084,11 @@ Identity and signature:
   canonicalization per §9.2.1 (property ordering §3.2.3, numbers §3.2.2.3,
   strings §3.2.2.2) and the preimage is exactly the bound fields above,
   excluding `decision_id` and `signature`. It is the RFC 8785 JCS standard
-  hash, recomputable with any conformant JCS library.
+  hash, recomputable with any conformant JCS library, subject to the number
+  domain in §9.2.1: the schema bounds `ancestor_reads[].coordinate` only as a
+  non-negative integer, and a `coordinate` beyond the safe-integer range is not
+  dependably reproducible across implementations. Issuers should keep committed
+  integers inside that range.
 - The record is Ed25519-signed over the same JCS preimage bytes with the
   verifier / issuer key, using the same signing path as `RevocationRecord`.
 
