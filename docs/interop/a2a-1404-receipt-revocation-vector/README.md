@@ -42,7 +42,7 @@ RFC 8785 JCS canonicalizer. Nothing here patches or extends the SDK.
 | `delegation_B_candidate.json` | `B` projected as a cascade candidate artifact (references `A` via `fulfills`). Not a rewrite of `B`; the same id. |
 | `revocation_A.json` | The single status write: a shipped RevocationRecord revoking `A`, scope `cascade_to_dependents`. |
 | `cascade_decision_deny.json` | The **committed terminal deny** for `B`: a shipped `CascadeDecisionRecord`, `deny_decision_id = SHA-256(JCS(preimage))`, Ed25519-signed, committing to the ancestor read. |
-| `vector.json` | Recomputable expectations: PUBLIC test-only signing seeds (`signing_seeds_PUBLIC_test_only_do_not_reuse`, never reuse), public keys, the load-bearing hashes (incl. `deny_decision_id`). |
+| `vector.json` | Recomputable expectations: PUBLIC test-only signing seeds (`signing_seeds_PUBLIC_test_only_do_not_reuse`, never reuse), public keys, every published hash (incl. `deny_decision_id`). |
 
 ## Reproduce it
 
@@ -75,7 +75,7 @@ the vector verifies at any wall-clock time without a stale-expiry failure. This
 is a fixture-stability choice, not a claim that a real procurement grant runs a
 century; a production receipt sets a realistic window.
 
-## The load-bearing hash values
+## The published hash values
 
 ```
 decision_id        = sha256:15f84f2cf53ba52a6d0ba7d859d7c1a7bb6c21cfd5be7d036d2d998fd2eec28e
