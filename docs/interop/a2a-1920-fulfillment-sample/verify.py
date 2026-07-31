@@ -22,6 +22,23 @@ Confirms, from the retained JSON bytes (no network, no regeneration):
 
 Exit code 0 == every assertion held.
 
+Two deliberate limits, stated rather than left to be discovered:
+
+  - The independent `rfc8785` cross-check is SKIPPED when that library is not
+    installed, so a third party with only `concordia` installed still gets a
+    clean run. Absence is the only skip condition (see `find_spec` below); a
+    broken rfc8785 fails the run. Because a skip is possible here, this script
+    is not the regression gate: `tests/test_interop_fixtures.py` imports
+    rfc8785 unconditionally and runs in CI, which is where a canonicalizer
+    regression that was baked into BOTH the artifact and the recorded digest
+    gets caught.
+  - A missing or malformed field in the fixture raises rather than printing a
+    REJECT/FAIL line. That is fail-closed: the traceback exits nonzero, which
+    is the same signal a failed check gives.
+
+This fixture exercises one artifact shape. It is not a JCS conformance suite;
+`tests/test_canonicalization_rfc8785.py` covers the edge vectors.
+
 Run:  python verify.py
 """
 
@@ -29,6 +46,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -140,14 +158,16 @@ def main() -> int:
     # artifact of Concordia's own canonicalizer. Skipped (not failed) if
     # rfc8785 is absent, so a third party with only `concordia` installed still
     # gets a clean run. Mirrors the same cross-check in the #1404 vector.
-    # The import is the ONLY thing allowed to be optional here. Everything after
-    # it runs outside the try, so a genuine failure inside rfc8785 surfaces as a
-    # failure rather than being swallowed and reported as a skip.
-    try:
-        import rfc8785  # type: ignore
-    except ImportError:
+    # ABSENCE is the only condition that skips. `find_spec` answers "is the
+    # module installed" without executing it, so an ImportError raised from
+    # INSIDE a broken rfc8785 propagates and fails the run instead of being
+    # swallowed as a skip. A bare `try: import ... except ImportError` cannot
+    # tell those two cases apart.
+    if importlib.util.find_spec("rfc8785") is None:
         print("[SKIP] rfc8785 not installed; standard-JCS cross-check skipped")
     else:
+        import rfc8785  # type: ignore
+
         reference_canonical = (
             "sha256:" + hashlib.sha256(rfc8785.dumps(signable)).hexdigest()
         )

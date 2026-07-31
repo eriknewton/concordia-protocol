@@ -32,6 +32,7 @@ Run:  python verify.py
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import sys
 from datetime import datetime, timezone
@@ -139,13 +140,15 @@ def main() -> int:
     # available, prove the decision_id is the RFC 8785 STANDARD hash, not a
     # Concordia-specific one. Skipped (not failed) if rfc8785 is absent, so a
     # third party with only `concordia` installed still gets a clean run.
-    # Only the import is optional. The comparison runs outside the try so a real
-    # failure inside rfc8785 cannot be swallowed and reported as a skip.
-    try:
-        import rfc8785  # type: ignore
-    except ImportError:
+    # ABSENCE is the only condition that skips. `find_spec` answers "is it
+    # installed" without executing the module, so an ImportError raised from
+    # INSIDE a broken rfc8785 propagates and fails the run rather than being
+    # swallowed as a skip.
+    if importlib.util.find_spec("rfc8785") is None:
         print("[SKIP] rfc8785 not installed; standard-JCS cross-check skipped")
     else:
+        import rfc8785  # type: ignore
+
         ref = "sha256:" + hashlib.sha256(rfc8785.dumps(decision_object)).hexdigest()
         check(
             "decision_id matches INDEPENDENT rfc8785 reference JCS",
@@ -285,11 +288,11 @@ def main() -> int:
 
     # 6b. Independent rfc8785 cross-check: it is the RFC 8785 STANDARD hash, so
     # it cross-runs byte-for-byte with any conformant decision-log family.
-    try:
-        import rfc8785  # type: ignore
-    except ImportError:
+    if importlib.util.find_spec("rfc8785") is None:
         print("[SKIP] rfc8785 not installed; deny standard-JCS cross-check skipped")
     else:
+        import rfc8785  # type: ignore
+
         deny_ref = "sha256:" + hashlib.sha256(
             rfc8785.dumps(deny.preimage())
         ).hexdigest()
