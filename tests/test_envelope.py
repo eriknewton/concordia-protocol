@@ -22,6 +22,10 @@ from concordia.mcp_server import handle_tool_call
 from concordia.types import ResolutionMechanism, SessionState
 
 
+EXAMPLE_PROVIDER_DID = "did:web:example-scores.test"
+EXAMPLE_PROVIDER_KID = "example-scoring-key-2026"
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -91,6 +95,35 @@ def _make_expired_session():
         session, keys, resolution_mechanism=ResolutionMechanism.NONE
     )
     return session, attestation, keys
+
+
+def _make_agreed_tool_session(make_agent, prefix: str) -> tuple[str, str, str]:
+    """Create an agreed MCP session and return session, initiator, responder tokens."""
+    a = make_agent(f"{prefix}_a")
+    b = make_agent(f"{prefix}_b")
+
+    result = handle_tool_call("concordia_open_session", {
+        "initiator_id": a.agent_id,
+        "responder_id": b.agent_id,
+        "terms": {"price": {"type": "numeric"}},
+    })
+    session_id = result["session_id"]
+    init_token = result["initiator_token"]
+    resp_token = result["responder_token"]
+
+    handle_tool_call("concordia_propose", {
+        "session_id": session_id,
+        "role": "initiator",
+        "terms": {"price": {"value": 100}},
+        "auth_token": init_token,
+    })
+    handle_tool_call("concordia_accept", {
+        "session_id": session_id,
+        "role": "responder",
+        "auth_token": resp_token,
+    })
+
+    return session_id, init_token, resp_token
 
 
 # ---------------------------------------------------------------------------
@@ -478,6 +511,8 @@ class TestNonTerminalRejection:
         raw = handle_tool_call("concordia_session_receipt_envelope", {
             "session_id": session_id,
             "auth_token": init_token,
+            "provider_did": EXAMPLE_PROVIDER_DID,
+            "provider_kid": EXAMPLE_PROVIDER_KID,
         })
         # raw is a JSON string from the tool
         if isinstance(raw, str):
@@ -521,6 +556,74 @@ class TestPrivateKeyNeverInOutput:
 
 
 class TestMcpEnvelopeTool:
+    def test_requires_provider_did_via_tool(self, make_agent):
+        session_id, init_token, _ = _make_agreed_tool_session(
+            make_agent, "agent_missing_provider_did"
+        )
+
+        result = handle_tool_call("concordia_session_receipt_envelope", {
+            "session_id": session_id,
+            "auth_token": init_token,
+            "provider_kid": EXAMPLE_PROVIDER_KID,
+        })
+
+        assert "error" in result
+        assert "Missing required parameter" in result["error"]
+        assert "provider_did" in result["error"]
+        assert "No default reputation provider is used" in result["error"]
+        assert "verascore.ai" not in result["error"].lower()
+
+    def test_requires_provider_kid_via_tool(self, make_agent):
+        session_id, init_token, _ = _make_agreed_tool_session(
+            make_agent, "agent_missing_provider_kid"
+        )
+
+        result = handle_tool_call("concordia_session_receipt_envelope", {
+            "session_id": session_id,
+            "auth_token": init_token,
+            "provider_did": EXAMPLE_PROVIDER_DID,
+        })
+
+        assert "error" in result
+        assert "Missing required parameter" in result["error"]
+        assert "provider_kid" in result["error"]
+        assert "No default reputation provider is used" in result["error"]
+        assert "verascore.ai" not in result["error"].lower()
+
+    def test_fictional_provider_wires_through_via_tool(self, make_agent):
+        session_id, init_token, _ = _make_agreed_tool_session(
+            make_agent, "agent_fictional_provider"
+        )
+
+        envelope = handle_tool_call("concordia_session_receipt_envelope", {
+            "session_id": session_id,
+            "auth_token": init_token,
+            "provider_did": EXAMPLE_PROVIDER_DID,
+            "provider_kid": EXAMPLE_PROVIDER_KID,
+        })
+
+        assert envelope["provider"]["did"] == EXAMPLE_PROVIDER_DID
+        assert envelope["provider"]["kid"] == EXAMPLE_PROVIDER_KID
+        assert envelope["references"][0]["verifier_did"] == EXAMPLE_PROVIDER_DID
+        assert envelope["signature"]["kid"] == EXAMPLE_PROVIDER_KID
+
+    def test_non_verascore_provider_output_has_no_default_vendor(self, make_agent):
+        session_id, init_token, _ = _make_agreed_tool_session(
+            make_agent, "agent_neutral_provider"
+        )
+
+        envelope = handle_tool_call("concordia_session_receipt_envelope", {
+            "session_id": session_id,
+            "auth_token": init_token,
+            "provider_did": EXAMPLE_PROVIDER_DID,
+            "provider_kid": EXAMPLE_PROVIDER_KID,
+        })
+
+        rendered = json.dumps(envelope, sort_keys=True).lower()
+        assert "verascore" not in rendered
+        assert "did:web:verascore.ai" not in rendered
+        assert "verascore-scoring-v1" not in rendered
+
     def test_agreed_session_via_tool(self, make_agent):
         a = make_agent("agent-mcp-a")
         b = make_agent("agent-mcp-b")
@@ -550,6 +653,8 @@ class TestMcpEnvelopeTool:
         raw = handle_tool_call("concordia_session_receipt_envelope", {
             "session_id": session_id,
             "auth_token": init_token,
+            "provider_did": EXAMPLE_PROVIDER_DID,
+            "provider_kid": EXAMPLE_PROVIDER_KID,
         })
         if isinstance(raw, str):
             envelope = json.loads(raw)
@@ -588,6 +693,8 @@ class TestMcpEnvelopeTool:
         raw = handle_tool_call("concordia_session_receipt_envelope", {
             "session_id": session_id,
             "auth_token": init_token,
+            "provider_did": EXAMPLE_PROVIDER_DID,
+            "provider_kid": EXAMPLE_PROVIDER_KID,
             "algorithm": "ES256",
         })
         if isinstance(raw, str):
@@ -626,6 +733,8 @@ class TestMcpEnvelopeTool:
         raw = handle_tool_call("concordia_session_receipt_envelope", {
             "session_id": session_id,
             "auth_token": init_token,
+            "provider_did": EXAMPLE_PROVIDER_DID,
+            "provider_kid": EXAMPLE_PROVIDER_KID,
             "additional_references": extra_refs,
         })
         if isinstance(raw, str):

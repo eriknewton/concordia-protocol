@@ -64,8 +64,8 @@ Tools — Mandate Verification (v0.4.0):
     concordia_verify_mandate      — Verify a signed mandate credential (signature, temporal, constraints, delegation, revocation)
     concordia_verify_approval_receipt - Verify a signed ApprovalReceipt artifact
 
-Tools — Verascore Integration:
-    concordia_verascore_report    — Report a concluded negotiation to Verascore for reputation scoring
+Tools - Reputation Provider Integration:
+    concordia_reputation_report   - Report a concluded negotiation to an explicit reputation provider
 
 Usage:
     python -m concordia                     # stdio transport (default)
@@ -74,6 +74,7 @@ Usage:
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import re
@@ -1097,8 +1098,8 @@ def tool_session_receipt(
 def tool_session_receipt_envelope(
     session_id: Annotated[str, "The concluded session to generate an envelope for"],
     auth_token: Annotated[str, "Session-scoped auth token"],
-    provider_did: Annotated[str, "Provider DID for the envelope"] = "did:web:verascore.ai",
-    provider_kid: Annotated[str, "Key identifier for the signing key"] = "verascore-scoring-v1",
+    provider_did: Annotated[str, "Provider DID for the envelope"],
+    provider_kid: Annotated[str, "Key identifier for the signing key"],
     subject_did: Annotated[str | None, "Subject DID (defaults to session initiator)"] = None,
     algorithm: Annotated[str, "Signing algorithm: 'EdDSA' (default) or 'ES256'"] = "EdDSA",
     visibility: Annotated[str, "Envelope visibility: 'public', 'restricted', or 'private'"] = "public",
@@ -1107,6 +1108,18 @@ def tool_session_receipt_envelope(
     """Export a concluded session as a trust-evidence-format v1.0.0 envelope."""
     from .envelope import build_trust_evidence_envelope
     from .signing import ES256KeyPair
+
+    missing_provider = _blank_required_parameters({
+        "provider_did": provider_did,
+        "provider_kid": provider_kid,
+    })
+    if missing_provider:
+        return json.dumps({
+            "error": _missing_required_parameters_message(
+                "concordia_session_receipt_envelope",
+                missing_provider,
+            )
+        })
 
     if _auth.get_any_session_role(session_id, auth_token) is None:
         return _auth_error(f"session={session_id}", context="concordia_session_receipt_envelope")
@@ -3159,40 +3172,53 @@ def tool_list_receipt_bundles(
 
 
 # ---------------------------------------------------------------------------
-# Tool: verascore_report
+# Tool: reputation_report
 # ---------------------------------------------------------------------------
 
 @mcp.tool(
-    name="concordia_verascore_report",
+    name="concordia_reputation_report",
     description=(
-        "Report a completed negotiation to Verascore for reputation scoring. "
+        "Report a completed negotiation to an explicit reputation provider endpoint. "
         "Extracts behavioral metadata from the session receipt (never raw deal terms) "
         "and posts it signed with the agent's Ed25519 key. "
-        "Requires VERASCORE_ENABLED=true environment variable."
+        "Requires CONCORDIA_REPUTATION_REPORTING_ENABLED=true environment variable."
     ),
 )
-def tool_verascore_report(
+def tool_reputation_report(
     session_id: Annotated[str, "The concluded session to report"],
     agent_id: Annotated[str, "The agent reporting (must be a party in the session)"],
     auth_token: Annotated[str, "Agent-scoped auth token (returned by concordia_register_agent)"],
+    provider_endpoint: Annotated[str, "Reputation provider API base URL"],
+    provider_did: Annotated[str, "Reputation provider DID"],
     fulfillment_status: Annotated[str, "Fulfillment status: 'fulfilled', 'disputed', or 'pending'"] = "pending",
-    verascore_url: Annotated[str, "Verascore API base URL"] = "https://verascore.ai",
 ) -> str:
-    """Report a concluded negotiation to Verascore for portable reputation."""
-    # Gate: require explicit opt-in (CLAUDE.md hard constraint #1)
-    if os.environ.get("VERASCORE_ENABLED", "false").lower() != "true":
+    """Report a concluded negotiation to an explicit reputation provider."""
+    missing_provider = _blank_required_parameters({
+        "provider_endpoint": provider_endpoint,
+        "provider_did": provider_did,
+    })
+    if missing_provider:
         return json.dumps({
-            "error": "Verascore reporting is not enabled.",
+            "error": _missing_required_parameters_message(
+                "concordia_reputation_report",
+                missing_provider,
+            )
+        })
+
+    # Gate: require explicit opt-in (CLAUDE.md hard constraint #1)
+    if os.environ.get("CONCORDIA_REPUTATION_REPORTING_ENABLED", "false").lower() != "true":
+        return json.dumps({
+            "error": "Reputation reporting is not enabled.",
             "hint": (
-                "Set the VERASCORE_ENABLED=true environment variable to enable "
-                "Verascore reputation reporting. This ensures no external data "
+                "Set the CONCORDIA_REPUTATION_REPORTING_ENABLED=true environment "
+                "variable to enable reputation reporting. This ensures no external data "
                 "is transmitted without explicit user intent."
             ),
         })
 
     # Auth check
     if not _auth.validate_agent_token(agent_id, auth_token):
-        return _auth_error(agent_id, context="concordia_verascore_report")
+        return _auth_error(agent_id, context="concordia_reputation_report")
 
     # Validate fulfillment_status
     valid_statuses = ("fulfilled", "disputed", "pending")
@@ -3214,7 +3240,7 @@ def tool_verascore_report(
         return json.dumps({
             "error": (
                 f"Session is in state '{session.state.value}'. "
-                "Session must be finalized before reporting to Verascore "
+                "Session must be finalized before reporting to a reputation provider "
                 "(agreed, rejected, or expired)."
             ),
         })
@@ -3263,8 +3289,15 @@ def tool_verascore_report(
         "negotiation_competence": competence,
     }
 
-    # Sign and POST to Verascore
-    client = VerascoreClient(base_url=verascore_url)
+    # Sign and POST to the explicitly selected reputation provider. The
+    # Verascore client remains the current provider adapter implementation.
+    try:
+        client = VerascoreClient(base_url=provider_endpoint)
+    except ValueError as e:
+        return json.dumps({
+            "error": _neutralize_provider_adapter_text(str(e)),
+        })
+
     try:
         result = client.report_concordia_receipt(
             session_data=session_data,
@@ -3279,23 +3312,28 @@ def tool_verascore_report(
     # Check for API error
     if "error" in result:
         return json.dumps({
-            "error": result["error"],
-            "detail": result.get("detail", ""),
+            "error": _neutralize_provider_adapter_text(str(result["error"])),
+            "detail": _neutralize_provider_adapter_text(str(result.get("detail", ""))),
             "status_code": result.get("status_code"),
         }, indent=2, default=str)
 
+    provider_profile = f"{provider_endpoint}/agent/{agent_did}"
     return json.dumps({
         "reported": True,
         "session_id": session_id,
         "agent_did": agent_did,
+        "provider": {
+            "did": provider_did,
+            "endpoint": provider_endpoint,
+        },
         "outcome": outcome,
         "negotiation_competence": competence,
-        "verascore_profile": f"{verascore_url}/agent/{agent_did}",
-        "verascore_response": result,
+        "provider_profile": provider_profile,
+        "provider_response": result,
         "message": (
-            f"Negotiation receipt reported to Verascore. "
+            f"Negotiation receipt reported to reputation provider {provider_did}. "
             f"Competence score: {competence}/100. "
-            f"View profile at {verascore_url}/agent/{agent_did}"
+            f"View profile at {provider_profile}"
         ),
     }, indent=2, default=str)
 
@@ -3444,6 +3482,62 @@ def _parse_result(json_str: str) -> dict[str, Any]:
     return json.loads(json_str)
 
 
+def _blank_required_parameters(values: dict[str, Any]) -> list[str]:
+    """Return required string parameters that were omitted or blank."""
+    return [
+        name for name, value in values.items()
+        if not isinstance(value, str) or not value.strip()
+    ]
+
+
+def _missing_required_parameters_message(tool_name: str, missing: list[str]) -> str:
+    """Build a stable missing-parameter message for direct tool calls."""
+    plural = "s" if len(missing) != 1 else ""
+    names = ", ".join(missing)
+    suffix = ""
+    if tool_name in {
+        "concordia_session_receipt_envelope",
+        "concordia_reputation_report",
+    } and any(name.startswith("provider_") for name in missing):
+        suffix = " No default reputation provider is used."
+    return (
+        f"Missing required parameter{plural} for '{tool_name}': {names}. "
+        f"Provide the missing parameter{plural} explicitly.{suffix}"
+    )
+
+
+def _missing_required_parameters(handler: Any, arguments: dict[str, Any]) -> list[str]:
+    """Inspect a handler signature for required parameters absent from arguments."""
+    try:
+        signature = inspect.signature(handler)
+    except (TypeError, ValueError):
+        return []
+    required_kinds = {
+        inspect.Parameter.POSITIONAL_ONLY,
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        inspect.Parameter.KEYWORD_ONLY,
+    }
+    return [
+        param.name
+        for param in signature.parameters.values()
+        if (
+            param.default is inspect.Parameter.empty
+            and param.kind in required_kinds
+            and param.name not in arguments
+        )
+    ]
+
+
+def _neutralize_provider_adapter_text(value: str) -> str:
+    """Keep the neutral MCP tool from exposing adapter-specific labels."""
+    return (
+        value
+        .replace("VerascoreClient base_url", "provider_endpoint")
+        .replace("Verascore API", "Reputation provider API")
+        .replace("Verascore", "reputation provider")
+    )
+
+
 def handle_tool_call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     """Dispatch an MCP tool call to the appropriate handler.
 
@@ -3503,7 +3597,7 @@ def handle_tool_call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         "concordia_create_receipt_bundle": tool_create_receipt_bundle,
         "concordia_verify_receipt_bundle": tool_verify_receipt_bundle,
         "concordia_list_receipt_bundles": tool_list_receipt_bundles,
-        "concordia_verascore_report": tool_verascore_report,
+        "concordia_reputation_report": tool_reputation_report,
         "concordia_verify_mandate": tool_verify_mandate,
         "concordia_verify_approval_receipt": tool_verify_approval_receipt,
         # Discovery tools (Phase 2)
@@ -3517,6 +3611,11 @@ def handle_tool_call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         return {"error": f"Unknown tool: '{name}'. Available: {list(handlers.keys())}"}
 
     try:
+        missing = _missing_required_parameters(handler, arguments)
+        if missing:
+            return {
+                "error": _missing_required_parameters_message(name, missing),
+            }
         result_str = handler(**arguments)
         return json.loads(result_str)
     except TypeError as e:
