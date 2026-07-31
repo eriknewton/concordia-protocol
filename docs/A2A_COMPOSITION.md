@@ -160,7 +160,7 @@ With Concordia in place, the full stack looks like this:
 ```
   Settlement    ACP · AP2 · x402 · Stripe · Lightning
   ─────────────────────────────────────────────────────
-  Reputation    ★ VERASCORE ★
+  Reputation    Receipt-backed scoring
   ─────────────────────────────────────────────────────
   Agreement     ★ CONCORDIA ★
   ─────────────────────────────────────────────────────

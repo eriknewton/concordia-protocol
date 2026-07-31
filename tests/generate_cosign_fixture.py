@@ -7,8 +7,8 @@ Run as a module to (re)produce ``tests/fixtures/concordia_cosigned_receipt.json`
 The keys are derived from FIXED 32-byte seeds (publisher = 0x01*32, counterparty
 = 0x02*32) and the receipt carries no timestamps, so the output is byte-stable
 and regenerable. ``tests/test_cosign_producer.py`` asserts the committed fixture
-matches what this generator produces and that it passes an independent port of
-Verascore's ``verifyCounterpartyCosignatureStructural``.
+matches what this generator produces and that it passes an independent consumer
+verification port.
 """
 
 from __future__ import annotations
@@ -71,9 +71,9 @@ def build_fixture() -> dict:
             "tests/generate_cosign_fixture from concordia.cosign with FIXED seed "
             "keys (publisher seed=0x01*32, counterparty seed=0x02*32) so it is "
             "deterministic and regenerable. Cross-repo parity anchor: "
-            "Wiki/concepts/concordia-bilateral-attestation-anchor-2026-06-09.md and "
-            "Verascore src/lib/concordia-cosignature.ts. Verascore consumes this "
-            "for the reverse-direction (producer->consumer) parity test."
+            "Wiki/concepts/concordia-bilateral-attestation-anchor-2026-06-09.md. "
+            "A consumer verifier consumes this for the reverse-direction "
+            "(producer->consumer) parity test."
         ),
         "publisher_did": publisher_did,
         "counterparty_did": counterparty_did,
@@ -93,10 +93,10 @@ def build_envelope_fixture() -> dict:
 
     Built by the SAME code path the client uses (``build_publish_body``), with
     the same fixed seed keys and session data as the receipt fixture, so it is
-    deterministic and regenerable. Verascore consumes this to verify the whole
-    transport envelope — publisher signature over JSON.stringify(data),
-    publicKey→agentId derivation, receipt extraction, normalization, and the
-    counterparty co-signature — with its REAL route-layer functions.
+    deterministic and regenerable. A consumer verifier consumes this to verify
+    the whole transport envelope: publisher signature over JSON.stringify(data),
+    public-key-derived agent identity, receipt extraction, normalization, and
+    the counterparty co-signature.
     """
     from concordia.verascore import build_publish_body
 
@@ -125,8 +125,8 @@ def build_envelope_fixture() -> dict:
     )
 
     # The client transmits canonical_json(body) (sorted keys at every level),
-    # and the publisher signature is over canonical_json(data). Verascore's
-    # route verifies over JSON.stringify of the PARSED wire object, so the
+    # and the publisher signature is over canonical_json(data). Consumers verify
+    # over JSON.stringify of the PARSED wire object, so the
     # fixture must carry the body in exactly that canonical wire form —
     # round-trip through canonical_json so key order in the committed JSON
     # matches the bytes the signature covers.
@@ -141,10 +141,10 @@ def build_envelope_fixture() -> dict:
             "concordia.verascore.build_publish_body with the same FIXED seed "
             "keys as concordia_cosigned_receipt.json (publisher seed=0x01*32, "
             "counterparty seed=0x02*32), so it is deterministic and "
-            "regenerable. Verascore's test suite consumes this with its real "
-            "route-layer functions (signature check over JSON.stringify(data), "
-            "deriveAgentId, normalizeConcordiaReceipt, "
-            "verifyCounterpartyCosignatureStructural)."
+            "regenerable. A consumer test suite can consume this with its own "
+            "publish-envelope verifier (signature check over JSON.stringify(data), "
+            "public-key-derived agent identity, receipt normalization, and "
+            "counterparty co-signature verification)."
         ),
         "publisher_did": publisher_did,
         "counterparty_did": counterparty_did,

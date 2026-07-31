@@ -367,11 +367,11 @@ class BundleVerificationResult:
     snapshot by a dual-accept countersignature map (>=0.2.0 with EVERY listed
     party's countersignature verifying -- a single holder cannot self-rebind).
     ``outcome_unbound_attestations`` names the attestation_ids whose outcome is
-    only prover-asserted -- legacy <0.2.0 records that predate C-H2. A consumer
-    (Verascore, competence-proof aggregation) must credit ONLY bound outcomes;
-    unbound ones are reported, not errored. A >=0.2.0 attestation with a
-    missing/invalid countersignature is a hard ERROR (the bundle is invalid),
-    so it never appears as merely "unbound."
+    only prover-asserted -- legacy <0.2.0 records that predate C-H2. Reputation
+    consumers, including Verascore and competence-proof aggregation, must credit
+    ONLY bound outcomes; unbound ones are reported, not errored. A >=0.2.0
+    attestation with a missing/invalid countersignature is a hard ERROR (the
+    bundle is invalid), so it never appears as merely "unbound."
 
     ``summary_accurate`` is a SELF-CONSISTENCY check (claimed summary == summary
     recomputed over ALL attestations), retained for backward compatibility. It

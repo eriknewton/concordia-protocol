@@ -3,13 +3,11 @@
 The acceptance gate for this build (Cosign_Producer_Build_Spawn_Prompt_2026-06-10):
 
   1. A real co-signed receipt fixture produced by ``concordia.cosign`` passes a
-     FAITHFUL, INDEPENDENT port of Verascore's verifier
-     (verascore/src/lib/concordia-cosignature.ts:
-     ``canonicalCosignBytes`` + ``verifyCounterpartyCosignatureStructural``).
-     The port below is re-implemented from the TS source on purpose — it does
-     NOT call ``concordia.cosign``'s own canonicalization — so a byte-level
-     divergence between the two repos' canonicalization would make the
-     signature fail to verify here.
+     FAITHFUL, INDEPENDENT port of one Verascore verifier's counterparty
+     co-signature checks. The port below is re-implemented from the TS source on
+     purpose — it does NOT call ``concordia.cosign``'s own canonicalization — so
+     a byte-level divergence between implementations would make the signature
+     fail to verify here.
   2. Happy-path co-sign; recursive signature-strip canonicalization;
      wrong-counterparty key rejected; missing counterparty -> clean
      single-signed receipt; lone-surrogate input -> fail-closed.
@@ -57,13 +55,13 @@ def _session_data(counterparty_did: str, **overrides) -> dict:
 
 
 # ===========================================================================
-# INDEPENDENT port of verascore/src/lib/concordia-cosignature.ts + crypto.ts.
-# Deliberately re-implemented from the TS source (NOT importing concordia.cosign
-# canonicalization) so this is a genuine cross-repo parity check.
+# INDEPENDENT port of the observed consumer's co-signature and key-decoding
+# helpers. Deliberately re-implemented from the TS source (NOT importing
+# concordia.cosign canonicalization) so this is a genuine parity check.
 # ===========================================================================
 
 def _ts_strip_signatures(value):
-    """Port of stripSignatures() in concordia-cosignature.ts."""
+    """Port of the recursive signature-stripping helper."""
     if isinstance(value, list):
         return [_ts_strip_signatures(v) for v in value]
     if isinstance(value, dict):
@@ -76,7 +74,7 @@ def _ts_strip_signatures(value):
 
 
 def _ts_stable_stringify(value) -> str:
-    """Port of stableStringify() in concordia-cosignature.ts.
+    """Port of the stable stringify helper.
 
     Keys sorted by UTF-16 code unit (JS default sort); no whitespace; numbers
     and strings via JSON.stringify semantics. The fixture uses only ASCII keys
@@ -116,14 +114,14 @@ def _ts_canonical_cosign_bytes(receipt) -> bytes:
 
 
 def _ts_base64url_to_bytes(s: str) -> bytes:
-    """Port of base64urlToBuffer() in crypto.ts."""
+    """Port of the base64url decoder helper."""
     b64 = s.replace("-", "+").replace("_", "/")
     pad = (4 - (len(b64) % 4)) % 4
     return base64.b64decode(b64 + "=" * pad)
 
 
 def _ts_public_key_from_did(did: str) -> bytes | None:
-    """Port of publicKeyFromDid() in crypto.ts (base64url multibase branch).
+    """Port of the did:key public-key decoder (base64url multibase branch).
 
     Concordia/Sanctuary emit the base64url 'z' variant, which the TS tries
     first; base58btc is the standard-did:key fallback and is not exercised by
@@ -142,7 +140,7 @@ def _ts_public_key_from_did(did: str) -> bytes | None:
 
 
 def _ts_verify_ed25519(message: bytes, signature: bytes, pubkey: bytes) -> bool:
-    """Port of verifyEd25519() in crypto.ts."""
+    """Port of the Ed25519 verifier helper."""
     try:
         Ed25519PublicKey.from_public_bytes(pubkey).verify(signature, message)
         return True
@@ -151,7 +149,7 @@ def _ts_verify_ed25519(message: bytes, signature: bytes, pubkey: bytes) -> bool:
 
 
 def _ts_find_counterparty_signature(receipt: dict, counterparty_did: str):
-    """Port of findCounterpartySignature(): exactly-one match or reject."""
+    """Port of exactly-one counterparty signature lookup."""
     parties = receipt.get("parties")
     parties = parties if isinstance(parties, list) else []
     matches = [
@@ -169,11 +167,11 @@ def _ts_find_counterparty_signature(receipt: dict, counterparty_did: str):
 def verascore_verify_counterparty_cosignature_structural(
     receipt, counterparty_did: str, publisher_did: str
 ) -> bool:
-    """FAITHFUL port of verifyCounterpartyCosignatureStructural().
+    """FAITHFUL port of counterparty co-signature structural verification.
 
-    Bound to verascore/src/lib/concordia-cosignature.ts (lines 137-163). Any
-    divergence between Concordia's ``canonical_json`` and the TS stableStringify
-    would make a Concordia-produced signature fail here.
+    Bound to one observed consumer verifier. Any divergence between Concordia's
+    ``canonical_json`` and the TS stableStringify would make a Concordia-produced
+    signature fail here.
     """
     try:
         if not isinstance(receipt, dict):
@@ -246,7 +244,7 @@ def test_happy_path_cosign_verifies() -> None:
     # The counterparty entry carries a real base64url signature.
     cp_entry = next(p for p in receipt["parties"] if p["agent_id"] == cp_did)
     assert isinstance(cp_entry["signature"], str) and cp_entry["signature"]
-    # And it passes the independent Verascore port.
+    # And it passes the independent consumer port.
     assert verascore_verify_counterparty_cosignature_structural(receipt, cp_did, pub_did)
 
 
@@ -282,7 +280,7 @@ def test_signature_strip_is_recursive_and_canonical_invariant() -> None:
     variant["parties"][1]["behavior"]["signature"] = "ALSO_DEEP_DIFFERENT"
     assert cosign.canonical_cosign_bytes(nested) == cosign.canonical_cosign_bytes(variant)
 
-    # And the producer's canonical bytes equal the independent Verascore port's.
+    # And the producer's canonical bytes equal the independent consumer port's.
     assert cosign.canonical_cosign_bytes(nested) == _ts_canonical_cosign_bytes(nested)
 
 
@@ -316,7 +314,7 @@ def test_missing_counterparty_yields_clean_single_signed_receipt() -> None:
 
     cp_entry = next(p for p in receipt["parties"] if p["agent_id"] == cp_did)
     assert "signature" not in cp_entry  # fail-closed: absent, not empty
-    # Verascore treats it as not co-signed (contributes nothing), but it is
+    # Consumer verifiers treat it as not co-signed (contributes nothing), but it is
     # well-formed and verification simply returns False.
     assert not verascore_verify_counterparty_cosignature_structural(receipt, cp_did, pub_did)
 
@@ -437,8 +435,8 @@ def test_did_key_codec_roundtrip_and_rejection() -> None:
 
 
 def test_did_key_matches_sanctuary_deriveagentid_encoding() -> None:
-    """did:key:z<base64url(0xed01 || pubkey)> — the exact form Verascore's
-    deriveAgentId / publicKeyToDidBase64url emits and publicKeyFromDid decodes."""
+    """did:key:z<base64url(0xed01 || pubkey)> — the exact form emitted and decoded
+    by the observed consumer's base64url did:key path."""
     raw = _kp(9).public_key_bytes()
     expected = "did:key:z" + base64.urlsafe_b64encode(b"\xed\x01" + raw).rstrip(b"=").decode()
     assert cosign.ed25519_did_key(raw) == expected

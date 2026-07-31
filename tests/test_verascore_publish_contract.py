@@ -1,21 +1,17 @@
 """Contract test: the Verascore publish envelope this client emits matches the
-committed copy of Verascore's accepted /api/publish schema.
+committed schema for a concordia-receipt publish body.
 
-The schema in tests/fixtures/verascore_publish_contract.schema.json is a copy of
-the body Verascore accepts, bound to its source:
+The schema in tests/fixtures/verascore_publish_contract.schema.json describes
+the envelope on its own terms: top-level {signature, publicKey, type, data},
+publisher signature over JSON.stringify(data), data.did bound to the verified
+publicKey, data.receipt carrying Concordia receipt fields, and parties[] carrying
+the counterparty co-signature.
 
-    Verascore repo: src/app/api/publish/route.ts
-                    src/lib/concordia-receipts.ts
-                    src/lib/concordia-cosignature.ts
-                    src/lib/crypto.ts
-    Branch commit:  a3e6090  (#63, require counterparty co-signature for
-                    trust-bearing Concordia receipts; H1/H2)
-
-If Verascore's route contract changes, update BOTH the schema fixture (with the
-new commit) and this test. The cross-repo canonicalization is the
-bilateral-attestation anchor
-(Wiki/concepts/concordia-bilateral-attestation-anchor-2026-06-09.md): a change
-to the signed bytes or signature placement is an anchor change.
+If the publish contract changes, update BOTH the schema fixture and this test.
+The counterparty co-signature byte contract follows the bilateral-attestation
+anchor (Wiki/concepts/concordia-bilateral-attestation-anchor-2026-06-09.md).
+The co-signed receipt shape itself is not normatively specified in SPEC; this
+fixture is an interoperability contract for a known consumer.
 """
 
 from __future__ import annotations
@@ -108,9 +104,9 @@ def test_envelope_validates_against_committed_schema() -> None:
 
 
 def test_publisher_envelope_signature_matches_route_check() -> None:
-    """Mirror route.ts: verify raw Ed25519(JSON.stringify(data)) with the
+    """Mirror the consumer check: raw Ed25519(JSON.stringify(data)) with the
     decoded publicKey. canonical_json(data) == JSON.stringify(data) because the
-    route re-stringifies the object it parsed and we send sorted keys."""
+    consumer re-stringifies the object it parsed and we send sorted keys."""
     cap = _capture_envelope(with_cosignature=True)
     body = cap["body"]
 
@@ -119,19 +115,18 @@ def test_publisher_envelope_signature_matches_route_check() -> None:
     assert len(pub) == 32
     assert len(sig) == 64
 
-    # The bytes the route signs over: JSON.stringify of the parsed data.
+    # The bytes the consumer verifies: JSON.stringify of the parsed data.
     reparsed_data = json.loads(cap["raw"].decode("utf-8"))["data"]
     cap["publisher"].public_key.verify(sig, canonical_json(reparsed_data))
 
-    # publicKey must encode the same did:key the route derives (deriveAgentId)
-    # and that data.did declares.
+    # publicKey must encode the same did:key that data.did declares.
     assert body["data"]["did"] == cap["pub_did"]
     assert cosign.ed25519_did_key(pub) == body["data"]["did"]
 
 
 def test_counterparty_cosignature_matches_anchor() -> None:
     """The counterparty signature on parties[] verifies over the canonical
-    signature-stripped receipt — the shared anchor Verascore re-derives."""
+    signature-stripped receipt the consumer re-derives."""
     cap = _capture_envelope(with_cosignature=True)
     receipt = cap["body"]["data"]["receipt"]
     cp_entry = next(
@@ -142,13 +137,12 @@ def test_counterparty_cosignature_matches_anchor() -> None:
 
 
 def test_committed_envelope_fixture_matches_generator() -> None:
-    """The committed cross-repo transport-envelope fixture is exactly what
+    """The committed transport-envelope fixture is exactly what
     ``build_publish_body`` produces today (deterministic seed keys), and it
-    validates against the committed copy of Verascore's route schema.
+    validates against the committed schema.
 
-    Verascore's test suite consumes this same fixture with its REAL
-    route-layer functions; this test guarantees the committed bytes never
-    drift from the producer code.
+    A consumer test suite can consume this same fixture with its own verifier;
+    this test guarantees the committed bytes never drift from the producer code.
     """
     from tests.generate_cosign_fixture import (
         ENVELOPE_FIXTURE_PATH,

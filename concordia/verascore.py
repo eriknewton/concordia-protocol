@@ -36,8 +36,7 @@ DEFAULT_VERASCORE_ENDPOINT = "https://verascore.ai"
 
 
 def _b64url(raw: bytes) -> str:
-    """Unpadded base64url, matching Verascore's bufferToBase64url / the decode
-    in base64urlToBuffer (src/lib/crypto.ts), which re-adds padding on verify."""
+    """Unpadded base64url; verifiers re-add padding before decoding."""
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 
@@ -87,7 +86,7 @@ def build_publish_body(
     This is the single source of truth for the Concordia→Verascore transport
     envelope shape. ``VerascoreClient.report_concordia_receipt`` POSTs exactly
     this object; the cross-repo fixture generator emits exactly this object so
-    Verascore's test suite can verify it with the real route-layer functions.
+    consumer test suites can verify it with their own publish-envelope checks.
 
     Raises:
         ValueError: If the envelope cannot be built completely — e.g.
@@ -98,11 +97,10 @@ def build_publish_body(
     """
     # ── Publisher identity must equal the signing key's did:key ──────────
     # Verascore's /api/publish IGNORES any caller-supplied agentId and
-    # derives the publisher identity from the verified Ed25519 publicKey
-    # (deriveAgentId -> did:key:z<base64url(0xed01||pubkey)>, see
-    # src/lib/crypto.ts). The receipt's publisher party, the envelope's
-    # publicKey, and data.did must all resolve to that same identity or the
-    # publish is unverifiable. Fail closed if the caller passed a DID that
+    # derives the publisher identity from the verified Ed25519 publicKey as
+    # did:key:z<base64url(0xed01||pubkey)>. The receipt's publisher party, the
+    # envelope's publicKey, and data.did must all resolve to that same identity
+    # or the publish is unverifiable. Fail closed if the caller passed a DID that
     # is not this key's did:key.
     expected_did = did_key_for(key_pair)
     if agent_did != expected_did:
@@ -113,8 +111,8 @@ def build_publish_body(
         )
 
     # Bilateral receipt (parties[] with the counterparty co-signature when
-    # available). This is the H1/H2 producer half: Verascore counts a
-    # receipt toward a trust-bearing score only if the named counterparty
+    # available). This is the H1/H2 producer half: a reputation consumer can
+    # count a receipt toward a trust-bearing score only if the named counterparty
     # cryptographically co-signed it. Fail-closed to single-signed.
     receipt = build_cosigned_receipt(
         session_data,
@@ -123,24 +121,21 @@ def build_publish_body(
     )
 
     # ── Build the signed `data` object Verascore consumes ───────────────
-    # The route extracts the receipt from data.receipt (extractConcordia-
-    # ReceiptPayload) and canonicalizes THAT object for the co-signature
-    # check, so the receipt must be nested untouched (no sibling keys mixed
-    # in). data.did lets the route bind the publish to this publicKey and
-    # reject DID squatting.
+    # Consumers extract the receipt from data.receipt and canonicalize THAT
+    # object for the co-signature check, so the receipt must be nested untouched
+    # (no sibling keys mixed in). data.did lets the consumer bind the publish to
+    # this publicKey and reject DID squatting.
     data = {
         "did": agent_did,
         "receipt": receipt,
     }
 
-    # The route verifies the publisher-envelope signature over
-    # JSON.stringify(data) (route.ts: `Buffer.from(JSON.stringify(data))`).
+    # Consumers verify the publisher-envelope signature over JSON.stringify(data).
     # canonical_json is byte-identical to ECMAScript JSON.stringify with
-    # sorted keys; because the route re-stringifies the object it parsed
-    # (preserving wire key order) and we send `data` with those same sorted
-    # keys, the server reproduces these exact bytes. Signature is base64url
-    # raw Ed25519 (NOT hex) and publicKey is base64url raw 32-byte key, both
-    # matching the route's base64urlToBuffer decode.
+    # sorted keys; because consumers re-stringify the object they parsed
+    # (preserving wire key order) and we send `data` with those same sorted keys,
+    # the verifier reproduces these exact bytes. Signature is base64url raw
+    # Ed25519 (NOT hex) and publicKey is base64url raw 32-byte key.
     data_bytes = canonical_json(data)
     raw_sig = key_pair.private_key.sign(data_bytes)
     signature_b64url = _b64url(raw_sig)
