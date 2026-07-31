@@ -9,6 +9,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- `TrustSignals.reputation` now carries provider-neutral `ReputationAssertion`
+  entries, and the Verascore profile publish path writes both that neutral
+  assertion and the retained legacy fields.
 - **`CascadeDecisionRecord`: a committed, recomputable terminal-deny decision
   object (A2A #1404 last mile).** The cascade verifier's terminal deny was a
   live `InadmissibleArtifact` (a `reason` enum plus a free-text `evidence`
@@ -50,8 +53,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `docs/interop/a2a-1404-receipt-revocation-vector/` vector now emits and
   verifies the committed deny offline in one command.
 
+### Changed
+
+- Agent discovery search now uses `min_reputation_composite`,
+  `sort_by="reputation_composite"`, and `average_reputation_composite`; score
+  reads still fall back to the legacy `verascore_composite` field.
+
 ### Deprecated
 
+- `TrustSignals.verascore_did`, `TrustSignals.verascore_tier`, and
+  `TrustSignals.verascore_composite` are deprecated in favor of provider-neutral
+  `TrustSignals.reputation` assertions, but they remain available in this
+  alpha release.
 - `VerascoreClient` and `make_verascore_auto_hook` remain available through
   `concordia.VerascoreClient` and `concordia.make_verascore_auto_hook` for
   one release, but those top-level imports now emit `DeprecationWarning`.

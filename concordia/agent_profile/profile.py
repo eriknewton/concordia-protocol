@@ -100,17 +100,39 @@ class Sovereignty:
 
 
 @dataclass
+class ReputationAssertion:
+    """Provider-neutral reputation assertion."""
+
+    provider: str
+    """Reputation provider domain or identifier."""
+
+    subject_did: str | None = None
+    """DID this assertion describes, if supplied by the provider."""
+
+    tier: str | None = None
+    """Provider-specific reputation tier."""
+
+    composite: int | None = None
+    """Provider-specific composite reputation score."""
+
+    def to_dict(self) -> dict[str, Any]:
+        d = asdict(self)
+        # Don't include None values
+        return {k: v for k, v in d.items() if v is not None}
+
+
+@dataclass
 class TrustSignals:
     """External trust indicators."""
 
     verascore_did: str | None = None
-    """DID linked to this agent's Verascore profile."""
+    """Deprecated: DID linked to this agent's Verascore profile."""
 
     verascore_tier: str | None = None
-    """Verascore tier: verified-sovereign, verified-degraded, self-attested, unverified."""
+    """Deprecated: Verascore tier."""
 
     verascore_composite: int | None = None
-    """Composite trust score (0-100) from Verascore."""
+    """Deprecated: composite trust score from Verascore."""
 
     sovereignty: Sovereignty = field(default_factory=Sovereignty)
     """Most recent Sovereignty Health Report summary."""
@@ -124,8 +146,24 @@ class TrustSignals:
     concordia_preferred: bool = True
     """Whether agent supports Concordia protocol."""
 
+    reputation: list[ReputationAssertion] | None = None
+    """Provider-neutral reputation assertions."""
+
     def to_dict(self) -> dict[str, Any]:
-        d = asdict(self)
+        d = {
+            "verascore_did": self.verascore_did,
+            "verascore_tier": self.verascore_tier,
+            "verascore_composite": self.verascore_composite,
+            "sovereignty": self.sovereignty.to_dict(),
+            "concordia_sessions_completed": self.concordia_sessions_completed,
+            "attestation_count": self.attestation_count,
+            "concordia_preferred": self.concordia_preferred,
+            "reputation": (
+                [assertion.to_dict() for assertion in self.reputation]
+                if self.reputation is not None
+                else None
+            ),
+        }
         # Don't include None values
         return {k: v for k, v in d.items() if v is not None}
 
@@ -259,6 +297,13 @@ class AgentCapabilityProfile:
             trust_kwargs["sovereignty"] = Sovereignty(
                 **_known_dataclass_kwargs(Sovereignty, trust_kwargs["sovereignty"])
             )
+        if "reputation" in trust_kwargs and trust_kwargs["reputation"] is not None:
+            trust_kwargs["reputation"] = [
+                ReputationAssertion(
+                    **_known_dataclass_kwargs(ReputationAssertion, assertion)
+                )
+                for assertion in trust_kwargs["reputation"]
+            ]
         trust = TrustSignals(**trust_kwargs)
 
         endpoints = Endpoints(
