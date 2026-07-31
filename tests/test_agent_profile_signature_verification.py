@@ -48,6 +48,48 @@ def test_invalid_profile_signature_rejects() -> None:
     assert store.get(profile.agent_id) is None
 
 
+def test_profile_from_dict_ignores_unknown_trust_signal_reputation() -> None:
+    data = {
+        "agent_id": "did:concordia:future-trust-signal",
+        "name": "Future trust signal",
+        "trust_signals": {"reputation": []},
+    }
+
+    profile = AgentCapabilityProfile.from_dict(data)
+
+    assert profile.agent_id == "did:concordia:future-trust-signal"
+
+
+def test_unknown_trust_signal_stays_out_of_canonical_profile() -> None:
+    data = {
+        "agent_id": "did:concordia:future-trust-signal",
+        "name": "Future trust signal",
+        "trust_signals": {"reputation": []},
+    }
+
+    profile = AgentCapabilityProfile.from_dict(data)
+    canonical_trust_signals = profile.to_canonical_dict()["trust_signals"]
+
+    assert "reputation" not in canonical_trust_signals
+    assert sorted(canonical_trust_signals) == [
+        "attestation_count",
+        "concordia_preferred",
+        "concordia_sessions_completed",
+        "sovereignty",
+    ]
+
+
+def test_profile_signed_before_unknown_trust_signal_still_verifies() -> None:
+    keypair = KeyPair.generate()
+    profile = _signed_profile(keypair, "did:concordia:signed-before-future-key")
+    serialized = profile.to_dict()
+    serialized["trust_signals"]["reputation"] = []
+
+    restored = AgentCapabilityProfile.from_dict(serialized)
+
+    assert restored.verify_signature(keypair.public_key) is True
+
+
 def test_missing_key_stores_unsigned_profile_as_unverified() -> None:
     profile = _profile()
     store = AgentProfileStore()
