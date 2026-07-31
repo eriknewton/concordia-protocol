@@ -59,6 +59,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `sort_by="reputation_composite"`, and `average_reputation_composite`; score
   reads still fall back to the legacy `verascore_composite` field.
 
+- **BREAKING (MCP tool signature).** `concordia_session_receipt_envelope` now
+  requires `provider_did` and `provider_kid`. They previously defaulted to
+  `did:web:verascore.ai` and `verascore-scoring-v1`, so a tool documented as
+  compatible with multi-provider trust evidence silently emitted one vendor's
+  identifiers. Calling without them now fails closed and names the missing
+  parameter.
+
+- **BREAKING (MCP tool rename).** `concordia_verascore_report` is now
+  `concordia_reputation_report`, and takes an explicit `provider_endpoint` and
+  `provider_did`. There is no default provider; an unspecified provider is an
+  error rather than a silent `verascore.ai`.
+
+- **BREAKING (environment variable).** The reporting tool is gated by
+  `CONCORDIA_REPUTATION_REPORTING_ENABLED` instead of `VERASCORE_ENABLED`.
+  `VERASCORE_ENABLED` still gates the Verascore auto-hook in
+  `concordia.verascore`, which is a vendor-specific adapter and keeps its
+  vendor-specific variable.
+
 ### Deprecated
 
 - `TrustSignals.verascore_did`, `TrustSignals.verascore_tier`, and

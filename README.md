@@ -277,7 +277,7 @@ Concordia defines:
 - **Predicate primitive**: signed v0.6 authority, policy, eligibility, and bounds evaluations
 
 **The tool set:**
-- 59 MCP tools across negotiation, session receipts, competence proofs, reputation, discovery, agent profiles, want registry, relay, adoption, Sanctuary bridge, receipt bundles, Verascore reporting, mandate verification, and approval receipt verification
+- 59 MCP tools across negotiation, session receipts, competence proofs, reputation, discovery, agent profiles, want registry, relay, adoption, Sanctuary bridge, receipt bundles, provider-parameterized reputation reporting, mandate verification, and approval receipt verification
 - Tool registration: 55 in `concordia.mcp_server` plus 4 agent-profile discovery tools registered via `register_discovery_tools()`, for 59 active runtime tools
 - Predicate CLI verification with `python -m concordia predicate verify <file>`
 - Cryptographic signing and verification

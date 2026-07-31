@@ -1,10 +1,11 @@
-"""Verascore reputation reporting — push negotiation receipts to Verascore.
+"""Optional Verascore reputation reporting adapter.
 
-Posts behavioral metadata from concluded Concordia sessions to the Verascore
-transaction ingestion API. Only behavioral signals are sent (rounds, duration,
-outcome, concession count) — never raw deal terms, prices, or counterparty
-names. This is a hard constraint from §9.6 and the no-raw-deal-terms privacy
-invariant (AGENTS.md rule #8).
+This module is one provider-specific implementation for posting behavioral
+metadata from concluded Concordia sessions to Verascore's transaction ingestion
+API. Only behavioral signals are sent (rounds, duration, outcome, concession
+count) - never raw deal terms, prices, or counterparty names. This is a hard
+constraint from §9.6 and the no-raw-deal-terms privacy invariant (AGENTS.md
+rule #8).
 
 Requires VERASCORE_ENABLED=true environment variable to activate, ensuring
 no external data is transmitted without explicit user intent (the
