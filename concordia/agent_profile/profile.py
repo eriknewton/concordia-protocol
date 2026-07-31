@@ -10,7 +10,7 @@ with Ed25519 and can be stored in registries or published at well-known URIs.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from typing import Any
 
@@ -22,6 +22,12 @@ from concordia.signing import canonical_json, verify_signature
 def _new_timestamp() -> str:
     """Return an ISO 8601 timestamp in UTC."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _known_dataclass_kwargs(cls: type[Any], payload: dict[str, Any]) -> dict[str, Any]:
+    """Return only payload keys accepted by the dataclass constructor."""
+    known_fields = {field.name for field in fields(cls)}
+    return {k: v for k, v in payload.items() if k in known_fields}
 
 
 @dataclass
@@ -238,21 +244,29 @@ class AgentCapabilityProfile:
 
         Used for deserializing profiles from registries or well-known URIs.
         """
-        caps = Capabilities(**data.get("capabilities", {}))
-        neg_prof = NegotiationProfile(**data.get("negotiation_profile", {}))
-        trust = TrustSignals(
-            **{
-                k: v
-                for k, v in data.get("trust_signals", {}).items()
-                if k != "sovereignty"
-            }
+        caps = Capabilities(
+            **_known_dataclass_kwargs(Capabilities, data.get("capabilities", {}))
         )
+        neg_prof = NegotiationProfile(
+            **_known_dataclass_kwargs(
+                NegotiationProfile, data.get("negotiation_profile", {})
+            )
+        )
+        trust_payload = data.get("trust_signals", {})
+        trust_kwargs = _known_dataclass_kwargs(TrustSignals, trust_payload)
         # Handle nested sovereignty
-        if "sovereignty" in data.get("trust_signals", {}):
-            trust.sovereignty = Sovereignty(**data["trust_signals"]["sovereignty"])
+        if "sovereignty" in trust_kwargs:
+            trust_kwargs["sovereignty"] = Sovereignty(
+                **_known_dataclass_kwargs(Sovereignty, trust_kwargs["sovereignty"])
+            )
+        trust = TrustSignals(**trust_kwargs)
 
-        endpoints = Endpoints(**data.get("endpoints", {}))
-        location = Location(**data.get("location", {}))
+        endpoints = Endpoints(
+            **_known_dataclass_kwargs(Endpoints, data.get("endpoints", {}))
+        )
+        location = Location(
+            **_known_dataclass_kwargs(Location, data.get("location", {}))
+        )
 
         return cls(
             type=data.get("type", "concordia.agent_profile"),
