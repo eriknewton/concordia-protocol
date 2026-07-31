@@ -1087,8 +1087,7 @@ Identity and signature:
   hash, recomputable with any conformant JCS library, subject to the number
   domain in §9.2.1: the schema bounds `ancestor_reads[].coordinate` only as a
   non-negative integer, and a `coordinate` beyond the safe-integer range is not
-  dependably reproducible across implementations. Issuers should keep committed
-  integers inside that range.
+  dependably reproducible across implementations.
 - The record is Ed25519-signed over the same JCS preimage bytes with the
   verifier / issuer key, using the same signing path as `RevocationRecord`.
 
