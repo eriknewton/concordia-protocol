@@ -50,6 +50,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `docs/interop/a2a-1404-receipt-revocation-vector/` vector now emits and
   verifies the committed deny offline in one command.
 
+### Deprecated
+
+- `VerascoreClient` and `make_verascore_auto_hook` remain available through
+  `concordia.VerascoreClient` and `concordia.make_verascore_auto_hook` for
+  one release, but those top-level imports now emit `DeprecationWarning`.
+  Import from `concordia.verascore` instead. This removes the eager Verascore
+  client import from `import concordia`. Known cost: mypy cannot see names
+  provided by module `__getattr__`, so `from concordia import VerascoreClient`
+  is a type error for consumers during the deprecation window.
+
 ### Security
 
 - **Attestation context is validated fail-closed at issuance (audit
