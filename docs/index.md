@@ -12,7 +12,7 @@ the spec, the governance files, and the contributor entry points.
 | [SPEC](../SPEC.md) | The normative protocol specification: messages, signing, attestations, mandates, and predicates. |
 | [CONTRIBUTING](../CONTRIBUTING.md) | How to set up the repo, run the tests, and open a change. |
 | [AGENTS](../AGENTS.md) | Repository guide for AI coding agents working in this codebase. |
-| [Interop conformance vectors](interop/) | Runnable worked vectors that determine conformance. Each ships the fixture bytes, a deterministic generator, and a `verify.py` that recomputes every published digest from those bytes, so a second implementer can check a record's identity offline with any RFC 8785 JCS library and no Concordia code. |
+| [Interop vectors](interop/) | Runnable worked vectors for the artifact-identity and verification path. Each ships the fixture bytes, a deterministic generator, and a `verify.py` that recomputes every published digest from those bytes, so a second implementer can check a record's identity offline with any RFC 8785 JCS library and no Concordia code. The conformance levels themselves are defined in [SPEC §12](../SPEC.md#12-conformance-requirements). |
 
 ## Reference and deep dives (this directory)
 

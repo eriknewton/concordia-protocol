@@ -659,9 +659,9 @@ canonicalizes an in-memory JSON value that an implementation has already parsed
 or constructed, not a JSON text.
 
 RFC 8785 fixes how a value is serialized. It never fixes which value is
-serialized, so every place a signature or digest excludes part of the artifact,
-that exclusion is Concordia's own rule and is stated at the site that applies
-it. The three exclusion rules in use are:
+serialized, so wherever a signature or digest covers less than the whole
+artifact, that exclusion is Concordia's own rule. Three exclusion rules are in
+use:
 
 1. **Top-level signature removal** (§4.1, §9.2, §9.6.4a): the top-level
    `signature` member is removed and the remainder is canonicalized. Members
@@ -672,13 +672,27 @@ it. The three exclusion rules in use are:
 3. **Enumerated preimage** (§9.6.4d): the fields covered are listed explicitly
    rather than derived by removal.
 
+Two sites apply rule 1 without stating it in their own text: §9.6.4b lists
+`signature` among the ApprovalReceipt's required fields, and §9.6.4c lists it
+among the RevocationRecord's, but neither section defines its preimage. As a
+statement of fact rather than a requirement, the reference implementation
+computes both over the artifact with its top-level `signature` member removed.
+Specifying those two preimages normatively is a change to this document, not a
+clarification of it, so it is tracked as its own change.
+
 **Number domain (non-normative).** RFC 8785 §3.2.2.3 serializes numbers through
-the ECMAScript algorithm, which operates on IEEE-754 doubles, so integers
-outside the exactly representable range of ±(2^53 - 1) fall outside the
-interoperable domain. RFC 8785 Appendix D discusses exactly this case and its
-guidance is to carry such values as JSON strings. Concordia additionally
-rejects `-0.0` rather than emitting `0` as RFC 8785 would, so the two zero forms
-can never both appear in a Concordia digest preimage.
+the ECMAScript algorithm, which operates on IEEE-754 doubles, so integers beyond
+the safe-integer range of ±(2^53 - 1), where consecutive integers stop being
+distinguishable, are not reliably interoperable. RFC 8785 Appendix D discusses
+exactly this case and its guidance is to carry such values as JSON strings. The
+two reference SDKs currently differ at this boundary and neither should be read
+as normative: the JavaScript SDK refuses to serialize a plain-decimal integer
+beyond that range rather than emit a value it cannot represent, while the Python
+SDK emits the integer's full decimal form, which a JCS implementation backed by
+doubles will not reproduce. A digest taken over such a value is therefore not
+dependably recomputable by a second implementation. Separately, both SDKs reject
+`-0.0` rather than emitting `0` as RFC 8785 would, so the two zero forms can
+never both appear in a Concordia digest preimage.
 
 ### 9.3 Transcript Integrity
 
