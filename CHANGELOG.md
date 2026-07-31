@@ -96,7 +96,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   #1734 (April 2026) and adopted here. Overdue provenance note; no behavior
   change.
 
-## [0.7.0a1] - 2026-06-DD
+## [0.7.0a1] - 2026-05-22
 
 ### Added
 

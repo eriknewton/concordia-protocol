@@ -245,7 +245,7 @@ All Concordia messages are JSON objects transmitted over HTTPS. The protocol use
 - `from`: the sending agent
 - `prev_hash`: hash of the previous message in the session transcript (the genesis hash `sha256:` followed by 64 zeros for the first message); chains the transcript per Section 9.3
 - `body`: type-specific payload
-- `signature`: Ed25519 signature over the canonical JSON of all other fields
+- `signature`: Ed25519 signature over the canonical JSON (RFC 8785 JCS, §9.2.1) of all other fields
 
 **Optional fields:**
 - `to`: recipient(s); omitted for broadcast messages
@@ -633,10 +633,66 @@ Agents that root their `agent_id` in an autonomic identifier protocol such as KE
 
 ### 9.2 Message Integrity
 
-Every message is signed with Ed25519. The signature covers the canonical JSON serialization of all fields except the signature itself. This ensures:
+Every message is signed with Ed25519. The signature covers the canonical JSON serialization (RFC 8785 JCS, §9.2.1) of all fields except the top-level `signature` member itself. This ensures:
 - Messages cannot be tampered with in transit
 - The sender cannot deny having sent a message
 - The transcript is independently verifiable
+
+#### 9.2.1 Canonical JSON is RFC 8785 (JCS)
+
+Wherever this specification says "canonical JSON", "canonicalized JSON", or
+"JCS", it means the JSON Canonicalization Scheme defined in
+[RFC 8785](https://www.rfc-editor.org/rfc/rfc8785). Serialization follows
+RFC 8785 §3.2, and each subsection below governs one part of the output:
+
+| RFC 8785 section | What it fixes |
+|------------------|---------------|
+| §3.2.1 | No whitespace between JSON tokens |
+| §3.2.2.1 | Literals serialized as `true`, `false`, `null` |
+| §3.2.2.2 | String escaping: the seven two-character escapes, `\uXXXX` for the remaining control characters U+0000 to U+001F, every other character emitted raw |
+| §3.2.2.3 | Number formatting, which RFC 8785 delegates to ECMAScript (RFC 8785 cites ECMA-262 §7.1.12.1; current ECMA-262 editions carry the same algorithm as `Number::toString`, §6.1.6.1.20), and which prohibits `NaN` and `Infinity` |
+| §3.2.3 | Object property names sorted by UTF-16 code unit |
+| §3.2.4 | UTF-8 output |
+
+RFC 8785 §3.1 (creation of input data) is out of scope here. Concordia
+canonicalizes an in-memory JSON value that an implementation has already parsed
+or constructed, not a JSON text.
+
+RFC 8785 fixes how a value is serialized. It never fixes which value is
+serialized, so wherever a signature or digest covers less than the whole
+artifact, that exclusion is Concordia's own rule. Three exclusion rules are in
+use:
+
+1. **Top-level signature removal** (§4.1, §9.2, §9.6.4a): the top-level
+   `signature` member is removed and the remainder is canonicalized. Members
+   named `signature` nested inside the artifact are retained.
+2. **Recursive signature removal plus countersignature exclusion** (§9.6.5a):
+   every `signature` member is removed at every depth AND the top-level
+   `countersignatures` map is excluded.
+3. **Enumerated preimage** (§9.6.4d): the fields covered are listed explicitly
+   rather than derived by removal.
+
+Two sites apply rule 1 without stating it in their own text: §9.6.4b lists
+`signature` among the ApprovalReceipt's required fields, and §9.6.4c lists it
+among the RevocationRecord's, but neither section defines its preimage. As a
+statement of fact rather than a requirement, the reference implementation
+computes both over the artifact with its top-level `signature` member removed.
+Specifying those two preimages normatively is a change to this document, not a
+clarification of it, so it is tracked as its own change.
+
+**Number domain (non-normative).** RFC 8785 §3.2.2.3 serializes numbers through
+the ECMAScript algorithm, which operates on IEEE-754 doubles, so integers beyond
+the safe-integer range of ±(2^53 - 1), where consecutive integers stop being
+distinguishable, are not reliably interoperable. RFC 8785 Appendix D discusses
+exactly this case and its guidance is to carry such values as JSON strings. The
+two reference SDKs currently differ at this boundary and neither should be read
+as normative: the JavaScript SDK refuses to serialize a plain-decimal integer
+beyond that range rather than emit a value it cannot represent, while the Python
+SDK emits the integer's full decimal form, which a JCS implementation backed by
+doubles will not reproduce. A digest taken over such a value is therefore not
+dependably recomputable by a second implementation. Separately, both SDKs reject
+`-0.0` rather than emitting `0` as RFC 8785 would, so the two zero forms can
+never both appear in a Concordia digest preimage.
 
 ### 9.3 Transcript Integrity
 
@@ -749,7 +805,7 @@ Every completed negotiation session (regardless of outcome) MUST produce an atte
 }
 ```
 
-The `countersignatures` map (added in v0.2.0, C-H2) is what makes the outcome trustworthy rather than merely prover-asserted. Each present party signs the canonical issuance snapshot of the WHOLE attestation (every `signature` field stripped, and the `countersignatures` map itself excluded), so the `outcome`, `meta`, `session_id`, and `transcript_hash` are bound at issuance. See §9.6.5.
+The `countersignatures` map (added in v0.2.0, C-H2) is what makes the outcome trustworthy rather than merely prover-asserted. Each present party signs the canonical issuance snapshot (RFC 8785 JCS, §9.2.1) of the WHOLE attestation (every `signature` field stripped recursively, and the `countersignatures` map itself excluded), so the `outcome`, `meta`, `session_id`, and `transcript_hash` are bound at issuance. See §9.6.5.
 
 #### 9.6.3 Attestation Fields
 
@@ -848,7 +904,7 @@ Minimal required fields:
 | `agreement_attestation_id` | Denormalized pointer to the agreement attestation this fulfillment discharges |
 | `fulfillment.status` | `fulfilled_clean` / `fulfilled_with_mediation` / `failed` / `disputed_unresolved` |
 | `references[]` | At least one entry with `relationship: "fulfills"` pointing at the agreement attestation |
-| `signature` | Ed25519 over the canonicalized JSON |
+| `signature` | Ed25519 over the canonical JSON (RFC 8785 JCS, §9.2.1) of the artifact with the top-level `signature` member removed |
 
 Optional `meta` fields populate mediator context:
 `mediator_invoked`, `resolution_outcome`, `resolver_did`,
@@ -934,9 +990,10 @@ ApprovalReceipt invariants:
   cryptographically binding the same way an `approve` is; the
   counterparty cannot retry the same offer without crossing the
   threshold afresh.
-- `scope.offer_hash` is the sha256 of the canonicalized offer the
-  approver evaluated. Re-canonicalize on-the-wire offers at verify
-  time and compare.
+- `scope.offer_hash` is `sha256:` followed by the hex SHA-256 of the
+  canonical JSON (RFC 8785 JCS, §9.2.1) of the offer the approver
+  evaluated. The offer is canonicalized whole, with no member removed.
+  Re-canonicalize on-the-wire offers at verify time and compare.
 - The `relationship` vocabulary used here extends §11.5.5: in
   addition to `supersedes`, `extends`, `fulfills`, `references`,
   ApprovalReceipt entries MAY use `approves` for the negotiation-
@@ -1023,9 +1080,14 @@ Canonical object (the fields the `decision_id` commits to):
 
 Identity and signature:
 
-- `decision_id = SHA-256(JCS(preimage))` where the preimage is exactly the
-  bound fields above, excluding `decision_id` and `signature`. It is the
-  RFC 8785 JCS standard hash, recomputable with any conformant JCS library.
+- `decision_id = SHA-256(JCS(preimage))` where `JCS` is RFC 8785
+  canonicalization per §9.2.1 (property ordering §3.2.3, numbers §3.2.2.3,
+  strings §3.2.2.2) and the preimage is exactly the bound fields above,
+  excluding `decision_id` and `signature`. It is the RFC 8785 JCS standard
+  hash, recomputable with any conformant JCS library, subject to the number
+  domain in §9.2.1: the schema bounds `ancestor_reads[].coordinate` only as a
+  non-negative integer, and a `coordinate` beyond the safe-integer range is not
+  dependably reproducible across implementations.
 - The record is Ed25519-signed over the same JCS preimage bytes with the
   verifier / issuer key, using the same signing path as `RevocationRecord`.
 
@@ -1072,7 +1134,7 @@ Attestations inherit the security properties of the transcript:
 
 Through v0.1.0, each party's signature covered only its own behavior record. The top-level `outcome`, `meta`, and `transcript_hash` were derived from the transcript but not bound by any signature, so a holder could rewrite the outcome (for example, flip `rejected` to `agreed`) without invalidating any party signature. A bundle verifier that re-derived its summary from the rewritten outcome would then report it as accurate. C-H2 closes this.
 
-- **Payload.** The countersignature payload is `canonical_json(strip_signatures(attestation_without_countersignatures))`: the fully assembled attestation with every `signature` field stripped recursively AND the top-level `countersignatures` map excluded. Stripping every `signature` (the same rule the co-signature lane uses) plus excluding the `countersignatures` map means a countersignature never covers itself or a sibling's countersignature, and all parties sign byte-identical, mutually independent payload bytes.
+- **Payload.** The countersignature payload is `canonical_json(strip_signatures(attestation_without_countersignatures))`, where `canonical_json` is RFC 8785 JCS per §9.2.1 and `strip_signatures` is Concordia's own recursive removal rule: the fully assembled attestation with every `signature` field stripped recursively AND the top-level `countersignatures` map excluded. Stripping every `signature` (the same rule the co-signature lane uses) plus excluding the `countersignatures` map means a countersignature never covers itself or a sibling's countersignature, and all parties sign byte-identical, mutually independent payload bytes.
 - **Map.** `countersignatures` is a top-level object mapping each party `agent_id` to its base64url-padded Ed25519 signature over that payload. There is one entry per party that held a signing key at issuance; a party with no key gets no entry (an empty string is never used). A single-key issuance therefore yields a one-entry map, which is exactly as strong as a single-signed co-signed receipt for the present signer.
 - **Version-gated dual-accept (verifier MUST).** Before crediting a `concordia_attestation` >= `0.2.0` outcome as integrity-bound, a verifier MUST require a `countersignatures` map in which EVERY party listed in `parties[]` has a present signature that verifies under that party's resolved key; if any listed party's countersignature is absent, its key cannot be resolved, or its signature fails, the outcome MUST NOT be credited as bound (fail-closed). The "every listed party" rule is what makes the binding meaningful: a single holder is itself a party, so "at least one party signed" would let the holder rewrite `outcome.status` (e.g. flip `rejected` to `agreed`), drop the counterparty's countersignature, and re-sign with its OWN key alone, the precise C-H2 threat. Requiring every listed party closes that self-rebind. A genuine single-party attestation (only one entry in `parties[]`) binds with its one countersignature, exactly as strong as a single-signed co-signed receipt. An attestation below `0.2.0` (or with a malformed version) is read as legacy: its outcome is prover-asserted and MUST NOT be credited as outcome-bound, but its presence is NOT an error. This lets pre-C-H2 history remain verifiable for its party-level signals while never silently crediting an unbound outcome.
 - **What is bound.** The issuance snapshot: `concordia_attestation`, `attestation_id`, `session_id`, `timestamp`, `outcome`, `parties[*]` (signatures stripped), `meta`, `transcript_hash`, `references`, `validity_temporal`, `summary`, and `fulfillment` AS IT STOOD AT ISSUANCE (`null`).
@@ -1483,7 +1545,7 @@ This reference validates against the §11.5.6 schema fragment: `id`, `type`, and
 A v0.5-conforming implementation:
 
 - MUST validate `references[]` per the schema fragment in 11.5.6 at attestation generation and at attestation verification.
-- MUST enforce the 11.5.6 string length caps and whitespace bans (any whitespace character in `id`, `type`, `relationship`, `version`, `signed_at`, or `signer_did` is rejected; legitimate identifiers such as UUIDs, DIDs, URNs, ISO timestamps, and semver never contain whitespace) and an issuance-side cap of 32 entries per `references[]` array and 2048 canonical-JSON bytes per `extensions` map, failing closed (reject, never truncate or coerce). Implementations SHOULD structurally pre-check `extensions` (bounded nesting depth and node count) before canonical serialization so oversized objects are rejected without a full walk. The caps keep the opaque-string forward-compat clause from carrying free-text deal terms or unbounded payloads.
+- MUST enforce the 11.5.6 string length caps and whitespace bans (any whitespace character in `id`, `type`, `relationship`, `version`, `signed_at`, or `signer_did` is rejected; legitimate identifiers such as UUIDs, DIDs, URNs, ISO timestamps, and semver never contain whitespace) and an issuance-side cap of 32 entries per `references[]` array and 2048 canonical-JSON bytes per `extensions` map (RFC 8785 JCS UTF-8 bytes per §9.2.1, measured over the `extensions` map alone), failing closed (reject, never truncate or coerce). Implementations SHOULD structurally pre-check `extensions` (bounded nesting depth and node count) before canonical serialization so oversized objects are rejected without a full walk. The caps keep the opaque-string forward-compat clause from carrying free-text deal terms or unbounded payloads.
 - MUST emit clear error text for malformed entries that maps to the specific 11.5.x section that defines the violated invariant.
 - MUST preserve unknown relationship values as opaque strings rather than rejecting them, per 11.5.5 forward-compat.
 - MUST preserve unknown reference type values as opaque strings rather than rejecting them, per 11.5.3 forward-compat.

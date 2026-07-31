@@ -97,7 +97,7 @@ PASS is meaningful rather than vacuous.
 
 ## Second-implementation reproductions
 
-An independent implementation reproduced the load-bearing digest with its own
+An independent implementation reproduced the digest with its own
 RFC 8785 JCS canonicalizer, so a reader can diff two canonicalizers against the
 one digest with no shared SDK and no issuer callback.
 
