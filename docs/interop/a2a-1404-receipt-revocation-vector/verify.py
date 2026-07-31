@@ -4,7 +4,10 @@
 A third party runs this against the retained JSON bytes in this directory
 (no network, no regeneration required) to confirm:
 
-  1. decision_id recomputes from bytes: SHA-256(JCS(decision_object)).
+  1. Every digest vector.json publishes recomputes from the shipped bytes:
+     decision_id = SHA-256(JCS(decision_object)), capability_digest from
+     capability.json, receipt_offer_hash / request_digest from offer.json, and
+     deny_decision_id at check 6. No recorded value is read as a source.
   2. The receipt's native fields (scope.decision, scope.offer_hash) equal the
      decision object's `decision` and `request_digest` -- the honest mapping
      check that makes the wrapper checkable, not merely asserted.
@@ -147,6 +150,28 @@ def main() -> int:
         )
     except ImportError:
         print("[SKIP] rfc8785 not installed; standard-JCS cross-check skipped")
+
+    # 1c. Every OTHER digest vector.json publishes also recomputes from the
+    # shipped bytes. A recorded digest that no verifier derives is an answer
+    # key, not a test: a regressed canonicalizer would emit a different value
+    # and nothing would notice. `offer_hash` is additionally recomputed inside
+    # the shipped verifier at check 3, but stating it here makes the property
+    # visible to a reader rather than implicit.
+    capability = load("capability.json")
+    recomputed_capability = "sha256:" + sha256_jcs(capability)
+    check(
+        "capability_digest RECOMPUTES from capability.json",
+        recomputed_capability == vector["hashes"]["capability_digest"],
+        recomputed_capability,
+    )
+    recomputed_offer = "sha256:" + sha256_jcs(offer)
+    check(
+        "receipt_offer_hash / request_digest RECOMPUTE from offer.json",
+        recomputed_offer == vector["hashes"]["receipt_offer_hash"]
+        and recomputed_offer == vector["hashes"]["request_digest"]
+        and recomputed_offer == receipt["scope"]["offer_hash"],
+        recomputed_offer,
+    )
 
     # 2. Honest native-vs-wrapped mapping is checkable.
     ext = receipt["references"][0]["extensions"]

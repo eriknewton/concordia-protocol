@@ -12,6 +12,7 @@ suite makes an accidental byte-drift a hard CI failure.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import importlib.util
 import json
@@ -129,6 +130,82 @@ def test_1920_verify_script_passes() -> None:
     """The published #1920 verify.py returns exit code 0 (all checks PASS)."""
     verify = _load_module(INTEROP_1920 / "verify.py", "interop_1920_verify")
     assert verify.main() == 0
+
+
+def test_1920_canonical_sha256_matches_reference_jcs() -> None:
+    """The #1920 canonical_sha256 is the RFC 8785 STANDARD hash.
+
+    Re-derived over the attestation minus its top-level ``signature`` with the
+    INDEPENDENT rfc8785 reference library, so the digest the fixture publishes
+    is proven reproducible by any conformant JCS implementation rather than
+    being an artifact of Concordia's own canonicalizer. The #1404 vector has had
+    this cross-check since it shipped; #1920 did not, which left the flagship
+    second-implementation fixture's headline digest unguarded in CI.
+    """
+    att = _json(INTEROP_1920 / "fulfillment_attestation.json")
+    sample = _json(INTEROP_1920 / "sample.json")
+    signable = {k: v for k, v in att.items() if k != "signature"}
+    reference = "sha256:" + hashlib.sha256(rfc8785.dumps(signable)).hexdigest()
+    assert reference == sample["canonical_sha256"]
+
+
+def test_1920_canonical_sha256_diverges_on_tamper() -> None:
+    """The recorded digest is a live comparison, not a restatement.
+
+    A one-byte change to the signed body must diverge the recomputed digest. A
+    recompute that could not fail is the same defect as no recompute at all.
+    """
+    att = _json(INTEROP_1920 / "fulfillment_attestation.json")
+    sample = _json(INTEROP_1920 / "sample.json")
+    signable = {k: v for k, v in att.items() if k != "signature"}
+    signable["charge_ref"] = signable["charge_ref"][:-1] + (
+        "0" if signable["charge_ref"][-1] != "0" else "1"
+    )
+    tampered = "sha256:" + hashlib.sha256(rfc8785.dumps(signable)).hexdigest()
+    assert tampered != sample["canonical_sha256"]
+
+
+def test_1920_published_signature_and_key_are_derived_not_asserted() -> None:
+    """sample.json's signature and public key are checkable, not just recorded.
+
+    The signature string must equal the artifact's own signature member, and the
+    public key must re-derive from the published test seed, so no field in
+    sample.json is a value a reader has to take on trust.
+    """
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    att = _json(INTEROP_1920 / "fulfillment_attestation.json")
+    sample = _json(INTEROP_1920 / "sample.json")
+    assert att["signature"]["value"] == sample["signature_b64url"]
+    derived = base64.urlsafe_b64encode(
+        Ed25519PrivateKey.from_private_bytes(sample["seed_ed25519_ascii"].encode())
+        .public_key()
+        .public_bytes_raw()
+    ).decode()
+    assert derived == sample["public_key_b64url"]
+
+
+def test_1404_published_digests_all_recompute() -> None:
+    """Every digest #1404's vector.json publishes re-derives from shipped bytes.
+
+    capability_digest and receipt_offer_hash / request_digest were published but
+    never recomputed-and-compared in the fixture's own verifier; only decision_id
+    and deny_decision_id were. Same answer-key class, smaller blast radius.
+    """
+    from concordia.canonicalization import canonicalize_jcs
+
+    vector = _json(INTEROP_1404 / "vector.json")
+    capability = _json(INTEROP_1404 / "capability.json")
+    offer = _json(INTEROP_1404 / "offer.json")
+    receipt = _json(INTEROP_1404 / "approval_receipt.json")
+
+    def digest(obj: dict) -> str:
+        return "sha256:" + hashlib.sha256(canonicalize_jcs(obj)).hexdigest()
+
+    assert digest(capability) == vector["hashes"]["capability_digest"]
+    assert digest(offer) == vector["hashes"]["receipt_offer_hash"]
+    assert digest(offer) == vector["hashes"]["request_digest"]
+    assert digest(offer) == receipt["scope"]["offer_hash"]
 
 
 def test_1920_privacy_invariant_no_raw_terms() -> None:

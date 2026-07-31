@@ -24,9 +24,16 @@ RFC 8785 JCS canonicalizer, and the shipped
 | File | What it is |
 |------|------------|
 | `generate.py` | Deterministic generator (fixed seed). Rewrites the two files below. |
-| `verify.py` | Offline byte-check: shipped-verifier PASS, signature PASS, one-byte tamper REJECT, privacy-invariant scan, join-key match. |
+| `verify.py` | Offline byte-check: shipped-verifier PASS, signature PASS, `canonical_sha256` recomputed and compared (plus an independent `rfc8785` cross-check), one-byte tamper REJECT, privacy-invariant scan, join-key match. |
 | `fulfillment_attestation.json` | The signed sample artifact. |
 | `sample.json` | Recomputable expectations: seed, public key, join keys, signature, canonical hash. |
+
+Every value `sample.json` publishes is an expectation the verifier re-derives
+from the artifact bytes, never an input it reads as truth: `canonical_sha256` is
+recomputed and compared, the signature string is compared against the
+artifact's own signature member, and the public key is re-derived from the
+published seed. A recorded digest that no verifier derives is an answer key,
+not a test.
 
 ## Reproduce it
 
