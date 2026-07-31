@@ -447,8 +447,8 @@ def _map_state_to_outcome(state: SessionState) -> OutcomeStatus:
 #
 # base64url is PADDED here (``urlsafe_b64encode(...).decode()``) to match the
 # per-party ``sign_message`` convention and the JS SDK's strict, padding-
-# requiring verifier. (``cosign.cosign_receipt`` returns UNPADDED for Verascore;
-# do NOT reuse it on this lane.)
+# requiring verifier. ``cosign.cosign_receipt`` returns UNPADDED for the compact
+# receipt co-signature lane; do NOT reuse it on this lane.
 # ---------------------------------------------------------------------------
 
 

@@ -1,7 +1,7 @@
 """Tests for direct Verascore client reporting.
 
-The envelope these tests pin is the live Verascore ``POST /api/publish``
-contract (src/app/api/publish/route.ts, branch at commit a3e6090 / #63):
+The envelope these tests pin is the Verascore publish contract for
+``concordia-receipt`` bodies:
 
     {
       "type": "concordia-receipt",

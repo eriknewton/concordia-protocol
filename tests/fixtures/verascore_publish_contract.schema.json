@@ -2,24 +2,24 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "verascore/api/publish#concordia-receipt",
   "title": "Verascore POST /api/publish — concordia-receipt envelope (accepted contract)",
-  "description": "Committed copy of the body Verascore's /api/publish route accepts for a concordia-receipt. Bound to Verascore src/app/api/publish/route.ts and src/lib/concordia-receipts.ts on branch at commit a3e6090 (#63, 'require counterparty co-signature for trust-bearing Concordia receipts'). The route destructures {signature, publicKey, type, data}; agentId is NOT trusted (derived from the verified publicKey via deriveAgentId). The publisher-envelope signature is raw Ed25519 over JSON.stringify(data), base64url-encoded (route.ts: base64urlToBuffer + verifyEd25519). data.receipt is extracted (extractConcordiaReceiptPayload) and must carry session_id, counterparty_did, outcome, and concordia (protocol version); parties[] carries the counterparty co-signature (concordia-cosignature.ts).",
+  "description": "Committed schema for a concordia-receipt publish envelope accepted by one reputation consumer. The envelope has {signature, publicKey, type, data}; agent identity is derived from the verified publicKey, not from a caller-supplied agentId. The publisher-envelope signature is raw Ed25519 over JSON.stringify(data), base64url-encoded. data.did is bound to publicKey. data.receipt must carry session_id, counterparty_did, outcome, and concordia (protocol version); parties[] carries the counterparty co-signature.",
   "type": "object",
   "additionalProperties": false,
   "required": ["type", "publicKey", "signature", "data"],
   "properties": {
     "type": {
       "const": "concordia-receipt",
-      "description": "validTypes in route.ts includes concordia-receipt."
+      "description": "Envelope type for Concordia receipt publish bodies."
     },
     "publicKey": {
       "type": "string",
       "pattern": "^[A-Za-z0-9_-]+$",
-      "description": "base64url raw 32-byte Ed25519 public key; route requires length 32 after decode."
+      "description": "base64url raw 32-byte Ed25519 public key; consumers require length 32 after decode."
     },
     "signature": {
       "type": "string",
       "pattern": "^[A-Za-z0-9_-]+$",
-      "description": "base64url raw 64-byte Ed25519 signature over JSON.stringify(data); route requires length 64 after decode."
+      "description": "base64url raw 64-byte Ed25519 signature over JSON.stringify(data); consumers require length 64 after decode."
     },
     "data": {
       "type": "object",
@@ -28,7 +28,7 @@
         "did": {
           "type": "string",
           "pattern": "^did:key:",
-          "description": "Publisher did:key; route rejects (403) if it does not match publicKey (publicKeyMatchesDid)."
+          "description": "Publisher did:key; rejected if it does not match publicKey."
         },
         "receipt": {
           "type": "object",
@@ -36,7 +36,7 @@
           "properties": {
             "concordia": {
               "type": "string",
-              "description": "Protocol version; normalizeConcordiaReceipt reads receipt.concordia and rejects when absent."
+              "description": "Protocol version required to normalize the Concordia receipt."
             },
             "session_id": { "type": "string", "minLength": 1 },
             "counterparty_did": { "type": "string", "minLength": 1 },
@@ -46,7 +46,7 @@
               "properties": {
                 "status": {
                   "enum": ["agreed", "rejected", "expired", "withdrawn", "fulfilled_with_mediation"],
-                  "description": "VALID_OUTCOMES in concordia-receipts.ts."
+                  "description": "Accepted Concordia receipt outcome values."
                 }
               }
             },
@@ -60,7 +60,7 @@
                   "agent_id": { "type": "string" },
                   "signature": {
                     "type": "string",
-                    "description": "base64url Ed25519 counterparty co-signature; present only on the counterparty_did party (findCounterpartySignature)."
+                    "description": "base64url Ed25519 counterparty co-signature; present only on the counterparty_did party."
                   }
                 }
               }

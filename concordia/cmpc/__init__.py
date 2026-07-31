@@ -1,8 +1,8 @@
 """CMPC (Cross-Mandate Promise Chain) bilateral primitive set.
 
 This module ships the bilateral subset for Concordia v0.7-alpha, including
-RevocationRecord. Multilateral primitives, transparency log, and Verascore
-scoring-dimension wire-up land in later stages.
+RevocationRecord. Multilateral primitives, transparency log, and adapters for
+downstream scoring consumers, including Verascore, land in later stages.
 """
 
 from .canonical import (
