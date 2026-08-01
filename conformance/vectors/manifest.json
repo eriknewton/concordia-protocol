@@ -1,0 +1,79 @@
+{
+  "check_command": "python3 scripts/conformance/generate_vectors.py --check",
+  "counts": {
+    "canary": 0,
+    "diag_canonical_bytes": 7,
+    "fixtures": 11,
+    "mutation": 0,
+    "positive": 11,
+    "schemas": 4
+  },
+  "files": {
+    "canary": [],
+    "diag_canonical_bytes": [
+      "conformance/diag/canonical-bytes/pos-1404-approval-receipt.jcs",
+      "conformance/diag/canonical-bytes/pos-1404-capability-digest.jcs",
+      "conformance/diag/canonical-bytes/pos-1404-cascade-deny.jcs",
+      "conformance/diag/canonical-bytes/pos-1404-decision-id.jcs",
+      "conformance/diag/canonical-bytes/pos-1404-offer-digest.jcs",
+      "conformance/diag/canonical-bytes/pos-1404-revocation-record.jcs",
+      "conformance/diag/canonical-bytes/pos-1920-fulfillment-attestation.jcs"
+    ],
+    "fixtures": [
+      "conformance/vectors/fixtures/a2a-1404-receipt-revocation-vector/approval_receipt.json",
+      "conformance/vectors/fixtures/a2a-1404-receipt-revocation-vector/capability.json",
+      "conformance/vectors/fixtures/a2a-1404-receipt-revocation-vector/cascade_decision_deny.json",
+      "conformance/vectors/fixtures/a2a-1404-receipt-revocation-vector/decision_object.json",
+      "conformance/vectors/fixtures/a2a-1404-receipt-revocation-vector/delegation_A.json",
+      "conformance/vectors/fixtures/a2a-1404-receipt-revocation-vector/delegation_B_candidate.json",
+      "conformance/vectors/fixtures/a2a-1404-receipt-revocation-vector/offer.json",
+      "conformance/vectors/fixtures/a2a-1404-receipt-revocation-vector/revocation_A.json",
+      "conformance/vectors/fixtures/a2a-1404-receipt-revocation-vector/vector.json",
+      "conformance/vectors/fixtures/a2a-1920-fulfillment-sample/fulfillment_attestation.json",
+      "conformance/vectors/fixtures/a2a-1920-fulfillment-sample/sample.json"
+    ],
+    "mutation": [],
+    "positive": [
+      "conformance/vectors/positive/pos-1404-ancestor-status-read-binding.json",
+      "conformance/vectors/positive/pos-1404-approval-receipt.json",
+      "conformance/vectors/positive/pos-1404-capability-digest.json",
+      "conformance/vectors/positive/pos-1404-cascade-deny.json",
+      "conformance/vectors/positive/pos-1404-decision-id.json",
+      "conformance/vectors/positive/pos-1404-offer-digest.json",
+      "conformance/vectors/positive/pos-1404-receipt-decision-binding.json",
+      "conformance/vectors/positive/pos-1404-receipt-offer-binding.json",
+      "conformance/vectors/positive/pos-1404-revocation-record.json",
+      "conformance/vectors/positive/pos-1404-wrapped-decision-id-binding.json",
+      "conformance/vectors/positive/pos-1920-fulfillment-attestation.json"
+    ],
+    "schemas": [
+      "conformance/vectors/schemas/approval_receipt.schema.json",
+      "conformance/vectors/schemas/cascade_decision_record.schema.json",
+      "conformance/vectors/schemas/fulfillment_attestation.schema.json",
+      "conformance/vectors/schemas/revocation_record.schema.json"
+    ]
+  },
+  "generated_by": "python3 scripts/conformance/generate_vectors.py",
+  "phase_notes": {
+    "canary": "C3 adds the three runner-discrimination canaries.",
+    "mutation": "C2 converts the 222 mutation battery.",
+    "reference_runner": "C3 adds the clean-room reference runner."
+  },
+  "profiles": [
+    "decision-object-v1",
+    "offer-binding-v1",
+    "receipt-v1",
+    "revocation-v1",
+    "cascade-decision-v1",
+    "fulfillment-attestation-v1"
+  ],
+  "record_types": [
+    "decision_object",
+    "approval_receipt",
+    "revocation_record",
+    "cascade_decision_record",
+    "fulfillment_attestation"
+  ],
+  "schema_version": "concordia-conformance-manifest/v1-draft",
+  "suite_version": "v1-draft"
+}
