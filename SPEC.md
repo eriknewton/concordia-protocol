@@ -1237,6 +1237,8 @@ Concordia defines a standard query format for agents to request reputation infor
 - Agents SHOULD query multiple reputation services and apply their own weighting; no single service should be a gatekeeper
 - Agents MAY also verify directly presented attestations from the counterparty itself (§9.6.6a), bypassing reputation services entirely
 
+Disclosure: the reference Python SDK ships an optional, off-by-default adapter (`concordia.verascore`) for Verascore, a reputation service authored by this specification's author. The adapter is not part of this specification. No conformance vector uses it. This specification defines no field, tool, or requirement in terms of that service. The provider-neutral reporting path is the reputation query and response shape in this section, together with the self-custodied attestation presentation path in §9.6.6a.
+
 #### 9.6.8 Relationship to Scoring Services
 
 The protocol's relationship to reputation scoring services mirrors the relationship between git and GitHub, or between TCP and the services built on it:

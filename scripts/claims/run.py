@@ -4,6 +4,25 @@
 Claim markers are scanned only in public Markdown documents: ``SPEC.md``,
 ``README.md``, and ``docs/**/*.md``. ``Review/`` and internal documentation
 directories are intentionally out of scope for this public-claims chokepoint.
+
+Unmarked-claim detection is intentionally narrower than marker scanning because
+this gate blocks merges and false positives are expensive. It scans prose only
+in non-SPEC manifest ``stated_in`` files and in docs Markdown files outside the
+baseline that existed when this gate was introduced. ``SPEC.md`` is a normative
+protocol document with many RFC 2119 statements, so unmarked SPEC prose is
+excluded; SPEC claims must use explicit markers and executable manifest entries.
+
+The unmarked-prose patterns are high-confidence commitments from the vocabulary
+Concordia already publishes: "no implementation is/are", "requires no",
+"does not depend on", "no X is required", "without our code", "anyone can
+verify", "no registry", commitment-shaped "never" and "always" phrases,
+"formally verified", "byte-for-byte", and independent verification language.
+Generic single words such as "never" and "independent" are deliberately not
+standalone triggers.
+
+Deliberately descriptive prose can be excluded with an explicit HTML comment
+region: ``<!-- not-a-claim -->`` ... ``<!-- /not-a-claim -->``. The gate prints
+each skipped region so reviewers can see every exemption.
 """
 
 from __future__ import annotations
@@ -14,6 +33,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable, Iterable
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_PATH = REPO_ROOT / "docs" / "claims.yaml"
@@ -23,7 +43,99 @@ CHECK_TIMEOUT_SECONDS = 120
 CLAIM_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 HTML_COMMENT_OPEN = "<!--"
 HTML_COMMENT_CLOSE = "-->"
+NOT_A_CLAIM_OPEN = "not-a-claim"
+NOT_A_CLAIM_CLOSE = "/not-a-claim"
 INTERNAL_DOC_DIR_NAMES = {"review", "internal", "_internal", "private"}
+FENCED_CODE_RE = re.compile(r"(?ms)^```.*?^```\s*")
+PARAGRAPH_RE = re.compile(r"(?ms)([^\n].*?)(?:\n\s*\n|\Z)")
+SENTENCE_RE = re.compile(r"[^.!?]+(?:[.!?]|$)")
+BASELINE_DOC_MARKDOWN_PATHS = frozenset(
+    {
+        "docs/A2A_COMPOSITION.md",
+        "docs/A2CN_FULFILLMENT.md",
+        "docs/EFFICIENCY_REPORT_DEPLOYMENT.md",
+        "docs/cmpc_revocation.md",
+        "docs/hahs_payload_composition.md",
+        "docs/index.md",
+        "docs/interop/README.md",
+        "docs/interop/a2a-1404-receipt-revocation-vector/README.md",
+        "docs/interop/a2a-1920-fulfillment-sample/README.md",
+        "docs/revocation_resolver.md",
+        "docs/v0.6_migration.md",
+        "docs/v0.6_predicate_primitive.md",
+    }
+)
+
+
+@dataclass(frozen=True)
+class ClaimProsePattern:
+    label: str
+    regex: re.Pattern[str]
+
+
+UNMARKED_CLAIM_PATTERNS = (
+    ClaimProsePattern(
+        "no implementation is/are",
+        re.compile(r"\bno implementation (?:is|are)\b", re.IGNORECASE),
+    ),
+    ClaimProsePattern(
+        "requires no",
+        re.compile(r"\brequires no\b", re.IGNORECASE),
+    ),
+    ClaimProsePattern(
+        "does not depend on",
+        re.compile(r"\bdoes not depend on\b", re.IGNORECASE),
+    ),
+    ClaimProsePattern(
+        "no X is required",
+        re.compile(r"\bno\b.{0,80}\bis required\b", re.IGNORECASE),
+    ),
+    ClaimProsePattern(
+        "without our code",
+        re.compile(r"\bwithout our code\b", re.IGNORECASE),
+    ),
+    ClaimProsePattern(
+        "anyone can verify",
+        re.compile(r"\banyone can verify\b", re.IGNORECASE),
+    ),
+    ClaimProsePattern(
+        "no registry",
+        re.compile(r"\bno (?:central )?registry\b", re.IGNORECASE),
+    ),
+    ClaimProsePattern(
+        "never commitment",
+        re.compile(
+            r"\bnever\s+(?:depends?|requires?|contacts?|transmits?|exposes?|"
+            r"persists?|leaks?|silently|phones?)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    ClaimProsePattern(
+        "always commitment",
+        re.compile(
+            r"\balways\s+(?:verifies?|rejects?|requires?|signs?|checks?|"
+            r"enforces?|fails?)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    ClaimProsePattern(
+        "formally verified",
+        re.compile(r"\bformally verified\b", re.IGNORECASE),
+    ),
+    ClaimProsePattern(
+        "byte-for-byte",
+        re.compile(r"\bbyte-for-byte\b", re.IGNORECASE),
+    ),
+    ClaimProsePattern(
+        "independent verification",
+        re.compile(
+            r"\bindependent (?:implementation|implementer|verifier|verification|"
+            r"recompute|recomputation)\b|"
+            r"\bindependently verif(?:y|ies|iable|ied)\b",
+            re.IGNORECASE,
+        ),
+    ),
+)
 
 
 class ManifestError(Exception):
@@ -53,6 +165,25 @@ class ClaimMarker:
     content: str
     start_line: int
     end_line: int
+
+
+@dataclass(frozen=True)
+class CommentRegion:
+    path: Path
+    start: int
+    end: int
+    content_start: int
+    content_end: int
+    start_line: int
+    end_line: int
+
+
+@dataclass(frozen=True)
+class UnmarkedClaim:
+    path: Path
+    line: int
+    sentence: str
+    pattern_label: str
 
 
 def parse_scalar(value: str, line_number: int) -> str:
@@ -264,6 +395,220 @@ def parse_claim_markers(path: Path) -> tuple[list[ClaimMarker], list[str]]:
     return (markers, errors)
 
 
+def post_baseline_doc_paths() -> set[Path]:
+    docs_root = REPO_ROOT / "docs"
+    if not docs_root.is_dir():
+        return set()
+
+    paths: set[Path] = set()
+    for path in docs_root.rglob("*.md"):
+        relative = path.relative_to(REPO_ROOT)
+        relative_text = relative.as_posix()
+        if is_internal_doc_path(relative):
+            continue
+        if relative_text not in BASELINE_DOC_MARKDOWN_PATHS:
+            paths.add(path)
+    return paths
+
+
+def unmarked_claim_candidate_paths(
+    claims: Iterable[Claim],
+    extra_paths: Iterable[Path] = (),
+) -> list[Path]:
+    paths: set[Path] = set()
+    for claim in claims:
+        if claim.stated_in == "SPEC.md":
+            continue
+        path = REPO_ROOT / claim.stated_in
+        if path.suffix == ".md":
+            paths.add(path)
+
+    paths.update(post_baseline_doc_paths())
+    paths.update(extra_paths)
+    return sorted(paths, key=repo_relative)
+
+
+def html_comment_regions(
+    path: Path,
+    text: str,
+    is_open: Callable[[str], bool],
+    close_body: str,
+    label: str,
+) -> tuple[list[CommentRegion], list[str]]:
+    relative = repo_relative(path)
+    regions: list[CommentRegion] = []
+    errors: list[str] = []
+    active: tuple[int, int, int] | None = None
+    offset = 0
+
+    while True:
+        start = text.find(HTML_COMMENT_OPEN, offset)
+        if start == -1:
+            break
+
+        end = text.find(HTML_COMMENT_CLOSE, start + len(HTML_COMMENT_OPEN))
+        start_line = line_number(text, start)
+        if end == -1:
+            body_prefix = text[start + len(HTML_COMMENT_OPEN) : start + 80].strip()
+            if active is not None:
+                errors.append(f"{relative}:{active[2]}: unclosed {label} region")
+                active = None
+            elif is_open(body_prefix) or body_prefix == close_body:
+                errors.append(f"{relative}:{start_line}: unclosed {label} comment")
+            break
+
+        comment_end = end + len(HTML_COMMENT_CLOSE)
+        body = text[start + len(HTML_COMMENT_OPEN) : end].strip()
+        if is_open(body):
+            if active is not None:
+                errors.append(
+                    f"{relative}:{start_line}: nested {label} region inside "
+                    f"{relative}:{active[2]}"
+                )
+            else:
+                active = (start, comment_end, start_line)
+        elif body == close_body:
+            if active is None:
+                errors.append(
+                    f"{relative}:{start_line}: closing {label} region without open"
+                )
+            else:
+                region_start, content_start, region_start_line = active
+                regions.append(
+                    CommentRegion(
+                        path=path,
+                        start=region_start,
+                        end=comment_end,
+                        content_start=content_start,
+                        content_end=start,
+                        start_line=region_start_line,
+                        end_line=start_line,
+                    )
+                )
+                active = None
+
+        offset = comment_end
+
+    if active is not None:
+        errors.append(f"{relative}:{active[2]}: unclosed {label} region")
+
+    return (regions, errors)
+
+
+def claim_comment_regions(path: Path, text: str) -> tuple[list[CommentRegion], list[str]]:
+    return html_comment_regions(
+        path,
+        text,
+        lambda body: parse_claim_marker_body(body)[0] == "open",
+        "/claim",
+        "claim",
+    )
+
+
+def not_a_claim_regions(path: Path, text: str) -> tuple[list[CommentRegion], list[str]]:
+    return html_comment_regions(
+        path,
+        text,
+        lambda body: body == NOT_A_CLAIM_OPEN,
+        NOT_A_CLAIM_CLOSE,
+        "not-a-claim",
+    )
+
+
+def fenced_code_regions(path: Path, text: str) -> list[CommentRegion]:
+    return [
+        CommentRegion(
+            path=path,
+            start=match.start(),
+            end=match.end(),
+            content_start=match.start(),
+            content_end=match.end(),
+            start_line=line_number(text, match.start()),
+            end_line=line_number(text, match.end()),
+        )
+        for match in FENCED_CODE_RE.finditer(text)
+    ]
+
+
+def mask_regions(text: str, regions: Iterable[CommentRegion]) -> str:
+    chars = list(text)
+    for region in regions:
+        for index in range(region.start, region.end):
+            if chars[index] != "\n":
+                chars[index] = " "
+    return "".join(chars)
+
+
+def summarize_region_content(text: str, region: CommentRegion) -> str:
+    content = normalized_text(text[region.content_start : region.content_end])
+    if len(content) > 140:
+        return content[:137].rstrip() + "..."
+    return content
+
+
+def scan_unmarked_claims_in_path(
+    path: Path,
+) -> tuple[list[UnmarkedClaim], list[str], list[str]]:
+    relative = repo_relative(path)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception as exc:
+        return ([], [], [f"{relative}: cannot read public doc: {exc}"])
+
+    claim_regions, claim_errors = claim_comment_regions(path, text)
+    skip_regions, skip_errors = not_a_claim_regions(path, text)
+    excluded_regions = [
+        *claim_regions,
+        *skip_regions,
+        *fenced_code_regions(path, text),
+    ]
+    masked = mask_regions(text, excluded_regions)
+
+    findings: list[UnmarkedClaim] = []
+    for paragraph_match in PARAGRAPH_RE.finditer(masked):
+        paragraph = paragraph_match.group(1)
+        paragraph_start = paragraph_match.start(1)
+        for match in SENTENCE_RE.finditer(paragraph):
+            sentence = normalized_text(match.group(0))
+            if not sentence:
+                continue
+            for pattern in UNMARKED_CLAIM_PATTERNS:
+                if pattern.regex.search(sentence):
+                    findings.append(
+                        UnmarkedClaim(
+                            path=path,
+                            line=line_number(masked, paragraph_start + match.start()),
+                            sentence=sentence,
+                            pattern_label=pattern.label,
+                        )
+                    )
+                    break
+
+    skipped = [
+        (
+            f"{relative}:{region.start_line}-{region.end_line}: "
+            f"not-a-claim skipped: {summarize_region_content(text, region)}"
+        )
+        for region in skip_regions
+    ]
+    return (findings, skipped, [*claim_errors, *skip_errors])
+
+
+def validate_unmarked_claim_prose(
+    claims: Iterable[Claim],
+    extra_paths: Iterable[Path] = (),
+) -> tuple[list[UnmarkedClaim], list[str], list[str]]:
+    findings: list[UnmarkedClaim] = []
+    skipped: list[str] = []
+    errors: list[str] = []
+    for path in unmarked_claim_candidate_paths(claims, extra_paths):
+        path_findings, path_skipped, path_errors = scan_unmarked_claims_in_path(path)
+        findings.extend(path_findings)
+        skipped.extend(path_skipped)
+        errors.extend(path_errors)
+    return (findings, skipped, errors)
+
+
 def validate_claim_markers(claims: list[Claim]) -> list[str]:
     claims_by_id = {claim.claim_id: claim for claim in claims}
     markers_by_id: dict[str, list[ClaimMarker]] = {}
@@ -433,6 +778,22 @@ def main() -> int:
     if marker_errors:
         for error in marker_errors:
             print(f"[FAIL] claim markers: {error}")
+        print("[FAIL] executable claims gate failed", file=sys.stderr)
+        return 1
+
+    unmarked_claims, skipped_claim_prose, unmarked_scan_errors = (
+        validate_unmarked_claim_prose(claims)
+    )
+    for skipped in skipped_claim_prose:
+        print(f"[SKIP] {skipped}")
+    if unmarked_scan_errors or unmarked_claims:
+        for error in unmarked_scan_errors:
+            print(f"[FAIL] unmarked claim scan: {error}")
+        for claim in unmarked_claims:
+            print(
+                f"[FAIL] unmarked claim: {repo_relative(claim.path)}:{claim.line}: "
+                f"{claim.pattern_label}: {claim.sentence}"
+            )
         print("[FAIL] executable claims gate failed", file=sys.stderr)
         return 1
 
