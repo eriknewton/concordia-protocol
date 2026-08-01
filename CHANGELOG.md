@@ -7,7 +7,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-01
+
+First stable release since 0.6.0 (0.7.0a1 was a pre-release; default
+`pip install concordia-protocol` previously resolved to 0.6.0, which lacks the
+`mcp<2` dependency cap and fails to import the MCP server under `mcp==2.0.0`).
+This release carries breaking changes relative to both 0.6.0 and 0.7.0a1; they
+are marked BREAKING in the entries below.
+
 ### Added
+
+- **Conformance suite Phase 1** (`conformance/`): a runner contract
+  (`conformance/RUNNER_CONTRACT.md`) implementable with an RFC 8785 library,
+  Ed25519, and a JSON-Schema 2020-12 validator alone; 236 implementation-
+  agnostic vectors (11 positive, 222 single-field mutations with executed
+  expected outcomes, 3 canaries that discriminate named regressed-runner
+  classes); a clean-room reference runner
+  (`conformance/reference-runner/runner.py`) that asserts the `concordia`
+  package is absent from its import path; a `conformance-clean-room` CI job;
+  and a deterministic generator with a byte-identical regeneration gate.
+- **Third-party verification helpers** (from the measured onboarding gaps):
+  `public_key_from_b64url()`, `KeyPair.verification_material()`, and
+  end-to-end `verify_attestation()` (schema plus per-party signatures, with
+  the per-party signing scope documented for the first time); `canonicalize_jcs`
+  is now re-exported at the top level. MCP bundle-path tool descriptions now
+  state their registration-token and ingest-first dependencies,
+  `concordia_verify_receipt_bundle` accepts `concordia_create_receipt_bundle`'s
+  exact response shape, and the reporting tools' missing-provider error names
+  the argument and shows a correct call.
 
 - `TrustSignals.reputation` now carries provider-neutral `ReputationAssertion`
   entries, and the Verascore profile publish path writes both that neutral
