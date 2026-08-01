@@ -5,10 +5,9 @@ import pytest
 from concordia import (
     Agent,
     BasicOffer,
-    KeyPair,
-    ResolutionMechanism,
     SessionState,
     generate_attestation,
+    verify_attestation,
     verify_signature,
 )
 
@@ -129,3 +128,45 @@ class TestAttestationGeneration:
         buyer.accept_session()
         with pytest.raises(ValueError):
             generate_attestation(session, {})
+
+
+class TestAttestationVerification:
+    def test_verify_attestation_checks_schema_and_party_signatures(self, agreed_session):
+        session, seller, buyer = agreed_session
+        key_pairs = {"seller_01": seller.key_pair, "buyer_42": buyer.key_pair}
+        att = generate_attestation(
+            session,
+            key_pairs,
+            category="electronics.cameras",
+            value_range="100-500_USD",
+        )
+        public_keys = {
+            agent_id: kp.public_key for agent_id, kp in key_pairs.items()
+        }
+
+        result = verify_attestation(att, public_keys)
+
+        assert result.valid is True
+        assert result.errors == []
+        assert sorted(result.verified_parties) == ["buyer_42", "seller_01"]
+
+    def test_verify_attestation_rejects_party_tamper(self, agreed_session):
+        session, seller, buyer = agreed_session
+        key_pairs = {"seller_01": seller.key_pair, "buyer_42": buyer.key_pair}
+        att = generate_attestation(session, key_pairs)
+        public_keys = {
+            agent_id: kp.public_key for agent_id, kp in key_pairs.items()
+        }
+
+        assert verify_attestation(att, public_keys).valid is True
+        att["parties"][0]["behavior"]["offers_made"] += 1
+        result = verify_attestation(att, public_keys)
+
+        assert result.valid is False
+        assert any("invalid signature" in e for e in result.signature_errors)
+
+    def test_verify_attestation_fails_closed_on_malformed_input(self):
+        result = verify_attestation({"parties": "not-a-list"}, {})
+
+        assert result.valid is False
+        assert result.errors

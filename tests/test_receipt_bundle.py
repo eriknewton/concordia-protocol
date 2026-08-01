@@ -16,24 +16,22 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytest
-
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from concordia.receipt_bundle import (
-    BundleSummary,
     BundleStore,
+    BundleSummary,
     ReceiptBundle,
-    verify_bundle,
-    screen_bundle,
-    check_freshness,
     _compute_summary,
+    check_freshness,
+    screen_bundle,
+    verify_bundle,
 )
 from concordia.signing import KeyPair, sign_message
-
 
 # ---------------------------------------------------------------------------
 # Test helpers
@@ -679,7 +677,15 @@ class TestMcpToolIntegration:
 
     def _setup_negotiation(self):
         """Run a complete negotiation and return context for bundle testing."""
-        from concordia.mcp_server import handle_tool_call, _store, _auth, _attestation_store, _key_registry, _bundle_store, _registry
+        from concordia.mcp_server import (
+            _attestation_store,
+            _auth,
+            _bundle_store,
+            _key_registry,
+            _registry,
+            _store,
+            handle_tool_call,
+        )
 
         # Reset state
         _store._sessions.clear()
@@ -772,8 +778,8 @@ class TestMcpToolIntegration:
         })
         assert result["bundle_count"] == 1
 
-    def test_verify_bundle_via_tool(self):
-        """Verify a receipt bundle through the MCP tool."""
+    def test_verify_bundle_via_tool_accepts_create_response(self):
+        """Verify accepts the exact response from the create-bundle tool."""
         from concordia.mcp_server import handle_tool_call
         ctx = self._setup_negotiation()
 
@@ -782,20 +788,10 @@ class TestMcpToolIntegration:
             "auth_token": ctx["agent_token"],
         })
         assert "error" not in bundle_result, f"Error: {bundle_result}"
-
-        # Build a clean bundle dict for verification (remove non-schema fields)
-        bundle_dict = {
-            "concordia_receipt_bundle": bundle_result["concordia_receipt_bundle"],
-            "bundle_id": bundle_result["bundle_id"],
-            "agent_id": bundle_result["agent_id"],
-            "created_at": bundle_result["created_at"],
-            "attestations": bundle_result["attestations"],
-            "summary": bundle_result["summary"],
-            "agent_signature": bundle_result["agent_signature"],
-        }
+        assert "message" in bundle_result
 
         verify_result = handle_tool_call("concordia_verify_receipt_bundle", {
-            "bundle": bundle_dict,
+            "bundle": bundle_result,
         })
         assert verify_result["valid"], f"Errors: {verify_result.get('errors')}"
         # The tool surfaces the trustworthy counterparty count. In this in-process
@@ -808,7 +804,7 @@ class TestMcpToolIntegration:
     def test_create_bundle_auth_required(self):
         """Bundle creation requires valid auth token."""
         from concordia.mcp_server import handle_tool_call
-        ctx = self._setup_negotiation()
+        self._setup_negotiation()
 
         result = handle_tool_call("concordia_create_receipt_bundle", {
             "agent_id": "seller_01",
@@ -819,7 +815,7 @@ class TestMcpToolIntegration:
     def test_list_bundles_auth_required(self):
         """Bundle listing requires valid auth token."""
         from concordia.mcp_server import handle_tool_call
-        ctx = self._setup_negotiation()
+        self._setup_negotiation()
 
         result = handle_tool_call("concordia_list_receipt_bundles", {
             "agent_id": "seller_01",

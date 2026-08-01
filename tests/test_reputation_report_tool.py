@@ -8,7 +8,6 @@ from typing import Any
 from concordia import mcp_server
 from concordia.mcp_server import handle_tool_call
 
-
 EXAMPLE_PROVIDER_DID = "did:web:example-scores.test"
 EXAMPLE_PROVIDER_ENDPOINT = "https://example-scores.test"
 
@@ -53,6 +52,8 @@ def test_reputation_report_requires_explicit_provider() -> None:
     assert "provider_endpoint" in result["error"]
     assert "provider_did" in result["error"]
     assert "No default reputation provider is used" in result["error"]
+    assert "provider-neutral" in result["error"]
+    assert "Correct call: concordia_reputation_report(" in result["error"]
     assert "verascore.ai" not in result["error"].lower()
 
 

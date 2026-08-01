@@ -93,6 +93,24 @@ class KeyPair:
         """Return the public key as a URL-safe base64 string."""
         return base64.urlsafe_b64encode(self.public_key_bytes()).decode()
 
+    def verification_material(self) -> dict[str, str]:
+        """Return the canonical verifier material for this Ed25519 key.
+
+        The round trip for third-party verification is:
+        ``KeyPair.public_key_b64()`` -> ``public_key_from_b64url()`` ->
+        ``verify_signature``. The ``public_key_b64url`` value is padded,
+        URL-safe base64 exactly as emitted by ``KeyPair.public_key_b64()``.
+        Signatures cover the JCS-canonical object minus its top-level
+        ``signature`` field.
+        """
+        return {
+            "key_type": "Ed25519",
+            "public_key_b64url": self.public_key_b64(),
+            "alg": "EdDSA",
+            "canonicalization": "RFC8785-JCS",
+            "preimage_rule": "object minus top-level 'signature'",
+        }
+
     def private_key_bytes(self) -> bytes:
         """Return the raw 32-byte private key."""
         return self.private_key.private_bytes(
@@ -324,6 +342,46 @@ def canonical_json(data: dict[str, Any]) -> bytes:
     """
     _check_no_special_floats(data)
     return _stable_stringify(data).encode("utf-8")
+
+
+def _with_base64_padding(value: str) -> str:
+    """Return ``value`` with RFC 4648 padding restored."""
+    if not isinstance(value, str):
+        raise TypeError("base64 public key must be a string")
+    stripped = value.strip()
+    remainder = len(stripped) % 4
+    if not stripped or remainder == 1:
+        raise ValueError("invalid base64 public key length")
+    return stripped + ("=" * ((4 - remainder) % 4))
+
+
+def public_key_from_b64url(s: str) -> Ed25519PublicKey:
+    """Reconstruct an Ed25519 public key from base64 text.
+
+    ``KeyPair.public_key_b64()`` emits padded URL-safe base64. This helper
+    accepts that exact output, unpadded URL-safe base64, and standard base64,
+    trying URL-safe decoding first to match the SDK's own encoding. The
+    verification round trip is ``KeyPair.public_key_b64()`` -> this function
+    -> ``verify_signature``.
+    """
+    padded = _with_base64_padding(s)
+    decoded: bytes | None = None
+    for altchars in (b"-_", None):
+        try:
+            decoded = base64.b64decode(padded, altchars=altchars, validate=True)
+            break
+        except Exception:
+            continue
+    if decoded is None:
+        raise ValueError("invalid Ed25519 public key base64 encoding")
+    if len(decoded) != 32:
+        raise ValueError(
+            f"Ed25519 public key must decode to 32 bytes, got {len(decoded)}"
+        )
+    try:
+        return Ed25519PublicKey.from_public_bytes(decoded)
+    except ValueError as exc:
+        raise ValueError("invalid Ed25519 public key bytes") from exc
 
 
 def sign_message(

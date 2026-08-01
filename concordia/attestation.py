@@ -10,13 +10,15 @@ from __future__ import annotations
 import base64
 import re
 import uuid
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from .cosign import canonical_cosign_bytes
-from .signing import KeyPair, canonical_json, sign_message
+from .signing import KeyPair, canonical_json, sign_message, verify_signature
 from .types import (
     OutcomeStatus,
     ResolutionMechanism,
@@ -36,6 +38,17 @@ if TYPE_CHECKING:
 # outcome-unbound (legacy, prover-asserted) and is NOT credited, but is NOT an
 # error either. See SPEC.md §9.6.
 ATTESTATION_VERSION = "0.2.0"
+
+
+@dataclass(frozen=True)
+class AttestationVerifyResult:
+    """Result from end-to-end attestation verification."""
+
+    valid: bool
+    errors: list[str] = field(default_factory=list)
+    schema_errors: list[str] = field(default_factory=list)
+    signature_errors: list[str] = field(default_factory=list)
+    verified_parties: list[str] = field(default_factory=list)
 
 # v0.5 SPEC §11.5: generalized attestation-level references[] shape. Per
 # §11.5.6 the four canonical type values are receipt, chain_session,
@@ -497,6 +510,99 @@ def verify_attestation_countersignature(
         return True
     except Exception:
         return False
+
+
+def verify_attestation(
+    attestation: dict[str, Any],
+    public_keys: Mapping[str, Ed25519PublicKey],
+) -> AttestationVerifyResult:
+    """Validate an attestation and verify every party signature.
+
+    This is the end-to-end verifier for session receipts. It first runs
+    ``validate_attestation`` schema validation, then checks each
+    ``parties[*].signature`` against ``public_keys[agent_id]``. Each party's
+    signature covers that party's own sub-object minus its top-level
+    ``signature`` field, the same scope used by ``sign_message`` and
+    ``verify_signature``.
+
+    Fail closed: malformed inputs, missing keys, invalid key types, bad
+    signatures, and schema failures return ``valid=False`` instead of raising.
+    """
+    schema_errors: list[str] = []
+    signature_errors: list[str] = []
+    verified_parties: list[str] = []
+
+    try:
+        if not isinstance(attestation, dict):
+            return AttestationVerifyResult(
+                valid=False,
+                errors=["attestation must be a dict"],
+                schema_errors=["attestation must be a dict"],
+            )
+        if not isinstance(public_keys, Mapping):
+            signature_errors.append(
+                "public_keys must map agent_id to Ed25519PublicKey"
+            )
+            public_keys = {}
+
+        from .schema_validator import validate_attestation
+
+        schema_errors = validate_attestation(attestation)
+
+        parties = attestation.get("parties")
+        if not isinstance(parties, list):
+            signature_errors.append("parties must be a list")
+        else:
+            for index, party in enumerate(parties):
+                if not isinstance(party, dict):
+                    signature_errors.append(f"parties[{index}] must be a dict")
+                    continue
+                party_dict = dict(party)
+                agent_id = party_dict.get("agent_id")
+                if not isinstance(agent_id, str) or not agent_id:
+                    signature_errors.append(
+                        f"parties[{index}] missing agent_id"
+                    )
+                    continue
+                signature = party_dict.get("signature")
+                if not isinstance(signature, str) or not signature:
+                    signature_errors.append(
+                        f"parties[{index}] ('{agent_id}') missing signature"
+                    )
+                    continue
+                public_key = public_keys.get(agent_id)
+                if not isinstance(public_key, Ed25519PublicKey):
+                    signature_errors.append(
+                        f"parties[{index}] ('{agent_id}') missing Ed25519 public key"
+                    )
+                    continue
+                if verify_signature(party_dict, signature, public_key):
+                    verified_parties.append(agent_id)
+                else:
+                    signature_errors.append(
+                        f"parties[{index}] ('{agent_id}') invalid signature"
+                    )
+
+        errors = [*schema_errors, *signature_errors]
+        return AttestationVerifyResult(
+            valid=len(errors) == 0,
+            errors=errors,
+            schema_errors=schema_errors,
+            signature_errors=signature_errors,
+            verified_parties=verified_parties,
+        )
+    except Exception as exc:
+        signature_errors.append(
+            f"attestation verification failed closed: {type(exc).__name__}"
+        )
+        errors = [*schema_errors, *signature_errors]
+        return AttestationVerifyResult(
+            valid=False,
+            errors=errors,
+            schema_errors=schema_errors,
+            signature_errors=signature_errors,
+            verified_parties=verified_parties,
+        )
 
 
 def generate_attestation(
