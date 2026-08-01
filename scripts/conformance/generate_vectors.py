@@ -21,7 +21,7 @@ from typing import Any, Literal, TypeAlias
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", DeprecationWarning)
-    from jsonschema import Draft202012Validator, RefResolver
+    from jsonschema import Draft202012Validator, FormatChecker, RefResolver
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -151,6 +151,21 @@ SYNTHETIC_SEEDS = {
     "cosign_counterparty": "conformance_cosign_counter_00001",
 }
 
+P2_A2_PREDICATE_MUTATION_FIXTURE = "vector_02"
+P2_A2_PREDICATE_MUTATION_REASON = (
+    "richest predicate fixture: nested condition, constraints, delegation_chain, "
+    "metadata, revocation_endpoint, references, and windowed validity"
+)
+FORMAT_CHECKER = FormatChecker(formats=())
+
+
+@FORMAT_CHECKER.checks("date-time", raises=ValueError)
+def is_date_time(value: object) -> bool:
+    if not isinstance(value, str):
+        return True
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return parsed.tzinfo is not None
+
 
 class GenerationError(RuntimeError):
     """Vector generation failed."""
@@ -210,6 +225,7 @@ class MutationFixture:
     sdk_rejected: int
     sdk_total: int
     sdk_escapes: frozenset[MutationKey]
+    compare_typed_path: bool = True
 
 
 @dataclass(frozen=True)
@@ -453,7 +469,13 @@ def schema_store() -> dict[str, dict[str, Any]]:
 
 def schema_is_valid(schema: dict[str, Any], data: Any) -> bool:
     resolver = RefResolver.from_schema(schema, store=schema_store())
-    return not any(Draft202012Validator(schema, resolver=resolver).iter_errors(data))
+    return not any(
+        Draft202012Validator(
+            schema,
+            resolver=resolver,
+            format_checker=FORMAT_CHECKER,
+        ).iter_errors(data)
+    )
 
 
 def has_approves_reference(receipt: dict[str, Any]) -> bool:
@@ -521,6 +543,9 @@ def evaluate_attestation_profile(vector: Vector) -> Evaluation:
     context = vector.context
     if context.get("forbid_raw_deal_terms") and contains_raw_term(input_data):
         return Evaluation(False, "privacy")
+    schema = load_json(SCHEMA_COPIES["attestation.schema.json"])
+    if not schema_is_valid(schema, input_data):
+        return Evaluation(False, "schema")
     public_keys_b64 = context.get("public_keys_b64url")
     if not isinstance(public_keys_b64, dict):
         return Evaluation(False, "signature")
@@ -533,17 +558,34 @@ def evaluate_attestation_profile(vector: Vector) -> Evaluation:
         }
     except Exception:
         return Evaluation(False, "signature")
-    result = verify_attestation(input_data, public_keys)
-    if result.schema_errors:
+    parties = input_data.get("parties")
+    if not isinstance(parties, list):
         return Evaluation(False, "schema")
-    if result.signature_errors:
-        return Evaluation(False, "signature")
+    verified_parties: list[str] = []
+    for party in parties:
+        if not isinstance(party, dict):
+            return Evaluation(False, "schema")
+        agent_id = party.get("agent_id")
+        signature = party.get("signature")
+        if not isinstance(agent_id, str) or not isinstance(signature, str):
+            return Evaluation(False, "signature")
+        public_key = public_keys.get(agent_id)
+        if public_key is None:
+            return Evaluation(False, "signature")
+        try:
+            public_key.verify(
+                b64url_decode(signature),
+                canonical_json(without_signature(party)),
+            )
+        except Exception:
+            return Evaluation(False, "signature")
+        verified_parties.append(agent_id)
     expected_parties = context.get("expected_verified_parties")
-    if expected_parties is not None and sorted(result.verified_parties) != sorted(
+    if expected_parties is not None and sorted(verified_parties) != sorted(
         expected_parties
     ):
         return Evaluation(False, "binding")
-    return Evaluation(result.valid, None if result.valid else "binding")
+    return Evaluation(True)
 
 
 def evaluate_attestation_countersign_profile(vector: Vector) -> Evaluation:
@@ -898,9 +940,21 @@ def fixture_1920() -> dict[str, dict[str, Any]]:
 TOLERATED_SIGNATURE_ESCAPE_NOTE = (
     "tolerated-escape: signature block is outside its own preimage"
 )
-EXPECTED_MUTATION_TOTAL = 222
-EXPECTED_MUTATION_REJECTS = 220
-EXPECTED_MUTATION_ACCEPTS = 2
+ATTESTATION_TOP_LEVEL_ESCAPE_NOTE = (
+    "accepted-structural: field is outside attestation-v1 party-signature preimages"
+)
+ATTESTATION_COUNTERSIGNATURE_ESCAPE_NOTE = (
+    "accepted-structural: countersignatures are ignored by attestation-v1"
+)
+COUNTERSIGN_STRIPPED_PARTY_SIGNATURE_NOTE = (
+    "accepted-structural: party signatures are stripped from the countersignature preimage"
+)
+COUNTERSIGN_EXTRA_MAP_ENTRY_NOTE = (
+    "accepted-structural: extra countersignature map entry is outside the required signer set and preimage"
+)
+EXPECTED_MUTATION_TOTAL = 698
+EXPECTED_MUTATION_REJECTS = 664
+EXPECTED_MUTATION_ACCEPTS = 34
 EXPECTED_CANARY_TOTAL = 3
 EXPECTED_RAW_TYPED_DIVERGENCES = (
     MutationDivergence(
@@ -917,14 +971,54 @@ EXPECTED_RAW_ACCEPTED_MUTATIONS: frozenset[tuple[str, str, MutationKind]] = froz
         ("1404/approval_receipt.json", "signature", "inject"),
     }
 )
+EXPECTED_MUTATION_BATTERY_COUNTS: dict[str, tuple[int, int, int]] = {
+    "1404/approval_receipt.json": (63, 62, 1),
+    "1404/cascade_decision_deny.json": (35, 35, 0),
+    "1404/decision_object.json": (13, 13, 0),
+    "1404/offer.json": (15, 15, 0),
+    "1404/revocation_A.json": (33, 33, 0),
+    "1920/fulfillment_attestation.json": (63, 62, 1),
+    "synthetic/attestation/attestation.json::attestation-countersign-v1": (
+        107,
+        104,
+        3,
+    ),
+    "synthetic/attestation/attestation.json::attestation-v1": (107, 78, 29),
+    "synthetic/cosign/cosigned_receipt.json": (42, 42, 0),
+    "synthetic/mandate/delegated_mandate.json": (82, 82, 0),
+    "synthetic/mandate/mandate.json": (51, 51, 0),
+    "synthetic/predicate/vector_02.json": (87, 87, 0),
+}
 
 
 def build_mutation_fixtures(
-    f1404: dict[str, dict[str, Any]], f1920: dict[str, dict[str, Any]]
+    f1404: dict[str, dict[str, Any]],
+    f1920: dict[str, dict[str, Any]],
+    synthetic: SyntheticFixtures,
 ) -> list[MutationFixture]:
     hashes = f1404["vector"]["hashes"]
     public_keys_1404 = f1404["vector"]["public_keys_b64url"]
     sample = f1920["sample"]
+    attestation_public_keys = synthetic.attestation_seed_manifest[
+        "agent_public_keys_b64url"
+    ]
+    attestation_parties = [
+        party["agent_id"] for party in synthetic.attestation["parties"]
+    ]
+    countersign_preimage = attestation_countersign_payload(synthetic.attestation)
+    predicate = synthetic.predicates[P2_A2_PREDICATE_MUTATION_FIXTURE]
+    predicate_preimage = canonical_json(without_signature(predicate))
+    action = {"max_spend": 500, "category": "software"}
+    mandate_key_manifest = synthetic.mandate_seed_manifest[
+        "seeds_PUBLIC_test_only_do_not_reuse"
+    ]
+    mandate_agent_ids = synthetic.mandate_seed_manifest["agent_ids"]
+    mandate_issuer_key = mandate_key_manifest["mandate_issuer"]["public_key_b64url"]
+    cosign_dids = synthetic.cosign_seed_manifest["dids"]
+    cosign_key_manifest = synthetic.cosign_seed_manifest[
+        "seeds_PUBLIC_test_only_do_not_reuse"
+    ]
+    cosign_preimage = canonical_cosign_bytes(synthetic.cosigned_receipt)
 
     return [
         MutationFixture(
@@ -1044,6 +1138,148 @@ def build_mutation_fixtures(
             sdk_total=35,
             sdk_escapes=frozenset(),
         ),
+        MutationFixture(
+            battery_name="synthetic/attestation/attestation.json::attestation-v1",
+            fixture_label="synthetic",
+            object_label="attestation",
+            object_name="attestation",
+            input_data=synthetic.attestation,
+            source_fixture=SYNTHETIC_SOURCE_ATTESTATION,
+            record_type="attestation",
+            verification_profile="attestation-v1",
+            context={
+                "forbid_raw_deal_terms": True,
+                "expected_verified_parties": attestation_parties,
+                "public_keys_b64url": attestation_public_keys,
+            },
+            sdk_rejected=0,
+            sdk_total=107,
+            sdk_escapes=frozenset(),
+            compare_typed_path=False,
+        ),
+        MutationFixture(
+            battery_name=(
+                "synthetic/attestation/attestation.json::"
+                "attestation-countersign-v1"
+            ),
+            fixture_label="synthetic",
+            object_label="attestation-countersign",
+            object_name="attestation_countersign",
+            input_data=synthetic.attestation,
+            source_fixture=SYNTHETIC_SOURCE_ATTESTATION,
+            record_type="attestation",
+            verification_profile="attestation-countersign-v1",
+            context={
+                "canonical_sha256": "sha256:"
+                + hashlib.sha256(countersign_preimage).hexdigest(),
+                "countersigners": attestation_parties,
+                "public_keys_b64url": attestation_public_keys,
+            },
+            sdk_rejected=0,
+            sdk_total=107,
+            sdk_escapes=frozenset(),
+            compare_typed_path=False,
+        ),
+        MutationFixture(
+            battery_name=(
+                "synthetic/predicate/"
+                f"{P2_A2_PREDICATE_MUTATION_FIXTURE}.json"
+            ),
+            fixture_label="synthetic",
+            object_label="predicate-vector-02",
+            object_name="predicate_vector_02",
+            input_data=predicate,
+            source_fixture=SYNTHETIC_SOURCE_PREDICATE,
+            record_type="predicate",
+            verification_profile="predicate-v1",
+            context={
+                "canonical_sha256": "sha256:"
+                + hashlib.sha256(predicate_preimage).hexdigest(),
+                "now": fixed_iso_now(),
+                "public_key_b64url": synthetic.predicate_seed_manifest[
+                    "seeds_PUBLIC_test_only_do_not_reuse"
+                ]["predicate_issuer"]["public_key_b64url"],
+            },
+            sdk_rejected=0,
+            sdk_total=87,
+            sdk_escapes=frozenset(),
+            compare_typed_path=False,
+        ),
+        MutationFixture(
+            battery_name="synthetic/mandate/mandate.json",
+            fixture_label="synthetic",
+            object_label="mandate",
+            object_name="mandate",
+            input_data=synthetic.direct_mandate,
+            source_fixture=SYNTHETIC_SOURCE_MANDATE,
+            record_type="mandate",
+            verification_profile="mandate-v1",
+            context={
+                "action": action,
+                "canonical_sha256": sha256_jcs(
+                    without_signature(synthetic.direct_mandate)
+                ),
+                "issuer_public_key_b64url": mandate_issuer_key,
+                "now": fixed_iso_now(),
+            },
+            sdk_rejected=0,
+            sdk_total=51,
+            sdk_escapes=frozenset(),
+            compare_typed_path=False,
+        ),
+        MutationFixture(
+            battery_name="synthetic/mandate/delegated_mandate.json",
+            fixture_label="synthetic",
+            object_label="delegation-chain",
+            object_name="delegation_chain",
+            input_data=synthetic.delegated_mandate,
+            source_fixture=SYNTHETIC_SOURCE_MANDATE,
+            record_type="mandate",
+            verification_profile="delegation-chain-v1",
+            context={
+                "action": action,
+                "canonical_sha256": sha256_jcs(
+                    without_signature(synthetic.delegated_mandate)
+                ),
+                "delegation_public_keys_b64url": {
+                    mandate_agent_ids["issuer"]: mandate_key_manifest[
+                        "mandate_issuer"
+                    ]["public_key_b64url"],
+                    mandate_agent_ids["delegate"]: mandate_key_manifest[
+                        "mandate_delegate"
+                    ]["public_key_b64url"],
+                },
+                "issuer_public_key_b64url": mandate_issuer_key,
+                "now": fixed_iso_now(),
+            },
+            sdk_rejected=0,
+            sdk_total=82,
+            sdk_escapes=frozenset(),
+            compare_typed_path=False,
+        ),
+        MutationFixture(
+            battery_name="synthetic/cosign/cosigned_receipt.json",
+            fixture_label="synthetic",
+            object_label="cosign",
+            object_name="cosign_receipt",
+            input_data=synthetic.cosigned_receipt,
+            source_fixture=SYNTHETIC_SOURCE_COSIGN,
+            record_type="cosign_receipt",
+            verification_profile="cosign-v1",
+            context={
+                "canonical_sha256": "sha256:"
+                + hashlib.sha256(cosign_preimage).hexdigest(),
+                "counterparty_did": cosign_dids["counterparty"],
+                "counterparty_public_key_b64url": cosign_key_manifest[
+                    "cosign_counterparty"
+                ]["public_key_b64url"],
+                "publisher_did": cosign_dids["publisher"],
+            },
+            sdk_rejected=0,
+            sdk_total=42,
+            sdk_escapes=frozenset(),
+            compare_typed_path=False,
+        ),
     ]
 
 
@@ -1058,11 +1294,42 @@ def mutation_canonical_preimage(profile: str, input_data: dict[str, Any]) -> byt
         return canonical_json(without_signature(input_data))
     if profile == "cascade-decision-v1":
         return canonicalize_cascade_decision_record(input_data)
+    if profile == "attestation-countersign-v1":
+        return attestation_countersign_payload(input_data)
+    if profile == "predicate-v1":
+        return canonical_json(without_signature(input_data))
+    if profile in {"mandate-v1", "delegation-chain-v1"}:
+        return canonicalize_mandate(input_data)
+    if profile == "cosign-v1":
+        return canonical_cosign_bytes(input_data)
     return None
+
+
+def accepted_mutation_note(
+    fixture: MutationFixture,
+    field_path: str,
+    kind: MutationKind,
+) -> str:
+    if (fixture.battery_name, field_path, kind) in EXPECTED_RAW_ACCEPTED_MUTATIONS:
+        return TOLERATED_SIGNATURE_ESCAPE_NOTE
+    if fixture.verification_profile == "attestation-v1":
+        if field_path.startswith("countersignatures"):
+            return ATTESTATION_COUNTERSIGNATURE_ESCAPE_NOTE
+        return ATTESTATION_TOP_LEVEL_ESCAPE_NOTE
+    if fixture.verification_profile == "attestation-countersign-v1":
+        if field_path in {"parties.0.signature", "parties.1.signature"} and kind == "value":
+            return COUNTERSIGN_STRIPPED_PARTY_SIGNATURE_NOTE
+        if field_path == "countersignatures" and kind == "inject":
+            return COUNTERSIGN_EXTRA_MAP_ENTRY_NOTE
+    raise GenerationError(
+        f"{fixture.battery_name}: accepted mutation lacks structural justification: "
+        f"{kind} {field_path}"
+    )
 
 
 def assert_mutation_sanity(
     vectors: list[Vector],
+    battery_summaries: list[dict[str, Any]],
     divergences: list[MutationDivergence],
     raw_accepts: set[tuple[str, str, MutationKind]],
 ) -> None:
@@ -1100,17 +1367,35 @@ def assert_mutation_sanity(
             "raw tolerated-accept set drifted: "
             f"{sorted(raw_accepts)} != {sorted(EXPECTED_RAW_ACCEPTED_MUTATIONS)}"
         )
+    summary_counts = {
+        str(summary["battery_name"]): (
+            int(summary["total"]),
+            int(summary["reject"]),
+            int(summary["accept"]),
+        )
+        for summary in battery_summaries
+    }
+    if summary_counts != EXPECTED_MUTATION_BATTERY_COUNTS:
+        raise GenerationError(
+            "mutation battery counts drifted: "
+            f"{summary_counts} != {EXPECTED_MUTATION_BATTERY_COUNTS}"
+        )
 
 
-def build_mutation_vectors() -> list[Vector]:
+def build_mutation_battery(
+    synthetic: SyntheticFixtures | None = None,
+) -> tuple[list[Vector], list[dict[str, Any]]]:
     f1404 = fixture_1404()
     f1920 = fixture_1920()
+    if synthetic is None:
+        synthetic = build_synthetic_fixtures()
 
     vectors: list[Vector] = []
+    battery_summaries: list[dict[str, Any]] = []
     divergences: list[MutationDivergence] = []
     raw_accepts: set[tuple[str, str, MutationKind]] = set()
 
-    for fixture in build_mutation_fixtures(f1404, f1920):
+    for fixture in build_mutation_fixtures(f1404, f1920, synthetic):
         baseline = Vector(
             vector_id=f"baseline-{fixture.fixture_label}-{fixture.object_label}",
             title=f"{fixture.object_name}: baseline",
@@ -1124,6 +1409,8 @@ def build_mutation_vectors() -> list[Vector]:
             raise GenerationError(f"{fixture.battery_name}: baseline raw verifier rejected")
 
         object_total = 0
+        object_accept = 0
+        object_reject = 0
         for field_path, kind, mutated in mutations(fixture.input_data):
             if mutated == fixture.input_data:
                 continue
@@ -1140,21 +1427,30 @@ def build_mutation_vectors() -> list[Vector]:
                 input_data=mutated,
                 context=copy.deepcopy(fixture.context),
             )
-            evaluation = evaluate_vector(probe)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                evaluation = evaluate_vector(probe)
             expected = outcome_name(evaluation.accepted)
-            sdk_expected = outcome_name((field_path, kind) in fixture.sdk_escapes)
-            if sdk_expected != expected:
-                divergences.append(
-                    MutationDivergence(
-                        battery_name=fixture.battery_name,
-                        field_path=field_path,
-                        kind=kind,
-                        sdk_expected=sdk_expected,
-                        raw_expected=expected,
+            if fixture.compare_typed_path:
+                sdk_expected = outcome_name((field_path, kind) in fixture.sdk_escapes)
+                if sdk_expected != expected:
+                    divergences.append(
+                        MutationDivergence(
+                            battery_name=fixture.battery_name,
+                            field_path=field_path,
+                            kind=kind,
+                            sdk_expected=sdk_expected,
+                            raw_expected=expected,
+                        )
                     )
-                )
             if evaluation.accepted:
-                raw_accepts.add((fixture.battery_name, field_path, kind))
+                object_accept += 1
+                if fixture.compare_typed_path:
+                    raw_accepts.add((fixture.battery_name, field_path, kind))
+                notes = accepted_mutation_note(fixture, field_path, kind)
+            else:
+                object_reject += 1
+                notes = ""
             if not evaluation.accepted and evaluation.reason_class is None:
                 raise GenerationError(
                     f"{vector_id}: reject missing expected_reason_class"
@@ -1171,7 +1467,7 @@ def build_mutation_vectors() -> list[Vector]:
                     context=probe.context,
                     expected=expected,
                     expected_reason_class=evaluation.reason_class,
-                    notes=TOLERATED_SIGNATURE_ESCAPE_NOTE if evaluation.accepted else "",
+                    notes=notes,
                     canonical_preimage=mutation_canonical_preimage(
                         fixture.verification_profile, mutated
                     ),
@@ -1183,14 +1479,38 @@ def build_mutation_vectors() -> list[Vector]:
                 f"{fixture.battery_name}: mutation count drifted "
                 f"({object_total} != {fixture.sdk_total})"
             )
-        sdk_rejected = fixture.sdk_total - len(fixture.sdk_escapes)
-        if sdk_rejected != fixture.sdk_rejected:
-            raise GenerationError(
-                f"{fixture.battery_name}: SDK expectation table is internally inconsistent"
-            )
+        if fixture.compare_typed_path:
+            sdk_rejected = fixture.sdk_total - len(fixture.sdk_escapes)
+            if sdk_rejected != fixture.sdk_rejected:
+                raise GenerationError(
+                    f"{fixture.battery_name}: SDK expectation table is internally inconsistent"
+                )
+        if object_accept + object_reject != object_total:
+            raise GenerationError(f"{fixture.battery_name}: mutation split drifted")
+        summary: dict[str, Any] = {
+            "battery_name": fixture.battery_name,
+            "source_fixture": fixture.source_fixture,
+            "object_name": fixture.object_name,
+            "record_type": fixture.record_type,
+            "verification_profile": fixture.verification_profile,
+            "total": object_total,
+            "reject": object_reject,
+            "accept": object_accept,
+        }
+        if fixture.object_name == "predicate_vector_02":
+            summary["selection_note"] = P2_A2_PREDICATE_MUTATION_REASON
+        battery_summaries.append(summary)
 
     vectors = sorted(vectors, key=lambda vector: vector.vector_id)
-    assert_mutation_sanity(vectors, divergences, raw_accepts)
+    battery_summaries = sorted(
+        battery_summaries, key=lambda summary: str(summary["battery_name"])
+    )
+    assert_mutation_sanity(vectors, battery_summaries, divergences, raw_accepts)
+    return vectors, battery_summaries
+
+
+def build_mutation_vectors() -> list[Vector]:
+    vectors, _ = build_mutation_battery()
     return vectors
 
 
@@ -2151,7 +2471,9 @@ def build_vectors() -> list[Vector]:
 
 def assert_vectors_execute(vectors: list[Vector]) -> None:
     for vector in vectors:
-        got_accept = verify_vector(vector)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            got_accept = verify_vector(vector)
         expected_accept = vector.expected == "accept"
         if got_accept != expected_accept:
             raise GenerationError(
@@ -2256,6 +2578,7 @@ def write_manifest(
     schema_files: list[str],
     positive_files: list[str],
     mutation_files: list[str],
+    mutation_batteries: list[dict[str, Any]],
     canary_files: list[str],
     diag_files: list[str],
 ) -> None:
@@ -2282,8 +2605,9 @@ def write_manifest(
             "canary": canary_files,
             "diag_canonical_bytes": diag_files,
         },
+        "mutation_batteries": mutation_batteries,
         "phase_notes": {
-            "mutation": "C2 converts the 222 mutation battery under raw conformance rules.",
+            "mutation": "P2-A2 extends the raw mutation battery to the P2-A1 profiles.",
             "canary": "C3 adds the three runner-discrimination canaries.",
             "reference_runner": "C3 adds the clean-room reference runner.",
         },
@@ -2294,7 +2618,7 @@ def write_manifest(
 def generate(dest_root: Path) -> None:
     synthetic_fixtures = build_synthetic_fixtures()
     positive_vectors = build_vectors()
-    mutation_vectors = build_mutation_vectors()
+    mutation_vectors, mutation_batteries = build_mutation_battery(synthetic_fixtures)
     canary_vectors = build_canary_vectors()
     assert_vectors_execute(positive_vectors)
     assert_vectors_execute(mutation_vectors)
@@ -2320,6 +2644,7 @@ def generate(dest_root: Path) -> None:
         schema_files=schema_files,
         positive_files=positive_files,
         mutation_files=mutation_files,
+        mutation_batteries=mutation_batteries,
         canary_files=canary_files,
         diag_files=sorted(positive_diag_files + mutation_diag_files + canary_diag_files),
     )

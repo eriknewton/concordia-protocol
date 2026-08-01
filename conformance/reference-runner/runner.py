@@ -27,7 +27,7 @@ import rfc8785
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", DeprecationWarning)
-    from jsonschema import Draft202012Validator, RefResolver
+    from jsonschema import Draft202012Validator, FormatChecker, RefResolver
 from nacl.exceptions import BadSignatureError
 from nacl.signing import SigningKey, VerifyKey
 
@@ -87,6 +87,15 @@ RAW_TERM_PATTERNS = (
     re.compile(r"\b(?:qty|quantity)\s*[:=]?\s*\d+\b", re.IGNORECASE),
     re.compile(r"\b\d+\s*(?:units?|items?|pcs|pieces)\b", re.IGNORECASE),
 )
+FORMAT_CHECKER = FormatChecker(formats=())
+
+
+@FORMAT_CHECKER.checks("date-time", raises=ValueError)
+def is_date_time(value: object) -> bool:
+    if not isinstance(value, str):
+        return True
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return parsed.tzinfo is not None
 
 
 class Reject(Exception):
@@ -165,7 +174,13 @@ def schema_store(suite_base: Path) -> dict[str, Json]:
 def validate_schema(suite_base: Path, schema_name: str, data: Json) -> None:
     schema = load_json(schema_file(suite_base, schema_name))
     resolver = RefResolver.from_schema(schema, store=schema_store(suite_base))
-    errors = list(Draft202012Validator(schema, resolver=resolver).iter_errors(data))
+    errors = list(
+        Draft202012Validator(
+            schema,
+            resolver=resolver,
+            format_checker=FORMAT_CHECKER,
+        ).iter_errors(data)
+    )
     if errors:
         raise Reject("schema validation failed")
 

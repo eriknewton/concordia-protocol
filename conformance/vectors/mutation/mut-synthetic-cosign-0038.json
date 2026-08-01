@@ -1,0 +1,48 @@
+{
+  "context": {
+    "canonical_sha256": "sha256:75f426ad273730b836e5755cd78af3b5c987c8d5d375707ea50ce8124bd47ca3",
+    "counterparty_did": "did:key:z7QEZ5vqOjuq7ye7EQsBVvPIa3B-Eq1JvWfUp3N65nGboJg",
+    "counterparty_public_key_b64url": "Geb6jo7qu8nuxELAVbzyGtwfhKtSb1n1KdzeuZxm6CY=",
+    "publisher_did": "did:key:z7QHvEiiiHMRMqs1rZcoVgZNUtK8MbkKICWn9iC6Vhcv3rw"
+  },
+  "expected": "reject",
+  "expected_reason_class": "digest",
+  "id": "mut-synthetic-cosign-0038",
+  "input": {
+    "concordia": "0.5",
+    "counterparty_did": "did:key:z7QEZ5vqOjuq7ye7EQsBVvPIa3B-Eq1JvWfUp3N65nGboJg",
+    "fulfillment": {
+      "__mut_probe__": "MUT",
+      "status": "fulfilled"
+    },
+    "graceful_degradation": false,
+    "outcome": {
+      "duration_seconds": 312,
+      "rounds": 4,
+      "status": "agreed",
+      "terms_count": 3
+    },
+    "parties": [
+      {
+        "agent_id": "did:key:z7QHvEiiiHMRMqs1rZcoVgZNUtK8MbkKICWn9iC6Vhcv3rw",
+        "behavior": {
+          "concessions": 2
+        },
+        "role": "initiator"
+      },
+      {
+        "agent_id": "did:key:z7QEZ5vqOjuq7ye7EQsBVvPIa3B-Eq1JvWfUp3N65nGboJg",
+        "behavior": {},
+        "role": "responder",
+        "signature": "NfuEHQ1Ee9Jau1dlUTOONFN6TxwERygML5scPS-WzW0WAphv99epihIlRb4q4qPfXkYkmASULRK7LEEeMmAQBg"
+      }
+    ],
+    "session_id": "concordia:session:conformance-cosign-0001"
+  },
+  "notes": "",
+  "record_type": "cosign_receipt",
+  "schema_version": "concordia-conformance-vector/v1-draft",
+  "source_fixture": "synthetic/cosign",
+  "title": "cosign_receipt: inject fulfillment",
+  "verification_profile": "cosign-v1"
+}

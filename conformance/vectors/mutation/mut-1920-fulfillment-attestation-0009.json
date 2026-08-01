@@ -11,7 +11,7 @@
     "signature_b64url": "sLNIOmz8qhx3scaDXgxc9G_G2jemSZUI1ckdYhbNV7s6RJ0NSydt9J7nn1A8I_AbrUBL1yBWQXMKu-PX7MZgAA=="
   },
   "expected": "reject",
-  "expected_reason_class": "signature",
+  "expected_reason_class": "schema",
   "id": "mut-1920-fulfillment-attestation-0009",
   "input": {
     "action_ref": "urn:a2a:action:2026-05-10-deliver-88f01c",
