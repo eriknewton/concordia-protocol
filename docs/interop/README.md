@@ -15,11 +15,11 @@ directory's expectations file) and uses only shipped Concordia v0.7.0a1
 primitives and the shipped RFC 8785 JCS canonicalizer. No fixture patches or
 extends the SDK.
 
-**Recorded values are expectations, never sources.** Every digest a fixture
+**Recorded values are expectations, never sources.** <!-- claim:fixture-digests-recomputed -->Every digest a fixture
 publishes is recomputed from the fixture bytes by that fixture's `verify.py`
 and compared, and the digests used for signature and revocation checks are
 additionally cross-checked against the independent `rfc8785` reference library
-in CI (`tests/test_interop_fixtures.py`). A published digest that no verifier
+in CI (`tests/test_interop_fixtures.py`).<!-- /claim --> A published digest that no verifier
 derives would be an answer key rather than a test: a regressed implementation
 deriving the wrong value would go uncaught, because nothing would compare.
 

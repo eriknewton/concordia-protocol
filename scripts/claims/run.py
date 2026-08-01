@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Run the executable claims gate."""
+"""Run the executable claims gate.
+
+Claim markers are scanned only in public Markdown documents: ``SPEC.md``,
+``README.md``, and ``docs/**/*.md``. ``Review/`` and internal documentation
+directories are intentionally out of scope for this public-claims chokepoint.
+"""
 
 from __future__ import annotations
 
@@ -15,6 +20,10 @@ MANIFEST_PATH = REPO_ROOT / "docs" / "claims.yaml"
 CI_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 REQUIRED_KEYS = {"id", "claim", "stated_in", "check"}
 CHECK_TIMEOUT_SECONDS = 120
+CLAIM_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
+HTML_COMMENT_OPEN = "<!--"
+HTML_COMMENT_CLOSE = "-->"
+INTERNAL_DOC_DIR_NAMES = {"review", "internal", "_internal", "private"}
 
 
 class ManifestError(Exception):
@@ -35,6 +44,15 @@ class ClaimResult:
     ok: bool
     message: str
     output: str = ""
+
+
+@dataclass(frozen=True)
+class ClaimMarker:
+    claim_id: str
+    path: Path
+    content: str
+    start_line: int
+    end_line: int
 
 
 def parse_scalar(value: str, line_number: int) -> str:
@@ -126,6 +144,175 @@ def parse_manifest(path: Path) -> list[Claim]:
 
 def normalized_text(value: str) -> str:
     return " ".join(value.split())
+
+
+def repo_relative(path: Path) -> str:
+    try:
+        return path.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def is_internal_doc_path(path: Path) -> bool:
+    return any(
+        part.lower() in INTERNAL_DOC_DIR_NAMES or part.startswith(".") for part in path.parts
+    )
+
+
+def public_doc_paths() -> list[Path]:
+    paths = {REPO_ROOT / "SPEC.md", REPO_ROOT / "README.md"}
+    docs_root = REPO_ROOT / "docs"
+    if not docs_root.is_dir():
+        raise ManifestError("public docs directory does not exist: docs/")
+    try:
+        for path in docs_root.rglob("*.md"):
+            relative = path.relative_to(REPO_ROOT)
+            if not is_internal_doc_path(relative):
+                paths.add(path)
+    except Exception as exc:
+        raise ManifestError(f"cannot enumerate public docs under docs/: {exc}") from exc
+    return sorted(paths, key=repo_relative)
+
+
+def line_number(text: str, offset: int) -> int:
+    return text.count("\n", 0, offset) + 1
+
+
+def parse_claim_marker_body(body: str) -> tuple[str, str | None]:
+    if body.startswith("claim:"):
+        claim_id = body.removeprefix("claim:")
+        if CLAIM_ID_RE.fullmatch(claim_id) is None:
+            return ("malformed", None)
+        return ("open", claim_id)
+    if body == "/claim":
+        return ("close", None)
+    if body.startswith("claim") or body.startswith("/claim"):
+        return ("malformed", None)
+    return ("ignore", None)
+
+
+def parse_claim_markers(path: Path) -> tuple[list[ClaimMarker], list[str]]:
+    relative = repo_relative(path)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception as exc:
+        return ([], [f"{relative}: cannot read public doc: {exc}"])
+
+    markers: list[ClaimMarker] = []
+    errors: list[str] = []
+    active: tuple[str, int, int] | None = None
+    offset = 0
+
+    while True:
+        start = text.find(HTML_COMMENT_OPEN, offset)
+        if start == -1:
+            break
+
+        end = text.find(HTML_COMMENT_CLOSE, start + len(HTML_COMMENT_OPEN))
+        start_line = line_number(text, start)
+        if end == -1:
+            body_prefix = text[start + len(HTML_COMMENT_OPEN) : start + 80].strip()
+            if active is not None:
+                errors.append(
+                    f"{active[0]} in {relative}:{active[2]}: marker is unclosed"
+                )
+                active = None
+            elif body_prefix.startswith("claim") or body_prefix.startswith("/claim"):
+                errors.append(f"{relative}:{start_line}: malformed claim marker is unclosed")
+            else:
+                errors.append(
+                    f"{relative}:{start_line}: unclosed HTML comment while scanning claim markers"
+                )
+            break
+
+        body = text[start + len(HTML_COMMENT_OPEN) : end].strip()
+        marker_kind, claim_id = parse_claim_marker_body(body)
+        if marker_kind == "malformed":
+            errors.append(f"{relative}:{start_line}: malformed claim marker {body!r}")
+        elif marker_kind == "open":
+            assert claim_id is not None
+            if active is not None:
+                errors.append(
+                    f"{claim_id} in {relative}:{start_line}: nested marker inside "
+                    f"{active[0]} opened at {relative}:{active[2]}"
+                )
+            else:
+                active = (claim_id, end + len(HTML_COMMENT_CLOSE), start_line)
+        elif marker_kind == "close":
+            if active is None:
+                errors.append(
+                    f"{relative}:{start_line}: closing claim marker without opening marker"
+                )
+            else:
+                claim_id, content_start, marker_start_line = active
+                markers.append(
+                    ClaimMarker(
+                        claim_id=claim_id,
+                        path=path,
+                        content=text[content_start:start],
+                        start_line=marker_start_line,
+                        end_line=start_line,
+                    )
+                )
+                active = None
+
+        offset = end + len(HTML_COMMENT_CLOSE)
+
+    if active is not None:
+        errors.append(f"{active[0]} in {relative}:{active[2]}: marker is unclosed")
+
+    return (markers, errors)
+
+
+def validate_claim_markers(claims: list[Claim]) -> list[str]:
+    claims_by_id = {claim.claim_id: claim for claim in claims}
+    markers_by_id: dict[str, list[ClaimMarker]] = {}
+    errors: list[str] = []
+
+    for path in public_doc_paths():
+        markers, marker_errors = parse_claim_markers(path)
+        errors.extend(marker_errors)
+        for marker in markers:
+            markers_by_id.setdefault(marker.claim_id, []).append(marker)
+
+    for claim_id, markers in markers_by_id.items():
+        if len(markers) > 1:
+            locations = ", ".join(
+                f"{repo_relative(marker.path)}:{marker.start_line}" for marker in markers
+            )
+            errors.append(f"{claim_id}: duplicate marker id in public docs: {locations}")
+
+        for marker in markers:
+            marker_relative = repo_relative(marker.path)
+            claim = claims_by_id.get(claim_id)
+            if claim is None:
+                errors.append(
+                    f"{claim_id} in {marker_relative}:{marker.start_line}: "
+                    "marker has no manifest entry"
+                )
+                continue
+
+            if marker_relative != claim.stated_in:
+                errors.append(
+                    f"{claim_id} in {marker_relative}:{marker.start_line}: "
+                    f"marker is not in manifest stated_in file {claim.stated_in}"
+                )
+
+            if normalized_text(marker.content) != normalized_text(claim.claim):
+                errors.append(
+                    f"{claim_id} in {marker_relative}:{marker.start_line}: "
+                    "marker text does not match manifest claim"
+                )
+
+    for claim in claims:
+        markers = markers_by_id.get(claim.claim_id, [])
+        if not any(repo_relative(marker.path) == claim.stated_in for marker in markers):
+            errors.append(
+                f"{claim.claim_id} in {claim.stated_in}: "
+                "manifest entry has no marker in stated_in document"
+            )
+
+    return errors
 
 
 def validate_stated_claim(claim: Claim) -> str | None:
@@ -240,6 +427,13 @@ def main() -> int:
         jobs = ci_job_names(CI_PATH)
     except ManifestError as exc:
         print(f"[FAIL] {exc}", file=sys.stderr)
+        return 1
+
+    marker_errors = validate_claim_markers(claims)
+    if marker_errors:
+        for error in marker_errors:
+            print(f"[FAIL] claim markers: {error}")
+        print("[FAIL] executable claims gate failed", file=sys.stderr)
         return 1
 
     results = [evaluate_claim(claim, jobs) for claim in claims]
