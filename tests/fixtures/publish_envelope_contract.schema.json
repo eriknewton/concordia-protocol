@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "verascore/api/publish#concordia-receipt",
-  "title": "Verascore POST /api/publish — concordia-receipt envelope (accepted contract)",
-  "description": "Committed schema for a concordia-receipt publish envelope accepted by one reputation consumer. The envelope has {signature, publicKey, type, data}; agent identity is derived from the verified publicKey, not from a caller-supplied agentId. The publisher-envelope signature is raw Ed25519 over JSON.stringify(data), base64url-encoded. data.did is bound to publicKey. data.receipt must carry session_id, counterparty_did, outcome, and concordia (protocol version); parties[] carries the counterparty co-signature.",
+  "$id": "concordia/receipt#publish-envelope",
+  "title": "Concordia receipt publish envelope contract",
+  "description": "Committed schema for a Concordia receipt publish envelope that consumers may accept. The envelope has {signature, publicKey, type, data}; agent identity is derived from the verified publicKey, not from a caller-supplied agentId. The publisher-envelope signature is raw Ed25519 over JSON.stringify(data), base64url-encoded. data.did is bound to publicKey. data.receipt must carry session_id, counterparty_did, outcome, and concordia (protocol version); parties[] carries the counterparty co-signature.",
   "type": "object",
   "additionalProperties": false,
   "required": ["type", "publicKey", "signature", "data"],
