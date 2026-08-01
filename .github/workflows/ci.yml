@@ -65,6 +65,22 @@ jobs:
       - name: Assert version coherence across Python publish surfaces
         run: python scripts/version-coherence.py
 
+  clean-room-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6.0.2 (resolved 2026-05-18)
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0 (resolved 2026-05-18)
+        with:
+          python-version: "3.12"
+
+      - name: Install clean-room verifier dependencies
+        run: pip install rfc8785 pynacl
+
+      - name: Verify interop fixtures without Concordia
+        run: python scripts/claims/clean_room_verify.py docs/interop/
+
   lint:
     # Gated code-quality checks for the Python package: ruff (lint) and mypy
     # (type check). Hard-fail — a new lint or type regression blocks the merge.
