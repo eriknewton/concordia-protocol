@@ -361,7 +361,7 @@ pytest -v
 ### Checking conformance without trusting us
 
 The vectors in [`docs/interop/`](docs/interop/) run offline against the retained
-fixture bytes. No network, no regeneration, no issuer callback:
+fixture bytes. <!-- claim:offline-no-issuer-callback -->No network, no regeneration, no issuer callback:<!-- /claim -->
 
 ```bash
 for d in docs/interop/*/; do
@@ -375,8 +375,8 @@ independent RFC 8785 reference library rather than Concordia's own
 canonicalizer. The vectors cover the artifact identity and verification path,
 not the whole protocol: the conformance levels themselves are defined in
 [SPEC §12](SPEC.md#12-conformance-requirements), and most of the specification
-has no vector yet. What the vectors do establish is that the parts they cover
-are checkable without our code and without asking us. There is no membership, no
+has no vector yet. <!-- claim:verification-without-our-code -->What the vectors do establish is that the parts they cover
+are checkable without our code and without asking us.<!-- /claim --> There is no membership, no
 listing, and no permission from anyone.
 
 ---

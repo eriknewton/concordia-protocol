@@ -56,7 +56,7 @@ The protocol does not require agents to reveal their private preferences. But it
 
 ### 1.3 Simplicity and Parsimony
 
-An LLM agent should be able to implement Concordia from reading this specification alone, with no external documentation. Every concept maps to an intuitive real-world analogy. The message format uses standard JSON over HTTPS. The state machine has exactly six states. There are no features that exist "in case someone needs them."
+<!-- claim:implementable-from-spec-alone -->An LLM agent should be able to implement Concordia from reading this specification alone, with no external documentation.<!-- /claim --> Every concept maps to an intuitive real-world analogy. The message format uses standard JSON over HTTPS. The state machine has exactly six states. There are no features that exist "in case someone needs them."
 
 ### 1.4 Composability, Not Competition
 
@@ -640,9 +640,9 @@ Every message is signed with Ed25519. The signature covers the canonical JSON se
 
 #### 9.2.1 Canonical JSON is RFC 8785 (JCS)
 
-Wherever this specification says "canonical JSON", "canonicalized JSON", or
+<!-- claim:canonical-json-is-rfc-8785 -->Wherever this specification says "canonical JSON", "canonicalized JSON", or
 "JCS", it means the JSON Canonicalization Scheme defined in
-[RFC 8785](https://www.rfc-editor.org/rfc/rfc8785). Serialization follows
+[RFC 8785](https://www.rfc-editor.org/rfc/rfc8785).<!-- /claim --> Serialization follows
 RFC 8785 §3.2, and each subsection below governs one part of the output:
 
 | RFC 8785 section | What it fixes |
