@@ -55,8 +55,10 @@ Required fields:
 - `record_type`: one of `decision_object`, `approval_receipt`,
   `revocation_record`, `cascade_decision_record`,
   `fulfillment_attestation`, `attestation`, `predicate`, `mandate`, or
-  `cosign_receipt`. `decision_object` is an unsigned support object used by
-  the `decision-object-v1` digest profile.
+  `cosign_receipt`, `conditional_commitment`, `atomic_activation_proof`,
+  `unwind_record`, `closure_predicate`, `chain_session`, or
+  `chain_session_transition`. `decision_object` is an unsigned support object
+  used by the `decision-object-v1` digest profile.
 - `verification_profile`: one of the profiles below.
 - `input`: the full JSON object being checked. It is inline, never a file path.
 - `context`: extra public data needed by the selected profile.
@@ -130,7 +132,7 @@ all other JSON Schema formats remain annotations unless a profile states a
 separate explicit check.
 
 Allowed `expected_reason_class` values are `schema`, `signature`, `digest`,
-`binding`, `temporal`, and `privacy`.
+`binding`, `temporal`, `privacy`, and `transition`.
 
 ## Profiles
 
@@ -521,6 +523,170 @@ Checks, in order:
 7. Verify the counterparty signature as Ed25519 over the preimage.
 8. Accept only if all checks pass.
 
+### `conditional-commitment-v1`
+
+Inputs:
+
+- `input`: a ConditionalCommitment object.
+- `context.public_key_b64url`: Ed25519 public key for the commitment signer.
+- `context.canonical_sha256`: optional `sha256:<hex>` digest over
+  `JCS(input without /signature)`.
+
+Signature envelope:
+
+```json
+{"algorithm": "EdDSA", "signature": "<base64url signature>"}
+```
+
+Checks, in order:
+
+1. Validate `input` against `conditional_commitment.schema.json`.
+2. Require `/algorithm == "EdDSA"`.
+3. Build the preimage as `JCS(input without /signature)`.
+4. If `context.canonical_sha256` is present, compare it to SHA-256 over that
+   preimage.
+5. Verify Ed25519 over the preimage under `context.public_key_b64url`.
+6. Accept only if all checks pass.
+
+### `atomic-activation-proof-v1`
+
+Inputs:
+
+- `input`: an AtomicActivationProof object.
+- `context.public_key_b64url`: Ed25519 public key for the proof signer.
+- `context.canonical_sha256`: optional `sha256:<hex>` digest over
+  `JCS(input without /signature)`.
+
+Signature envelope:
+
+```json
+{"algorithm": "EdDSA", "signature": "<base64url signature>"}
+```
+
+Checks, in order:
+
+1. Validate `input` against `atomic_activation_proof.schema.json`.
+2. Require `/algorithm == "EdDSA"`.
+3. Build the preimage as `JCS(input without /signature)`.
+4. If `context.canonical_sha256` is present, compare it to SHA-256 over that
+   preimage.
+5. Verify Ed25519 over the preimage under `context.public_key_b64url`.
+6. Accept only if all checks pass.
+
+### `unwind-record-v1`
+
+Inputs:
+
+- `input`: an UnwindRecord object.
+- `context.public_key_b64url`: Ed25519 public key for the unwind signer.
+- `context.canonical_sha256`: optional `sha256:<hex>` digest over
+  `JCS(input without /signature)`.
+
+Signature envelope:
+
+```json
+{"algorithm": "EdDSA", "signature": "<base64url signature>"}
+```
+
+Checks, in order:
+
+1. Validate `input` against `unwind_record.schema.json`.
+2. Require `/algorithm == "EdDSA"`.
+3. Build the preimage as `JCS(input without /signature)`.
+4. If `context.canonical_sha256` is present, compare it to SHA-256 over that
+   preimage.
+5. Verify Ed25519 over the preimage under `context.public_key_b64url`.
+6. Accept only if all checks pass.
+
+### `closure-predicate-v1`
+
+Inputs:
+
+- `input`: a ClosurePredicate object.
+- `context.canonical_sha256`: optional `sha256:<hex>` digest over
+  `JCS(input without /signature)`.
+- `context.digest_checks`: optional array of committed digest checks. The
+  P2-A3 vectors use:
+
+  ```json
+  {
+    "kind": "jcs-sha256-pointer",
+    "source": "context.chain_session",
+    "target": {"object": "input", "pointer": "/references/0/digest"}
+  }
+  ```
+
+Signature envelope:
+
+None for this profile. The schema has a non-empty `/signature` field because
+the fixture shape carries one, but `closure-predicate-v1` does not verify it
+and does not include it in the canonical digest. There is no dedicated
+ClosurePredicate signer in the SDK.
+
+Checks, in order:
+
+1. Validate `input` against `closure_predicate.schema.json`.
+2. Build the canonical preimage as `JCS(input without /signature)`.
+3. If `context.canonical_sha256` is present, compare it to SHA-256 over that
+   preimage.
+4. For each `context.digest_checks[]` entry with
+   `kind: "jcs-sha256-pointer"`, resolve `source`, compute `SHA256-JCS(source)`,
+   resolve `target`, and require equality.
+5. Accept only if all checks pass.
+
+### `chain-session-v1`
+
+Inputs:
+
+- `input`: a ChainSession object.
+- `context.canonical_sha256`: optional `sha256:<hex>` digest over `JCS(input)`.
+
+Checks, in order:
+
+1. Validate `input` against `chain_session.schema.json`.
+2. If `context.canonical_sha256` is present, compare it to `SHA256-JCS(input)`.
+3. Accept only if all checks pass.
+
+### `chain-session-transition-v1`
+
+Inputs:
+
+- `input.initial_session`: a full ChainSession object before the attempted
+  transition.
+- `input.attempt_transition`: target state string.
+- `input.transition_now`: deterministic ISO 8601 timestamp for precondition
+  checks.
+- `input.expected`: optional source-fixture expectation, either `ok` or
+  `InvalidTransitionError`. The vector's top-level `expected` remains
+  authoritative.
+
+Legal state-transition table:
+
+| From | Legal targets |
+|---|---|
+| `PROPOSED` | `OPEN` |
+| `OPEN` | `ACTIVATED`, `DISSOLVED`, `EXPIRED` |
+| `ACTIVATED` | none |
+| `DISSOLVED` | none |
+| `EXPIRED` | none |
+
+Preconditions:
+
+1. `PROPOSED -> OPEN` requires `len(commitments) == len(participants)`.
+2. `OPEN -> ACTIVATED` requires `activation_proof_id` and
+   `transition_now < activation_deadline`.
+3. `OPEN -> DISSOLVED` requires `unwind_record_id`.
+4. `OPEN -> EXPIRED` requires `transition_now >= activation_deadline` and no
+   `activation_proof_id`.
+
+Checks, in order:
+
+1. Validate `input.initial_session` against `chain_session.schema.json`.
+2. Require `input.attempt_transition` to appear in the legal-target set for
+   `input.initial_session.state`.
+3. Require the matching transition preconditions above.
+4. Accept only if all checks pass.
+
 ## Decisions
 
 ### D1: Normativize Raw Verification
@@ -566,6 +732,12 @@ Attestation countersignatures, Predicates, Mandates, Mandate delegation chains,
 and counterparty cosigned receipts. Phase 2 A1 deliberately keeps `ES256`
 mandate and predicate vectors out of scope; all new signing vectors are Ed25519
 or EdDSA over Ed25519.
+
+Phase 2 A3 adds synthetic, deterministic coverage for the CMPC bilateral set:
+ConditionalCommitment, AtomicActivationProof, UnwindRecord, ClosurePredicate,
+ChainSession, and the ten ChainSession transition fixtures. ClosurePredicate is
+schema plus canonical digest plus committed digest checks only; this suite does
+not invent a closure-signature verification rule.
 
 The generated manifest pins the exact counts for fixtures, schemas, positive
 section vectors, mutation vectors, canaries, and diagnostic canonical bytes.

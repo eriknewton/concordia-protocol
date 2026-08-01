@@ -53,6 +53,12 @@ PROFILE_ORDER = (
     "mandate-v1",
     "delegation-chain-v1",
     "cosign-v1",
+    "conditional-commitment-v1",
+    "atomic-activation-proof-v1",
+    "unwind-record-v1",
+    "closure-predicate-v1",
+    "chain-session-v1",
+    "chain-session-transition-v1",
 )
 RECORD_TYPES = {
     "decision_object",
@@ -64,6 +70,12 @@ RECORD_TYPES = {
     "predicate",
     "mandate",
     "cosign_receipt",
+    "conditional_commitment",
+    "atomic_activation_proof",
+    "unwind_record",
+    "closure_predicate",
+    "chain_session",
+    "chain_session_transition",
 }
 REQUIRED_VECTOR_FIELDS = {
     "schema_version",
@@ -859,6 +871,125 @@ def verify_cosign(input_data: Json, context: dict[str, Json]) -> None:
     verify_ed25519(public_key_b64url, bare_signature(matches[0]), preimage)
 
 
+def verify_bare_signed_schema_object(
+    suite_base: Path,
+    input_data: Json,
+    context: dict[str, Json],
+    *,
+    schema_name: str,
+) -> None:
+    validate_schema(suite_base, schema_name, input_data)
+    require_algorithm(input_data, "EdDSA")
+    preimage = jcs_bytes(without_top_level(input_data, {"signature"}))
+    expected_digest = context.get("canonical_sha256")
+    if expected_digest is not None and canonical_sha256(preimage) != expected_digest:
+        raise Reject("canonical digest mismatch")
+    public_key = context.get("public_key_b64url")
+    if not isinstance(public_key, str):
+        raise Reject("public key is missing")
+    verify_ed25519(public_key, bare_signature(input_data), preimage)
+
+
+def verify_digest_checks(input_data: Json, context: dict[str, Json]) -> None:
+    checks = context.get("digest_checks", [])
+    if not isinstance(checks, list):
+        raise Reject("digest checks are not a list")
+    for check in checks:
+        if not isinstance(check, dict):
+            raise Reject("digest check is not an object")
+        if check.get("kind") != "jcs-sha256-pointer":
+            raise Reject("unknown digest check kind")
+        source = resolve_object(check.get("source"), input_data, context)
+        target = resolve_side(check.get("target"), input_data, context)
+        if sha256_jcs(source) != target:
+            raise Reject("committed digest mismatch")
+
+
+def verify_closure_predicate(
+    suite_base: Path,
+    input_data: Json,
+    context: dict[str, Json],
+) -> None:
+    validate_schema(suite_base, "closure_predicate.schema.json", input_data)
+    preimage = jcs_bytes(without_top_level(input_data, {"signature"}))
+    expected_digest = context.get("canonical_sha256")
+    if expected_digest is not None and canonical_sha256(preimage) != expected_digest:
+        raise Reject("closure predicate digest mismatch")
+    verify_digest_checks(input_data, context)
+
+
+def verify_chain_session(
+    suite_base: Path,
+    input_data: Json,
+    context: dict[str, Json],
+) -> None:
+    validate_schema(suite_base, "chain_session.schema.json", input_data)
+    expected_digest = context.get("canonical_sha256")
+    if expected_digest is not None and sha256_jcs(input_data) != expected_digest:
+        raise Reject("chain session digest mismatch")
+
+
+LEGAL_CHAIN_TRANSITIONS: dict[str, set[str]] = {
+    "PROPOSED": {"OPEN"},
+    "OPEN": {"ACTIVATED", "DISSOLVED", "EXPIRED"},
+    "ACTIVATED": set(),
+    "DISSOLVED": set(),
+    "EXPIRED": set(),
+}
+
+
+def transition_preconditions_hold(
+    initial_session: dict[str, Json],
+    target_state: str,
+    transition_now: datetime,
+) -> bool:
+    source_state = initial_session.get("state")
+    if source_state == "PROPOSED" and target_state == "OPEN":
+        commitments = initial_session.get("commitments")
+        participants = initial_session.get("participants")
+        return (
+            isinstance(commitments, list)
+            and isinstance(participants, list)
+            and len(commitments) == len(participants)
+        )
+    if source_state == "OPEN" and target_state == "ACTIVATED":
+        activation_proof_id = initial_session.get("activation_proof_id")
+        deadline = parse_datetime(initial_session.get("activation_deadline"))
+        return isinstance(activation_proof_id, str) and transition_now < deadline
+    if source_state == "OPEN" and target_state == "DISSOLVED":
+        return isinstance(initial_session.get("unwind_record_id"), str)
+    if source_state == "OPEN" and target_state == "EXPIRED":
+        deadline = parse_datetime(initial_session.get("activation_deadline"))
+        return (
+            transition_now >= deadline
+            and initial_session.get("activation_proof_id") is None
+        )
+    return True
+
+
+def verify_chain_session_transition(suite_base: Path, input_data: Json) -> None:
+    if not isinstance(input_data, dict):
+        raise Reject("transition input is not an object")
+    initial_session = input_data.get("initial_session")
+    target_state = input_data.get("attempt_transition")
+    transition_now_raw = input_data.get("transition_now")
+    if (
+        not isinstance(initial_session, dict)
+        or not isinstance(target_state, str)
+        or not isinstance(transition_now_raw, str)
+    ):
+        raise Reject("transition input is malformed")
+    validate_schema(suite_base, "chain_session.schema.json", initial_session)
+    transition_now = parse_datetime(transition_now_raw)
+    source_state = initial_session.get("state")
+    if not isinstance(source_state, str):
+        raise Reject("transition source state is missing")
+    if target_state not in LEGAL_CHAIN_TRANSITIONS.get(source_state, set()):
+        raise Reject("transition is not legal")
+    if not transition_preconditions_hold(initial_session, target_state, transition_now):
+        raise Reject("transition preconditions failed")
+
+
 def verify_profile(
     suite_base: Path,
     profile: str,
@@ -890,6 +1021,33 @@ def verify_profile(
         verify_delegation_chain_profile(suite_base, input_data, context)
     elif profile == "cosign-v1":
         verify_cosign(input_data, context)
+    elif profile == "conditional-commitment-v1":
+        verify_bare_signed_schema_object(
+            suite_base,
+            input_data,
+            context,
+            schema_name="conditional_commitment.schema.json",
+        )
+    elif profile == "atomic-activation-proof-v1":
+        verify_bare_signed_schema_object(
+            suite_base,
+            input_data,
+            context,
+            schema_name="atomic_activation_proof.schema.json",
+        )
+    elif profile == "unwind-record-v1":
+        verify_bare_signed_schema_object(
+            suite_base,
+            input_data,
+            context,
+            schema_name="unwind_record.schema.json",
+        )
+    elif profile == "closure-predicate-v1":
+        verify_closure_predicate(suite_base, input_data, context)
+    elif profile == "chain-session-v1":
+        verify_chain_session(suite_base, input_data, context)
+    elif profile == "chain-session-transition-v1":
+        verify_chain_session_transition(suite_base, input_data)
     else:
         raise Reject("unknown verification profile")
 

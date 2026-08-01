@@ -1,0 +1,33 @@
+{
+  "context": {
+    "canonical_sha256": "sha256:5fbf6f2266e6bbe9bcb333fc613787fba7177434d549ffd54bb1e9f31f5e9091",
+    "public_key_b64url": "OOIB4EeR_3P_Cds5bQ6sxUdl5iL4Tp6PoM_wStS1OkQ="
+  },
+  "expected": "reject",
+  "expected_reason_class": "digest",
+  "id": "mut-synthetic-cmpc-unwind-record-0010",
+  "input": {
+    "affected_commitment_ids": [
+      "urn:concordia:commitment:retailer-beer-order-2026-05-17-001",
+      "urn:concordia:commitment:wholesaler-beer-supply-2026-05-17-001"
+    ],
+    "algorithm": "EdDSA",
+    "chain_session_id": "urn:concordia:chain-session:beer-game-2026-05-17-001",
+    "counterparty_acknowledgment": null,
+    "dissolution_details": {
+      "activation_deadline": "2026-05-17T14:00:00Z",
+      "note": "Activation predicate was not satisfied before deadline."
+    },
+    "dissolution_reason": "timeout",
+    "issued_at": "2026-05-17T14:01:30Z",
+    "issuer_did": "did:web:retailer.example",
+    "signature": "R3YTJ4LtfNeQdBzyrzhWnG-d96rdXFDovj9sOKwnI6y09qEMHy2BrfqiIl3poymNND2--HBEK8yevkuKQxA1Aw==",
+    "unwind_record_id": "urn:concordia:unwind:beer-game-2026-05-17-001"
+  },
+  "notes": "",
+  "record_type": "unwind_record",
+  "schema_version": "concordia-conformance-vector/v1-draft",
+  "source_fixture": "synthetic/cmpc_bilateral",
+  "title": "cmpc_unwind_record: drop dissolution_details.observed_at",
+  "verification_profile": "unwind-record-v1"
+}

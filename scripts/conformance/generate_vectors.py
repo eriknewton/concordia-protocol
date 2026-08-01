@@ -42,12 +42,38 @@ from concordia.canonicalization import (
     canonicalize_mandate,  # noqa: E402
 )
 from concordia.cmpc.canonical import (  # noqa: E402
+    canonicalize_atomic_activation_proof,
     canonicalize_cascade_decision_record,
+    canonicalize_chain_session,
+    canonicalize_closure_predicate,
+    canonicalize_conditional_commitment,
+    canonicalize_unwind_record,
 )
 from concordia.cmpc.schemas import (  # noqa: E402
+    ATOMIC_ACTIVATION_PROOF_SCHEMA,
     CASCADE_DECISION_RECORD_SCHEMA,
+    CHAIN_SESSION_SCHEMA,
+    CLOSURE_PREDICATE_SCHEMA,
+    CONDITIONAL_COMMITMENT_SCHEMA,
     REVOCATION_RECORD_SCHEMA,
+    UNWIND_RECORD_SCHEMA,
     validate_cascade_decision_record,
+    validate_chain_session,
+    validate_closure_predicate,
+)
+from concordia.cmpc.signing import (  # noqa: E402
+    sign_atomic_activation_proof,
+    sign_conditional_commitment,
+    sign_unwind_record,
+    verify_atomic_activation_proof,
+    verify_conditional_commitment,
+    verify_unwind_record,
+)
+from concordia.cmpc.types import (  # noqa: E402
+    AtomicActivationProof,
+    ClosurePredicate,
+    ConditionalCommitment,
+    UnwindRecord,
 )
 from concordia.cosign import (  # noqa: E402
     build_cosigned_receipt,
@@ -84,6 +110,7 @@ ReasonClass: TypeAlias = Literal[
     "binding",
     "temporal",
     "privacy",
+    "transition",
 ]
 ExpectedOutcome: TypeAlias = Literal["accept", "reject"]
 MutationKind: TypeAlias = Literal["value", "drop", "inject"]
@@ -96,6 +123,10 @@ CHECK_COMMAND = "python3 scripts/conformance/generate_vectors.py --check"
 
 INTEROP_1404 = REPO_ROOT / "docs" / "interop" / "a2a-1404-receipt-revocation-vector"
 INTEROP_1920 = REPO_ROOT / "docs" / "interop" / "a2a-1920-fulfillment-sample"
+CMPC_PRIMITIVES = REPO_ROOT / "tests" / "fixtures" / "cmpc_bilateral" / "primitives"
+CMPC_STATE_MACHINE = (
+    REPO_ROOT / "tests" / "fixtures" / "cmpc_bilateral" / "state_machine"
+)
 FIXED_NOW = datetime(2026, 5, 10, 14, 25, 0, tzinfo=timezone.utc)
 
 SCHEMA_COPIES = {
@@ -123,6 +154,12 @@ PROFILES = (
     "mandate-v1",
     "delegation-chain-v1",
     "cosign-v1",
+    "conditional-commitment-v1",
+    "atomic-activation-proof-v1",
+    "unwind-record-v1",
+    "closure-predicate-v1",
+    "chain-session-v1",
+    "chain-session-transition-v1",
 )
 RECORD_TYPES = (
     "decision_object",
@@ -134,6 +171,12 @@ RECORD_TYPES = (
     "predicate",
     "mandate",
     "cosign_receipt",
+    "conditional_commitment",
+    "atomic_activation_proof",
+    "unwind_record",
+    "closure_predicate",
+    "chain_session",
+    "chain_session_transition",
 )
 
 SYNTHETIC_FIXTURE_ROOT = "synthetic"
@@ -141,6 +184,7 @@ SYNTHETIC_SOURCE_ATTESTATION = "synthetic/attestation"
 SYNTHETIC_SOURCE_PREDICATE = "synthetic/predicate"
 SYNTHETIC_SOURCE_MANDATE = "synthetic/mandate"
 SYNTHETIC_SOURCE_COSIGN = "synthetic/cosign"
+SYNTHETIC_SOURCE_CMPC = "synthetic/cmpc_bilateral"
 SYNTHETIC_SEEDS = {
     "attestation_initiator": "conformance_attest_initiator_001",
     "attestation_responder": "conformance_attest_responder_001",
@@ -149,6 +193,9 @@ SYNTHETIC_SEEDS = {
     "mandate_delegate": "conformance_mand_delegate_000001",
     "cosign_publisher": "conformance_cosign_publisher_001",
     "cosign_counterparty": "conformance_cosign_counter_00001",
+    "cmpc_retailer": "conformance_cmpc_retailer_000001",
+    "cmpc_wholesaler": "conformance_cmpc_wholesaler_0000",
+    "cmpc_authority": "conformance_cmpc_authority_00000",
 }
 
 P2_A2_PREDICATE_MUTATION_FIXTURE = "vector_02"
@@ -238,6 +285,17 @@ class MutationDivergence:
 
 
 @dataclass(frozen=True)
+class SyntheticCmpcFixtures:
+    conditional_commitment: dict[str, Any]
+    atomic_activation_proof: dict[str, Any]
+    unwind_record: dict[str, Any]
+    closure_predicate: dict[str, Any]
+    chain_session: dict[str, Any]
+    transition_vectors: dict[str, dict[str, Any]]
+    seed_manifest: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class SyntheticFixtures:
     attestation: dict[str, Any]
     attestation_seed_manifest: dict[str, Any]
@@ -248,6 +306,7 @@ class SyntheticFixtures:
     mandate_seed_manifest: dict[str, Any]
     cosigned_receipt: dict[str, Any]
     cosign_seed_manifest: dict[str, Any]
+    cmpc: SyntheticCmpcFixtures
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -743,6 +802,146 @@ def evaluate_cosign_profile(vector: Vector) -> Evaluation:
     return Evaluation(True)
 
 
+def evaluate_bare_signed_profile(
+    vector: Vector,
+    *,
+    schema: dict[str, Any],
+    preimage: bytes,
+) -> Evaluation:
+    input_data = vector.input_data
+    context = vector.context
+    if not schema_is_valid(schema, input_data):
+        return Evaluation(False, "schema")
+    if input_data.get("algorithm") != "EdDSA":
+        return Evaluation(False, "signature")
+    expected_digest = context.get("canonical_sha256")
+    if expected_digest is not None:
+        if "sha256:" + hashlib.sha256(preimage).hexdigest() != expected_digest:
+            return Evaluation(False, "digest")
+    public_key_b64 = context.get("public_key_b64url")
+    signature = input_data.get("signature")
+    if not isinstance(public_key_b64, str) or not isinstance(signature, str):
+        return Evaluation(False, "signature")
+    if not verify_ed25519_signature(public_key_b64, signature, preimage):
+        return Evaluation(False, "signature")
+    return Evaluation(True)
+
+
+def evaluate_digest_checks(input_data: dict[str, Any], context: dict[str, Any]) -> Evaluation:
+    checks = context.get("digest_checks", [])
+    if not isinstance(checks, list):
+        return Evaluation(False, "binding")
+    for check in checks:
+        if not isinstance(check, dict):
+            return Evaluation(False, "binding")
+        if check.get("kind") != "jcs-sha256-pointer":
+            return Evaluation(False, "binding")
+        try:
+            source = resolve_object(str(check["source"]), input_data, context)
+            target = resolve_side(check["target"], input_data, context)
+        except (GenerationError, KeyError, TypeError, ValueError, IndexError):
+            return Evaluation(False, "binding")
+        if sha256_jcs(source) != target:
+            return Evaluation(False, "digest")
+    return Evaluation(True)
+
+
+def evaluate_closure_predicate_profile(vector: Vector) -> Evaluation:
+    input_data = vector.input_data
+    context = vector.context
+    if not schema_is_valid(CLOSURE_PREDICATE_SCHEMA, input_data):
+        return Evaluation(False, "schema")
+    preimage = canonicalize_closure_predicate(input_data)
+    expected_digest = context.get("canonical_sha256")
+    if expected_digest is not None:
+        if "sha256:" + hashlib.sha256(preimage).hexdigest() != expected_digest:
+            return Evaluation(False, "digest")
+    digest_result = evaluate_digest_checks(input_data, context)
+    if not digest_result.accepted:
+        return digest_result
+    return Evaluation(True)
+
+
+def evaluate_chain_session_profile(vector: Vector) -> Evaluation:
+    input_data = vector.input_data
+    context = vector.context
+    if not schema_is_valid(CHAIN_SESSION_SCHEMA, input_data):
+        return Evaluation(False, "schema")
+    preimage = canonicalize_chain_session(input_data)
+    expected_digest = context.get("canonical_sha256")
+    if expected_digest is not None:
+        if "sha256:" + hashlib.sha256(preimage).hexdigest() != expected_digest:
+            return Evaluation(False, "digest")
+    return Evaluation(True)
+
+
+LEGAL_CHAIN_TRANSITIONS: dict[str, set[str]] = {
+    "PROPOSED": {"OPEN"},
+    "OPEN": {"ACTIVATED", "DISSOLVED", "EXPIRED"},
+    "ACTIVATED": set(),
+    "DISSOLVED": set(),
+    "EXPIRED": set(),
+}
+
+
+def transition_preconditions_hold(
+    initial_session: dict[str, Any],
+    target_state: str,
+    transition_now: datetime,
+) -> bool:
+    source_state = initial_session.get("state")
+    if source_state == "PROPOSED" and target_state == "OPEN":
+        commitments = initial_session.get("commitments")
+        participants = initial_session.get("participants")
+        return (
+            isinstance(commitments, list)
+            and isinstance(participants, list)
+            and len(commitments) == len(participants)
+        )
+    if source_state == "OPEN" and target_state == "ACTIVATED":
+        activation_proof_id = initial_session.get("activation_proof_id")
+        deadline = parse_datetime(str(initial_session.get("activation_deadline")))
+        return isinstance(activation_proof_id, str) and transition_now < deadline
+    if source_state == "OPEN" and target_state == "DISSOLVED":
+        return isinstance(initial_session.get("unwind_record_id"), str)
+    if source_state == "OPEN" and target_state == "EXPIRED":
+        deadline = parse_datetime(str(initial_session.get("activation_deadline")))
+        return (
+            transition_now >= deadline
+            and initial_session.get("activation_proof_id") is None
+        )
+    return True
+
+
+def evaluate_chain_session_transition_profile(vector: Vector) -> Evaluation:
+    input_data = vector.input_data
+    if not isinstance(input_data, dict):
+        return Evaluation(False, "transition")
+    initial_session = input_data.get("initial_session")
+    target_state = input_data.get("attempt_transition")
+    transition_now_raw = input_data.get("transition_now")
+    if (
+        not isinstance(initial_session, dict)
+        or not isinstance(target_state, str)
+        or not isinstance(transition_now_raw, str)
+    ):
+        return Evaluation(False, "transition")
+    try:
+        if not schema_is_valid(CHAIN_SESSION_SCHEMA, initial_session):
+            return Evaluation(False, "schema")
+        transition_now = parse_datetime(transition_now_raw)
+    except Exception:
+        return Evaluation(False, "schema")
+    source_state = initial_session.get("state")
+    if not isinstance(source_state, str):
+        return Evaluation(False, "transition")
+    if target_state not in LEGAL_CHAIN_TRANSITIONS.get(source_state, set()):
+        return Evaluation(False, "transition")
+    if not transition_preconditions_hold(initial_session, target_state, transition_now):
+        return Evaluation(False, "transition")
+    return Evaluation(True)
+
+
 def verify_vector(vector: Vector) -> bool:
     return evaluate_vector(vector).accepted
 
@@ -914,6 +1113,36 @@ def evaluate_vector(vector: Vector) -> Evaluation:
     if profile == "cosign-v1":
         return evaluate_cosign_profile(vector)
 
+    if profile == "conditional-commitment-v1":
+        return evaluate_bare_signed_profile(
+            vector,
+            schema=CONDITIONAL_COMMITMENT_SCHEMA,
+            preimage=canonicalize_conditional_commitment(input_data),
+        )
+
+    if profile == "atomic-activation-proof-v1":
+        return evaluate_bare_signed_profile(
+            vector,
+            schema=ATOMIC_ACTIVATION_PROOF_SCHEMA,
+            preimage=canonicalize_atomic_activation_proof(input_data),
+        )
+
+    if profile == "unwind-record-v1":
+        return evaluate_bare_signed_profile(
+            vector,
+            schema=UNWIND_RECORD_SCHEMA,
+            preimage=canonicalize_unwind_record(input_data),
+        )
+
+    if profile == "closure-predicate-v1":
+        return evaluate_closure_predicate_profile(vector)
+
+    if profile == "chain-session-v1":
+        return evaluate_chain_session_profile(vector)
+
+    if profile == "chain-session-transition-v1":
+        return evaluate_chain_session_transition_profile(vector)
+
     raise GenerationError(f"unknown profile: {profile}")
 
 
@@ -952,9 +1181,12 @@ COUNTERSIGN_STRIPPED_PARTY_SIGNATURE_NOTE = (
 COUNTERSIGN_EXTRA_MAP_ENTRY_NOTE = (
     "accepted-structural: extra countersignature map entry is outside the required signer set and preimage"
 )
-EXPECTED_MUTATION_TOTAL = 698
-EXPECTED_MUTATION_REJECTS = 664
-EXPECTED_MUTATION_ACCEPTS = 34
+CLOSURE_SIGNATURE_NOT_VERIFIED_NOTE = (
+    "accepted-structural: closure-predicate-v1 does not verify or commit /signature"
+)
+EXPECTED_MUTATION_TOTAL = 856
+EXPECTED_MUTATION_REJECTS = 821
+EXPECTED_MUTATION_ACCEPTS = 35
 EXPECTED_CANARY_TOTAL = 3
 EXPECTED_RAW_TYPED_DIVERGENCES = (
     MutationDivergence(
@@ -985,6 +1217,11 @@ EXPECTED_MUTATION_BATTERY_COUNTS: dict[str, tuple[int, int, int]] = {
     ),
     "synthetic/attestation/attestation.json::attestation-v1": (107, 78, 29),
     "synthetic/cosign/cosigned_receipt.json": (42, 42, 0),
+    "synthetic/cmpc_bilateral/primitives/atomic_activation_proof.json": (30, 30, 0),
+    "synthetic/cmpc_bilateral/primitives/chain_session.json": (25, 25, 0),
+    "synthetic/cmpc_bilateral/primitives/closure_predicate.json": (40, 39, 1),
+    "synthetic/cmpc_bilateral/primitives/conditional_commitment.json": (35, 35, 0),
+    "synthetic/cmpc_bilateral/primitives/unwind_record.json": (28, 28, 0),
     "synthetic/mandate/delegated_mandate.json": (82, 82, 0),
     "synthetic/mandate/mandate.json": (51, 51, 0),
     "synthetic/predicate/vector_02.json": (87, 87, 0),
@@ -1019,6 +1256,10 @@ def build_mutation_fixtures(
         "seeds_PUBLIC_test_only_do_not_reuse"
     ]
     cosign_preimage = canonical_cosign_bytes(synthetic.cosigned_receipt)
+    cmpc_keys = synthetic.cmpc.seed_manifest["seeds_PUBLIC_test_only_do_not_reuse"]
+    cmpc_retailer_key = cmpc_keys["cmpc_retailer"]["public_key_b64url"]
+    cmpc_wholesaler_key = cmpc_keys["cmpc_wholesaler"]["public_key_b64url"]
+    cmpc_authority_key = cmpc_keys["cmpc_authority"]["public_key_b64url"]
 
     return [
         MutationFixture(
@@ -1280,6 +1521,111 @@ def build_mutation_fixtures(
             sdk_escapes=frozenset(),
             compare_typed_path=False,
         ),
+        MutationFixture(
+            battery_name="synthetic/cmpc_bilateral/primitives/conditional_commitment.json",
+            fixture_label="synthetic",
+            object_label="cmpc-conditional-commitment",
+            object_name="cmpc_conditional_commitment",
+            input_data=synthetic.cmpc.conditional_commitment,
+            source_fixture=SYNTHETIC_SOURCE_CMPC,
+            record_type="conditional_commitment",
+            verification_profile="conditional-commitment-v1",
+            context={
+                "canonical_sha256": sha256_jcs(
+                    without_signature(synthetic.cmpc.conditional_commitment)
+                ),
+                "public_key_b64url": cmpc_retailer_key,
+            },
+            sdk_rejected=0,
+            sdk_total=35,
+            sdk_escapes=frozenset(),
+            compare_typed_path=False,
+        ),
+        MutationFixture(
+            battery_name="synthetic/cmpc_bilateral/primitives/atomic_activation_proof.json",
+            fixture_label="synthetic",
+            object_label="cmpc-atomic-activation-proof",
+            object_name="cmpc_atomic_activation_proof",
+            input_data=synthetic.cmpc.atomic_activation_proof,
+            source_fixture=SYNTHETIC_SOURCE_CMPC,
+            record_type="atomic_activation_proof",
+            verification_profile="atomic-activation-proof-v1",
+            context={
+                "canonical_sha256": sha256_jcs(
+                    without_signature(synthetic.cmpc.atomic_activation_proof)
+                ),
+                "public_key_b64url": cmpc_wholesaler_key,
+            },
+            sdk_rejected=0,
+            sdk_total=30,
+            sdk_escapes=frozenset(),
+            compare_typed_path=False,
+        ),
+        MutationFixture(
+            battery_name="synthetic/cmpc_bilateral/primitives/unwind_record.json",
+            fixture_label="synthetic",
+            object_label="cmpc-unwind-record",
+            object_name="cmpc_unwind_record",
+            input_data=synthetic.cmpc.unwind_record,
+            source_fixture=SYNTHETIC_SOURCE_CMPC,
+            record_type="unwind_record",
+            verification_profile="unwind-record-v1",
+            context={
+                "canonical_sha256": sha256_jcs(
+                    without_signature(synthetic.cmpc.unwind_record)
+                ),
+                "public_key_b64url": cmpc_retailer_key,
+            },
+            sdk_rejected=0,
+            sdk_total=28,
+            sdk_escapes=frozenset(),
+            compare_typed_path=False,
+        ),
+        MutationFixture(
+            battery_name="synthetic/cmpc_bilateral/primitives/closure_predicate.json",
+            fixture_label="synthetic",
+            object_label="cmpc-closure-predicate",
+            object_name="cmpc_closure_predicate",
+            input_data=synthetic.cmpc.closure_predicate,
+            source_fixture=SYNTHETIC_SOURCE_CMPC,
+            record_type="closure_predicate",
+            verification_profile="closure-predicate-v1",
+            context={
+                "canonical_sha256": sha256_jcs(
+                    without_signature(synthetic.cmpc.closure_predicate)
+                ),
+                "chain_session": synthetic.cmpc.chain_session,
+                "digest_checks": [
+                    {
+                        "kind": "jcs-sha256-pointer",
+                        "source": "context.chain_session",
+                        "target": {"object": "input", "pointer": "/references/0/digest"},
+                    }
+                ],
+                "public_key_b64url": cmpc_authority_key,
+            },
+            sdk_rejected=0,
+            sdk_total=40,
+            sdk_escapes=frozenset(),
+            compare_typed_path=False,
+        ),
+        MutationFixture(
+            battery_name="synthetic/cmpc_bilateral/primitives/chain_session.json",
+            fixture_label="synthetic",
+            object_label="cmpc-chain-session",
+            object_name="cmpc_chain_session",
+            input_data=synthetic.cmpc.chain_session,
+            source_fixture=SYNTHETIC_SOURCE_CMPC,
+            record_type="chain_session",
+            verification_profile="chain-session-v1",
+            context={
+                "canonical_sha256": sha256_jcs(synthetic.cmpc.chain_session),
+            },
+            sdk_rejected=0,
+            sdk_total=25,
+            sdk_escapes=frozenset(),
+            compare_typed_path=False,
+        ),
     ]
 
 
@@ -1302,6 +1648,15 @@ def mutation_canonical_preimage(profile: str, input_data: dict[str, Any]) -> byt
         return canonicalize_mandate(input_data)
     if profile == "cosign-v1":
         return canonical_cosign_bytes(input_data)
+    if profile in {
+        "conditional-commitment-v1",
+        "atomic-activation-proof-v1",
+        "unwind-record-v1",
+        "closure-predicate-v1",
+    }:
+        return canonical_json(without_signature(input_data))
+    if profile == "chain-session-v1":
+        return canonicalize_chain_session(input_data)
     return None
 
 
@@ -1321,6 +1676,9 @@ def accepted_mutation_note(
             return COUNTERSIGN_STRIPPED_PARTY_SIGNATURE_NOTE
         if field_path == "countersignatures" and kind == "inject":
             return COUNTERSIGN_EXTRA_MAP_ENTRY_NOTE
+    if fixture.verification_profile == "closure-predicate-v1":
+        if field_path == "signature" and kind == "value":
+            return CLOSURE_SIGNATURE_NOT_VERIFIED_NOTE
     raise GenerationError(
         f"{fixture.battery_name}: accepted mutation lacks structural justification: "
         f"{kind} {field_path}"
@@ -2056,11 +2414,120 @@ def build_synthetic_cosigned_receipt() -> tuple[dict[str, Any], dict[str, Any]]:
     return receipt, manifest
 
 
+def load_cmpc_primitive(name: str) -> dict[str, Any]:
+    return load_json(CMPC_PRIMITIVES / f"{name}.json")
+
+
+def load_cmpc_transitions() -> dict[str, dict[str, Any]]:
+    return {
+        path.stem: load_json(path)
+        for path in sorted(CMPC_STATE_MACHINE.glob("*.json"))
+    }
+
+
+def normalize_transition_fixture(fixture: dict[str, Any]) -> dict[str, Any]:
+    initial = {
+        "chain_session_id": "urn:concordia:chain-session:transition-vector",
+        "participants": ["did:web:r.test", "did:web:w.test"],
+        "closure_predicate_ref": "urn:concordia:predicate:transition-vector",
+        "state": "PROPOSED",
+        "created_at": "2026-05-18T10:00:00+00:00",
+        "activation_deadline": "2026-05-18T13:00:00+00:00",
+        "activated_at": None,
+        "dissolved_at": None,
+        "commitments": [],
+        "unwind_record_id": None,
+        "activation_proof_id": None,
+    }
+    initial.update(fixture["initial_session"])
+    return {
+        "initial_session": initial,
+        "attempt_transition": fixture["attempt_transition"],
+        "transition_now": fixture["transition_now"],
+        "expected": fixture["expected"],
+    }
+
+
+def build_synthetic_cmpc_fixtures() -> SyntheticCmpcFixtures:
+    retailer_key = key_pair_from_seed(SYNTHETIC_SEEDS["cmpc_retailer"])
+    wholesaler_key = key_pair_from_seed(SYNTHETIC_SEEDS["cmpc_wholesaler"])
+    authority_key = key_pair_from_seed(SYNTHETIC_SEEDS["cmpc_authority"])
+
+    chain_session = load_cmpc_primitive("chain_session")
+    validate_chain_session(chain_session)
+
+    raw_commitment = load_cmpc_primitive("conditional_commitment")
+    commitment = ConditionalCommitment.from_dict({**raw_commitment, "signature": ""})
+    signed_commitment_obj = sign_conditional_commitment(commitment, retailer_key)
+    if not verify_conditional_commitment(signed_commitment_obj, retailer_key.public_key):
+        raise GenerationError("synthetic CMPC conditional commitment did not verify")
+    signed_commitment = signed_commitment_obj.to_dict()
+
+    raw_proof = load_cmpc_primitive("atomic_activation_proof")
+    proof = AtomicActivationProof.from_dict({**raw_proof, "signature": ""})
+    signed_proof_obj = sign_atomic_activation_proof(proof, wholesaler_key)
+    if not verify_atomic_activation_proof(signed_proof_obj, wholesaler_key.public_key):
+        raise GenerationError("synthetic CMPC activation proof did not verify")
+    signed_proof = signed_proof_obj.to_dict()
+
+    raw_unwind = load_cmpc_primitive("unwind_record")
+    unwind = UnwindRecord.from_dict({**raw_unwind, "signature": ""})
+    signed_unwind_obj = sign_unwind_record(unwind, retailer_key)
+    if not verify_unwind_record(signed_unwind_obj, retailer_key.public_key):
+        raise GenerationError("synthetic CMPC unwind record did not verify")
+    signed_unwind = signed_unwind_obj.to_dict()
+
+    closure = load_cmpc_primitive("closure_predicate")
+    closure["references"][0]["digest"] = sha256_jcs(chain_session)
+    closure["signature"] = sign_b64url(
+        authority_key.private_key,
+        canonicalize_closure_predicate(closure),
+    )
+    validate_closure_predicate(closure)
+    ClosurePredicate.from_dict(closure)
+
+    transition_vectors = {
+        name: normalize_transition_fixture(fixture)
+        for name, fixture in load_cmpc_transitions().items()
+    }
+    for name, vector_input in transition_vectors.items():
+        if not schema_is_valid(CHAIN_SESSION_SCHEMA, vector_input["initial_session"]):
+            raise GenerationError(f"{name}: normalized transition fixture is invalid")
+
+    manifest = seed_manifest_for(
+        {
+            "cmpc_retailer": retailer_key,
+            "cmpc_wholesaler": wholesaler_key,
+            "cmpc_authority": authority_key,
+        }
+    )
+    manifest["dids"] = {
+        "retailer": raw_commitment["committer_did"],
+        "wholesaler": raw_proof["issuer_did"],
+        "authority": closure["authority"],
+    }
+    manifest["closure_signature_profile"] = (
+        "closure-predicate-v1 does not verify /signature; the deterministic "
+        "fixture value is present only because the schema requires a non-empty field"
+    )
+
+    return SyntheticCmpcFixtures(
+        conditional_commitment=signed_commitment,
+        atomic_activation_proof=signed_proof,
+        unwind_record=signed_unwind,
+        closure_predicate=closure,
+        chain_session=chain_session,
+        transition_vectors=transition_vectors,
+        seed_manifest=manifest,
+    )
+
+
 def build_synthetic_fixtures() -> SyntheticFixtures:
     attestation, attestation_seed_manifest = build_synthetic_attestation()
     predicates, predicate_seed_manifest = build_synthetic_predicates()
     direct_mandate, delegated_mandate, mandate_seed_manifest = build_synthetic_mandates()
     cosigned_receipt, cosign_seed_manifest = build_synthetic_cosigned_receipt()
+    cmpc = build_synthetic_cmpc_fixtures()
     return SyntheticFixtures(
         attestation=attestation,
         attestation_seed_manifest=attestation_seed_manifest,
@@ -2071,6 +2538,7 @@ def build_synthetic_fixtures() -> SyntheticFixtures:
         mandate_seed_manifest=mandate_seed_manifest,
         cosigned_receipt=cosigned_receipt,
         cosign_seed_manifest=cosign_seed_manifest,
+        cmpc=cmpc,
     )
 
 
@@ -2089,6 +2557,21 @@ def synthetic_fixture_payloads(fixtures: SyntheticFixtures) -> dict[Path, Any]:
     payloads[Path("synthetic/predicate/seed_manifest.json")] = (
         fixtures.predicate_seed_manifest
     )
+    cmpc_root = Path("synthetic/cmpc_bilateral")
+    payloads[cmpc_root / "primitives/conditional_commitment.json"] = (
+        fixtures.cmpc.conditional_commitment
+    )
+    payloads[cmpc_root / "primitives/atomic_activation_proof.json"] = (
+        fixtures.cmpc.atomic_activation_proof
+    )
+    payloads[cmpc_root / "primitives/unwind_record.json"] = fixtures.cmpc.unwind_record
+    payloads[cmpc_root / "primitives/closure_predicate.json"] = (
+        fixtures.cmpc.closure_predicate
+    )
+    payloads[cmpc_root / "primitives/chain_session.json"] = fixtures.cmpc.chain_session
+    for name, transition in sorted(fixtures.cmpc.transition_vectors.items()):
+        payloads[cmpc_root / "state_machine" / f"{name}.json"] = transition
+    payloads[cmpc_root / "seed_manifest.json"] = fixtures.cmpc.seed_manifest
     return payloads
 
 
@@ -2119,6 +2602,12 @@ def build_phase2_vectors(fixtures: SyntheticFixtures) -> list[Vector]:
         "seeds_PUBLIC_test_only_do_not_reuse"
     ]["cosign_counterparty"]["public_key_b64url"]
     cosign_preimage = canonical_cosign_bytes(cosign_receipt)
+    cmpc_key_manifest = fixtures.cmpc.seed_manifest[
+        "seeds_PUBLIC_test_only_do_not_reuse"
+    ]
+    cmpc_retailer_key = cmpc_key_manifest["cmpc_retailer"]["public_key_b64url"]
+    cmpc_wholesaler_key = cmpc_key_manifest["cmpc_wholesaler"]["public_key_b64url"]
+    cmpc_authority_key = cmpc_key_manifest["cmpc_authority"]["public_key_b64url"]
 
     vectors: list[Vector] = [
         Vector(
@@ -2222,6 +2711,96 @@ def build_phase2_vectors(fixtures: SyntheticFixtures) -> list[Vector]:
             },
             canonical_preimage=cosign_preimage,
         ),
+        Vector(
+            vector_id="pos-synthetic-cmpc-conditional-commitment",
+            title="Synthetic CMPC ConditionalCommitment validates and verifies",
+            source_fixture=SYNTHETIC_SOURCE_CMPC,
+            record_type="conditional_commitment",
+            verification_profile="conditional-commitment-v1",
+            input_data=fixtures.cmpc.conditional_commitment,
+            context={
+                "canonical_sha256": sha256_jcs(
+                    without_signature(fixtures.cmpc.conditional_commitment)
+                ),
+                "public_key_b64url": cmpc_retailer_key,
+            },
+            canonical_preimage=canonicalize_conditional_commitment(
+                fixtures.cmpc.conditional_commitment
+            ),
+        ),
+        Vector(
+            vector_id="pos-synthetic-cmpc-atomic-activation-proof",
+            title="Synthetic CMPC AtomicActivationProof validates and verifies",
+            source_fixture=SYNTHETIC_SOURCE_CMPC,
+            record_type="atomic_activation_proof",
+            verification_profile="atomic-activation-proof-v1",
+            input_data=fixtures.cmpc.atomic_activation_proof,
+            context={
+                "canonical_sha256": sha256_jcs(
+                    without_signature(fixtures.cmpc.atomic_activation_proof)
+                ),
+                "public_key_b64url": cmpc_wholesaler_key,
+            },
+            canonical_preimage=canonicalize_atomic_activation_proof(
+                fixtures.cmpc.atomic_activation_proof
+            ),
+        ),
+        Vector(
+            vector_id="pos-synthetic-cmpc-unwind-record",
+            title="Synthetic CMPC UnwindRecord validates and verifies",
+            source_fixture=SYNTHETIC_SOURCE_CMPC,
+            record_type="unwind_record",
+            verification_profile="unwind-record-v1",
+            input_data=fixtures.cmpc.unwind_record,
+            context={
+                "canonical_sha256": sha256_jcs(
+                    without_signature(fixtures.cmpc.unwind_record)
+                ),
+                "public_key_b64url": cmpc_retailer_key,
+            },
+            canonical_preimage=canonicalize_unwind_record(fixtures.cmpc.unwind_record),
+        ),
+        Vector(
+            vector_id="pos-synthetic-cmpc-closure-predicate",
+            title="Synthetic CMPC ClosurePredicate validates and binds its chain-session digest",
+            source_fixture=SYNTHETIC_SOURCE_CMPC,
+            record_type="closure_predicate",
+            verification_profile="closure-predicate-v1",
+            input_data=fixtures.cmpc.closure_predicate,
+            context={
+                "canonical_sha256": sha256_jcs(
+                    without_signature(fixtures.cmpc.closure_predicate)
+                ),
+                "chain_session": fixtures.cmpc.chain_session,
+                "digest_checks": [
+                    {
+                        "kind": "jcs-sha256-pointer",
+                        "source": "context.chain_session",
+                        "target": {"object": "input", "pointer": "/references/0/digest"},
+                    }
+                ],
+                "public_key_b64url": cmpc_authority_key,
+            },
+            notes=(
+                "closure-predicate-v1 checks schema and committed digests; "
+                "it does not verify /signature"
+            ),
+            canonical_preimage=canonicalize_closure_predicate(
+                fixtures.cmpc.closure_predicate
+            ),
+        ),
+        Vector(
+            vector_id="pos-synthetic-cmpc-chain-session",
+            title="Synthetic CMPC ChainSession validates and canonicalizes",
+            source_fixture=SYNTHETIC_SOURCE_CMPC,
+            record_type="chain_session",
+            verification_profile="chain-session-v1",
+            input_data=fixtures.cmpc.chain_session,
+            context={
+                "canonical_sha256": sha256_jcs(fixtures.cmpc.chain_session),
+            },
+            canonical_preimage=canonicalize_chain_session(fixtures.cmpc.chain_session),
+        ),
     ]
 
     for name, predicate in sorted(fixtures.predicates.items()):
@@ -2243,6 +2822,25 @@ def build_phase2_vectors(fixtures: SyntheticFixtures) -> list[Vector]:
                     ]["predicate_issuer"]["public_key_b64url"],
                 },
                 canonical_preimage=preimage,
+            )
+        )
+
+    for name, transition in sorted(fixtures.cmpc.transition_vectors.items()):
+        expects_accept = transition["expected"] == "ok"
+        vectors.append(
+            Vector(
+                vector_id=f"transition-synthetic-cmpc-{name.replace('_', '-')}",
+                title=f"CMPC ChainSession transition fixture {name}",
+                source_fixture=f"{SYNTHETIC_SOURCE_CMPC}/state_machine",
+                record_type="chain_session_transition",
+                verification_profile="chain-session-transition-v1",
+                input_data=transition,
+                context={},
+                expected="accept" if expects_accept else "reject",
+                expected_reason_class=None if expects_accept else "transition",
+                notes=(
+                    "legal transition" if expects_accept else "illegal transition"
+                ),
             )
         )
 
@@ -2531,6 +3129,19 @@ def copy_schemas(dest_root: Path) -> list[str]:
         (Path("conformance") / "vectors" / "schemas" / cascade_name).as_posix()
     )
 
+    cmpc_schemas = {
+        "atomic_activation_proof.schema.json": ATOMIC_ACTIVATION_PROOF_SCHEMA,
+        "chain_session.schema.json": CHAIN_SESSION_SCHEMA,
+        "closure_predicate.schema.json": CLOSURE_PREDICATE_SCHEMA,
+        "conditional_commitment.schema.json": CONDITIONAL_COMMITMENT_SCHEMA,
+        "unwind_record.schema.json": UNWIND_RECORD_SCHEMA,
+    }
+    for name, schema in sorted(cmpc_schemas.items()):
+        write_json(schemas_root / name, schema)
+        copied.append(
+            (Path("conformance") / "vectors" / "schemas" / name).as_posix()
+        )
+
     mandate_name = "mandate.schema.json"
     write_json(schemas_root / mandate_name, MANDATE_JSON_SCHEMA)
     copied.append(
@@ -2608,6 +3219,7 @@ def write_manifest(
         "mutation_batteries": mutation_batteries,
         "phase_notes": {
             "mutation": "P2-A2 extends the raw mutation battery to the P2-A1 profiles.",
+            "cmpc": "P2-A3 adds CMPC bilateral primitive and chain-session transition profiles.",
             "canary": "C3 adds the three runner-discrimination canaries.",
             "reference_runner": "C3 adds the clean-room reference runner.",
         },
