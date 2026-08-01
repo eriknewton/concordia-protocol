@@ -1,0 +1,24 @@
+{
+  "context": {
+    "expected_message_count": 3,
+    "expected_message_hashes": [
+      "sha256:705c54d33038d73c9ef3ae4b580de5b295613d374c2bdfccc2c9930ec5ccb0c0",
+      "sha256:398fea2652b36838eb2dc299037662021421e91d09a78733312a52cd2ed9e835",
+      "sha256:88f4a3c55430d9a3182400382f8022266a71ffbfd34d156ca3592478b20557d9"
+    ],
+    "public_keys_b64url": {
+      "did:concordia:agent:chain-initiator": "PvpsKWi2oPBbZv2mzdOf6tKmumdTrbV9rDyGb8m3NBA=",
+      "did:concordia:agent:chain-responder": "xgl2oSl1XU6m7Otw_eHFkZuaTfw0F7R9ZfNFV6xGhDU="
+    }
+  },
+  "expected": "reject",
+  "expected_reason_class": "schema",
+  "id": "mut-synthetic-message-chain-0098",
+  "input": {},
+  "notes": "",
+  "record_type": "message_chain",
+  "schema_version": "concordia-conformance-vector/v1-draft",
+  "source_fixture": "synthetic/longtail",
+  "title": "message_chain: drop messages",
+  "verification_profile": "message-chain-v1"
+}

@@ -57,7 +57,8 @@ Required fields:
   `fulfillment_attestation`, `attestation`, `predicate`, `mandate`, or
   `cosign_receipt`, `conditional_commitment`, `atomic_activation_proof`,
   `unwind_record`, `closure_predicate`, `chain_session`, or
-  `chain_session_transition`. `decision_object` is an unsigned support object
+  `chain_session_transition`, `agent_profile`, `competence_proof`,
+  `receipt_bundle`, or `message_chain`. `decision_object` is an unsigned support object
   used by the `decision-object-v1` digest profile.
 - `verification_profile`: one of the profiles below.
 - `input`: the full JSON object being checked. It is inline, never a file path.
@@ -687,6 +688,166 @@ Checks, in order:
 3. Require the matching transition preconditions above.
 4. Accept only if all checks pass.
 
+### `agent-profile-v1`
+
+Inputs:
+
+- `input`: an AgentCapabilityProfile object.
+- `context.public_key_b64url`: Ed25519 public key for the profile signer.
+- `context.canonical_fields`: the exact top-level field list inside
+  `AgentCapabilityProfile.to_canonical_dict()`.
+- `context.canonical_sha256`: optional `sha256:<hex>` digest over the
+  canonical profile bytes.
+
+Signature envelope:
+
+```json
+{"signature": "<base64url signature>"}
+```
+
+The signed canonical form is exactly:
+
+```text
+type, version, agent_id, name, description, capabilities,
+negotiation_profile, trust_signals, endpoints, location, ttl, updated_at
+```
+
+`signature` and `verified` are excluded. `verified` is store-local. Unknown
+top-level keys are rejected by this conformance profile. Unknown keys under
+`trust_signals` are tolerated and ignored for canonicalization, matching the
+#149 / #151 forward-compatibility lane. Unknown keys inside each
+`trust_signals.reputation[]` assertion are also ignored; reputation assertions
+are additive provider records, and only `provider`, `subject_did`, `tier`, and
+`composite` are in the canonical assertion.
+
+Checks, in order:
+
+1. Require `context.canonical_fields` to equal the exact list above.
+2. Build the canonical dict from the fields above. For `trust_signals`, ignore
+   unknown trust-signal keys and drop `null` optional known keys. For
+   `trust_signals.reputation[]`, ignore unknown assertion keys and drop `null`
+   optional assertion keys.
+3. Reject unknown keys in signed nested objects other than the two tolerance
+   lanes above.
+4. If `context.canonical_sha256` is present, compare it to SHA-256 over
+   `JCS(canonical_dict)`.
+5. Verify Ed25519 over `JCS(canonical_dict)` under
+   `context.public_key_b64url`.
+6. Accept only if all checks pass.
+
+### `competence-proof-v1`
+
+Inputs:
+
+- `input`: a CompetenceProof object.
+- `context.public_key_b64url`: Ed25519 public key for `/agent_id`.
+- `context.canonical_sha256`: optional `sha256:<hex>` digest over the
+  signable proof form.
+
+Signature envelope:
+
+```json
+{"agent_signature": "<base64url signature>"}
+```
+
+The signable proof form is the CompetenceProof signing dict: all top-level
+members except `agent_signature` and `concordia_competence_proof`. This matches
+the SDK signable form (`to_dict_for_signing()`).
+
+Merkle inclusion proof semantics match the SDK `verify_merkle_proof` helper:
+
+1. Empty root rejects.
+2. Start with `SHA-256(attestation_id UTF-8)` as lowercase hex.
+3. Read `proof.index`, defaulting to `0` if absent.
+4. Read `proof.proof`, defaulting to `[]` if absent.
+5. For each sibling hash in order, concatenate `current || sibling` when the
+   current index is even, otherwise `sibling || current`, hash that UTF-8 hex
+   concatenation with SHA-256, then integer-divide the index by 2.
+6. The proof is valid only if the final hex digest equals
+   `/attestation_merkle_root`.
+
+Checks, in order:
+
+1. Require `proof_id`, `agent_id`, `created_at`, `claims`,
+   `attestation_merkle_root`, `attestation_count`, `merkle_proofs`,
+   `revealed_attestations`, and `agent_signature`.
+2. Require `/claims/total_negotiations == /attestation_count`.
+3. For every revealed attestation, find a Merkle proof whose
+   `/attestation_id` equals the revealed attestation's `/attestation_id`.
+4. Verify each inclusion proof against `/attestation_merkle_root` using the
+   ordered Merkle semantics above. A proof/root mismatch rejects with reason
+   class `binding`.
+5. Build the signable form by removing top-level `agent_signature` and
+   `concordia_competence_proof`.
+6. If `context.canonical_sha256` is present, compare it to SHA-256 over
+   `JCS(signable)`.
+7. Verify Ed25519 over `JCS(signable)` under `context.public_key_b64url`.
+8. Accept only if all checks pass.
+
+### `receipt-bundle-v1`
+
+Inputs:
+
+- `input`: a ReceiptBundle object.
+- `context.public_key_b64url`: Ed25519 public key for `/agent_id`.
+- `context.canonical_sha256`: optional `sha256:<hex>` digest over the
+  signable bundle form.
+
+Signature envelope:
+
+```json
+{"agent_signature": "<base64url signature>"}
+```
+
+Checks, in order:
+
+1. Validate `input` against `receipt_bundle.schema.json`.
+2. Build the signable form by removing top-level `agent_signature` and
+   `concordia_receipt_bundle`.
+3. If `context.canonical_sha256` is present, compare it to SHA-256 over
+   `JCS(signable)`.
+4. Verify Ed25519 over `JCS(signable)` under `context.public_key_b64url`.
+5. Accept only if all checks pass.
+
+### `message-chain-v1`
+
+Inputs:
+
+- `input.messages`: a non-empty array of session envelope messages.
+- `context.public_keys_b64url`: object mapping each message sender
+  `agent_id` to that sender's Ed25519 public key.
+- `context.expected_message_count`: optional exact message count.
+- `context.expected_message_hashes`: optional array of expected full-message
+  hashes after signature insertion.
+
+Signature envelope:
+
+```json
+{"signature": "<base64url signature>"}
+```
+
+`GENESIS_HASH` is `sha256:` followed by 64 zero characters. `MessageHash(m)` is
+`sha256:` plus lowercase hex SHA-256 over `JCS(m)`, including the message's
+`signature` field. Each message signature itself covers `JCS(message without
+top-level signature)`.
+
+Checks, in order:
+
+1. Require the input object to contain only `messages`.
+2. If `context.expected_message_count` is present, require it to equal
+   `len(input.messages)`.
+3. Require `input.messages[0].prev_hash == GENESIS_HASH`.
+4. For each subsequent message, require `/prev_hash` to equal
+   `MessageHash(previous_message)`. A stale, forked, deleted, or spliced link
+   rejects with reason class `binding`.
+5. For each message, resolve `/from/agent_id` in
+   `context.public_keys_b64url`.
+6. Verify Ed25519 over `JCS(message without top-level signature)` under the
+   sender's public key.
+7. If `context.expected_message_hashes` is present, recompute
+   `MessageHash(message)` for every message and require exact array equality.
+8. Accept only if all checks pass.
+
 ## Decisions
 
 ### D1: Normativize Raw Verification
@@ -697,23 +858,35 @@ re-fills a dataclass default when `cascade_depth` is dropped from
 profiles verify raw JSON mappings. Under raw rules, that mutation changes the
 canonical bytes and must reject.
 
-Consequence: the full mutation suite target for later phases is 220 rejects and
-2 tolerated accepts. The existing SDK battery remains SDK-behavior coverage and
-continues to assert 219 rejects and 3 accepted mutations through its typed path.
-The divergence is intentional and documented here so the two count lines cannot
-be mistaken for drift.
+Consequence: the generated mutation suite uses raw conformance verification
+and pins its current per-battery split in `manifest.json`. The existing SDK
+batteries remain SDK-behavior coverage where they exist. Any divergence between
+raw profile verification and an SDK typed path must be named here or the
+generator fails.
 
-### D2: Keep the Two Tolerated Accepts Byte-Pinned
+### D2: Keep Tolerated Accepts Byte-Pinned
 
-The remaining accepted mutations inject an extra member into the `signature`
-object of the ApprovalReceipt and FulfillmentAttestation fixtures. Those schema
-objects allow additional properties, and the signature block is outside its own
-signed preimage. The extra member cannot alter a signed field.
+Accepted mutation vectors are permitted only when the accepted field is outside
+the selected profile's signed and checked semantics, and every accepted vector
+must carry a non-empty justification note. Current tolerated lanes are:
+
+- Extra members in the `signature` object of ApprovalReceipt and
+  FulfillmentAttestation, because those schema objects allow additional
+  properties and the signature block is outside its own signed preimage.
+- AgentProfile unknown `trust_signals` keys and unknown reputation assertion
+  keys, matching the #149 / #151 forward-compatibility lane.
+- AgentProfile `verified`, because it is store-local and excluded from
+  `to_canonical_dict()`.
+- CompetenceProof `concordia_competence_proof`, because it is excluded from the
+  signable proof form.
+- ReceiptBundle `concordia_receipt_bundle` scalar value changes that remain
+  schema-valid, because the version marker is excluded from the signable bundle
+  form.
 
 The schemas under `conformance/vectors/schemas/` are frozen copies for this
-suite. Tightening those two signature schemas would change published fixture
-behavior, so it is deferred to a later phase. The two vectors will carry
-`expected: "accept"` and a tolerated-escape note when the mutation set lands.
+suite. Tightening a schema changes published fixture behavior and belongs in a
+separate phase. Any new accepted mutation without a named tolerance is a
+generator error.
 
 ## Scope Limits
 
@@ -738,6 +911,16 @@ ConditionalCommitment, AtomicActivationProof, UnwindRecord, ClosurePredicate,
 ChainSession, and the ten ChainSession transition fixtures. ClosurePredicate is
 schema plus canonical digest plus committed digest checks only; this suite does
 not invent a closure-signature verification rule.
+
+Phase 2 A4 adds the remaining signed long-tail profiles: AgentProfile,
+CompetenceProof, ReceiptBundle, and the session MessageChain. The MessageChain
+profile uses a three-message synthetic chain and checks `prev_hash` linkage from
+`GENESIS_HASH` before verifying each message signature.
+
+The Verascore publish envelope is out of scope because it is a vendor adapter
+surface, not a Concordia conformance profile. A2CN adapter messages are also
+out of scope for this suite; they are adapter-specific composition surfaces,
+not core conformance vectors.
 
 The generated manifest pins the exact counts for fixtures, schemas, positive
 section vectors, mutation vectors, canaries, and diagnostic canonical bytes.
