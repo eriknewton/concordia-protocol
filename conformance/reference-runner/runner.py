@@ -59,6 +59,10 @@ PROFILE_ORDER = (
     "closure-predicate-v1",
     "chain-session-v1",
     "chain-session-transition-v1",
+    "agent-profile-v1",
+    "competence-proof-v1",
+    "receipt-bundle-v1",
+    "message-chain-v1",
 )
 RECORD_TYPES = {
     "decision_object",
@@ -76,6 +80,10 @@ RECORD_TYPES = {
     "closure_predicate",
     "chain_session",
     "chain_session_transition",
+    "agent_profile",
+    "competence_proof",
+    "receipt_bundle",
+    "message_chain",
 }
 REQUIRED_VECTOR_FIELDS = {
     "schema_version",
@@ -990,6 +998,286 @@ def verify_chain_session_transition(suite_base: Path, input_data: Json) -> None:
         raise Reject("transition preconditions failed")
 
 
+AGENT_PROFILE_CANONICAL_FIELDS = (
+    "type",
+    "version",
+    "agent_id",
+    "name",
+    "description",
+    "capabilities",
+    "negotiation_profile",
+    "trust_signals",
+    "endpoints",
+    "location",
+    "ttl",
+    "updated_at",
+)
+AGENT_PROFILE_TOP_LEVEL_FIELDS = set(AGENT_PROFILE_CANONICAL_FIELDS) | {
+    "signature",
+    "verified",
+}
+AGENT_PROFILE_CAPABILITY_FIELDS = {
+    "categories",
+    "offer_types",
+    "resolution_methods",
+    "max_concurrent_sessions",
+    "languages",
+    "currencies",
+}
+AGENT_PROFILE_NEGOTIATION_FIELDS = {
+    "style",
+    "avg_rounds_to_agreement",
+    "agreement_rate",
+    "avg_session_duration_seconds",
+    "concession_pattern",
+}
+AGENT_PROFILE_TRUST_SIGNAL_FIELDS = {
+    "verascore_did",
+    "verascore_tier",
+    "verascore_composite",
+    "sovereignty",
+    "concordia_sessions_completed",
+    "attestation_count",
+    "concordia_preferred",
+    "reputation",
+}
+AGENT_PROFILE_SOVEREIGNTY_FIELDS = {"L1", "L2", "L3", "L4"}
+AGENT_PROFILE_REPUTATION_FIELDS = {
+    "provider",
+    "subject_did",
+    "tier",
+    "composite",
+}
+AGENT_PROFILE_ENDPOINT_FIELDS = {"negotiate", "a2a_card", "mcp_manifest"}
+AGENT_PROFILE_LOCATION_FIELDS = {"regions", "jurisdictions"}
+GENESIS_HASH = "sha256:" + ("0" * 64)
+
+
+def require_object(value: Json, label: str) -> dict[str, Json]:
+    if not isinstance(value, dict):
+        raise Reject(f"{label} is not an object")
+    return value
+
+
+def profile_subdict(
+    payload: dict[str, Json],
+    allowed: set[str],
+    *,
+    allow_extra: bool = False,
+    drop_none: bool = False,
+) -> dict[str, Json]:
+    if not allow_extra and set(payload) - allowed:
+        raise Reject("agent profile contains an unknown signed-form key")
+    result = {key: payload[key] for key in sorted(allowed) if key in payload}
+    if drop_none:
+        result = {key: value for key, value in result.items() if value is not None}
+    return result
+
+
+def agent_profile_canonical(input_data: Json) -> dict[str, Json]:
+    profile = require_object(input_data, "agent profile")
+    if set(profile) - AGENT_PROFILE_TOP_LEVEL_FIELDS:
+        raise Reject("agent profile top-level key is unknown")
+    capabilities = profile_subdict(
+        require_object(profile.get("capabilities"), "agent profile capabilities"),
+        AGENT_PROFILE_CAPABILITY_FIELDS,
+    )
+    negotiation_profile = profile_subdict(
+        require_object(profile.get("negotiation_profile"), "agent profile negotiation_profile"),
+        AGENT_PROFILE_NEGOTIATION_FIELDS,
+    )
+    trust_signals = profile_subdict(
+        require_object(profile.get("trust_signals"), "agent profile trust_signals"),
+        AGENT_PROFILE_TRUST_SIGNAL_FIELDS,
+        allow_extra=True,
+        drop_none=True,
+    )
+    if "sovereignty" in trust_signals:
+        trust_signals["sovereignty"] = profile_subdict(
+            require_object(trust_signals["sovereignty"], "agent profile sovereignty"),
+            AGENT_PROFILE_SOVEREIGNTY_FIELDS,
+        )
+    if "reputation" in trust_signals:
+        reputation = trust_signals["reputation"]
+        if not isinstance(reputation, list):
+            raise Reject("agent profile reputation is not a list")
+        normalized_reputation: list[dict[str, Json]] = []
+        for assertion in reputation:
+            normalized = profile_subdict(
+                require_object(assertion, "agent profile reputation assertion"),
+                AGENT_PROFILE_REPUTATION_FIELDS,
+                allow_extra=True,
+                drop_none=True,
+            )
+            if "provider" not in normalized:
+                raise Reject("agent profile reputation assertion is missing provider")
+            normalized_reputation.append(normalized)
+        trust_signals["reputation"] = normalized_reputation
+    endpoints = profile_subdict(
+        require_object(profile.get("endpoints"), "agent profile endpoints"),
+        AGENT_PROFILE_ENDPOINT_FIELDS,
+        drop_none=True,
+    )
+    location = profile_subdict(
+        require_object(profile.get("location"), "agent profile location"),
+        AGENT_PROFILE_LOCATION_FIELDS,
+    )
+    canonical: dict[str, Json] = {}
+    for field_name in AGENT_PROFILE_CANONICAL_FIELDS:
+        if field_name == "capabilities":
+            canonical[field_name] = capabilities
+        elif field_name == "negotiation_profile":
+            canonical[field_name] = negotiation_profile
+        elif field_name == "trust_signals":
+            canonical[field_name] = trust_signals
+        elif field_name == "endpoints":
+            canonical[field_name] = endpoints
+        elif field_name == "location":
+            canonical[field_name] = location
+        elif field_name in profile:
+            canonical[field_name] = profile[field_name]
+        else:
+            raise Reject("agent profile signed canonical field is missing")
+    return canonical
+
+
+def verify_agent_profile(input_data: Json, context: dict[str, Json]) -> None:
+    if tuple(context.get("canonical_fields", ())) != AGENT_PROFILE_CANONICAL_FIELDS:
+        raise Reject("agent profile canonical field list is wrong")
+    profile = require_object(input_data, "agent profile")
+    preimage = jcs_bytes(agent_profile_canonical(profile))
+    expected_digest = context.get("canonical_sha256")
+    if expected_digest is not None and canonical_sha256(preimage) != expected_digest:
+        raise Reject("agent profile canonical digest mismatch")
+    public_key = context.get("public_key_b64url")
+    signature = profile.get("signature")
+    verify_ed25519(public_key, signature, preimage)
+
+
+def verify_receipt_bundle(
+    suite_base: Path,
+    input_data: Json,
+    context: dict[str, Json],
+) -> None:
+    validate_schema(suite_base, "receipt_bundle.schema.json", input_data)
+    signable = without_top_level(input_data, {"agent_signature", "concordia_receipt_bundle"})
+    preimage = jcs_bytes(signable)
+    expected_digest = context.get("canonical_sha256")
+    if expected_digest is not None and canonical_sha256(preimage) != expected_digest:
+        raise Reject("receipt bundle canonical digest mismatch")
+    bundle = require_object(input_data, "receipt bundle")
+    verify_ed25519(context.get("public_key_b64url"), bundle.get("agent_signature"), preimage)
+
+
+def verify_merkle_proof(attestation_id: str, proof: dict[str, Json], root: str) -> bool:
+    if root == "":
+        return False
+    current_hash = hashlib.sha256(attestation_id.encode("utf-8")).hexdigest()
+    index = proof.get("index", 0)
+    proof_hashes = proof.get("proof", [])
+    if not isinstance(index, int) or not isinstance(proof_hashes, list):
+        return False
+    for sibling_hash in proof_hashes:
+        if not isinstance(sibling_hash, str):
+            return False
+        combined = current_hash + sibling_hash if index % 2 == 0 else sibling_hash + current_hash
+        current_hash = hashlib.sha256(combined.encode("utf-8")).hexdigest()
+        index //= 2
+    return current_hash == root
+
+
+def verify_competence_proof(input_data: Json, context: dict[str, Json]) -> None:
+    proof = require_object(input_data, "competence proof")
+    required = {
+        "proof_id",
+        "agent_id",
+        "created_at",
+        "claims",
+        "attestation_merkle_root",
+        "attestation_count",
+        "merkle_proofs",
+        "revealed_attestations",
+        "agent_signature",
+    }
+    if not required.issubset(proof):
+        raise Reject("competence proof is missing a required field")
+    claims = require_object(proof.get("claims"), "competence proof claims")
+    if claims.get("total_negotiations") != proof.get("attestation_count"):
+        raise Reject("competence proof attestation count mismatch")
+    root = proof.get("attestation_merkle_root")
+    merkle_proofs = proof.get("merkle_proofs")
+    revealed_attestations = proof.get("revealed_attestations")
+    if (
+        not isinstance(root, str)
+        or not isinstance(merkle_proofs, list)
+        or not isinstance(revealed_attestations, list)
+    ):
+        raise Reject("competence proof Merkle fields are malformed")
+    proofs_by_attestation_id: dict[str, dict[str, Json]] = {}
+    for item in merkle_proofs:
+        proof_item = require_object(item, "competence proof Merkle proof")
+        attestation_id = proof_item.get("attestation_id")
+        if not isinstance(attestation_id, str):
+            raise Reject("competence proof Merkle proof has no attestation_id")
+        proofs_by_attestation_id[attestation_id] = proof_item
+    for item in revealed_attestations:
+        attestation = require_object(item, "competence proof revealed attestation")
+        attestation_id = attestation.get("attestation_id")
+        if not isinstance(attestation_id, str):
+            raise Reject("revealed attestation has no attestation_id")
+        maybe_proof = proofs_by_attestation_id.get(attestation_id)
+        if maybe_proof is None or not verify_merkle_proof(attestation_id, maybe_proof, root):
+            raise Reject("competence proof Merkle inclusion failed")
+    signable = without_top_level(proof, {"agent_signature", "concordia_competence_proof"})
+    preimage = jcs_bytes(signable)
+    expected_digest = context.get("canonical_sha256")
+    if expected_digest is not None and canonical_sha256(preimage) != expected_digest:
+        raise Reject("competence proof canonical digest mismatch")
+    verify_ed25519(context.get("public_key_b64url"), proof.get("agent_signature"), preimage)
+
+
+def message_hash(message: Json) -> str:
+    return "sha256:" + hashlib.sha256(jcs_bytes(message)).hexdigest()
+
+
+def verify_message_chain(input_data: Json, context: dict[str, Json]) -> None:
+    chain = require_object(input_data, "message chain")
+    if set(chain) != {"messages"}:
+        raise Reject("message chain input must only contain messages")
+    messages = chain.get("messages")
+    if not isinstance(messages, list) or not messages:
+        raise Reject("message chain messages are missing")
+    expected_count = context.get("expected_message_count")
+    if expected_count is not None and expected_count != len(messages):
+        raise Reject("message chain count mismatch")
+    for item in messages:
+        require_object(item, "message chain message")
+    if messages[0].get("prev_hash") != GENESIS_HASH:
+        raise Reject("message chain first prev_hash is not genesis")
+    for index in range(1, len(messages)):
+        if messages[index].get("prev_hash") != message_hash(messages[index - 1]):
+            raise Reject("message chain prev_hash mismatch")
+    public_keys = context.get("public_keys_b64url")
+    if not isinstance(public_keys, dict):
+        raise Reject("message chain public key map is missing")
+    for item in messages:
+        message = require_object(item, "message chain message")
+        sender = require_object(message.get("from"), "message chain sender")
+        agent_id = sender.get("agent_id")
+        if not isinstance(agent_id, str):
+            raise Reject("message chain sender agent_id is missing")
+        public_key = public_keys.get(agent_id)
+        verify_ed25519(
+            public_key,
+            message.get("signature"),
+            jcs_bytes(without_top_level(message, {"signature"})),
+        )
+    expected_hashes = context.get("expected_message_hashes")
+    if expected_hashes is not None:
+        if expected_hashes != [message_hash(message) for message in messages]:
+            raise Reject("message chain hash list mismatch")
+
+
 def verify_profile(
     suite_base: Path,
     profile: str,
@@ -1048,6 +1336,14 @@ def verify_profile(
         verify_chain_session(suite_base, input_data, context)
     elif profile == "chain-session-transition-v1":
         verify_chain_session_transition(suite_base, input_data)
+    elif profile == "agent-profile-v1":
+        verify_agent_profile(input_data, context)
+    elif profile == "competence-proof-v1":
+        verify_competence_proof(input_data, context)
+    elif profile == "receipt-bundle-v1":
+        verify_receipt_bundle(suite_base, input_data, context)
+    elif profile == "message-chain-v1":
+        verify_message_chain(input_data, context)
     else:
         raise Reject("unknown verification profile")
 

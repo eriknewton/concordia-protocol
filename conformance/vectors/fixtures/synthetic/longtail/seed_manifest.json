@@ -1,0 +1,52 @@
+{
+  "agent_ids": {
+    "agent_profile": "did:concordia:agent:profile-longtail",
+    "message_chain_initiator": "did:concordia:agent:chain-initiator",
+    "message_chain_responder": "did:concordia:agent:chain-responder",
+    "receipt_bundle_agent": "did:concordia:agent:synthetic-initiator",
+    "receipt_bundle_counterparty": "did:concordia:agent:synthetic-responder"
+  },
+  "agent_profile_canonical_fields": [
+    "type",
+    "version",
+    "agent_id",
+    "name",
+    "description",
+    "capabilities",
+    "negotiation_profile",
+    "trust_signals",
+    "endpoints",
+    "location",
+    "ttl",
+    "updated_at"
+  ],
+  "competence_proof_reveal": {
+    "committed_attestation_count": 2,
+    "revealed_attestation_ids": [
+      "att_conformance_p2a1_0001"
+    ]
+  },
+  "seeds_PUBLIC_test_only_do_not_reuse": {
+    "agent_profile_signer": {
+      "public_key_b64url": "PASQYhr4Hh-3awFj71Bd3wK3UuySmpXzU1SRrHiXIaE=",
+      "seed_ed25519_ascii": "conformance_agent_profile_000001"
+    },
+    "attestation_initiator": {
+      "public_key_b64url": "99wNp8HVsqJcFfjN0ycm2d-9pPDlxilgTPMeWF0tRew=",
+      "seed_ed25519_ascii": "conformance_attest_initiator_001"
+    },
+    "attestation_responder": {
+      "public_key_b64url": "vy0hFV5wyWltVNKvQzK2GVh71mHdEmrKFnjNTGz8aNs=",
+      "seed_ed25519_ascii": "conformance_attest_responder_001"
+    },
+    "message_chain_initiator": {
+      "public_key_b64url": "PvpsKWi2oPBbZv2mzdOf6tKmumdTrbV9rDyGb8m3NBA=",
+      "seed_ed25519_ascii": "conformance_msg_initiator_000001"
+    },
+    "message_chain_responder": {
+      "public_key_b64url": "xgl2oSl1XU6m7Otw_eHFkZuaTfw0F7R9ZfNFV6xGhDU=",
+      "seed_ed25519_ascii": "conformance_msg_responder_000001"
+    }
+  },
+  "warning": "PUBLIC deterministic conformance test seeds; do not reuse"
+}

@@ -32,6 +32,16 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (  # noqa: E402
     Ed25519PublicKey,
 )
 
+from concordia.agent_profile import (  # noqa: E402
+    AgentCapabilityProfile,
+    Capabilities,
+    Endpoints,
+    Location,
+    NegotiationProfile,
+    ReputationAssertion,
+    Sovereignty,
+    TrustSignals,
+)
 from concordia.attestation import (  # noqa: E402
     countersign_attestation,
     verify_attestation,
@@ -75,6 +85,11 @@ from concordia.cmpc.types import (  # noqa: E402
     ConditionalCommitment,
     UnwindRecord,
 )
+from concordia.competence_proof import (  # noqa: E402
+    build_merkle_tree,
+    generate_merkle_proof,
+    verify_merkle_proof,
+)
 from concordia.cosign import (  # noqa: E402
     build_cosigned_receipt,
     canonical_cosign_bytes,
@@ -89,6 +104,7 @@ from concordia.mandate import (  # noqa: E402
     verify_delegation_chain,
     verify_mandate,
 )
+from concordia.message import GENESIS_HASH, compute_hash  # noqa: E402
 from concordia.models.mandate import (  # noqa: E402
     MANDATE_JSON_SCHEMA,
     DelegationLink,
@@ -97,6 +113,7 @@ from concordia.models.mandate import (  # noqa: E402
     ValidityWindow,
 )
 from concordia.predicate import sign_predicate, verify_predicate  # noqa: E402
+from concordia.receipt_bundle import _compute_summary  # noqa: E402
 from concordia.schema_validator import (  # noqa: E402
     _RAW_TERM_PATTERNS,
     validate_approval_receipt,
@@ -136,6 +153,7 @@ SCHEMA_COPIES = {
     "fulfillment_attestation.schema.json": REPO_ROOT
     / "schemas"
     / "fulfillment_attestation.schema.json",
+    "receipt_bundle.schema.json": REPO_ROOT / "schemas" / "receipt_bundle.schema.json",
     "predicate.json": REPO_ROOT / "schemas" / "predicate.json",
     "reference.schema.json": REPO_ROOT / "schemas" / "reference.schema.json",
 }
@@ -160,6 +178,10 @@ PROFILES = (
     "closure-predicate-v1",
     "chain-session-v1",
     "chain-session-transition-v1",
+    "agent-profile-v1",
+    "competence-proof-v1",
+    "receipt-bundle-v1",
+    "message-chain-v1",
 )
 RECORD_TYPES = (
     "decision_object",
@@ -177,6 +199,10 @@ RECORD_TYPES = (
     "closure_predicate",
     "chain_session",
     "chain_session_transition",
+    "agent_profile",
+    "competence_proof",
+    "receipt_bundle",
+    "message_chain",
 )
 
 SYNTHETIC_FIXTURE_ROOT = "synthetic"
@@ -185,9 +211,11 @@ SYNTHETIC_SOURCE_PREDICATE = "synthetic/predicate"
 SYNTHETIC_SOURCE_MANDATE = "synthetic/mandate"
 SYNTHETIC_SOURCE_COSIGN = "synthetic/cosign"
 SYNTHETIC_SOURCE_CMPC = "synthetic/cmpc_bilateral"
+SYNTHETIC_SOURCE_LONGTAIL = "synthetic/longtail"
 SYNTHETIC_SEEDS = {
     "attestation_initiator": "conformance_attest_initiator_001",
     "attestation_responder": "conformance_attest_responder_001",
+    "agent_profile_signer": "conformance_agent_profile_000001",
     "predicate_issuer": "conformance_pred_issuer_00000001",
     "mandate_issuer": "conformance_mand_issuer_00000001",
     "mandate_delegate": "conformance_mand_delegate_000001",
@@ -196,6 +224,8 @@ SYNTHETIC_SEEDS = {
     "cmpc_retailer": "conformance_cmpc_retailer_000001",
     "cmpc_wholesaler": "conformance_cmpc_wholesaler_0000",
     "cmpc_authority": "conformance_cmpc_authority_00000",
+    "message_chain_initiator": "conformance_msg_initiator_000001",
+    "message_chain_responder": "conformance_msg_responder_000001",
 }
 
 P2_A2_PREDICATE_MUTATION_FIXTURE = "vector_02"
@@ -296,6 +326,16 @@ class SyntheticCmpcFixtures:
 
 
 @dataclass(frozen=True)
+class SyntheticLongtailFixtures:
+    agent_profile: dict[str, Any]
+    receipt_bundle: dict[str, Any]
+    competence_proof: dict[str, Any]
+    message_chain: dict[str, Any]
+    attestations: list[dict[str, Any]]
+    seed_manifest: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class SyntheticFixtures:
     attestation: dict[str, Any]
     attestation_seed_manifest: dict[str, Any]
@@ -307,6 +347,7 @@ class SyntheticFixtures:
     cosigned_receipt: dict[str, Any]
     cosign_seed_manifest: dict[str, Any]
     cmpc: SyntheticCmpcFixtures
+    longtail: SyntheticLongtailFixtures
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -942,6 +983,343 @@ def evaluate_chain_session_transition_profile(vector: Vector) -> Evaluation:
     return Evaluation(True)
 
 
+AGENT_PROFILE_CANONICAL_FIELDS = (
+    "type",
+    "version",
+    "agent_id",
+    "name",
+    "description",
+    "capabilities",
+    "negotiation_profile",
+    "trust_signals",
+    "endpoints",
+    "location",
+    "ttl",
+    "updated_at",
+)
+AGENT_PROFILE_TOP_LEVEL_FIELDS = set(AGENT_PROFILE_CANONICAL_FIELDS) | {
+    "signature",
+    "verified",
+}
+AGENT_PROFILE_CAPABILITY_FIELDS = {
+    "categories",
+    "offer_types",
+    "resolution_methods",
+    "max_concurrent_sessions",
+    "languages",
+    "currencies",
+}
+AGENT_PROFILE_NEGOTIATION_FIELDS = {
+    "style",
+    "avg_rounds_to_agreement",
+    "agreement_rate",
+    "avg_session_duration_seconds",
+    "concession_pattern",
+}
+AGENT_PROFILE_TRUST_SIGNAL_FIELDS = {
+    "verascore_did",
+    "verascore_tier",
+    "verascore_composite",
+    "sovereignty",
+    "concordia_sessions_completed",
+    "attestation_count",
+    "concordia_preferred",
+    "reputation",
+}
+AGENT_PROFILE_SOVEREIGNTY_FIELDS = {"L1", "L2", "L3", "L4"}
+AGENT_PROFILE_REPUTATION_FIELDS = {
+    "provider",
+    "subject_did",
+    "tier",
+    "composite",
+}
+AGENT_PROFILE_ENDPOINT_FIELDS = {"negotiate", "a2a_card", "mcp_manifest"}
+AGENT_PROFILE_LOCATION_FIELDS = {"regions", "jurisdictions"}
+
+
+def require_dict(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise GenerationError("expected object")
+    return value
+
+
+def strict_subset_keys(
+    payload: dict[str, Any],
+    allowed: set[str],
+    *,
+    allow_extra: bool = False,
+) -> bool:
+    return allow_extra or set(payload).issubset(allowed)
+
+
+def profile_subdict(
+    payload: dict[str, Any],
+    allowed: set[str],
+    *,
+    allow_extra: bool = False,
+    drop_none: bool = False,
+) -> dict[str, Any] | None:
+    if not strict_subset_keys(payload, allowed, allow_extra=allow_extra):
+        return None
+    result = {key: payload[key] for key in sorted(allowed) if key in payload}
+    if drop_none:
+        result = {key: value for key, value in result.items() if value is not None}
+    return result
+
+
+def agent_profile_canonical_from_raw(input_data: dict[str, Any]) -> dict[str, Any] | None:
+    if set(input_data) - AGENT_PROFILE_TOP_LEVEL_FIELDS:
+        return None
+    try:
+        capabilities = profile_subdict(
+            require_dict(input_data.get("capabilities")),
+            AGENT_PROFILE_CAPABILITY_FIELDS,
+        )
+        negotiation_profile = profile_subdict(
+            require_dict(input_data.get("negotiation_profile")),
+            AGENT_PROFILE_NEGOTIATION_FIELDS,
+        )
+        trust_signals_raw = require_dict(input_data.get("trust_signals"))
+        trust_signals = profile_subdict(
+            trust_signals_raw,
+            AGENT_PROFILE_TRUST_SIGNAL_FIELDS,
+            allow_extra=True,
+            drop_none=True,
+        )
+        if trust_signals is None:
+            return None
+        if "sovereignty" in trust_signals:
+            sovereignty = profile_subdict(
+                require_dict(trust_signals["sovereignty"]),
+                AGENT_PROFILE_SOVEREIGNTY_FIELDS,
+            )
+            if sovereignty is None:
+                return None
+            trust_signals["sovereignty"] = sovereignty
+        if "reputation" in trust_signals:
+            reputation = trust_signals["reputation"]
+            if not isinstance(reputation, list):
+                return None
+            normalized_reputation: list[dict[str, Any]] = []
+            for assertion in reputation:
+                if not isinstance(assertion, dict):
+                    return None
+                normalized = profile_subdict(
+                    assertion,
+                    AGENT_PROFILE_REPUTATION_FIELDS,
+                    allow_extra=True,
+                    drop_none=True,
+                )
+                if normalized is None or "provider" not in normalized:
+                    return None
+                normalized_reputation.append(normalized)
+            trust_signals["reputation"] = normalized_reputation
+        endpoints = profile_subdict(
+            require_dict(input_data.get("endpoints")),
+            AGENT_PROFILE_ENDPOINT_FIELDS,
+            drop_none=True,
+        )
+        location = profile_subdict(
+            require_dict(input_data.get("location")),
+            AGENT_PROFILE_LOCATION_FIELDS,
+        )
+    except GenerationError:
+        return None
+    if any(
+        item is None
+        for item in (capabilities, negotiation_profile, endpoints, location)
+    ):
+        return None
+    canonical: dict[str, Any] = {}
+    for field_name in AGENT_PROFILE_CANONICAL_FIELDS:
+        if field_name == "capabilities":
+            canonical[field_name] = capabilities
+        elif field_name == "negotiation_profile":
+            canonical[field_name] = negotiation_profile
+        elif field_name == "trust_signals":
+            canonical[field_name] = trust_signals
+        elif field_name == "endpoints":
+            canonical[field_name] = endpoints
+        elif field_name == "location":
+            canonical[field_name] = location
+        elif field_name in input_data:
+            canonical[field_name] = input_data[field_name]
+        else:
+            return None
+    return canonical
+
+
+def evaluate_agent_profile_profile(vector: Vector) -> Evaluation:
+    input_data = vector.input_data
+    context = vector.context
+    expected_fields = context.get("canonical_fields")
+    if tuple(expected_fields or ()) != AGENT_PROFILE_CANONICAL_FIELDS:
+        return Evaluation(False, "binding")
+    canonical = agent_profile_canonical_from_raw(input_data)
+    if canonical is None:
+        return Evaluation(False, "schema")
+    preimage = canonical_json(canonical)
+    expected_digest = context.get("canonical_sha256")
+    if expected_digest is not None:
+        if "sha256:" + hashlib.sha256(preimage).hexdigest() != expected_digest:
+            return Evaluation(False, "digest")
+    public_key_b64 = context.get("public_key_b64url")
+    signature = input_data.get("signature")
+    if not isinstance(public_key_b64, str) or not isinstance(signature, str):
+        return Evaluation(False, "signature")
+    if not verify_ed25519_signature(public_key_b64, signature, preimage):
+        return Evaluation(False, "signature")
+    return Evaluation(True)
+
+
+def evaluate_receipt_bundle_profile(vector: Vector) -> Evaluation:
+    input_data = vector.input_data
+    context = vector.context
+    schema = load_json(SCHEMA_COPIES["receipt_bundle.schema.json"])
+    if not schema_is_valid(schema, input_data):
+        return Evaluation(False, "schema")
+    signable = without_keys(input_data, {"agent_signature", "concordia_receipt_bundle"})
+    preimage = canonical_json(signable)
+    expected_digest = context.get("canonical_sha256")
+    if expected_digest is not None:
+        if "sha256:" + hashlib.sha256(preimage).hexdigest() != expected_digest:
+            return Evaluation(False, "digest")
+    public_key_b64 = context.get("public_key_b64url")
+    signature = input_data.get("agent_signature")
+    if not isinstance(public_key_b64, str) or not isinstance(signature, str):
+        return Evaluation(False, "signature")
+    if not verify_ed25519_signature(public_key_b64, signature, preimage):
+        return Evaluation(False, "signature")
+    return Evaluation(True)
+
+
+def verify_conformance_merkle_proof(
+    attestation_id: str,
+    proof: dict[str, Any],
+    root: str,
+) -> bool:
+    return verify_merkle_proof(attestation_id, proof, root)
+
+
+def competence_proof_signable(input_data: dict[str, Any]) -> dict[str, Any]:
+    return without_keys(input_data, {"agent_signature", "concordia_competence_proof"})
+
+
+def evaluate_competence_proof_profile(vector: Vector) -> Evaluation:
+    input_data = vector.input_data
+    context = vector.context
+    required = {
+        "proof_id",
+        "agent_id",
+        "created_at",
+        "claims",
+        "attestation_merkle_root",
+        "attestation_count",
+        "merkle_proofs",
+        "revealed_attestations",
+        "agent_signature",
+    }
+    if not required.issubset(input_data):
+        return Evaluation(False, "schema")
+    claims = input_data.get("claims")
+    attestation_count = input_data.get("attestation_count")
+    if not isinstance(claims, dict) or claims.get("total_negotiations") != attestation_count:
+        return Evaluation(False, "binding")
+    root = input_data.get("attestation_merkle_root")
+    merkle_proofs = input_data.get("merkle_proofs")
+    revealed_attestations = input_data.get("revealed_attestations")
+    if (
+        not isinstance(root, str)
+        or not isinstance(merkle_proofs, list)
+        or not isinstance(revealed_attestations, list)
+    ):
+        return Evaluation(False, "schema")
+    proofs_by_attestation_id: dict[str, dict[str, Any]] = {}
+    for proof in merkle_proofs:
+        if not isinstance(proof, dict) or not isinstance(proof.get("attestation_id"), str):
+            return Evaluation(False, "schema")
+        proofs_by_attestation_id[proof["attestation_id"]] = proof
+    for attestation in revealed_attestations:
+        if not isinstance(attestation, dict):
+            return Evaluation(False, "schema")
+        attestation_id = attestation.get("attestation_id")
+        if not isinstance(attestation_id, str):
+            return Evaluation(False, "schema")
+        proof = proofs_by_attestation_id.get(attestation_id)
+        if proof is None:
+            return Evaluation(False, "binding")
+        if not verify_conformance_merkle_proof(attestation_id, proof, root):
+            return Evaluation(False, "binding")
+    signable = competence_proof_signable(input_data)
+    preimage = canonical_json(signable)
+    expected_digest = context.get("canonical_sha256")
+    if expected_digest is not None:
+        if "sha256:" + hashlib.sha256(preimage).hexdigest() != expected_digest:
+            return Evaluation(False, "digest")
+    public_key_b64 = context.get("public_key_b64url")
+    signature = input_data.get("agent_signature")
+    if not isinstance(public_key_b64, str) or not isinstance(signature, str):
+        return Evaluation(False, "signature")
+    if not verify_ed25519_signature(public_key_b64, signature, preimage):
+        return Evaluation(False, "signature")
+    return Evaluation(True)
+
+
+def message_chain_messages(input_data: dict[str, Any]) -> list[dict[str, Any]] | None:
+    if set(input_data) != {"messages"}:
+        return None
+    messages = input_data.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return None
+    normalized: list[dict[str, Any]] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            return None
+        normalized.append(message)
+    return normalized
+
+
+def evaluate_message_chain_profile(vector: Vector) -> Evaluation:
+    input_data = vector.input_data
+    context = vector.context
+    messages = message_chain_messages(input_data)
+    if messages is None:
+        return Evaluation(False, "schema")
+    expected_count = context.get("expected_message_count")
+    if expected_count is not None and expected_count != len(messages):
+        return Evaluation(False, "binding")
+    if messages[0].get("prev_hash") != GENESIS_HASH:
+        return Evaluation(False, "binding")
+    for index in range(1, len(messages)):
+        if messages[index].get("prev_hash") != compute_hash(messages[index - 1]):
+            return Evaluation(False, "binding")
+    public_keys = context.get("public_keys_b64url")
+    if not isinstance(public_keys, dict):
+        return Evaluation(False, "signature")
+    for message in messages:
+        sender = message.get("from")
+        if not isinstance(sender, dict):
+            return Evaluation(False, "schema")
+        agent_id = sender.get("agent_id")
+        signature = message.get("signature")
+        if not isinstance(agent_id, str) or not isinstance(signature, str):
+            return Evaluation(False, "signature")
+        public_key_b64 = public_keys.get(agent_id)
+        if not isinstance(public_key_b64, str):
+            return Evaluation(False, "signature")
+        if not verify_ed25519_signature(
+            public_key_b64,
+            signature,
+            canonical_json(without_signature(message)),
+        ):
+            return Evaluation(False, "signature")
+    expected_hashes = context.get("expected_message_hashes")
+    if expected_hashes is not None:
+        if expected_hashes != [compute_hash(message) for message in messages]:
+            return Evaluation(False, "digest")
+    return Evaluation(True)
+
+
 def verify_vector(vector: Vector) -> bool:
     return evaluate_vector(vector).accepted
 
@@ -1143,6 +1521,18 @@ def evaluate_vector(vector: Vector) -> Evaluation:
     if profile == "chain-session-transition-v1":
         return evaluate_chain_session_transition_profile(vector)
 
+    if profile == "agent-profile-v1":
+        return evaluate_agent_profile_profile(vector)
+
+    if profile == "competence-proof-v1":
+        return evaluate_competence_proof_profile(vector)
+
+    if profile == "receipt-bundle-v1":
+        return evaluate_receipt_bundle_profile(vector)
+
+    if profile == "message-chain-v1":
+        return evaluate_message_chain_profile(vector)
+
     raise GenerationError(f"unknown profile: {profile}")
 
 
@@ -1184,9 +1574,24 @@ COUNTERSIGN_EXTRA_MAP_ENTRY_NOTE = (
 CLOSURE_SIGNATURE_NOT_VERIFIED_NOTE = (
     "accepted-structural: closure-predicate-v1 does not verify or commit /signature"
 )
-EXPECTED_MUTATION_TOTAL = 856
-EXPECTED_MUTATION_REJECTS = 821
-EXPECTED_MUTATION_ACCEPTS = 35
+AGENT_PROFILE_TRUST_SIGNAL_TOLERANCE_NOTE = (
+    "accepted-structural: unknown trust_signals keys are ignored by AgentProfile canonicalization"
+)
+AGENT_PROFILE_REPUTATION_TOLERANCE_NOTE = (
+    "accepted-structural: unknown reputation assertion keys are ignored by AgentProfile canonicalization"
+)
+AGENT_PROFILE_VERIFIED_TOLERANCE_NOTE = (
+    "accepted-structural: verified is store-local and excluded from AgentProfile.to_canonical_dict()"
+)
+COMPETENCE_PROOF_VERSION_TOLERANCE_NOTE = (
+    "accepted-structural: concordia_competence_proof is excluded from CompetenceProof.to_signable_dict()"
+)
+RECEIPT_BUNDLE_VERSION_TOLERANCE_NOTE = (
+    "accepted-structural: concordia_receipt_bundle is schema-valid metadata and excluded from the ReceiptBundle signable form"
+)
+EXPECTED_MUTATION_TOTAL = 1456
+EXPECTED_MUTATION_REJECTS = 1414
+EXPECTED_MUTATION_ACCEPTS = 42
 EXPECTED_CANARY_TOTAL = 3
 EXPECTED_RAW_TYPED_DIVERGENCES = (
     MutationDivergence(
@@ -1222,6 +1627,10 @@ EXPECTED_MUTATION_BATTERY_COUNTS: dict[str, tuple[int, int, int]] = {
     "synthetic/cmpc_bilateral/primitives/closure_predicate.json": (40, 39, 1),
     "synthetic/cmpc_bilateral/primitives/conditional_commitment.json": (35, 35, 0),
     "synthetic/cmpc_bilateral/primitives/unwind_record.json": (28, 28, 0),
+    "synthetic/longtail/agent_profile.json": (100, 96, 4),
+    "synthetic/longtail/competence_proof.json": (153, 151, 2),
+    "synthetic/longtail/message_chain.json": (99, 99, 0),
+    "synthetic/longtail/receipt_bundle.json": (248, 247, 1),
     "synthetic/mandate/delegated_mandate.json": (82, 82, 0),
     "synthetic/mandate/mandate.json": (51, 51, 0),
     "synthetic/predicate/vector_02.json": (87, 87, 0),
@@ -1260,6 +1669,24 @@ def build_mutation_fixtures(
     cmpc_retailer_key = cmpc_keys["cmpc_retailer"]["public_key_b64url"]
     cmpc_wholesaler_key = cmpc_keys["cmpc_wholesaler"]["public_key_b64url"]
     cmpc_authority_key = cmpc_keys["cmpc_authority"]["public_key_b64url"]
+    longtail_keys = synthetic.longtail.seed_manifest["seeds_PUBLIC_test_only_do_not_reuse"]
+    longtail_agent_ids = synthetic.longtail.seed_manifest["agent_ids"]
+    agent_profile_preimage = canonical_json(
+        agent_profile_canonical_from_raw(synthetic.longtail.agent_profile) or {}
+    )
+    receipt_bundle_preimage = canonical_json(
+        without_keys(
+            synthetic.longtail.receipt_bundle,
+            {"agent_signature", "concordia_receipt_bundle"},
+        )
+    )
+    competence_proof_preimage = canonical_json(
+        competence_proof_signable(synthetic.longtail.competence_proof)
+    )
+    message_hashes = [
+        compute_hash(message)
+        for message in synthetic.longtail.message_chain["messages"]
+    ]
 
     return [
         MutationFixture(
@@ -1626,6 +2053,96 @@ def build_mutation_fixtures(
             sdk_escapes=frozenset(),
             compare_typed_path=False,
         ),
+        MutationFixture(
+            battery_name="synthetic/longtail/agent_profile.json",
+            fixture_label="synthetic",
+            object_label="agent-profile",
+            object_name="agent_profile",
+            input_data=synthetic.longtail.agent_profile,
+            source_fixture=SYNTHETIC_SOURCE_LONGTAIL,
+            record_type="agent_profile",
+            verification_profile="agent-profile-v1",
+            context={
+                "canonical_fields": list(AGENT_PROFILE_CANONICAL_FIELDS),
+                "canonical_sha256": "sha256:"
+                + hashlib.sha256(agent_profile_preimage).hexdigest(),
+                "public_key_b64url": longtail_keys["agent_profile_signer"][
+                    "public_key_b64url"
+                ],
+            },
+            sdk_rejected=0,
+            sdk_total=100,
+            sdk_escapes=frozenset(),
+            compare_typed_path=False,
+        ),
+        MutationFixture(
+            battery_name="synthetic/longtail/competence_proof.json",
+            fixture_label="synthetic",
+            object_label="competence-proof",
+            object_name="competence_proof",
+            input_data=synthetic.longtail.competence_proof,
+            source_fixture=SYNTHETIC_SOURCE_LONGTAIL,
+            record_type="competence_proof",
+            verification_profile="competence-proof-v1",
+            context={
+                "canonical_sha256": "sha256:"
+                + hashlib.sha256(competence_proof_preimage).hexdigest(),
+                "public_key_b64url": longtail_keys["attestation_initiator"][
+                    "public_key_b64url"
+                ],
+            },
+            sdk_rejected=0,
+            sdk_total=153,
+            sdk_escapes=frozenset(),
+            compare_typed_path=False,
+        ),
+        MutationFixture(
+            battery_name="synthetic/longtail/receipt_bundle.json",
+            fixture_label="synthetic",
+            object_label="receipt-bundle",
+            object_name="receipt_bundle",
+            input_data=synthetic.longtail.receipt_bundle,
+            source_fixture=SYNTHETIC_SOURCE_LONGTAIL,
+            record_type="receipt_bundle",
+            verification_profile="receipt-bundle-v1",
+            context={
+                "canonical_sha256": "sha256:"
+                + hashlib.sha256(receipt_bundle_preimage).hexdigest(),
+                "public_key_b64url": longtail_keys["attestation_initiator"][
+                    "public_key_b64url"
+                ],
+            },
+            sdk_rejected=0,
+            sdk_total=248,
+            sdk_escapes=frozenset(),
+            compare_typed_path=False,
+        ),
+        MutationFixture(
+            battery_name="synthetic/longtail/message_chain.json",
+            fixture_label="synthetic",
+            object_label="message-chain",
+            object_name="message_chain",
+            input_data=synthetic.longtail.message_chain,
+            source_fixture=SYNTHETIC_SOURCE_LONGTAIL,
+            record_type="message_chain",
+            verification_profile="message-chain-v1",
+            context={
+                "expected_message_count": 3,
+                "expected_message_hashes": message_hashes,
+                "public_keys_b64url": {
+                    longtail_agent_ids["message_chain_initiator"]: longtail_keys[
+                        "message_chain_initiator"
+                    ]["public_key_b64url"],
+                    longtail_agent_ids["message_chain_responder"]: longtail_keys[
+                        "message_chain_responder"
+                    ]["public_key_b64url"],
+                },
+            },
+            sdk_rejected=0,
+            sdk_total=99,
+            sdk_escapes=frozenset(),
+            compare_typed_path=False,
+        ),
     ]
 
 
@@ -1657,6 +2174,17 @@ def mutation_canonical_preimage(profile: str, input_data: dict[str, Any]) -> byt
         return canonical_json(without_signature(input_data))
     if profile == "chain-session-v1":
         return canonicalize_chain_session(input_data)
+    if profile == "agent-profile-v1":
+        canonical = agent_profile_canonical_from_raw(input_data)
+        return canonical_json(canonical) if canonical is not None else None
+    if profile == "receipt-bundle-v1":
+        return canonical_json(
+            without_keys(input_data, {"agent_signature", "concordia_receipt_bundle"})
+        )
+    if profile == "competence-proof-v1":
+        return canonical_json(competence_proof_signable(input_data))
+    if profile == "message-chain-v1":
+        return canonical_json(input_data)
     return None
 
 
@@ -1679,6 +2207,19 @@ def accepted_mutation_note(
     if fixture.verification_profile == "closure-predicate-v1":
         if field_path == "signature" and kind == "value":
             return CLOSURE_SIGNATURE_NOT_VERIFIED_NOTE
+    if fixture.verification_profile == "agent-profile-v1":
+        if field_path == "trust_signals" and kind == "inject":
+            return AGENT_PROFILE_TRUST_SIGNAL_TOLERANCE_NOTE
+        if field_path.startswith("trust_signals.reputation.") and kind == "inject":
+            return AGENT_PROFILE_REPUTATION_TOLERANCE_NOTE
+        if field_path == "verified" and kind in {"value", "drop"}:
+            return AGENT_PROFILE_VERIFIED_TOLERANCE_NOTE
+    if fixture.verification_profile == "competence-proof-v1":
+        if field_path == "concordia_competence_proof" and kind in {"value", "drop"}:
+            return COMPETENCE_PROOF_VERSION_TOLERANCE_NOTE
+    if fixture.verification_profile == "receipt-bundle-v1":
+        if field_path == "concordia_receipt_bundle" and kind == "value":
+            return RECEIPT_BUNDLE_VERSION_TOLERANCE_NOTE
     raise GenerationError(
         f"{fixture.battery_name}: accepted mutation lacks structural justification: "
         f"{kind} {field_path}"
@@ -2522,12 +3063,340 @@ def build_synthetic_cmpc_fixtures() -> SyntheticCmpcFixtures:
     )
 
 
+def resign_attestation(
+    attestation: dict[str, Any],
+    key_by_agent: Mapping[str, KeyPair],
+) -> dict[str, Any]:
+    signed = copy.deepcopy(attestation)
+    signed.pop("countersignatures", None)
+    for party in signed.get("parties", []):
+        if not isinstance(party, dict):
+            raise GenerationError("attestation party is not an object")
+        agent_id = party.get("agent_id")
+        if not isinstance(agent_id, str) or agent_id not in key_by_agent:
+            raise GenerationError("attestation party has no deterministic key")
+        party.pop("signature", None)
+        party["signature"] = sign_message(party, key_by_agent[agent_id])
+    signed["countersignatures"] = {
+        agent_id: countersign_attestation(signed, key_by_agent[agent_id])
+        for agent_id in sorted(key_by_agent)
+    }
+    return signed
+
+
+def build_agent_profile_fixture(profile_key: KeyPair) -> dict[str, Any]:
+    profile = AgentCapabilityProfile(
+        agent_id="did:concordia:agent:profile-longtail",
+        name="Conformance Profile Agent",
+        description="Deterministic agent profile fixture for conformance.",
+        capabilities=Capabilities(
+            categories=["software.tools", "data.analysis"],
+            offer_types=["basic", "conditional"],
+            resolution_methods=["split_difference", "tradeoff_optimization"],
+            max_concurrent_sessions=4,
+            languages=["en", "es"],
+            currencies=["USD", "EUR"],
+        ),
+        negotiation_profile=NegotiationProfile(
+            style="collaborative",
+            avg_rounds_to_agreement=3.5,
+            agreement_rate=0.75,
+            avg_session_duration_seconds=180.0,
+            concession_pattern="graduated",
+        ),
+        trust_signals=TrustSignals(
+            verascore_did="did:web:verascore.example:agent-longtail",
+            verascore_tier="verified-sovereign",
+            verascore_composite=91,
+            sovereignty=Sovereignty(L1="Full", L2="Full", L3="Full", L4="Full"),
+            concordia_sessions_completed=8,
+            attestation_count=2,
+            concordia_preferred=True,
+            reputation=[
+                ReputationAssertion(
+                    provider="verascore.example",
+                    subject_did="did:web:verascore.example:agent-longtail",
+                    tier="verified-sovereign",
+                    composite=91,
+                )
+            ],
+        ),
+        endpoints=Endpoints(
+            negotiate="https://agent.example/.well-known/concordia",
+            a2a_card="https://agent.example/.well-known/agent-card.json",
+            mcp_manifest="https://agent.example/.well-known/mcp.json",
+        ),
+        location=Location(regions=["us-west1", "eu-west1"], jurisdictions=["US-CA", "EU"]),
+        ttl=7200,
+        updated_at=fixed_iso_now(),
+    )
+    profile.signature = sign_message(profile.to_canonical_dict(), profile_key)
+    profile.verified = True
+    if not profile.verify_signature(profile_key.public_key):
+        raise GenerationError("synthetic agent profile did not verify")
+    return profile.to_dict()
+
+
+def build_receipt_bundle_fixture(
+    agent_id: str,
+    attestations: list[dict[str, Any]],
+    key_pair: KeyPair,
+) -> dict[str, Any]:
+    signable = {
+        "bundle_id": "bundle_aaaaaaaaaaaa",
+        "agent_id": agent_id,
+        "created_at": fixed_iso_now(),
+        "attestations": attestations,
+        "summary": _compute_summary(agent_id, attestations).to_dict(),
+    }
+    bundle = {
+        "concordia_receipt_bundle": "0.1.0",
+        **signable,
+        "agent_signature": sign_message(signable, key_pair),
+    }
+    baseline = Vector(
+        vector_id="baseline-synthetic-receipt-bundle",
+        title="receipt bundle baseline",
+        source_fixture=SYNTHETIC_SOURCE_LONGTAIL,
+        record_type="receipt_bundle",
+        verification_profile="receipt-bundle-v1",
+        input_data=bundle,
+        context={
+            "canonical_sha256": "sha256:"
+            + hashlib.sha256(canonical_json(signable)).hexdigest(),
+            "public_key_b64url": key_pair.public_key_b64(),
+        },
+    )
+    if not evaluate_receipt_bundle_profile(baseline).accepted:
+        raise GenerationError("synthetic receipt bundle did not verify")
+    return bundle
+
+
+def build_competence_proof_fixture(
+    agent_id: str,
+    attestations: list[dict[str, Any]],
+    key_pair: KeyPair,
+) -> dict[str, Any]:
+    attestation_ids = [att["attestation_id"] for att in attestations]
+    root, layers = build_merkle_tree(attestation_ids)
+    reveal_id = sorted(attestation_ids)[0]
+    revealed = [att for att in attestations if att["attestation_id"] == reveal_id]
+    signable = {
+        "proof_id": "proof_aaaaaaaaaaaa",
+        "agent_id": agent_id,
+        "created_at": fixed_iso_now(),
+        "claims": _compute_summary(agent_id, attestations).to_dict(),
+        "attestation_merkle_root": root,
+        "attestation_count": len(attestations),
+        "merkle_proofs": [
+            generate_merkle_proof(reveal_id, sorted(attestation_ids), layers)
+        ],
+        "revealed_attestations": revealed,
+    }
+    proof = {
+        "concordia_competence_proof": "0.1.0",
+        **signable,
+        "agent_signature": sign_message(signable, key_pair),
+    }
+    baseline = Vector(
+        vector_id="baseline-synthetic-competence-proof",
+        title="competence proof baseline",
+        source_fixture=SYNTHETIC_SOURCE_LONGTAIL,
+        record_type="competence_proof",
+        verification_profile="competence-proof-v1",
+        input_data=proof,
+        context={
+            "canonical_sha256": "sha256:"
+            + hashlib.sha256(canonical_json(signable)).hexdigest(),
+            "public_key_b64url": key_pair.public_key_b64(),
+        },
+    )
+    if not evaluate_competence_proof_profile(baseline).accepted:
+        raise GenerationError("synthetic competence proof did not verify")
+    return proof
+
+
+def build_message(
+    *,
+    message_id: str,
+    message_type: str,
+    session_id: str,
+    sender: dict[str, Any],
+    body: dict[str, Any],
+    key_pair: KeyPair,
+    prev_hash: str,
+    timestamp: str,
+    recipients: list[dict[str, Any]] | None = None,
+    in_reply_to: str | None = None,
+    reasoning: str | None = None,
+) -> dict[str, Any]:
+    message: dict[str, Any] = {
+        "concordia": "0.1.0",
+        "type": message_type,
+        "id": message_id,
+        "session_id": session_id,
+        "timestamp": timestamp,
+        "from": sender,
+        "prev_hash": prev_hash,
+        "body": body,
+    }
+    if recipients is not None:
+        message["to"] = recipients
+    if in_reply_to is not None:
+        message["in_reply_to"] = in_reply_to
+    if reasoning is not None:
+        message["reasoning"] = reasoning
+    message["signature"] = sign_message(message, key_pair)
+    return message
+
+
+def build_message_chain_fixture(
+    initiator_key: KeyPair,
+    responder_key: KeyPair,
+) -> dict[str, Any]:
+    session_id = "sess_conformance_message_chain_0001"
+    initiator = {"agent_id": "did:concordia:agent:chain-initiator"}
+    responder = {"agent_id": "did:concordia:agent:chain-responder"}
+    open_msg = build_message(
+        message_id="msg_conformance_chain_0001",
+        message_type="negotiate.open",
+        session_id=session_id,
+        sender=initiator,
+        recipients=[responder],
+        body={"terms": {"deliverable": "analysis", "rounds": 3}},
+        key_pair=initiator_key,
+        prev_hash=GENESIS_HASH,
+        timestamp="2026-05-10T14:25:00Z",
+        reasoning="Open deterministic conformance session.",
+    )
+    accept_session = build_message(
+        message_id="msg_conformance_chain_0002",
+        message_type="negotiate.accept_session",
+        session_id=session_id,
+        sender=responder,
+        recipients=[initiator],
+        body={"accepted": True},
+        key_pair=responder_key,
+        prev_hash=compute_hash(open_msg),
+        timestamp="2026-05-10T14:26:00Z",
+        in_reply_to=open_msg["id"],
+    )
+    offer = build_message(
+        message_id="msg_conformance_chain_0003",
+        message_type="negotiate.offer",
+        session_id=session_id,
+        sender=initiator,
+        recipients=[responder],
+        body={"offer": {"quality": "high", "delivery_days": 2}},
+        key_pair=initiator_key,
+        prev_hash=compute_hash(accept_session),
+        timestamp="2026-05-10T14:27:00Z",
+        in_reply_to=accept_session["id"],
+        reasoning="First signed offer after session acceptance.",
+    )
+    chain = {"messages": [open_msg, accept_session, offer]}
+    baseline = Vector(
+        vector_id="baseline-synthetic-message-chain",
+        title="message chain baseline",
+        source_fixture=SYNTHETIC_SOURCE_LONGTAIL,
+        record_type="message_chain",
+        verification_profile="message-chain-v1",
+        input_data=chain,
+        context={
+            "expected_message_count": 3,
+            "expected_message_hashes": [compute_hash(message) for message in chain["messages"]],
+            "public_keys_b64url": {
+                initiator["agent_id"]: initiator_key.public_key_b64(),
+                responder["agent_id"]: responder_key.public_key_b64(),
+            },
+        },
+    )
+    if not evaluate_message_chain_profile(baseline).accepted:
+        raise GenerationError("synthetic message chain did not verify")
+    return chain
+
+
+def build_synthetic_longtail_fixtures(
+    base_attestation: dict[str, Any],
+) -> SyntheticLongtailFixtures:
+    profile_key = key_pair_from_seed(SYNTHETIC_SEEDS["agent_profile_signer"])
+    initiator_key = key_pair_from_seed(SYNTHETIC_SEEDS["attestation_initiator"])
+    responder_key = key_pair_from_seed(SYNTHETIC_SEEDS["attestation_responder"])
+    chain_initiator_key = key_pair_from_seed(SYNTHETIC_SEEDS["message_chain_initiator"])
+    chain_responder_key = key_pair_from_seed(SYNTHETIC_SEEDS["message_chain_responder"])
+
+    agent_a = "did:concordia:agent:synthetic-initiator"
+    agent_b = "did:concordia:agent:synthetic-responder"
+    key_by_agent = {agent_a: initiator_key, agent_b: responder_key}
+
+    attestation_one = resign_attestation(base_attestation, key_by_agent)
+    attestation_two = copy.deepcopy(base_attestation)
+    attestation_two["attestation_id"] = "att_conformance_p2a4_0002"
+    attestation_two["session_id"] = "sess_conformance_p2a4_0002"
+    attestation_two["timestamp"] = "2026-05-10T14:35:00Z"
+    attestation_two["outcome"] = {
+        "status": "rejected",
+        "rounds": 2,
+        "duration_seconds": 145,
+        "terms_count": 2,
+        "resolution_mechanism": "direct",
+    }
+    attestation_two["parties"][0]["behavior"]["offers_made"] = 1
+    attestation_two["parties"][0]["behavior"]["concession_magnitude"] = 0.1
+    attestation_two["parties"][1]["behavior"]["offers_made"] = 1
+    attestation_two["parties"][1]["behavior"]["concession_magnitude"] = 0.2
+    attestations = [
+        attestation_one,
+        resign_attestation(attestation_two, key_by_agent),
+    ]
+
+    profile = build_agent_profile_fixture(profile_key)
+    receipt_bundle = build_receipt_bundle_fixture(agent_a, attestations, initiator_key)
+    competence_proof = build_competence_proof_fixture(agent_a, attestations, initiator_key)
+    message_chain = build_message_chain_fixture(chain_initiator_key, chain_responder_key)
+
+    manifest = seed_manifest_for(
+        {
+            "agent_profile_signer": profile_key,
+            "attestation_initiator": initiator_key,
+            "attestation_responder": responder_key,
+            "message_chain_initiator": chain_initiator_key,
+            "message_chain_responder": chain_responder_key,
+        }
+    )
+    manifest["agent_ids"] = {
+        "agent_profile": profile["agent_id"],
+        "receipt_bundle_agent": agent_a,
+        "receipt_bundle_counterparty": agent_b,
+        "message_chain_initiator": "did:concordia:agent:chain-initiator",
+        "message_chain_responder": "did:concordia:agent:chain-responder",
+    }
+    manifest["agent_profile_canonical_fields"] = list(AGENT_PROFILE_CANONICAL_FIELDS)
+    manifest["competence_proof_reveal"] = {
+        "committed_attestation_count": len(attestations),
+        "revealed_attestation_ids": [
+            attestation["attestation_id"]
+            for attestation in competence_proof["revealed_attestations"]
+        ],
+    }
+
+    return SyntheticLongtailFixtures(
+        agent_profile=profile,
+        receipt_bundle=receipt_bundle,
+        competence_proof=competence_proof,
+        message_chain=message_chain,
+        attestations=attestations,
+        seed_manifest=manifest,
+    )
+
+
 def build_synthetic_fixtures() -> SyntheticFixtures:
     attestation, attestation_seed_manifest = build_synthetic_attestation()
     predicates, predicate_seed_manifest = build_synthetic_predicates()
     direct_mandate, delegated_mandate, mandate_seed_manifest = build_synthetic_mandates()
     cosigned_receipt, cosign_seed_manifest = build_synthetic_cosigned_receipt()
     cmpc = build_synthetic_cmpc_fixtures()
+    longtail = build_synthetic_longtail_fixtures(attestation)
     return SyntheticFixtures(
         attestation=attestation,
         attestation_seed_manifest=attestation_seed_manifest,
@@ -2539,6 +3408,7 @@ def build_synthetic_fixtures() -> SyntheticFixtures:
         cosigned_receipt=cosigned_receipt,
         cosign_seed_manifest=cosign_seed_manifest,
         cmpc=cmpc,
+        longtail=longtail,
     )
 
 
@@ -2572,6 +3442,16 @@ def synthetic_fixture_payloads(fixtures: SyntheticFixtures) -> dict[Path, Any]:
     for name, transition in sorted(fixtures.cmpc.transition_vectors.items()):
         payloads[cmpc_root / "state_machine" / f"{name}.json"] = transition
     payloads[cmpc_root / "seed_manifest.json"] = fixtures.cmpc.seed_manifest
+    longtail_root = Path("synthetic/longtail")
+    payloads[longtail_root / "agent_profile.json"] = fixtures.longtail.agent_profile
+    payloads[longtail_root / "receipt_bundle.json"] = fixtures.longtail.receipt_bundle
+    payloads[longtail_root / "competence_proof.json"] = (
+        fixtures.longtail.competence_proof
+    )
+    payloads[longtail_root / "message_chain.json"] = fixtures.longtail.message_chain
+    for index, attestation in enumerate(fixtures.longtail.attestations, start=1):
+        payloads[longtail_root / f"attestation_{index:02d}.json"] = attestation
+    payloads[longtail_root / "seed_manifest.json"] = fixtures.longtail.seed_manifest
     return payloads
 
 
@@ -2608,6 +3488,25 @@ def build_phase2_vectors(fixtures: SyntheticFixtures) -> list[Vector]:
     cmpc_retailer_key = cmpc_key_manifest["cmpc_retailer"]["public_key_b64url"]
     cmpc_wholesaler_key = cmpc_key_manifest["cmpc_wholesaler"]["public_key_b64url"]
     cmpc_authority_key = cmpc_key_manifest["cmpc_authority"]["public_key_b64url"]
+    longtail_key_manifest = fixtures.longtail.seed_manifest[
+        "seeds_PUBLIC_test_only_do_not_reuse"
+    ]
+    profile_preimage = canonical_json(
+        agent_profile_canonical_from_raw(fixtures.longtail.agent_profile) or {}
+    )
+    receipt_bundle_preimage = canonical_json(
+        without_keys(
+            fixtures.longtail.receipt_bundle,
+            {"agent_signature", "concordia_receipt_bundle"},
+        )
+    )
+    competence_proof_preimage = canonical_json(
+        competence_proof_signable(fixtures.longtail.competence_proof)
+    )
+    message_hashes = [
+        compute_hash(message) for message in fixtures.longtail.message_chain["messages"]
+    ]
+    longtail_agent_ids = fixtures.longtail.seed_manifest["agent_ids"]
 
     vectors: list[Vector] = [
         Vector(
@@ -2800,6 +3699,88 @@ def build_phase2_vectors(fixtures: SyntheticFixtures) -> list[Vector]:
                 "canonical_sha256": sha256_jcs(fixtures.cmpc.chain_session),
             },
             canonical_preimage=canonicalize_chain_session(fixtures.cmpc.chain_session),
+        ),
+        Vector(
+            vector_id="pos-synthetic-agent-profile",
+            title="Synthetic AgentProfile verifies its canonical signed form",
+            source_fixture=SYNTHETIC_SOURCE_LONGTAIL,
+            record_type="agent_profile",
+            verification_profile="agent-profile-v1",
+            input_data=fixtures.longtail.agent_profile,
+            context={
+                "canonical_fields": list(AGENT_PROFILE_CANONICAL_FIELDS),
+                "canonical_sha256": "sha256:"
+                + hashlib.sha256(profile_preimage).hexdigest(),
+                "public_key_b64url": longtail_key_manifest["agent_profile_signer"][
+                    "public_key_b64url"
+                ],
+            },
+            notes=(
+                "signed form is exactly AgentCapabilityProfile.to_canonical_dict(); "
+                "signature and verified are excluded"
+            ),
+            canonical_preimage=profile_preimage,
+        ),
+        Vector(
+            vector_id="pos-synthetic-competence-proof",
+            title="Synthetic CompetenceProof verifies signature and one Merkle inclusion proof",
+            source_fixture=SYNTHETIC_SOURCE_LONGTAIL,
+            record_type="competence_proof",
+            verification_profile="competence-proof-v1",
+            input_data=fixtures.longtail.competence_proof,
+            context={
+                "canonical_sha256": "sha256:"
+                + hashlib.sha256(competence_proof_preimage).hexdigest(),
+                "public_key_b64url": longtail_key_manifest["attestation_initiator"][
+                    "public_key_b64url"
+                ],
+            },
+            notes=(
+                "partial reveal: two attestation IDs are committed and one "
+                "revealed attestation carries a Merkle inclusion proof"
+            ),
+            canonical_preimage=competence_proof_preimage,
+        ),
+        Vector(
+            vector_id="pos-synthetic-receipt-bundle",
+            title="Synthetic ReceiptBundle validates schema and verifies agent signature",
+            source_fixture=SYNTHETIC_SOURCE_LONGTAIL,
+            record_type="receipt_bundle",
+            verification_profile="receipt-bundle-v1",
+            input_data=fixtures.longtail.receipt_bundle,
+            context={
+                "canonical_sha256": "sha256:"
+                + hashlib.sha256(receipt_bundle_preimage).hexdigest(),
+                "public_key_b64url": longtail_key_manifest["attestation_initiator"][
+                    "public_key_b64url"
+                ],
+            },
+            canonical_preimage=receipt_bundle_preimage,
+        ),
+        Vector(
+            vector_id="pos-synthetic-message-chain",
+            title="Synthetic three-message chain verifies signatures and prev_hash links",
+            source_fixture=SYNTHETIC_SOURCE_LONGTAIL,
+            record_type="message_chain",
+            verification_profile="message-chain-v1",
+            input_data=fixtures.longtail.message_chain,
+            context={
+                "expected_message_count": 3,
+                "expected_message_hashes": message_hashes,
+                "public_keys_b64url": {
+                    longtail_agent_ids["message_chain_initiator"]: longtail_key_manifest[
+                        "message_chain_initiator"
+                    ]["public_key_b64url"],
+                    longtail_agent_ids["message_chain_responder"]: longtail_key_manifest[
+                        "message_chain_responder"
+                    ]["public_key_b64url"],
+                },
+            },
+            notes=(
+                "chain linkage is checked from GENESIS_HASH before per-message "
+                "signature verification"
+            ),
+            canonical_preimage=canonical_json(fixtures.longtail.message_chain),
         ),
     ]
 
@@ -3220,6 +4201,7 @@ def write_manifest(
         "phase_notes": {
             "mutation": "P2-A2 extends the raw mutation battery to the P2-A1 profiles.",
             "cmpc": "P2-A3 adds CMPC bilateral primitive and chain-session transition profiles.",
+            "longtail": "P2-A4 adds AgentProfile, CompetenceProof, ReceiptBundle, and MessageChain profiles.",
             "canary": "C3 adds the three runner-discrimination canaries.",
             "reference_runner": "C3 adds the clean-room reference runner.",
         },

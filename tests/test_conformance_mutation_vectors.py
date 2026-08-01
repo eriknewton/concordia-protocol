@@ -19,9 +19,9 @@ EXPECTED_REASON_CLASSES = {
 TOLERATED_SIGNATURE_ESCAPE_NOTE = (
     "tolerated-escape: signature block is outside its own preimage"
 )
-EXPECTED_MUTATION_REJECTS = 821
-EXPECTED_MUTATION_ACCEPTS = 35
-EXPECTED_MUTATION_TOTAL = 856
+EXPECTED_MUTATION_REJECTS = 1414
+EXPECTED_MUTATION_ACCEPTS = 42
+EXPECTED_MUTATION_TOTAL = 1456
 EXPECTED_BATTERY_COUNTS = {
     "1404/approval_receipt.json": (63, 62, 1),
     "1404/cascade_decision_deny.json": (35, 35, 0),
@@ -41,6 +41,10 @@ EXPECTED_BATTERY_COUNTS = {
     "synthetic/cmpc_bilateral/primitives/closure_predicate.json": (40, 39, 1),
     "synthetic/cmpc_bilateral/primitives/conditional_commitment.json": (35, 35, 0),
     "synthetic/cmpc_bilateral/primitives/unwind_record.json": (28, 28, 0),
+    "synthetic/longtail/agent_profile.json": (100, 96, 4),
+    "synthetic/longtail/competence_proof.json": (153, 151, 2),
+    "synthetic/longtail/message_chain.json": (99, 99, 0),
+    "synthetic/longtail/receipt_bundle.json": (248, 247, 1),
     "synthetic/mandate/delegated_mandate.json": (82, 82, 0),
     "synthetic/mandate/mandate.json": (51, 51, 0),
     "synthetic/predicate/vector_02.json": (87, 87, 0),
@@ -48,6 +52,10 @@ EXPECTED_BATTERY_COUNTS = {
 EXPECTED_ACCEPTED_IDS = {
     "mut-1404-approval-receipt-0061",
     "mut-1920-fulfillment-attestation-0061",
+    "mut-synthetic-agent-profile-0072",
+    "mut-synthetic-agent-profile-0074",
+    "mut-synthetic-agent-profile-0098",
+    "mut-synthetic-agent-profile-0099",
     "mut-synthetic-attestation-0001",
     "mut-synthetic-attestation-0003",
     "mut-synthetic-attestation-0005",
@@ -81,6 +89,9 @@ EXPECTED_ACCEPTED_IDS = {
     "mut-synthetic-attestation-countersign-0072",
     "mut-synthetic-attestation-countersign-0105",
     "mut-synthetic-cmpc-closure-predicate-0038",
+    "mut-synthetic-competence-proof-0001",
+    "mut-synthetic-competence-proof-0002",
+    "mut-synthetic-receipt-bundle-0001",
 }
 
 
