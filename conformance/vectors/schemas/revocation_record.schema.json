@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:concordia:schema:revocation_record:v0.7",
+  "title": "Concordia RevocationRecord",
+  "description": "Signed artifact-side revocation primitive for cross-mandate promise-chain verification.",
+  "type": "object",
+  "required": [
+    "revocation_id",
+    "revoked_artifact_id",
+    "revoked_artifact_type",
+    "revocation_scope",
+    "issuer_did",
+    "issued_at",
+    "effective_at",
+    "reason",
+    "references",
+    "cascade_depth",
+    "signature"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "revocation_id": {
+      "type": "string",
+      "pattern": "^urn:concordia:revocation:"
+    },
+    "revoked_artifact_id": {
+      "type": "string",
+      "pattern": "^urn:(concordia|a2cn|ap2|x402|erc8004):"
+    },
+    "revoked_artifact_type": {
+      "type": "string",
+      "enum": [
+        "mandate",
+        "commitment",
+        "approval_receipt",
+        "predicate",
+        "attestation",
+        "chain_session"
+      ]
+    },
+    "revocation_scope": {
+      "type": "string",
+      "enum": ["single_artifact", "cascade_to_dependents"]
+    },
+    "issuer_did": {
+      "type": "string",
+      "pattern": "^did:"
+    },
+    "issued_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "effective_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "references": {
+      "type": "array",
+      "minItems": 1,
+      "contains": {
+        "type": "object",
+        "required": ["relationship"],
+        "properties": {
+          "relationship": { "const": "revokes" }
+        }
+      },
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "relationship"],
+        "additionalProperties": true,
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "type": { "type": "string", "minLength": 1 },
+          "relationship": { "type": "string", "minLength": 1 },
+          "version": { "type": "string" },
+          "signed_at": { "type": "string", "format": "date-time" },
+          "signer_did": { "type": "string" },
+          "extensions": { "type": "object" }
+        }
+      }
+    },
+    "cascade_depth": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 8,
+      "default": 3
+    },
+    "signature": {
+      "type": "object",
+      "required": ["alg", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "alg": { "type": "string", "const": "EdDSA" },
+        "value": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "supersedes": {
+      "type": "string",
+      "pattern": "^urn:concordia:revocation:"
+    },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

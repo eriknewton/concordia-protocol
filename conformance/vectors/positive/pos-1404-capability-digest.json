@@ -1,0 +1,28 @@
+{
+  "context": {
+    "checks": [
+      {
+        "expected": "sha256:dddfb8f55c9ff12ccd3ff0a5b065956b3a508b4be38eee74ad90c91c74aca932",
+        "kind": "jcs-sha256",
+        "source": "input"
+      }
+    ]
+  },
+  "expected": "accept",
+  "expected_reason_class": null,
+  "id": "pos-1404-capability-digest",
+  "input": {
+    "action": "procurement.purchase_order",
+    "constraints": {
+      "currency": "USD",
+      "max_total": "200000.00"
+    },
+    "granted_to": "did:web:buyer-agent.example"
+  },
+  "notes": "",
+  "record_type": "approval_receipt",
+  "schema_version": "concordia-conformance-vector/v1-draft",
+  "source_fixture": "a2a-1404-receipt-revocation-vector",
+  "title": "A2A 1404 capability_digest recomputes from capability JSON",
+  "verification_profile": "offer-binding-v1"
+}
