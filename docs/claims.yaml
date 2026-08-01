@@ -1,0 +1,21 @@
+claims:
+  - id: implementable-from-spec-alone
+    claim: "An LLM agent should be able to implement Concordia from reading this specification alone, with no external documentation."
+    stated_in: SPEC.md
+    check: scripts/claims/no_external_normative_deps.py
+  - id: canonical-json-is-rfc-8785
+    claim: 'Wherever this specification says "canonical JSON", "canonicalized JSON", or "JCS", it means the JSON Canonicalization Scheme defined in [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785).'
+    stated_in: SPEC.md
+    check: scripts/claims/rfc_sections_cited.py
+  - id: offline-no-issuer-callback
+    claim: "No network, no regeneration, no issuer callback:"
+    stated_in: README.md
+    check: scripts/claims/offline_resolution.py
+  - id: verification-without-our-code
+    claim: "What the vectors do establish is that the parts they cover are checkable without our code and without asking us."
+    stated_in: README.md
+    check: ci-job:clean-room-verify
+  - id: fixture-digests-recomputed
+    claim: "Every digest a fixture publishes is recomputed from the fixture bytes by that fixture's `verify.py` and compared, and the digests used for signature and revocation checks are additionally cross-checked against the independent `rfc8785` reference library in CI (`tests/test_interop_fixtures.py`)."
+    stated_in: docs/interop/README.md
+    check: scripts/claims/fixture_verifiers_recompute.py
