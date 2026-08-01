@@ -37,6 +37,7 @@ Regression = Literal[
     "preimage-includes-signature",
     "schema-skipped",
     "decision-id-not-recomputed",
+    "skip-linkage-walk",
 ]
 
 VECTOR_SCHEMA_VERSION = "concordia-conformance-vector/v1-draft"
@@ -1240,7 +1241,11 @@ def message_hash(message: Json) -> str:
     return "sha256:" + hashlib.sha256(jcs_bytes(message)).hexdigest()
 
 
-def verify_message_chain(input_data: Json, context: dict[str, Json]) -> None:
+def verify_message_chain(
+    input_data: Json,
+    context: dict[str, Json],
+    regression: Regression | None,
+) -> None:
     chain = require_object(input_data, "message chain")
     if set(chain) != {"messages"}:
         raise Reject("message chain input must only contain messages")
@@ -1252,11 +1257,12 @@ def verify_message_chain(input_data: Json, context: dict[str, Json]) -> None:
         raise Reject("message chain count mismatch")
     for item in messages:
         require_object(item, "message chain message")
-    if messages[0].get("prev_hash") != GENESIS_HASH:
-        raise Reject("message chain first prev_hash is not genesis")
-    for index in range(1, len(messages)):
-        if messages[index].get("prev_hash") != message_hash(messages[index - 1]):
-            raise Reject("message chain prev_hash mismatch")
+    if regression != "skip-linkage-walk":
+        if messages[0].get("prev_hash") != GENESIS_HASH:
+            raise Reject("message chain first prev_hash is not genesis")
+        for index in range(1, len(messages)):
+            if messages[index].get("prev_hash") != message_hash(messages[index - 1]):
+                raise Reject("message chain prev_hash mismatch")
     public_keys = context.get("public_keys_b64url")
     if not isinstance(public_keys, dict):
         raise Reject("message chain public key map is missing")
@@ -1343,7 +1349,7 @@ def verify_profile(
     elif profile == "receipt-bundle-v1":
         verify_receipt_bundle(suite_base, input_data, context)
     elif profile == "message-chain-v1":
-        verify_message_chain(input_data, context)
+        verify_message_chain(input_data, context, regression)
     else:
         raise Reject("unknown verification profile")
 
@@ -1394,6 +1400,7 @@ def active_regression() -> Regression | None:
         "preimage-includes-signature",
         "schema-skipped",
         "decision-id-not-recomputed",
+        "skip-linkage-walk",
     }
     if raw not in allowed:
         raise SystemExit(f"unknown RUNNER_REGRESS value: {raw}")

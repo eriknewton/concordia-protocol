@@ -848,6 +848,22 @@ Checks, in order:
    `MessageHash(message)` for every message and require exact array equality.
 8. Accept only if all checks pass.
 
+#### Chain position
+
+The chain-position vectors exercise whole-chain attacks over a four-message
+synthetic chain. A conforming runner walks messages in array order: it first
+requires the first `prev_hash` to equal `GENESIS_HASH`, then requires every
+later `prev_hash` to equal `MessageHash(previous_message)`, and only then
+verifies each message signature. Deletion, reorder, and genesis-substitution
+attacks reject with reason class `binding` when this linkage walk fails.
+
+The current profile does not intrinsically commit to the complete message set.
+It enforces completeness only when `context.expected_message_count` or
+`context.expected_message_hashes` is supplied. Therefore the re-signed deletion
+splice vector is a tolerated accept: the remaining messages form a
+self-consistent signed chain, but the deleted message is not recoverable from
+per-message signatures alone.
+
 ## Decisions
 
 ### D1: Normativize Raw Verification
@@ -916,6 +932,10 @@ Phase 2 A4 adds the remaining signed long-tail profiles: AgentProfile,
 CompetenceProof, ReceiptBundle, and the session MessageChain. The MessageChain
 profile uses a three-message synthetic chain and checks `prev_hash` linkage from
 `GENESIS_HASH` before verifying each message signature.
+
+Phase 2 B adds a four-message MessageChain position class that covers deletion
+splice, deletion splice plus downstream re-signing, reorder, genesis
+substitution, and the `canary-chain-splice` runner-discrimination vector.
 
 The Verascore publish envelope is out of scope because it is a vendor adapter
 surface, not a Concordia conformance profile. A2CN adapter messages are also

@@ -19,9 +19,9 @@ EXPECTED_REASON_CLASSES = {
 TOLERATED_SIGNATURE_ESCAPE_NOTE = (
     "tolerated-escape: signature block is outside its own preimage"
 )
-EXPECTED_MUTATION_REJECTS = 1414
-EXPECTED_MUTATION_ACCEPTS = 42
-EXPECTED_MUTATION_TOTAL = 1456
+EXPECTED_MUTATION_REJECTS = 1417
+EXPECTED_MUTATION_ACCEPTS = 43
+EXPECTED_MUTATION_TOTAL = 1460
 EXPECTED_BATTERY_COUNTS = {
     "1404/approval_receipt.json": (63, 62, 1),
     "1404/cascade_decision_deny.json": (35, 35, 0),
@@ -44,6 +44,7 @@ EXPECTED_BATTERY_COUNTS = {
     "synthetic/longtail/agent_profile.json": (100, 96, 4),
     "synthetic/longtail/competence_proof.json": (153, 151, 2),
     "synthetic/longtail/message_chain.json": (99, 99, 0),
+    "synthetic/longtail/message_chain_position.json": (4, 3, 1),
     "synthetic/longtail/receipt_bundle.json": (248, 247, 1),
     "synthetic/mandate/delegated_mandate.json": (82, 82, 0),
     "synthetic/mandate/mandate.json": (51, 51, 0),
@@ -91,6 +92,7 @@ EXPECTED_ACCEPTED_IDS = {
     "mut-synthetic-cmpc-closure-predicate-0038",
     "mut-synthetic-competence-proof-0001",
     "mut-synthetic-competence-proof-0002",
+    "mut-synthetic-message-chain-position-0002",
     "mut-synthetic-receipt-bundle-0001",
 }
 
