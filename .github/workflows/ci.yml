@@ -94,6 +94,9 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
+      - name: Check generated conformance document
+        run: python scripts/claims/generate_conformance.py --check
+
       - name: Run executable claims gate
         run: python scripts/claims/run.py
 

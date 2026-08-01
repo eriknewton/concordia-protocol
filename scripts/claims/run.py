@@ -38,6 +38,8 @@ from typing import Callable, Iterable
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_PATH = REPO_ROOT / "docs" / "claims.yaml"
 CI_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+GENERATED_CONFORMANCE_RELATIVE = "docs/CONFORMANCE.md"
+GENERATED_CONFORMANCE_CHECK = "scripts/claims/generate_conformance.py"
 REQUIRED_KEYS = {"id", "claim", "stated_in", "check"}
 CHECK_TIMEOUT_SECONDS = 120
 CLAIM_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
@@ -299,6 +301,14 @@ def public_doc_paths() -> list[Path]:
         for path in docs_root.rglob("*.md"):
             relative = path.relative_to(REPO_ROOT)
             if not is_internal_doc_path(relative):
+                # docs/CONFORMANCE.md is generated from docs/claims.yaml and is
+                # checked byte-identical before this scanner runs. That
+                # regeneration check is the strictly stronger guarantee here:
+                # this one path can contain only manifest-emitted claims, while
+                # marker and unmarked-prose scanning would duplicate the source
+                # claim checks and create duplicate ids.
+                if relative.as_posix() == GENERATED_CONFORMANCE_RELATIVE:
+                    continue
                 paths.add(path)
     except Exception as exc:
         raise ManifestError(f"cannot enumerate public docs under docs/: {exc}") from exc
@@ -406,6 +416,11 @@ def post_baseline_doc_paths() -> set[Path]:
         relative_text = relative.as_posix()
         if is_internal_doc_path(relative):
             continue
+        # See the matching exemption in public_doc_paths(). This exemption must
+        # stay paired with validate_generated_conformance(), which runs before
+        # scanner exemptions are applied.
+        if relative_text == GENERATED_CONFORMANCE_RELATIVE:
+            continue
         if relative_text not in BASELINE_DOC_MARKDOWN_PATHS:
             paths.add(path)
     return paths
@@ -418,6 +433,8 @@ def unmarked_claim_candidate_paths(
     paths: set[Path] = set()
     for claim in claims:
         if claim.stated_in == "SPEC.md":
+            continue
+        if claim.stated_in == GENERATED_CONFORMANCE_RELATIVE:
             continue
         path = REPO_ROOT / claim.stated_in
         if path.suffix == ".md":
@@ -758,6 +775,21 @@ def evaluate_claim(claim: Claim, jobs: set[str]) -> ClaimResult:
     return run_script_check(claim)
 
 
+def validate_generated_conformance() -> bool:
+    completed = subprocess.run(
+        [sys.executable, GENERATED_CONFORMANCE_CHECK, "--check"],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.stdout:
+        print(completed.stdout.rstrip())
+    if completed.stderr:
+        print(completed.stderr.rstrip(), file=sys.stderr)
+    return completed.returncode == 0
+
+
 def print_result(result: ClaimResult) -> None:
     status = "OK" if result.ok else "FAIL"
     print(f"[{status}] {result.claim_id}: {result.message}")
@@ -772,6 +804,10 @@ def main() -> int:
         jobs = ci_job_names(CI_PATH)
     except ManifestError as exc:
         print(f"[FAIL] {exc}", file=sys.stderr)
+        return 1
+
+    if not validate_generated_conformance():
+        print("[FAIL] executable claims gate failed", file=sys.stderr)
         return 1
 
     marker_errors = validate_claim_markers(claims)
