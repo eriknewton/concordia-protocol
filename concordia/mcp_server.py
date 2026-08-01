@@ -1600,7 +1600,9 @@ _registry = AgentRegistry()
         "Register an agent in the Concordia Discovery Registry. "
         "Advertises that this agent speaks Concordia and specifies "
         "its capabilities: supported roles, categories, and resolution "
-        "mechanisms. Grants the 'Concordia Preferred' badge."
+        "mechanisms. Grants the 'Concordia Preferred' badge and issues "
+        "the agent-scoped auth_token required by receipt-bundle tools "
+        "such as concordia_create_receipt_bundle."
     ),
 )
 def tool_register_agent(
@@ -2862,8 +2864,11 @@ _bundle_store = BundleStore()
     name="concordia_create_receipt_bundle",
     description=(
         "Create a portable receipt bundle from completed session attestations. "
-        "The bundle is signed by the agent and can be shared with counterparties "
-        "as proof of negotiation history. Counterparties verify it offline."
+        "First call concordia_register_agent and pass its auth_token here. "
+        "Only attestations already submitted with concordia_ingest_attestation "
+        "can be bundled. The response adds a top-level message outside the "
+        "signed bundle; concordia_verify_receipt_bundle accepts this exact "
+        "response shape and unwraps message before signature checking."
     ),
 )
 def tool_create_receipt_bundle(
@@ -2933,6 +2938,22 @@ def tool_create_receipt_bundle(
     return json.dumps(result, indent=2, default=str)
 
 
+def _unwrap_receipt_bundle_response(bundle: dict[str, Any]) -> dict[str, Any]:
+    """Accept create_receipt_bundle's response envelope as verifier input."""
+    required = {
+        "concordia_receipt_bundle",
+        "bundle_id",
+        "agent_id",
+        "created_at",
+        "attestations",
+        "summary",
+        "agent_signature",
+    }
+    if "message" not in bundle or not required.issubset(bundle):
+        return bundle
+    return {k: v for k, v in bundle.items() if k != "message"}
+
+
 def _find_agent_key_pair(agent_id: str) -> KeyPair | None:
     """Find an agent's key pair from any session context."""
     for ctx in _store._sessions.values():
@@ -2950,9 +2971,12 @@ def _find_agent_key_pair(agent_id: str) -> KeyPair | None:
 @mcp.tool(
     name="concordia_verify_receipt_bundle",
     description=(
-        "Verify a receipt bundle received from a counterparty. Checks the "
-        "bundle signature, each attestation's party signatures, summary accuracy, "
-        "deduplication, and Sybil screening. Works offline — no reputation service needed."
+        "Verify a receipt bundle received from a counterparty. You may pass "
+        "the exact dict returned by concordia_create_receipt_bundle; its "
+        "top-level message field is response text outside the signed bundle "
+        "and is unwrapped before signature checking. Checks the bundle "
+        "signature, each attestation's party signatures, summary accuracy, "
+        "deduplication, and Sybil screening. No reputation service is needed."
     ),
 )
 def tool_verify_receipt_bundle(
@@ -2960,6 +2984,8 @@ def tool_verify_receipt_bundle(
     max_age_hours: Annotated[float, "Maximum bundle age in hours before flagging as stale (default: 720 = 30 days)"] = 720,
 ) -> str:
     """Verify a received receipt bundle."""
+    bundle_to_verify = _unwrap_receipt_bundle_response(bundle)
+
     # Build a resolver that looks up keys from session contexts first
     # (per-attestation), then falls back to the global key registry
     def resolve_key(aid: str) -> Ed25519PublicKey | None:
@@ -3112,8 +3138,8 @@ def tool_verify_receipt_bundle(
             unverified_counterparties=sorted(unverified_cp),
         )
 
-    result = _verify_with_sessions(bundle)
-    is_fresh, freshness_msg = check_freshness(bundle, max_age_hours)
+    result = _verify_with_sessions(bundle_to_verify)
+    is_fresh, freshness_msg = check_freshness(bundle_to_verify, max_age_hours)
 
     if not is_fresh:
         result.warnings.append(freshness_msg)
@@ -3129,10 +3155,10 @@ def tool_verify_receipt_bundle(
         # the bundle's self-asserted summary.unique_counterparties.
         "verified_counterparties": result.verified_counterparties,
         "unverified_counterparties": result.unverified_counterparties,
-        "claimed_counterparties": bundle.get("summary", {}).get("unique_counterparties", 0),
+        "claimed_counterparties": bundle_to_verify.get("summary", {}).get("unique_counterparties", 0),
         "freshness": {"fresh": is_fresh, "message": freshness_msg},
-        "attestation_count": len(bundle.get("attestations", [])),
-        "agent_id": bundle.get("agent_id", ""),
+        "attestation_count": len(bundle_to_verify.get("attestations", [])),
+        "agent_id": bundle_to_verify.get("agent_id", ""),
     }, indent=2, default=str)
 
 
@@ -3499,11 +3525,32 @@ def _missing_required_parameters_message(tool_name: str, missing: list[str]) -> 
         "concordia_session_receipt_envelope",
         "concordia_reputation_report",
     } and any(name.startswith("provider_") for name in missing):
-        suffix = " No default reputation provider is used."
+        suffix = (
+            " No default reputation provider is used because Concordia is "
+            "provider-neutral and must not choose one for you. "
+            f"Correct call: {_provider_correct_call(tool_name)}"
+        )
     return (
         f"Missing required parameter{plural} for '{tool_name}': {names}. "
         f"Provide the missing parameter{plural} explicitly.{suffix}"
     )
+
+
+def _provider_correct_call(tool_name: str) -> str:
+    """Return a one-line provider-argument example for missing-provider errors."""
+    if tool_name == "concordia_session_receipt_envelope":
+        return (
+            "concordia_session_receipt_envelope(session_id='...', "
+            "auth_token='...', provider_did='did:web:provider.example', "
+            "provider_kid='key-1')"
+        )
+    if tool_name == "concordia_reputation_report":
+        return (
+            "concordia_reputation_report(session_id='...', agent_id='...', "
+            "auth_token='...', provider_endpoint='https://provider.example', "
+            "provider_did='did:web:provider.example')"
+        )
+    return f"{tool_name}(provider_...='...')"
 
 
 def _missing_required_parameters(handler: Any, arguments: dict[str, Any]) -> list[str]:

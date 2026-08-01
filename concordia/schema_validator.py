@@ -183,6 +183,11 @@ def validate_message(message: dict[str, Any]) -> list[str]:
 def validate_attestation(attestation: dict[str, Any]) -> list[str]:
     """Validate an attestation against attestation.schema.json.
 
+    This is schema validation only. Use
+    ``concordia.attestation.verify_attestation`` when a verifier also needs
+    to check each party's Ed25519 signature over its own signature-stripped
+    party record.
+
     Returns a list of validation error messages (empty if valid).
     """
     schema = _load_schema("attestation.schema.json")
@@ -326,7 +331,12 @@ def is_valid_message(message: dict[str, Any]) -> bool:
 
 
 def is_valid_attestation(attestation: dict[str, Any]) -> bool:
-    """Return True if the attestation passes schema validation."""
+    """Return True if the attestation passes schema validation.
+
+    This does not verify party signatures. Use
+    ``concordia.attestation.verify_attestation`` for schema plus signature
+    verification.
+    """
     return len(validate_attestation(attestation)) == 0
 
 

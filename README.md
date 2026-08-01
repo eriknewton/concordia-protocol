@@ -217,6 +217,26 @@ att = generate_attestation(session, {"seller": seller.key_pair, "buyer": buyer.k
 print(att["outcome"]["status"])  # "agreed"
 ```
 
+## Verify what you produced, without us
+
+When you share a signed object, include verification material with it:
+
+```python
+from concordia import KeyPair, public_key_from_b64url, sign_message, verify_signature
+
+producer = KeyPair.generate()
+record = {"type": "example.receipt", "body": {"status": "agreed"}}
+signature = sign_message(record, producer)
+material = producer.verification_material()
+
+verifier_key = public_key_from_b64url(material["public_key_b64url"])
+assert verify_signature(record, signature, verifier_key)
+tampered = {**record, "body": {"status": "rejected"}}
+assert not verify_signature(tampered, signature, verifier_key)
+```
+
+For a no-SDK path, see [`conformance/RUNNER_CONTRACT.md`](conformance/RUNNER_CONTRACT.md). It defines the canonical bytes and verifier behavior for conformance runners.
+
 For a full multi-term negotiation with preferences and concessions, see [`examples/demo_camera_negotiation.py`](examples/demo_camera_negotiation.py).
 
 ---
@@ -403,7 +423,7 @@ Apache License 2.0. Use it, build on it, extend it.
 
 ## Why "Concordia"?
 
-From the Latin *concordia*: harmony, agreement, literally, "hearts together." The Roman goddess of understanding between parties. Because negotiation, done well, is not a contest. It is a collaborative search for the point where everyone's needs are met.
+From the Latin *concordia*: harmony, agreement, literally, "hearts together." The Roman goddess of understanding between parties. The name fits a protocol for collaborative negotiation: parties search for terms each side can accept.
 
 ---
 

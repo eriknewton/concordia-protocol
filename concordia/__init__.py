@@ -12,11 +12,14 @@ from .agent import Agent
 from .approval_receipt import ApprovalReceiptResult, verify_approval_receipt
 from .attestation import (
     ATTESTATION_VERSION,
+    AttestationVerifyResult,
     countersign_attestation,
     generate_attestation,
     is_valid_now,
+    verify_attestation,
     verify_attestation_countersignature,
 )
+from .canonicalization import canonicalize_jcs
 from .ctef import predicate_to_ctef_claim
 from .discovery import Have, Match, Want, find_matches
 from .envelope import build_trust_evidence_envelope, verify_envelope_signature
@@ -66,7 +69,13 @@ from .session import (
     Session,
     SessionBindingError,
 )
-from .signing import ES256KeyPair, KeyPair, sign_message, verify_signature
+from .signing import (
+    ES256KeyPair,
+    KeyPair,
+    public_key_from_b64url,
+    sign_message,
+    verify_signature,
+)
 from .types import (
     AgentIdentity,
     BehaviorRecord,
@@ -128,12 +137,16 @@ __all__ = [
     "ES256KeyPair",
     "sign_message",
     "verify_signature",
+    "public_key_from_b64url",
+    "canonicalize_jcs",
     # Envelope
     "build_trust_evidence_envelope",
     "verify_envelope_signature",
     # Attestation
     "ATTESTATION_VERSION",
+    "AttestationVerifyResult",
     "generate_attestation",
+    "verify_attestation",
     "countersign_attestation",
     "verify_attestation_countersignature",
     "is_valid_now",

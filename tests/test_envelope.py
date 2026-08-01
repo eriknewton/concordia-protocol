@@ -4,23 +4,21 @@ from __future__ import annotations
 
 import json
 import warnings
-from typing import Any
 
 import pytest
 
 from concordia import (
     Agent,
     BasicOffer,
-    KeyPair,
     ES256KeyPair,
-    generate_attestation,
+    KeyPair,
     build_trust_evidence_envelope,
+    generate_attestation,
     verify_envelope_signature,
 )
-from concordia.envelope import ENVELOPE_VERSION, _OUTCOME_MAP
+from concordia.envelope import ENVELOPE_VERSION
 from concordia.mcp_server import handle_tool_call
 from concordia.types import ResolutionMechanism, SessionState
-
 
 EXAMPLE_PROVIDER_DID = "did:web:example-scores.test"
 EXAMPLE_PROVIDER_KID = "example-scoring-key-2026"
@@ -571,6 +569,11 @@ class TestMcpEnvelopeTool:
         assert "Missing required parameter" in result["error"]
         assert "provider_did" in result["error"]
         assert "No default reputation provider is used" in result["error"]
+        assert "provider-neutral" in result["error"]
+        assert (
+            "Correct call: concordia_session_receipt_envelope("
+            in result["error"]
+        )
         assert "verascore.ai" not in result["error"].lower()
 
     def test_requires_provider_kid_via_tool(self, make_agent):
@@ -588,6 +591,11 @@ class TestMcpEnvelopeTool:
         assert "Missing required parameter" in result["error"]
         assert "provider_kid" in result["error"]
         assert "No default reputation provider is used" in result["error"]
+        assert "provider-neutral" in result["error"]
+        assert (
+            "Correct call: concordia_session_receipt_envelope("
+            in result["error"]
+        )
         assert "verascore.ai" not in result["error"].lower()
 
     def test_fictional_provider_wires_through_via_tool(self, make_agent):
