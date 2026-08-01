@@ -1,16 +1,23 @@
 {
   "check_command": "python3 scripts/conformance/generate_vectors.py --check",
   "counts": {
-    "canary": 0,
-    "diag_canonical_bytes": 229,
+    "canary": 3,
+    "diag_canonical_bytes": 232,
     "fixtures": 11,
     "mutation": 222,
     "positive": 11,
     "schemas": 4
   },
   "files": {
-    "canary": [],
+    "canary": [
+      "conformance/vectors/canary/canary-decision-id-not-recomputed.json",
+      "conformance/vectors/canary/canary-preimage-includes-signature.json",
+      "conformance/vectors/canary/canary-schema-skipped.json"
+    ],
     "diag_canonical_bytes": [
+      "conformance/diag/canonical-bytes/canary-decision-id-not-recomputed.jcs",
+      "conformance/diag/canonical-bytes/canary-preimage-includes-signature.jcs",
+      "conformance/diag/canonical-bytes/canary-schema-skipped.jcs",
       "conformance/diag/canonical-bytes/mut-1404-approval-receipt-0001.jcs",
       "conformance/diag/canonical-bytes/mut-1404-approval-receipt-0002.jcs",
       "conformance/diag/canonical-bytes/mut-1404-approval-receipt-0003.jcs",

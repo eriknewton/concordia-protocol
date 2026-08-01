@@ -5,15 +5,22 @@ conforming runner implements. A runner needs an RFC 8785 JSON Canonicalization
 Scheme implementation, SHA-256, Ed25519, and a JSON-Schema draft 2020-12
 validator. It does not need the Concordia SDK.
 
+<!-- claim:conformance-vectors-verify-without-our-sdk -->
+The Phase 1 conformance vectors verify without the Concordia SDK: the reference
+runner installs only RFC 8785, PyNaCl, JSON Schema, and the Python standard
+library, then executes the public vector manifest.
+<!-- /claim -->
+
 ## Suite Layout
 
 The generated suite lives under `conformance/vectors/`.
 
 - `manifest.json` indexes every generated vector and pins the expected counts.
-- `fixtures/` contains byte-for-byte copies of the source JSON fixtures.
+- `fixtures/` contains verbatim copies of the source JSON fixtures.
 - `schemas/` contains frozen schema inputs for the four signed artifact types.
 - `positive/` contains vectors that a conforming runner must accept.
-- `mutation/` and `canary/` are reserved for later phases.
+- `mutation/` contains the converted mutation battery.
+- `canary/` contains runner-discrimination vectors.
 
 Diagnostic bytes live outside the vector tree under `conformance/diag/`.
 Conformance runs MUST NOT read `conformance/diag/`. The diagnostic files exist
@@ -309,8 +316,8 @@ Phase 1 covers four signed artifact types:
 The positive C1 vectors also include the unsigned #1404 decision object because
 it is the digest source for the approval receipt evidence. Phase 1 does not
 cover the other signed artifact shapes in the SDK, bare-string signature
-envelopes, chain-position vectors, schema tightening, or a reference runner.
+envelopes, chain-position vectors, or schema tightening.
 
-The next phases owe the 222 mutation vectors, three canary vectors, a clean-room
-reference runner, and CI integration. Until those land, this contract defines
-the runner interface and the positive-vector surface only.
+The generated suite contains 11 positive vectors, 222 mutation vectors, and
+three canary vectors. The clean-room reference runner is the executable form of
+this contract.

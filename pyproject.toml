@@ -44,6 +44,7 @@ dev = [
     "mypy>=1.8",
     "pytest>=8.0",
     "pytest-cov>=4.0",
+    "pynacl>=1.5",
     "rfc8785>=0.1.4",
     "ruff>=0.6",
     # Type stubs for the `jsonschema` runtime dependency so `mypy concordia`

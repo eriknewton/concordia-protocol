@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Run the executable claims gate.
 
-Claim markers are scanned only in public Markdown documents: ``SPEC.md``,
-``README.md``, and ``docs/**/*.md``. ``Review/`` and internal documentation
-directories are intentionally out of scope for this public-claims chokepoint.
+Claim markers are scanned in public Markdown documents: ``SPEC.md``,
+``README.md``, ``docs/**/*.md``, and Markdown files named by the claims
+manifest. ``Review/`` and internal documentation directories are intentionally
+out of scope for this public-claims chokepoint.
 
 Unmarked-claim detection is intentionally narrower than marker scanning because
 this gate blocks merges and false positives are expensive. It scans prose only
@@ -312,6 +313,20 @@ def public_doc_paths() -> list[Path]:
                 paths.add(path)
     except Exception as exc:
         raise ManifestError(f"cannot enumerate public docs under docs/: {exc}") from exc
+    return sorted(paths, key=repo_relative)
+
+
+def claim_marker_paths(claims: Iterable[Claim]) -> list[Path]:
+    paths = set(public_doc_paths())
+    for claim in claims:
+        path = REPO_ROOT / claim.stated_in
+        try:
+            resolved = path.resolve()
+            resolved.relative_to(REPO_ROOT)
+        except Exception:
+            continue
+        if path.suffix == ".md" and not is_internal_doc_path(path.relative_to(REPO_ROOT)):
+            paths.add(path)
     return sorted(paths, key=repo_relative)
 
 
@@ -631,7 +646,7 @@ def validate_claim_markers(claims: list[Claim]) -> list[str]:
     markers_by_id: dict[str, list[ClaimMarker]] = {}
     errors: list[str] = []
 
-    for path in public_doc_paths():
+    for path in claim_marker_paths(claims):
         markers, marker_errors = parse_claim_markers(path)
         errors.extend(marker_errors)
         for marker in markers:

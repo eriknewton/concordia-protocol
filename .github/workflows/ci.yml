@@ -81,6 +81,22 @@ jobs:
       - name: Verify interop fixtures without Concordia
         run: python scripts/claims/clean_room_verify.py docs/interop/
 
+  conformance-clean-room:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6.0.2 (resolved 2026-05-18)
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0 (resolved 2026-05-18)
+        with:
+          python-version: "3.12"
+
+      - name: Install conformance runner dependencies
+        run: pip install rfc8785 pynacl jsonschema
+
+      - name: Verify conformance vectors without Concordia
+        run: python conformance/reference-runner/runner.py conformance/vectors/
+
   executable-claims:
     runs-on: ubuntu-latest
     steps:
