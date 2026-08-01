@@ -12,13 +12,16 @@ import json
 import shutil
 import sys
 import tempfile
+import warnings
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, TypeAlias
 
-from jsonschema import Draft202012Validator
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", DeprecationWarning)
+    from jsonschema import Draft202012Validator, RefResolver
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -29,7 +32,15 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (  # noqa: E402
     Ed25519PublicKey,
 )
 
-from concordia.canonicalization import canonicalize_jcs  # noqa: E402
+from concordia.attestation import (  # noqa: E402
+    countersign_attestation,
+    verify_attestation,
+    verify_attestation_countersignature,
+)
+from concordia.canonicalization import (
+    canonicalize_jcs,  # noqa: E402
+    canonicalize_mandate,  # noqa: E402
+)
 from concordia.cmpc.canonical import (  # noqa: E402
     canonicalize_cascade_decision_record,
 )
@@ -38,13 +49,42 @@ from concordia.cmpc.schemas import (  # noqa: E402
     REVOCATION_RECORD_SCHEMA,
     validate_cascade_decision_record,
 )
+from concordia.cosign import (  # noqa: E402
+    build_cosigned_receipt,
+    canonical_cosign_bytes,
+    did_key_for,
+    ed25519_did_key,
+    keypair_signer,
+    public_key_bytes_from_did_key,
+)
+from concordia.mandate import (  # noqa: E402
+    sign_delegation,
+    sign_mandate,
+    verify_delegation_chain,
+    verify_mandate,
+)
+from concordia.models.mandate import (  # noqa: E402
+    MANDATE_JSON_SCHEMA,
+    DelegationLink,
+    Mandate,
+    TemporalMode,
+    ValidityWindow,
+)
+from concordia.predicate import sign_predicate, verify_predicate  # noqa: E402
 from concordia.schema_validator import (  # noqa: E402
     _RAW_TERM_PATTERNS,
     validate_approval_receipt,
 )
-from concordia.signing import canonical_json  # noqa: E402
+from concordia.signing import KeyPair, canonical_json, sign_message  # noqa: E402
 
-ReasonClass: TypeAlias = Literal["schema", "signature", "digest", "binding", "temporal"]
+ReasonClass: TypeAlias = Literal[
+    "schema",
+    "signature",
+    "digest",
+    "binding",
+    "temporal",
+    "privacy",
+]
 ExpectedOutcome: TypeAlias = Literal["accept", "reject"]
 MutationKind: TypeAlias = Literal["value", "drop", "inject"]
 MutationKey: TypeAlias = tuple[str, MutationKind]
@@ -60,10 +100,13 @@ FIXED_NOW = datetime(2026, 5, 10, 14, 25, 0, tzinfo=timezone.utc)
 
 SCHEMA_COPIES = {
     "approval_receipt.schema.json": REPO_ROOT / "schemas" / "approval_receipt.schema.json",
+    "attestation.schema.json": REPO_ROOT / "schemas" / "attestation.schema.json",
     "revocation_record.schema.json": REPO_ROOT / "schemas" / "revocation_record.schema.json",
     "fulfillment_attestation.schema.json": REPO_ROOT
     / "schemas"
     / "fulfillment_attestation.schema.json",
+    "predicate.json": REPO_ROOT / "schemas" / "predicate.json",
+    "reference.schema.json": REPO_ROOT / "schemas" / "reference.schema.json",
 }
 
 FIXTURE_DIRS = (INTEROP_1404, INTEROP_1920)
@@ -74,6 +117,12 @@ PROFILES = (
     "revocation-v1",
     "cascade-decision-v1",
     "fulfillment-attestation-v1",
+    "attestation-v1",
+    "attestation-countersign-v1",
+    "predicate-v1",
+    "mandate-v1",
+    "delegation-chain-v1",
+    "cosign-v1",
 )
 RECORD_TYPES = (
     "decision_object",
@@ -81,7 +130,26 @@ RECORD_TYPES = (
     "revocation_record",
     "cascade_decision_record",
     "fulfillment_attestation",
+    "attestation",
+    "predicate",
+    "mandate",
+    "cosign_receipt",
 )
+
+SYNTHETIC_FIXTURE_ROOT = "synthetic"
+SYNTHETIC_SOURCE_ATTESTATION = "synthetic/attestation"
+SYNTHETIC_SOURCE_PREDICATE = "synthetic/predicate"
+SYNTHETIC_SOURCE_MANDATE = "synthetic/mandate"
+SYNTHETIC_SOURCE_COSIGN = "synthetic/cosign"
+SYNTHETIC_SEEDS = {
+    "attestation_initiator": "conformance_attest_initiator_001",
+    "attestation_responder": "conformance_attest_responder_001",
+    "predicate_issuer": "conformance_pred_issuer_00000001",
+    "mandate_issuer": "conformance_mand_issuer_00000001",
+    "mandate_delegate": "conformance_mand_delegate_000001",
+    "cosign_publisher": "conformance_cosign_publisher_001",
+    "cosign_counterparty": "conformance_cosign_counter_00001",
+}
 
 
 class GenerationError(RuntimeError):
@@ -153,6 +221,19 @@ class MutationDivergence:
     raw_expected: ExpectedOutcome
 
 
+@dataclass(frozen=True)
+class SyntheticFixtures:
+    attestation: dict[str, Any]
+    attestation_seed_manifest: dict[str, Any]
+    predicates: dict[str, dict[str, Any]]
+    predicate_seed_manifest: dict[str, Any]
+    direct_mandate: dict[str, Any]
+    delegated_mandate: dict[str, Any]
+    mandate_seed_manifest: dict[str, Any]
+    cosigned_receipt: dict[str, Any]
+    cosign_seed_manifest: dict[str, Any]
+
+
 def load_json(path: Path) -> dict[str, Any]:
     data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
     return data
@@ -181,6 +262,11 @@ def private_key_from_seed(seed_ascii: str) -> Ed25519PrivateKey:
     return Ed25519PrivateKey.from_private_bytes(seed)
 
 
+def key_pair_from_seed(seed_ascii: str) -> KeyPair:
+    private_key = private_key_from_seed(seed_ascii)
+    return KeyPair(private_key=private_key, public_key=private_key.public_key())
+
+
 def sign_b64url(private_key: Ed25519PrivateKey, payload: bytes) -> str:
     return b64url_encode(private_key.sign(payload))
 
@@ -191,6 +277,35 @@ def sha256_jcs(value: Any) -> str:
 
 def without_signature(value: Mapping[str, Any]) -> dict[str, Any]:
     return {key: item for key, item in value.items() if key != "signature"}
+
+
+def without_keys(value: Mapping[str, Any], keys: set[str]) -> dict[str, Any]:
+    return {key: item for key, item in value.items() if key not in keys}
+
+
+def strip_signatures_recursive(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: strip_signatures_recursive(item)
+            for key, item in value.items()
+            if key != "signature"
+        }
+    if isinstance(value, list):
+        return [strip_signatures_recursive(item) for item in value]
+    return value
+
+
+def attestation_countersign_payload(attestation: dict[str, Any]) -> bytes:
+    return canonical_json(
+        strip_signatures_recursive(without_keys(attestation, {"countersignatures"}))
+    )
+
+
+def public_key_map(keys: Mapping[str, KeyPair]) -> dict[str, str]:
+    return {
+        agent_id: key_pair.public_key_b64()
+        for agent_id, key_pair in sorted(keys.items())
+    }
 
 
 def parse_datetime(value: str) -> datetime:
@@ -323,8 +438,22 @@ def mutations(obj: dict[str, Any]) -> Iterator[tuple[str, MutationKind, dict[str
     yield from walk(obj, [])
 
 
+def schema_store() -> dict[str, dict[str, Any]]:
+    schemas: dict[str, dict[str, Any]] = {}
+    for source in SCHEMA_COPIES.values():
+        loaded = load_json(source)
+        schema_id = loaded.get("$id")
+        if isinstance(schema_id, str):
+            schemas[schema_id] = loaded
+    mandate_id = MANDATE_JSON_SCHEMA.get("$id")
+    if isinstance(mandate_id, str):
+        schemas[mandate_id] = MANDATE_JSON_SCHEMA
+    return schemas
+
+
 def schema_is_valid(schema: dict[str, Any], data: Any) -> bool:
-    return not any(Draft202012Validator(schema).iter_errors(data))
+    resolver = RefResolver.from_schema(schema, store=schema_store())
+    return not any(Draft202012Validator(schema, resolver=resolver).iter_errors(data))
 
 
 def has_approves_reference(receipt: dict[str, Any]) -> bool:
@@ -372,6 +501,204 @@ def has_fulfills_reference(attestation: dict[str, Any]) -> bool:
         ):
             return True
     return False
+
+
+def verify_ed25519_signature(
+    public_key_b64url: str,
+    signature_b64url: str,
+    payload: bytes,
+) -> bool:
+    try:
+        public_key = Ed25519PublicKey.from_public_bytes(b64url_decode(public_key_b64url))
+        public_key.verify(b64url_decode(signature_b64url), payload)
+        return True
+    except Exception:
+        return False
+
+
+def evaluate_attestation_profile(vector: Vector) -> Evaluation:
+    input_data = vector.input_data
+    context = vector.context
+    if context.get("forbid_raw_deal_terms") and contains_raw_term(input_data):
+        return Evaluation(False, "privacy")
+    public_keys_b64 = context.get("public_keys_b64url")
+    if not isinstance(public_keys_b64, dict):
+        return Evaluation(False, "signature")
+    try:
+        public_keys = {
+            str(agent_id): Ed25519PublicKey.from_public_bytes(
+                b64url_decode(str(public_key_b64))
+            )
+            for agent_id, public_key_b64 in public_keys_b64.items()
+        }
+    except Exception:
+        return Evaluation(False, "signature")
+    result = verify_attestation(input_data, public_keys)
+    if result.schema_errors:
+        return Evaluation(False, "schema")
+    if result.signature_errors:
+        return Evaluation(False, "signature")
+    expected_parties = context.get("expected_verified_parties")
+    if expected_parties is not None and sorted(result.verified_parties) != sorted(
+        expected_parties
+    ):
+        return Evaluation(False, "binding")
+    return Evaluation(result.valid, None if result.valid else "binding")
+
+
+def evaluate_attestation_countersign_profile(vector: Vector) -> Evaluation:
+    input_data = vector.input_data
+    context = vector.context
+    schema = load_json(SCHEMA_COPIES["attestation.schema.json"])
+    if not schema_is_valid(schema, input_data):
+        return Evaluation(False, "schema")
+    public_keys_b64 = context.get("public_keys_b64url")
+    countersigners = context.get("countersigners")
+    countersignatures = input_data.get("countersignatures")
+    if (
+        not isinstance(public_keys_b64, dict)
+        or not isinstance(countersigners, list)
+        or not isinstance(countersignatures, dict)
+    ):
+        return Evaluation(False, "signature")
+    payload = attestation_countersign_payload(input_data)
+    expected_digest = context.get("canonical_sha256")
+    if expected_digest is not None:
+        if "sha256:" + hashlib.sha256(payload).hexdigest() != expected_digest:
+            return Evaluation(False, "digest")
+    for signer in countersigners:
+        if not isinstance(signer, str):
+            return Evaluation(False, "binding")
+        signature = countersignatures.get(signer)
+        public_key_b64 = public_keys_b64.get(signer)
+        if not isinstance(signature, str) or not isinstance(public_key_b64, str):
+            return Evaluation(False, "signature")
+        public_key = Ed25519PublicKey.from_public_bytes(b64url_decode(public_key_b64))
+        if not verify_attestation_countersignature(input_data, signature, public_key):
+            return Evaluation(False, "signature")
+    return Evaluation(True)
+
+
+def evaluate_predicate_profile(vector: Vector) -> Evaluation:
+    input_data = vector.input_data
+    context = vector.context
+    schema = load_json(SCHEMA_COPIES["predicate.json"])
+    if not schema_is_valid(schema, input_data):
+        return Evaluation(False, "schema")
+    if input_data.get("algorithm") != "EdDSA":
+        return Evaluation(False, "signature")
+    preimage = canonical_json(without_signature(input_data))
+    expected_digest = context.get("canonical_sha256")
+    if expected_digest is not None:
+        if "sha256:" + hashlib.sha256(preimage).hexdigest() != expected_digest:
+            return Evaluation(False, "digest")
+    public_key_b64 = context.get("public_key_b64url")
+    signature = input_data.get("signature")
+    if not isinstance(public_key_b64, str) or not isinstance(signature, str):
+        return Evaluation(False, "signature")
+    if not verify_ed25519_signature(public_key_b64, signature, preimage):
+        return Evaluation(False, "signature")
+    result = verify_predicate(input_data, now=parse_datetime(context["now"]))
+    if not result.valid:
+        if result.failure_reason in {"expired", "revoked"}:
+            return Evaluation(False, "temporal")
+        return Evaluation(False, "schema")
+    return Evaluation(True)
+
+
+def evaluate_mandate_profile(vector: Vector, *, require_chain: bool = False) -> Evaluation:
+    input_data = vector.input_data
+    context = vector.context
+    if not schema_is_valid(MANDATE_JSON_SCHEMA, input_data):
+        return Evaluation(False, "schema")
+    if input_data.get("algorithm") != "EdDSA":
+        return Evaluation(False, "signature")
+    preimage = canonicalize_mandate(input_data)
+    expected_digest = context.get("canonical_sha256")
+    if expected_digest is not None:
+        if "sha256:" + hashlib.sha256(preimage).hexdigest() != expected_digest:
+            return Evaluation(False, "digest")
+    public_key_b64 = context.get("issuer_public_key_b64url")
+    signature = input_data.get("signature")
+    if not isinstance(public_key_b64, str) or not isinstance(signature, str):
+        return Evaluation(False, "signature")
+    if not verify_ed25519_signature(public_key_b64, signature, preimage):
+        return Evaluation(False, "signature")
+    delegation_public_keys: dict[str, Ed25519PublicKey] = {}
+    for agent_id, delegation_public_key_b64 in context.get(
+        "delegation_public_keys_b64url", {}
+    ).items():
+        delegation_public_keys[str(agent_id)] = Ed25519PublicKey.from_public_bytes(
+            b64url_decode(str(delegation_public_key_b64))
+        )
+    if require_chain:
+        chain = input_data.get("delegation_chain")
+        if not isinstance(chain, list) or not chain:
+            return Evaluation(False, "binding")
+        links = [DelegationLink.from_dict(item) for item in chain]
+        chain_valid, _ = verify_delegation_chain(
+            links,
+            str(input_data.get("issuer", "")),
+            str(input_data.get("subject", "")),
+            delegation_public_keys,
+        )
+        if not chain_valid:
+            return Evaluation(False, "binding")
+    result = verify_mandate(
+        input_data,
+        Ed25519PublicKey.from_public_bytes(b64url_decode(public_key_b64)),
+        now=parse_datetime(context["now"]),
+        action=context.get("action"),
+        delegation_public_keys=delegation_public_keys,
+        check_revocation_status=False,
+    )
+    if not result.valid:
+        if result.checks.get("temporal_validity") is False:
+            return Evaluation(False, "temporal")
+        if result.checks.get("issuer_signature") is False:
+            return Evaluation(False, "signature")
+        if result.checks.get("delegation_chain") is False:
+            return Evaluation(False, "binding")
+        return Evaluation(False, "schema")
+    return Evaluation(True)
+
+
+def evaluate_cosign_profile(vector: Vector) -> Evaluation:
+    input_data = vector.input_data
+    context = vector.context
+    counterparty_did = context.get("counterparty_did")
+    publisher_did = context.get("publisher_did")
+    public_key_b64 = context.get("counterparty_public_key_b64url")
+    if not all(isinstance(value, str) for value in (counterparty_did, publisher_did, public_key_b64)):
+        return Evaluation(False, "binding")
+    if counterparty_did == publisher_did:
+        return Evaluation(False, "binding")
+    public_key_bytes = b64url_decode(str(public_key_b64))
+    if ed25519_did_key(public_key_bytes) != counterparty_did:
+        return Evaluation(False, "binding")
+    if public_key_bytes_from_did_key(str(counterparty_did)) != public_key_bytes:
+        return Evaluation(False, "binding")
+    parties = input_data.get("parties")
+    if not isinstance(parties, list):
+        return Evaluation(False, "schema")
+    matches = [
+        party
+        for party in parties
+        if isinstance(party, dict) and party.get("agent_id") == counterparty_did
+    ]
+    if len(matches) != 1:
+        return Evaluation(False, "binding")
+    signature = matches[0].get("signature")
+    if not isinstance(signature, str) or not signature:
+        return Evaluation(False, "signature")
+    preimage = canonical_cosign_bytes(input_data)
+    expected_digest = context.get("canonical_sha256")
+    if expected_digest is not None:
+        if "sha256:" + hashlib.sha256(preimage).hexdigest() != expected_digest:
+            return Evaluation(False, "digest")
+    if not verify_ed25519_signature(str(public_key_b64), signature, preimage):
+        return Evaluation(False, "signature")
+    return Evaluation(True)
 
 
 def verify_vector(vector: Vector) -> bool:
@@ -524,8 +851,26 @@ def evaluate_vector(vector: Vector) -> Evaluation:
         if "action_ref" in join_keys and input_data.get("action_ref") != join_keys["action_ref"]:
             return Evaluation(False, "binding")
         if context.get("forbid_raw_deal_terms") and contains_raw_term(input_data):
-            return Evaluation(False, "binding")
+            return Evaluation(False, "privacy")
         return Evaluation(True)
+
+    if profile == "attestation-v1":
+        return evaluate_attestation_profile(vector)
+
+    if profile == "attestation-countersign-v1":
+        return evaluate_attestation_countersign_profile(vector)
+
+    if profile == "predicate-v1":
+        return evaluate_predicate_profile(vector)
+
+    if profile == "mandate-v1":
+        return evaluate_mandate_profile(vector)
+
+    if profile == "delegation-chain-v1":
+        return evaluate_mandate_profile(vector, require_chain=True)
+
+    if profile == "cosign-v1":
+        return evaluate_cosign_profile(vector)
 
     raise GenerationError(f"unknown profile: {profile}")
 
@@ -1082,9 +1427,512 @@ def build_canary_vectors() -> list[Vector]:
     return vectors
 
 
+def fixed_iso_now() -> str:
+    return FIXED_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def seed_manifest_for(roles: Mapping[str, KeyPair]) -> dict[str, Any]:
+    return {
+        "warning": "PUBLIC deterministic conformance test seeds; do not reuse",
+        "seeds_PUBLIC_test_only_do_not_reuse": {
+            role: {
+                "seed_ed25519_ascii": SYNTHETIC_SEEDS[role],
+                "public_key_b64url": key_pair.public_key_b64(),
+            }
+            for role, key_pair in sorted(roles.items())
+        },
+    }
+
+
+def build_synthetic_attestation() -> tuple[dict[str, Any], dict[str, Any]]:
+    keys = {
+        "attestation_initiator": key_pair_from_seed(
+            SYNTHETIC_SEEDS["attestation_initiator"]
+        ),
+        "attestation_responder": key_pair_from_seed(
+            SYNTHETIC_SEEDS["attestation_responder"]
+        ),
+    }
+    agent_a = "did:concordia:agent:synthetic-initiator"
+    agent_b = "did:concordia:agent:synthetic-responder"
+    key_by_agent = {
+        agent_a: keys["attestation_initiator"],
+        agent_b: keys["attestation_responder"],
+    }
+    parties: list[dict[str, Any]] = [
+        {
+            "agent_id": agent_a,
+            "role": "initiator",
+            "behavior": {
+                "offers_made": 3,
+                "concessions": 1,
+                "concession_magnitude": 0.25,
+                "signals_shared": 1,
+                "constraints_declared": 1,
+                "constraints_violated": 0,
+                "reasoning_provided": True,
+                "withdrawal": False,
+                "response_time_avg_seconds": 4.5,
+            },
+        },
+        {
+            "agent_id": agent_b,
+            "role": "responder",
+            "behavior": {
+                "offers_made": 2,
+                "concessions": 2,
+                "concession_magnitude": 0.4,
+                "signals_shared": 0,
+                "constraints_declared": 1,
+                "constraints_violated": 0,
+                "reasoning_provided": True,
+                "withdrawal": False,
+                "response_time_avg_seconds": 6.0,
+            },
+        },
+    ]
+    for party in parties:
+        party["signature"] = sign_message(party, key_by_agent[party["agent_id"]])
+
+    attestation: dict[str, Any] = {
+        "concordia_attestation": "0.2.0",
+        "attestation_id": "att_conformance_p2a1_0001",
+        "session_id": "sess_conformance_p2a1_0001",
+        "timestamp": fixed_iso_now(),
+        "outcome": {
+            "status": "agreed",
+            "rounds": 4,
+            "duration_seconds": 312,
+            "terms_count": 3,
+            "resolution_mechanism": "direct",
+        },
+        "parties": parties,
+        "meta": {
+            "category": "software.tools",
+            "value_range": "1000-5000_USD",
+            "extensions_used": [],
+            "mediator_invoked": False,
+        },
+        "transcript_hash": "sha256:" + ("a1" * 32),
+        "fulfillment": None,
+        "references": [
+            {
+                "type": "receipt",
+                "id": "urn:concordia:receipt:synthetic-0001",
+                "relationship": "references",
+                "signed_at": fixed_iso_now(),
+            }
+        ],
+        "summary": (
+            "Agreement completed with four rounds, two active parties, "
+            "and no mediation."
+        ),
+    }
+    attestation["countersignatures"] = {
+        agent_id: countersign_attestation(attestation, key_by_agent[agent_id])
+        for agent_id in sorted(key_by_agent)
+    }
+
+    public_keys = {
+        agent_id: key_pair.public_key_b64()
+        for agent_id, key_pair in sorted(key_by_agent.items())
+    }
+    result = verify_attestation(
+        attestation,
+        {
+            agent_id: key_pair.public_key
+            for agent_id, key_pair in key_by_agent.items()
+        },
+    )
+    if not result.valid:
+        raise GenerationError(f"synthetic attestation did not verify: {result.errors}")
+    for agent_id, signature in attestation["countersignatures"].items():
+        if not verify_attestation_countersignature(
+            attestation,
+            signature,
+            key_by_agent[agent_id].public_key,
+        ):
+            raise GenerationError(f"synthetic countersignature failed: {agent_id}")
+
+    manifest = seed_manifest_for(keys)
+    manifest["agent_public_keys_b64url"] = public_keys
+    return attestation, manifest
+
+
+def predicate_fixture_dirs() -> list[Path]:
+    fixture_root = REPO_ROOT / "tests" / "fixtures" / "predicate_canonical"
+    return [
+        path
+        for path in sorted(fixture_root.glob("vector_*"))
+        if path.name not in {"vector_12", "vector_13_deterministic_gate_failure"}
+    ]
+
+
+def build_synthetic_predicates() -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    key_pair = key_pair_from_seed(SYNTHETIC_SEEDS["predicate_issuer"])
+    predicates: dict[str, dict[str, Any]] = {}
+    for fixture_dir in predicate_fixture_dirs():
+        raw = (fixture_dir / "expected_canonical.txt").read_text(
+            encoding="utf-8"
+        ).rstrip("\n")
+        predicate = json.loads(raw)
+        signed = sign_predicate(predicate, key_pair).to_dict()
+        result = verify_predicate(signed, now=FIXED_NOW)
+        if not result.valid:
+            raise GenerationError(
+                f"{fixture_dir.name}: synthetic predicate did not verify: "
+                f"{result.failure_reason}"
+            )
+        predicates[fixture_dir.name] = signed
+    return predicates, seed_manifest_for({"predicate_issuer": key_pair})
+
+
+def simple_mandate_constraints() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "max_spend": {"type": "number", "maximum": 1000},
+            "category": {"type": "string", "enum": ["software", "books"]},
+        },
+        "required": ["max_spend", "category"],
+        "additionalProperties": False,
+    }
+
+
+def build_synthetic_mandates() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    issuer_key = key_pair_from_seed(SYNTHETIC_SEEDS["mandate_issuer"])
+    delegate_key = key_pair_from_seed(SYNTHETIC_SEEDS["mandate_delegate"])
+    issuer = did_key_for(issuer_key)
+    delegate = did_key_for(delegate_key)
+    subject = "did:web:agent.example#synthetic-subject"
+    validity = ValidityWindow(
+        mode=TemporalMode.WINDOWED,
+        not_before="2026-05-01T00:00:00Z",
+        not_after="2026-06-01T00:00:00Z",
+    )
+    direct = Mandate(
+        mandate_id="urn:concordia:mandate:synthetic-direct-0001",
+        issuer=issuer,
+        subject=subject,
+        issued_at=fixed_iso_now(),
+        validity=validity,
+        constraints=simple_mandate_constraints(),
+        metadata={"fixture": "conformance-p2a1-direct"},
+        algorithm="EdDSA",
+    )
+    signed_direct = sign_mandate(direct, issuer_key).to_dict()
+
+    link_1 = sign_delegation(
+        DelegationLink(
+            delegator=issuer,
+            delegate=delegate,
+            delegated_at=fixed_iso_now(),
+            scope_restriction={"max_spend": 1000},
+            algorithm="EdDSA",
+        ),
+        issuer_key,
+    )
+    link_2 = sign_delegation(
+        DelegationLink(
+            delegator=delegate,
+            delegate=subject,
+            delegated_at=fixed_iso_now(),
+            scope_restriction={"max_spend": 750},
+            algorithm="EdDSA",
+        ),
+        delegate_key,
+    )
+    delegated = Mandate(
+        mandate_id="urn:concordia:mandate:synthetic-delegated-0001",
+        issuer=issuer,
+        subject=subject,
+        issued_at=fixed_iso_now(),
+        validity=validity,
+        constraints=simple_mandate_constraints(),
+        delegation_chain=[link_1, link_2],
+        metadata={"fixture": "conformance-p2a1-delegated"},
+        algorithm="EdDSA",
+    )
+    signed_delegated = sign_mandate(delegated, issuer_key).to_dict()
+
+    action = {"max_spend": 500, "category": "software"}
+    direct_result = verify_mandate(
+        signed_direct,
+        issuer_key.public_key,
+        now=FIXED_NOW,
+        action=action,
+        check_revocation_status=False,
+    )
+    if not direct_result.valid:
+        raise GenerationError(f"synthetic mandate did not verify: {direct_result.errors}")
+    delegated_result = verify_mandate(
+        signed_delegated,
+        issuer_key.public_key,
+        now=FIXED_NOW,
+        action=action,
+        delegation_public_keys={
+            issuer: issuer_key.public_key,
+            delegate: delegate_key.public_key,
+        },
+        check_revocation_status=False,
+    )
+    if not delegated_result.valid:
+        raise GenerationError(
+            f"synthetic delegated mandate did not verify: {delegated_result.errors}"
+        )
+
+    manifest = seed_manifest_for(
+        {
+            "mandate_issuer": issuer_key,
+            "mandate_delegate": delegate_key,
+        }
+    )
+    manifest["agent_ids"] = {
+        "issuer": issuer,
+        "delegate": delegate,
+        "subject": subject,
+    }
+    return signed_direct, signed_delegated, manifest
+
+
+def build_synthetic_cosigned_receipt() -> tuple[dict[str, Any], dict[str, Any]]:
+    publisher = key_pair_from_seed(SYNTHETIC_SEEDS["cosign_publisher"])
+    counterparty = key_pair_from_seed(SYNTHETIC_SEEDS["cosign_counterparty"])
+    publisher_did = did_key_for(publisher)
+    counterparty_did = did_key_for(counterparty)
+    receipt = build_cosigned_receipt(
+        {
+            "session_id": "concordia:session:conformance-cosign-0001",
+            "counterparty_did": counterparty_did,
+            "outcome": "agreed",
+            "rounds": 4,
+            "duration_seconds": 312,
+            "terms_count": 3,
+            "concessions_made": 2,
+            "fulfillment_status": "fulfilled",
+            "negotiation_competence": 90,
+        },
+        publisher_did,
+        counterparty_signer=keypair_signer(counterparty),
+    )
+    preimage = canonical_cosign_bytes(receipt)
+    counterparty_signature = receipt["parties"][1]["signature"]
+    if not verify_ed25519_signature(
+        counterparty.public_key_b64(),
+        counterparty_signature,
+        preimage,
+    ):
+        raise GenerationError("synthetic cosignature did not verify")
+    manifest = seed_manifest_for(
+        {
+            "cosign_publisher": publisher,
+            "cosign_counterparty": counterparty,
+        }
+    )
+    manifest["dids"] = {
+        "publisher": publisher_did,
+        "counterparty": counterparty_did,
+    }
+    return receipt, manifest
+
+
+def build_synthetic_fixtures() -> SyntheticFixtures:
+    attestation, attestation_seed_manifest = build_synthetic_attestation()
+    predicates, predicate_seed_manifest = build_synthetic_predicates()
+    direct_mandate, delegated_mandate, mandate_seed_manifest = build_synthetic_mandates()
+    cosigned_receipt, cosign_seed_manifest = build_synthetic_cosigned_receipt()
+    return SyntheticFixtures(
+        attestation=attestation,
+        attestation_seed_manifest=attestation_seed_manifest,
+        predicates=predicates,
+        predicate_seed_manifest=predicate_seed_manifest,
+        direct_mandate=direct_mandate,
+        delegated_mandate=delegated_mandate,
+        mandate_seed_manifest=mandate_seed_manifest,
+        cosigned_receipt=cosigned_receipt,
+        cosign_seed_manifest=cosign_seed_manifest,
+    )
+
+
+def synthetic_fixture_payloads(fixtures: SyntheticFixtures) -> dict[Path, Any]:
+    payloads: dict[Path, Any] = {
+        Path("synthetic/attestation/attestation.json"): fixtures.attestation,
+        Path("synthetic/attestation/seed_manifest.json"): fixtures.attestation_seed_manifest,
+        Path("synthetic/mandate/mandate.json"): fixtures.direct_mandate,
+        Path("synthetic/mandate/delegated_mandate.json"): fixtures.delegated_mandate,
+        Path("synthetic/mandate/seed_manifest.json"): fixtures.mandate_seed_manifest,
+        Path("synthetic/cosign/cosigned_receipt.json"): fixtures.cosigned_receipt,
+        Path("synthetic/cosign/seed_manifest.json"): fixtures.cosign_seed_manifest,
+    }
+    for name, predicate in sorted(fixtures.predicates.items()):
+        payloads[Path("synthetic/predicate") / f"{name}.json"] = predicate
+    payloads[Path("synthetic/predicate/seed_manifest.json")] = (
+        fixtures.predicate_seed_manifest
+    )
+    return payloads
+
+
+def build_phase2_vectors(fixtures: SyntheticFixtures) -> list[Vector]:
+    attestation = fixtures.attestation
+    attestation_public_keys = fixtures.attestation_seed_manifest[
+        "agent_public_keys_b64url"
+    ]
+    attestation_parties = [party["agent_id"] for party in attestation["parties"]]
+    countersign_preimage = attestation_countersign_payload(attestation)
+    raw_term_attestation = copy.deepcopy(attestation)
+    raw_term_attestation["parties"][0]["behavior"]["note"] = (
+        "price: USD 250 for 10 units"
+    )
+
+    action = {"max_spend": 500, "category": "software"}
+    mandate_issuer_key = fixtures.mandate_seed_manifest[
+        "seeds_PUBLIC_test_only_do_not_reuse"
+    ]["mandate_issuer"]["public_key_b64url"]
+    delegated_key_manifest = fixtures.mandate_seed_manifest[
+        "seeds_PUBLIC_test_only_do_not_reuse"
+    ]
+    mandate_agent_ids = fixtures.mandate_seed_manifest["agent_ids"]
+
+    cosign_receipt = fixtures.cosigned_receipt
+    cosign_dids = fixtures.cosign_seed_manifest["dids"]
+    cosign_public_key = fixtures.cosign_seed_manifest[
+        "seeds_PUBLIC_test_only_do_not_reuse"
+    ]["cosign_counterparty"]["public_key_b64url"]
+    cosign_preimage = canonical_cosign_bytes(cosign_receipt)
+
+    vectors: list[Vector] = [
+        Vector(
+            vector_id="pos-synthetic-attestation",
+            title="Synthetic reputation Attestation validates and verifies both party signatures",
+            source_fixture=SYNTHETIC_SOURCE_ATTESTATION,
+            record_type="attestation",
+            verification_profile="attestation-v1",
+            input_data=attestation,
+            context={
+                "forbid_raw_deal_terms": True,
+                "expected_verified_parties": attestation_parties,
+                "public_keys_b64url": attestation_public_keys,
+            },
+        ),
+        Vector(
+            vector_id="privacy-synthetic-attestation-behavior-note",
+            title="Synthetic Attestation rejects an injected raw deal term in a behavior note",
+            source_fixture=SYNTHETIC_SOURCE_ATTESTATION,
+            record_type="attestation",
+            verification_profile="attestation-v1",
+            input_data=raw_term_attestation,
+            context={
+                "forbid_raw_deal_terms": True,
+                "expected_verified_parties": attestation_parties,
+                "public_keys_b64url": attestation_public_keys,
+            },
+            expected="reject",
+            expected_reason_class="privacy",
+            notes=(
+                "privacy-reject: SPEC 9.6.6 raw-deal-term scanner catches "
+                "a party behavior note before schema/signature checks"
+            ),
+        ),
+        Vector(
+            vector_id="pos-synthetic-attestation-countersign",
+            title="Synthetic Attestation countersignatures bind the issuance snapshot",
+            source_fixture=SYNTHETIC_SOURCE_ATTESTATION,
+            record_type="attestation",
+            verification_profile="attestation-countersign-v1",
+            input_data=attestation,
+            context={
+                "canonical_sha256": "sha256:"
+                + hashlib.sha256(countersign_preimage).hexdigest(),
+                "countersigners": attestation_parties,
+                "public_keys_b64url": attestation_public_keys,
+            },
+            canonical_preimage=countersign_preimage,
+        ),
+        Vector(
+            vector_id="pos-synthetic-mandate",
+            title="Synthetic EdDSA Mandate validates, verifies, and authorizes the action",
+            source_fixture=SYNTHETIC_SOURCE_MANDATE,
+            record_type="mandate",
+            verification_profile="mandate-v1",
+            input_data=fixtures.direct_mandate,
+            context={
+                "action": action,
+                "canonical_sha256": sha256_jcs(without_signature(fixtures.direct_mandate)),
+                "issuer_public_key_b64url": mandate_issuer_key,
+                "now": fixed_iso_now(),
+            },
+            canonical_preimage=canonicalize_mandate(fixtures.direct_mandate),
+        ),
+        Vector(
+            vector_id="pos-synthetic-delegation-chain",
+            title="Synthetic delegated Mandate verifies each chain link",
+            source_fixture=SYNTHETIC_SOURCE_MANDATE,
+            record_type="mandate",
+            verification_profile="delegation-chain-v1",
+            input_data=fixtures.delegated_mandate,
+            context={
+                "action": action,
+                "canonical_sha256": sha256_jcs(without_signature(fixtures.delegated_mandate)),
+                "delegation_public_keys_b64url": {
+                    mandate_agent_ids["issuer"]: delegated_key_manifest[
+                        "mandate_issuer"
+                    ]["public_key_b64url"],
+                    mandate_agent_ids["delegate"]: delegated_key_manifest[
+                        "mandate_delegate"
+                    ]["public_key_b64url"],
+                },
+                "issuer_public_key_b64url": mandate_issuer_key,
+                "now": fixed_iso_now(),
+            },
+            canonical_preimage=canonicalize_mandate(fixtures.delegated_mandate),
+        ),
+        Vector(
+            vector_id="pos-synthetic-cosign",
+            title="Synthetic counterparty co-signature verifies and did:key matches",
+            source_fixture=SYNTHETIC_SOURCE_COSIGN,
+            record_type="cosign_receipt",
+            verification_profile="cosign-v1",
+            input_data=cosign_receipt,
+            context={
+                "canonical_sha256": "sha256:"
+                + hashlib.sha256(cosign_preimage).hexdigest(),
+                "counterparty_did": cosign_dids["counterparty"],
+                "counterparty_public_key_b64url": cosign_public_key,
+                "publisher_did": cosign_dids["publisher"],
+            },
+            canonical_preimage=cosign_preimage,
+        ),
+    ]
+
+    for name, predicate in sorted(fixtures.predicates.items()):
+        preimage = canonical_json(without_signature(predicate))
+        vectors.append(
+            Vector(
+                vector_id=f"pos-synthetic-predicate-{name.replace('_', '-')}",
+                title=f"Synthetic signed Predicate from canonical fixture {name}",
+                source_fixture=SYNTHETIC_SOURCE_PREDICATE,
+                record_type="predicate",
+                verification_profile="predicate-v1",
+                input_data=predicate,
+                context={
+                    "canonical_sha256": "sha256:"
+                    + hashlib.sha256(preimage).hexdigest(),
+                    "now": fixed_iso_now(),
+                    "public_key_b64url": fixtures.predicate_seed_manifest[
+                        "seeds_PUBLIC_test_only_do_not_reuse"
+                    ]["predicate_issuer"]["public_key_b64url"],
+                },
+                canonical_preimage=preimage,
+            )
+        )
+
+    return sorted(vectors, key=lambda vector: vector.vector_id)
+
+
 def build_vectors() -> list[Vector]:
     f1404 = fixture_1404()
     f1920 = fixture_1920()
+    synthetic = build_synthetic_fixtures()
     hashes = f1404["vector"]["hashes"]
     public_keys_1404 = f1404["vector"]["public_keys_b64url"]
     sample = f1920["sample"]
@@ -1297,6 +2145,7 @@ def build_vectors() -> list[Vector]:
         ),
     ]
 
+    vectors.extend(build_phase2_vectors(synthetic))
     return sorted(vectors, key=lambda vector: vector.vector_id)
 
 
@@ -1332,6 +2181,19 @@ def copy_fixtures(dest_root: Path) -> list[str]:
     return sorted(copied)
 
 
+def copy_synthetic_fixtures(
+    dest_root: Path,
+    fixtures: SyntheticFixtures,
+) -> list[str]:
+    copied: list[str] = []
+    fixtures_root = dest_root / "conformance" / "vectors" / "fixtures"
+    for rel, payload in sorted(synthetic_fixture_payloads(fixtures).items()):
+        dest = fixtures_root / rel
+        write_json(dest, payload)
+        copied.append((Path("conformance") / "vectors" / "fixtures" / rel).as_posix())
+    return copied
+
+
 def copy_schemas(dest_root: Path) -> list[str]:
     copied: list[str] = []
     schemas_root = dest_root / "conformance" / "vectors" / "schemas"
@@ -1345,6 +2207,12 @@ def copy_schemas(dest_root: Path) -> list[str]:
     write_json(schemas_root / cascade_name, CASCADE_DECISION_RECORD_SCHEMA)
     copied.append(
         (Path("conformance") / "vectors" / "schemas" / cascade_name).as_posix()
+    )
+
+    mandate_name = "mandate.schema.json"
+    write_json(schemas_root / mandate_name, MANDATE_JSON_SCHEMA)
+    copied.append(
+        (Path("conformance") / "vectors" / "schemas" / mandate_name).as_posix()
     )
     return sorted(copied)
 
@@ -1424,6 +2292,7 @@ def write_manifest(
 
 
 def generate(dest_root: Path) -> None:
+    synthetic_fixtures = build_synthetic_fixtures()
     positive_vectors = build_vectors()
     mutation_vectors = build_mutation_vectors()
     canary_vectors = build_canary_vectors()
@@ -1431,7 +2300,10 @@ def generate(dest_root: Path) -> None:
     assert_vectors_execute(mutation_vectors)
     assert_vectors_execute(canary_vectors)
     clean_output(dest_root)
-    fixture_files = copy_fixtures(dest_root)
+    fixture_files = sorted(
+        copy_fixtures(dest_root)
+        + copy_synthetic_fixtures(dest_root, synthetic_fixtures)
+    )
     schema_files = copy_schemas(dest_root)
     positive_files, positive_diag_files = write_vector_group(
         dest_root, positive_vectors, section="positive"

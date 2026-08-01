@@ -17,13 +17,17 @@ import json
 import os
 import re
 import sys
+import warnings
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
 import rfc8785
-from jsonschema import Draft202012Validator
+
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", DeprecationWarning)
+    from jsonschema import Draft202012Validator, RefResolver
 from nacl.exceptions import BadSignatureError
 from nacl.signing import SigningKey, VerifyKey
 
@@ -43,6 +47,12 @@ PROFILE_ORDER = (
     "revocation-v1",
     "cascade-decision-v1",
     "fulfillment-attestation-v1",
+    "attestation-v1",
+    "attestation-countersign-v1",
+    "predicate-v1",
+    "mandate-v1",
+    "delegation-chain-v1",
+    "cosign-v1",
 )
 RECORD_TYPES = {
     "decision_object",
@@ -50,6 +60,10 @@ RECORD_TYPES = {
     "revocation_record",
     "cascade_decision_record",
     "fulfillment_attestation",
+    "attestation",
+    "predicate",
+    "mandate",
+    "cosign_receipt",
 }
 REQUIRED_VECTOR_FIELDS = {
     "schema_version",
@@ -138,9 +152,20 @@ def schema_file(suite_base: Path, schema_name: str) -> Path:
     return path
 
 
+def schema_store(suite_base: Path) -> dict[str, Json]:
+    schemas: dict[str, Json] = {}
+    schema_dir = suite_base / "conformance" / "vectors" / "schemas"
+    for path in schema_dir.glob("*.json"):
+        schema = load_json(path)
+        if isinstance(schema, dict) and isinstance(schema.get("$id"), str):
+            schemas[schema["$id"]] = schema
+    return schemas
+
+
 def validate_schema(suite_base: Path, schema_name: str, data: Json) -> None:
     schema = load_json(schema_file(suite_base, schema_name))
-    errors = list(Draft202012Validator(schema).iter_errors(data))
+    resolver = RefResolver.from_schema(schema, store=schema_store(suite_base))
+    errors = list(Draft202012Validator(schema, resolver=resolver).iter_errors(data))
     if errors:
         raise Reject("schema validation failed")
 
@@ -254,6 +279,126 @@ def signed_preimage(
     return jcs_bytes(without_top_level(input_data, {"signature"}))
 
 
+def strip_signatures_recursive(value: Json) -> Json:
+    if isinstance(value, list):
+        return [strip_signatures_recursive(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: strip_signatures_recursive(item)
+            for key, item in value.items()
+            if key != "signature"
+        }
+    return value
+
+
+def countersign_preimage(input_data: Json) -> bytes:
+    return jcs_bytes(
+        strip_signatures_recursive(
+            without_top_level(input_data, {"countersignatures"})
+        )
+    )
+
+
+def cosign_preimage(input_data: Json) -> bytes:
+    return jcs_bytes(strip_signatures_recursive(input_data))
+
+
+def canonical_sha256(payload: bytes) -> str:
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def bare_signature(input_data: Json) -> str:
+    if not isinstance(input_data, dict):
+        raise Reject("input is not an object")
+    signature = input_data.get("signature")
+    if not isinstance(signature, str) or not signature:
+        raise Reject("signature is missing")
+    return signature
+
+
+def require_algorithm(input_data: Json, algorithm: str) -> None:
+    if not isinstance(input_data, dict):
+        raise Reject("input is not an object")
+    if input_data.get("algorithm") != algorithm:
+        raise Reject("signature algorithm is wrong")
+
+
+def ed25519_did_key(public_key_bytes: bytes) -> str:
+    if len(public_key_bytes) != 32:
+        raise Reject("Ed25519 public key is not 32 bytes")
+    return "did:key:z" + b64url_encode(b"\xed\x01" + public_key_bytes).rstrip("=")
+
+
+def public_key_from_did_key(did: Json) -> bytes:
+    if not isinstance(did, str) or not did.startswith("did:key:z"):
+        raise Reject("counterparty DID is not did:key")
+    decoded = b64url_decode(did.removeprefix("did:key:z"))
+    if len(decoded) != 34 or decoded[:2] != b"\xed\x01":
+        raise Reject("counterparty DID is not Ed25519 did:key")
+    return decoded[2:]
+
+
+def validate_json_schema_object(schema: Json) -> None:
+    if not isinstance(schema, dict):
+        raise Reject("constraint schema is not an object")
+    try:
+        Draft202012Validator.check_schema(schema)
+    except Exception as exc:
+        raise Reject("constraint schema is invalid") from exc
+
+
+def validate_action(schema: Json, action: Json) -> None:
+    if action is None:
+        return
+    validate_json_schema_object(schema)
+    errors = list(Draft202012Validator(schema).iter_errors(action))
+    if errors:
+        raise Reject("action violates constraints")
+
+
+def scope_restriction_to_schema(scope: Json) -> Json:
+    if not isinstance(scope, dict) or not scope:
+        raise Reject("scope restriction is invalid")
+    json_schema_keys = {
+        "$schema",
+        "$id",
+        "$ref",
+        "$defs",
+        "type",
+        "properties",
+        "required",
+        "additionalProperties",
+        "items",
+        "allOf",
+        "anyOf",
+        "oneOf",
+        "not",
+        "enum",
+        "const",
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "minLength",
+        "maxLength",
+        "pattern",
+        "minItems",
+        "maxItems",
+        "format",
+    }
+    if any(key in json_schema_keys for key in scope):
+        validate_json_schema_object(scope)
+        return scope
+    if set(scope) == {"max_spend"} and isinstance(scope.get("max_spend"), int | float):
+        return {
+            "type": "object",
+            "properties": {
+                "max_spend": {"type": "number", "maximum": scope["max_spend"]}
+            },
+        }
+    raise Reject("scope restriction is unsupported")
+
+
 def walk_key_strings(value: Json, pointer: str = "") -> list[tuple[str, str]]:
     items: list[tuple[str, str]] = []
     if isinstance(value, dict):
@@ -271,7 +416,9 @@ def walk_key_strings(value: Json, pointer: str = "") -> list[tuple[str, str]]:
 
 def contains_raw_term(input_data: Json) -> bool:
     for pointer, value in walk_key_strings(input_data):
-        if pointer == "/signature/value":
+        if pointer == "/signature/value" or pointer.endswith("/signature"):
+            continue
+        if pointer.startswith("/countersignatures/"):
             continue
         for pattern in RAW_TERM_PATTERNS:
             if pattern.search(value):
@@ -473,6 +620,230 @@ def verify_fulfillment(
         raise Reject("raw deal terms are present")
 
 
+def verify_attestation(
+    suite_base: Path,
+    input_data: Json,
+    context: dict[str, Json],
+) -> None:
+    if context.get("forbid_raw_deal_terms") and contains_raw_term(input_data):
+        raise Reject("raw deal terms are present")
+    validate_schema(suite_base, "attestation.schema.json", input_data)
+    if not isinstance(input_data, dict):
+        raise Reject("attestation input is not an object")
+    public_keys = context.get("public_keys_b64url")
+    if not isinstance(public_keys, dict):
+        raise Reject("attestation public keys are missing")
+    parties = input_data.get("parties")
+    if not isinstance(parties, list):
+        raise Reject("attestation parties are missing")
+    verified: list[str] = []
+    for party in parties:
+        if not isinstance(party, dict):
+            raise Reject("attestation party is not an object")
+        agent_id = party.get("agent_id")
+        if not isinstance(agent_id, str) or not agent_id:
+            raise Reject("attestation party agent_id is missing")
+        public_key = public_keys.get(agent_id)
+        if not isinstance(public_key, str):
+            raise Reject("attestation party public key is missing")
+        verify_ed25519(public_key, bare_signature(party), jcs_bytes(without_top_level(party, {"signature"})))
+        verified.append(agent_id)
+    expected = context.get("expected_verified_parties")
+    if expected is not None:
+        if not isinstance(expected, list) or sorted(verified) != sorted(expected):
+            raise Reject("attestation verified party set mismatch")
+
+
+def verify_attestation_countersign(
+    suite_base: Path,
+    input_data: Json,
+    context: dict[str, Json],
+) -> None:
+    validate_schema(suite_base, "attestation.schema.json", input_data)
+    if not isinstance(input_data, dict):
+        raise Reject("attestation input is not an object")
+    public_keys = context.get("public_keys_b64url")
+    countersigners = context.get("countersigners")
+    countersignatures = input_data.get("countersignatures")
+    if (
+        not isinstance(public_keys, dict)
+        or not isinstance(countersigners, list)
+        or not isinstance(countersignatures, dict)
+    ):
+        raise Reject("attestation countersignature inputs are missing")
+    preimage = countersign_preimage(input_data)
+    expected_digest = context.get("canonical_sha256")
+    if expected_digest is not None and canonical_sha256(preimage) != expected_digest:
+        raise Reject("attestation countersignature digest mismatch")
+    for signer in countersigners:
+        if not isinstance(signer, str):
+            raise Reject("countersigner is not a string")
+        signature = countersignatures.get(signer)
+        public_key = public_keys.get(signer)
+        if not isinstance(signature, str) or not isinstance(public_key, str):
+            raise Reject("countersignature or key is missing")
+        verify_ed25519(public_key, signature, preimage)
+
+
+def verify_predicate(
+    suite_base: Path,
+    input_data: Json,
+    context: dict[str, Json],
+) -> None:
+    validate_schema(suite_base, "predicate.json", input_data)
+    if not isinstance(input_data, dict):
+        raise Reject("predicate input is not an object")
+    require_algorithm(input_data, "EdDSA")
+    preimage = jcs_bytes(without_top_level(input_data, {"signature"}))
+    expected_digest = context.get("canonical_sha256")
+    if expected_digest is not None and canonical_sha256(preimage) != expected_digest:
+        raise Reject("predicate digest mismatch")
+    public_key = context.get("public_key_b64url")
+    if not isinstance(public_key, str):
+        raise Reject("predicate public key is missing")
+    verify_ed25519(public_key, bare_signature(input_data), preimage)
+    if input_data.get("status") != "active":
+        raise Reject("predicate is not active")
+    now = parse_datetime(context.get("now"))
+    if parse_datetime(input_data.get("expires_at")) < now:
+        raise Reject("predicate is expired")
+
+
+def mandate_preimage(input_data: Json) -> bytes:
+    return jcs_bytes(without_top_level(input_data, {"signature"}))
+
+
+def validate_mandate_common(
+    suite_base: Path,
+    input_data: Json,
+    context: dict[str, Json],
+) -> dict[str, Json]:
+    validate_schema(suite_base, "mandate.schema.json", input_data)
+    if not isinstance(input_data, dict):
+        raise Reject("mandate input is not an object")
+    require_algorithm(input_data, "EdDSA")
+    preimage = mandate_preimage(input_data)
+    expected_digest = context.get("canonical_sha256")
+    if expected_digest is not None and canonical_sha256(preimage) != expected_digest:
+        raise Reject("mandate digest mismatch")
+    public_key = context.get("issuer_public_key_b64url")
+    if not isinstance(public_key, str):
+        raise Reject("mandate issuer public key is missing")
+    verify_ed25519(public_key, bare_signature(input_data), preimage)
+    if input_data.get("status", "active") != "active":
+        raise Reject("mandate is not active")
+
+    validity = input_data.get("validity")
+    if not isinstance(validity, dict):
+        raise Reject("mandate validity is missing")
+    mode = validity.get("mode")
+    now = parse_datetime(context.get("now"))
+    if mode == "windowed":
+        if parse_datetime(validity.get("not_before")) > now:
+            raise Reject("mandate is not yet valid")
+        if parse_datetime(validity.get("not_after")) < now:
+            raise Reject("mandate is expired")
+    elif mode == "sequence":
+        if context.get("sequence_key") != validity.get("sequence_key"):
+            raise Reject("mandate sequence key mismatch")
+    elif mode == "state_bound":
+        if context.get("state_active") is not True:
+            raise Reject("mandate state is not active")
+    else:
+        raise Reject("mandate validity mode is unsupported")
+
+    constraints = input_data.get("constraints")
+    validate_json_schema_object(constraints)
+    return input_data
+
+
+def verify_mandate_profile(
+    suite_base: Path,
+    input_data: Json,
+    context: dict[str, Json],
+) -> None:
+    mandate = validate_mandate_common(suite_base, input_data, context)
+    validate_action(mandate.get("constraints"), context.get("action"))
+
+
+def verify_delegation_chain_profile(
+    suite_base: Path,
+    input_data: Json,
+    context: dict[str, Json],
+) -> None:
+    mandate = validate_mandate_common(suite_base, input_data, context)
+    chain = mandate.get("delegation_chain")
+    if not isinstance(chain, list) or not chain:
+        raise Reject("delegation chain is missing")
+    public_keys = context.get("delegation_public_keys_b64url")
+    if not isinstance(public_keys, dict):
+        raise Reject("delegation public keys are missing")
+    if not isinstance(chain[0], dict) or chain[0].get("delegator") != mandate.get("issuer"):
+        raise Reject("delegation chain root mismatch")
+    if not isinstance(chain[-1], dict) or chain[-1].get("delegate") != mandate.get("subject"):
+        raise Reject("delegation chain tail mismatch")
+
+    effective_constraints: list[Json] = [mandate.get("constraints")]
+    previous_delegate: Json | None = None
+    for index, link in enumerate(chain):
+        if not isinstance(link, dict):
+            raise Reject("delegation link is not an object")
+        if previous_delegate is not None and link.get("delegator") != previous_delegate:
+            raise Reject("delegation chain continuity mismatch")
+        delegator = link.get("delegator")
+        if not isinstance(delegator, str):
+            raise Reject("delegation link delegator is missing")
+        public_key = public_keys.get(delegator)
+        if not isinstance(public_key, str):
+            raise Reject("delegation link public key is missing")
+        require_algorithm(link, "EdDSA")
+        verify_ed25519(public_key, bare_signature(link), jcs_bytes(without_top_level(link, {"signature"})))
+        if "scope_restriction" in link:
+            effective_constraints.append(scope_restriction_to_schema(link["scope_restriction"]))
+        previous_delegate = link.get("delegate")
+
+    if len(effective_constraints) == 1:
+        validate_action(effective_constraints[0], context.get("action"))
+    else:
+        validate_action({"allOf": effective_constraints}, context.get("action"))
+
+
+def verify_cosign(input_data: Json, context: dict[str, Json]) -> None:
+    if not isinstance(input_data, dict):
+        raise Reject("cosign input is not an object")
+    counterparty_did = context.get("counterparty_did")
+    publisher_did = context.get("publisher_did")
+    public_key_b64url = context.get("counterparty_public_key_b64url")
+    if (
+        not isinstance(counterparty_did, str)
+        or not isinstance(publisher_did, str)
+        or not isinstance(public_key_b64url, str)
+    ):
+        raise Reject("cosign context is missing")
+    if counterparty_did == publisher_did:
+        raise Reject("counterparty DID equals publisher DID")
+    public_key = b64url_decode(public_key_b64url)
+    if ed25519_did_key(public_key) != counterparty_did:
+        raise Reject("did:key derivation mismatch")
+    if public_key_from_did_key(counterparty_did) != public_key:
+        raise Reject("did:key decoding mismatch")
+    parties = input_data.get("parties")
+    if not isinstance(parties, list):
+        raise Reject("cosign parties are missing")
+    matches = [
+        party
+        for party in parties
+        if isinstance(party, dict) and party.get("agent_id") == counterparty_did
+    ]
+    if len(matches) != 1:
+        raise Reject("counterparty party entry is not unique")
+    preimage = cosign_preimage(input_data)
+    expected_digest = context.get("canonical_sha256")
+    if expected_digest is not None and canonical_sha256(preimage) != expected_digest:
+        raise Reject("cosign digest mismatch")
+    verify_ed25519(public_key_b64url, bare_signature(matches[0]), preimage)
+
+
 def verify_profile(
     suite_base: Path,
     profile: str,
@@ -492,6 +863,18 @@ def verify_profile(
         verify_cascade(suite_base, input_data, context, regression)
     elif profile == "fulfillment-attestation-v1":
         verify_fulfillment(suite_base, input_data, context, regression)
+    elif profile == "attestation-v1":
+        verify_attestation(suite_base, input_data, context)
+    elif profile == "attestation-countersign-v1":
+        verify_attestation_countersign(suite_base, input_data, context)
+    elif profile == "predicate-v1":
+        verify_predicate(suite_base, input_data, context)
+    elif profile == "mandate-v1":
+        verify_mandate_profile(suite_base, input_data, context)
+    elif profile == "delegation-chain-v1":
+        verify_delegation_chain_profile(suite_base, input_data, context)
+    elif profile == "cosign-v1":
+        verify_cosign(input_data, context)
     else:
         raise Reject("unknown verification profile")
 

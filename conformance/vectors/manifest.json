@@ -2,11 +2,11 @@
   "check_command": "python3 scripts/conformance/generate_vectors.py --check",
   "counts": {
     "canary": 3,
-    "diag_canonical_bytes": 232,
-    "fixtures": 11,
+    "diag_canonical_bytes": 247,
+    "fixtures": 30,
     "mutation": 222,
-    "positive": 11,
-    "schemas": 4
+    "positive": 28,
+    "schemas": 8
   },
   "files": {
     "canary": [
@@ -246,7 +246,22 @@
       "conformance/diag/canonical-bytes/pos-1404-decision-id.jcs",
       "conformance/diag/canonical-bytes/pos-1404-offer-digest.jcs",
       "conformance/diag/canonical-bytes/pos-1404-revocation-record.jcs",
-      "conformance/diag/canonical-bytes/pos-1920-fulfillment-attestation.jcs"
+      "conformance/diag/canonical-bytes/pos-1920-fulfillment-attestation.jcs",
+      "conformance/diag/canonical-bytes/pos-synthetic-attestation-countersign.jcs",
+      "conformance/diag/canonical-bytes/pos-synthetic-cosign.jcs",
+      "conformance/diag/canonical-bytes/pos-synthetic-delegation-chain.jcs",
+      "conformance/diag/canonical-bytes/pos-synthetic-mandate.jcs",
+      "conformance/diag/canonical-bytes/pos-synthetic-predicate-vector-01.jcs",
+      "conformance/diag/canonical-bytes/pos-synthetic-predicate-vector-02.jcs",
+      "conformance/diag/canonical-bytes/pos-synthetic-predicate-vector-03.jcs",
+      "conformance/diag/canonical-bytes/pos-synthetic-predicate-vector-04.jcs",
+      "conformance/diag/canonical-bytes/pos-synthetic-predicate-vector-05.jcs",
+      "conformance/diag/canonical-bytes/pos-synthetic-predicate-vector-06.jcs",
+      "conformance/diag/canonical-bytes/pos-synthetic-predicate-vector-07.jcs",
+      "conformance/diag/canonical-bytes/pos-synthetic-predicate-vector-08.jcs",
+      "conformance/diag/canonical-bytes/pos-synthetic-predicate-vector-09.jcs",
+      "conformance/diag/canonical-bytes/pos-synthetic-predicate-vector-10.jcs",
+      "conformance/diag/canonical-bytes/pos-synthetic-predicate-vector-11.jcs"
     ],
     "fixtures": [
       "conformance/vectors/fixtures/a2a-1404-receipt-revocation-vector/approval_receipt.json",
@@ -259,7 +274,26 @@
       "conformance/vectors/fixtures/a2a-1404-receipt-revocation-vector/revocation_A.json",
       "conformance/vectors/fixtures/a2a-1404-receipt-revocation-vector/vector.json",
       "conformance/vectors/fixtures/a2a-1920-fulfillment-sample/fulfillment_attestation.json",
-      "conformance/vectors/fixtures/a2a-1920-fulfillment-sample/sample.json"
+      "conformance/vectors/fixtures/a2a-1920-fulfillment-sample/sample.json",
+      "conformance/vectors/fixtures/synthetic/attestation/attestation.json",
+      "conformance/vectors/fixtures/synthetic/attestation/seed_manifest.json",
+      "conformance/vectors/fixtures/synthetic/cosign/cosigned_receipt.json",
+      "conformance/vectors/fixtures/synthetic/cosign/seed_manifest.json",
+      "conformance/vectors/fixtures/synthetic/mandate/delegated_mandate.json",
+      "conformance/vectors/fixtures/synthetic/mandate/mandate.json",
+      "conformance/vectors/fixtures/synthetic/mandate/seed_manifest.json",
+      "conformance/vectors/fixtures/synthetic/predicate/seed_manifest.json",
+      "conformance/vectors/fixtures/synthetic/predicate/vector_01.json",
+      "conformance/vectors/fixtures/synthetic/predicate/vector_02.json",
+      "conformance/vectors/fixtures/synthetic/predicate/vector_03.json",
+      "conformance/vectors/fixtures/synthetic/predicate/vector_04.json",
+      "conformance/vectors/fixtures/synthetic/predicate/vector_05.json",
+      "conformance/vectors/fixtures/synthetic/predicate/vector_06.json",
+      "conformance/vectors/fixtures/synthetic/predicate/vector_07.json",
+      "conformance/vectors/fixtures/synthetic/predicate/vector_08.json",
+      "conformance/vectors/fixtures/synthetic/predicate/vector_09.json",
+      "conformance/vectors/fixtures/synthetic/predicate/vector_10.json",
+      "conformance/vectors/fixtures/synthetic/predicate/vector_11.json"
     ],
     "mutation": [
       "conformance/vectors/mutation/mut-1404-approval-receipt-0001.json",
@@ -496,12 +530,33 @@
       "conformance/vectors/positive/pos-1404-receipt-offer-binding.json",
       "conformance/vectors/positive/pos-1404-revocation-record.json",
       "conformance/vectors/positive/pos-1404-wrapped-decision-id-binding.json",
-      "conformance/vectors/positive/pos-1920-fulfillment-attestation.json"
+      "conformance/vectors/positive/pos-1920-fulfillment-attestation.json",
+      "conformance/vectors/positive/pos-synthetic-attestation-countersign.json",
+      "conformance/vectors/positive/pos-synthetic-attestation.json",
+      "conformance/vectors/positive/pos-synthetic-cosign.json",
+      "conformance/vectors/positive/pos-synthetic-delegation-chain.json",
+      "conformance/vectors/positive/pos-synthetic-mandate.json",
+      "conformance/vectors/positive/pos-synthetic-predicate-vector-01.json",
+      "conformance/vectors/positive/pos-synthetic-predicate-vector-02.json",
+      "conformance/vectors/positive/pos-synthetic-predicate-vector-03.json",
+      "conformance/vectors/positive/pos-synthetic-predicate-vector-04.json",
+      "conformance/vectors/positive/pos-synthetic-predicate-vector-05.json",
+      "conformance/vectors/positive/pos-synthetic-predicate-vector-06.json",
+      "conformance/vectors/positive/pos-synthetic-predicate-vector-07.json",
+      "conformance/vectors/positive/pos-synthetic-predicate-vector-08.json",
+      "conformance/vectors/positive/pos-synthetic-predicate-vector-09.json",
+      "conformance/vectors/positive/pos-synthetic-predicate-vector-10.json",
+      "conformance/vectors/positive/pos-synthetic-predicate-vector-11.json",
+      "conformance/vectors/positive/privacy-synthetic-attestation-behavior-note.json"
     ],
     "schemas": [
       "conformance/vectors/schemas/approval_receipt.schema.json",
+      "conformance/vectors/schemas/attestation.schema.json",
       "conformance/vectors/schemas/cascade_decision_record.schema.json",
       "conformance/vectors/schemas/fulfillment_attestation.schema.json",
+      "conformance/vectors/schemas/mandate.schema.json",
+      "conformance/vectors/schemas/predicate.json",
+      "conformance/vectors/schemas/reference.schema.json",
       "conformance/vectors/schemas/revocation_record.schema.json"
     ]
   },
@@ -517,14 +572,24 @@
     "receipt-v1",
     "revocation-v1",
     "cascade-decision-v1",
-    "fulfillment-attestation-v1"
+    "fulfillment-attestation-v1",
+    "attestation-v1",
+    "attestation-countersign-v1",
+    "predicate-v1",
+    "mandate-v1",
+    "delegation-chain-v1",
+    "cosign-v1"
   ],
   "record_types": [
     "decision_object",
     "approval_receipt",
     "revocation_record",
     "cascade_decision_record",
-    "fulfillment_attestation"
+    "fulfillment_attestation",
+    "attestation",
+    "predicate",
+    "mandate",
+    "cosign_receipt"
   ],
   "schema_version": "concordia-conformance-manifest/v1-draft",
   "suite_version": "v1-draft"
