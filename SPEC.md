@@ -296,7 +296,7 @@ The `reasoning` field is:
 - **Structurally encouraged**: agents that explain their reasoning reach better outcomes, because counterparties can identify creative solutions
 - **Included in the signed transcript**: so it serves as evidence of good faith
 
-This field is what makes Concordia native to the LLM era. Classical negotiation protocols exchanged only structured data. But LLM agents think in natural language, and the most productive negotiations between intelligent parties involve explanation, not just numbers.
+This field is what makes Concordia native to the LLM era. Classical negotiation protocols exchanged only structured data. But LLM agents think in natural language, and the most productive negotiations between intelligent parties carry explanation alongside the numbers.
 
 ---
 
@@ -708,7 +708,7 @@ The negotiation transcript is a hash chain. Each message includes the hash of th
 
 ### 9.4 Confidentiality
 
-Concordia messages are signed, not encrypted. Signing (§9.2) provides integrity, authenticity, and non-repudiation: a message cannot be altered without detection, and the sender cannot deny having sent it. Signing does not provide confidentiality. Any system that carries or stores a Concordia message, including a relay, a mailbox service, or any other transport intermediary, can read its full content. The only confidentiality protection in place today is transport-layer security (TLS) on each network hop, which protects against on-path observers between hops but not against the intermediaries themselves.
+Concordia messages are signed; they are not encrypted. Signing (§9.2) provides integrity, authenticity, and non-repudiation: a message cannot be altered without detection, and the sender cannot deny having sent it. Signing does not provide confidentiality. Any system that carries or stores a Concordia message, including a relay, a mailbox service, or any other transport intermediary, can read its full content. The only confidentiality protection in place today is transport-layer security (TLS) on each network hop, which protects against on-path observers between hops but not against the intermediaries themselves.
 
 Agents and implementers SHOULD therefore treat every message field, including offer terms and the `reasoning` field, as visible to the infrastructure that delivers it. Negotiations involving sensitive terms (financial, medical, legal) SHOULD be conducted only over transport whose operators the parties trust. The Privacy by Default principle (§1.5) applies at authoring time: do not place content in a message that must remain hidden from the delivery path.
 
@@ -1093,7 +1093,7 @@ Identity and signature:
 
 Invariants (all fail-closed):
 
-- Recomputable, not asserted. Mutating ANY bound field, including a claimed
+- Recomputable end to end. Mutating ANY bound field, including a claimed
   ancestor `status` or `coordinate`, or a swapped ref, MUST diverge the
   recomputed `decision_id`, and the verifier MUST reject the record.
 - The deny commits to the ancestor read. `ancestor_reads` MUST be non-empty; a
@@ -1251,7 +1251,7 @@ The protocol's relationship to reputation scoring services mirrors the relations
 | Specifies query/response format | Implements scoring algorithms |
 | Open, standardized, free | Proprietary, differentiated, monetizable |
 
-Multiple reputation services can coexist, each with different scoring models optimized for different contexts. A service optimized for high-value B2B procurement will weight different signals than one optimized for casual P2P goods transactions. This diversity is a feature, not a bug; it mirrors how the real world has multiple trust signals (credit scores, Yelp reviews, LinkedIn endorsements, personal references) for different contexts.
+Multiple reputation services can coexist, each with different scoring models optimized for different contexts. A service optimized for high-value B2B procurement will weight different signals than one optimized for casual P2P goods transactions. This diversity is deliberate; it mirrors how the real world keeps multiple trust signals (credit scores, Yelp reviews, LinkedIn endorsements, personal references) for different contexts.
 
 ---
 
@@ -1354,7 +1354,7 @@ Extensions are declared in the `negotiate.open` message and must be accepted by 
 | `concordia.ext.physical_goods` | Condition assessment, logistics, insurance |
 | `concordia.ext.multiparty` | Negotiations with 3+ parties (e.g., supply chain coordination) |
 
-*Note: Reputation attestations are a core protocol feature (§9.6), not an extension. The attestation format is part of every Concordia implementation. Reputation **scoring** is provided by external services that consume attestations.*
+*Note: Reputation attestations are defined in the core protocol (§9.6) rather than as an extension. The attestation format is part of every Concordia implementation. Reputation **scoring** is provided by external services that consume attestations.*
 
 ### 11.5 Reference Linkages
 
@@ -1412,7 +1412,7 @@ The two surfaces serve different purposes and MUST NOT be conflated:
 
 Tooling MAY surface both layers in a unified view (e.g., a "related artifacts" panel that aggregates references from both surfaces). When tooling does this, it MUST preserve the source layer in any verification step: an envelope-level reference verified by hash plus signer plus timestamp is a different verification claim than an attestation-level reference verified by the issuer's signature on the attestation body. A unified UI MAY present both, but the verification logic MUST keep them distinct.
 
-This layering boundary is the canonical reconciliation of the v0.4.0 follow-up (c) layering question. v0.5 ratifies the shipped two-surface design rather than collapsing the two into a single canonical mapping, because the two surfaces resolve to genuinely different verification concerns.
+This layering boundary is the canonical reconciliation of the v0.4.0 follow-up (c) layering question. v0.5 ratifies the shipped two-surface design rather than collapsing the two into a single canonical mapping, because the two surfaces resolve to different verification claims: hash plus signer plus timestamp at the envelope, issuer signature over the attestation body at the attestation.
 
 #### 11.5.5 Relationship Vocabulary
 
@@ -1624,7 +1624,7 @@ Concordia is an attempt to build negotiation infrastructure that is structurally
 
 We believe that as autonomous agents conduct more of the world's commerce, the protocols they use will shape the character of that commerce. Protocols are not neutral. They encode values. Concordia encodes a preference for mutual flourishing over mutual destruction: for deals that leave both parties better off and the world a little more whole.
 
-This is not naïve. It is mechanism design.
+Encoding that preference at the protocol layer is mechanism design: the same discipline that makes honest bidding the winning strategy in a well-built auction.
 
 ---
 
