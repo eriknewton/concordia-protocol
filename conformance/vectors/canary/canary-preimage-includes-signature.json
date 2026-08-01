@@ -1,0 +1,64 @@
+{
+  "context": {
+    "forbid_raw_deal_terms": true,
+    "join_keys": {
+      "action_ref": "urn:a2a:action:2026-05-10-deliver-88f01c",
+      "charge_ref": "urn:a2a:charge:2026-05-10-tx-88f01c"
+    },
+    "public_key_b64url": "AzGbtvmQkxYKS78wqrHh_egYUl-lEtTGr_J4EZLotUU=",
+    "signature_preimage_value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+  },
+  "discriminates": "preimage-includes-signature",
+  "expected": "reject",
+  "expected_reason_class": "signature",
+  "id": "canary-preimage-includes-signature",
+  "input": {
+    "action_ref": "urn:a2a:action:2026-05-10-deliver-88f01c",
+    "agreement_attestation_id": "urn:concordia:attestation:agree-88f01c",
+    "attestation_type": "FulfillmentAttestation",
+    "charge_ref": "urn:a2a:charge:2026-05-10-tx-88f01c",
+    "fulfillment": {
+      "settled_at": "2026-05-10T15:03:55Z",
+      "status": "fulfilled_clean"
+    },
+    "id": "urn:concordia:fulfillment:a2a-1920-88f01c",
+    "issued_at": "2026-05-10T15:04:00Z",
+    "meta": {
+      "behavioral_signals": {
+        "counterparty_confirmed": true,
+        "delivered_within_window": true,
+        "disputes_raised": 0,
+        "on_time": true,
+        "settlement_attempts": 1
+      },
+      "mediator_invoked": false
+    },
+    "references": [
+      {
+        "id": "urn:concordia:attestation:agree-88f01c",
+        "relationship": "fulfills",
+        "type": "attestation"
+      },
+      {
+        "id": "urn:a2a:charge:2026-05-10-tx-88f01c",
+        "relationship": "references",
+        "type": "receipt"
+      },
+      {
+        "id": "sha256:ddec8a0f3be077ad1ce362cb81d79c720cd4f7ff6b09531c1896af5516e99eb5",
+        "relationship": "references",
+        "type": "delivery_evidence"
+      }
+    ],
+    "signature": {
+      "alg": "Ed25519",
+      "value": "E5s680L-EETPlyGJ-8YRvKsFDn5IKrmeA_EFJjtHyq3iH2_Pr1kxgAY5eziYl-b4NtOTB3vRR4liJSfiukSKBQ=="
+    }
+  },
+  "notes": "canary: rejects unless the runner includes the signature placeholder in the preimage",
+  "record_type": "fulfillment_attestation",
+  "schema_version": "concordia-conformance-vector/v1-draft",
+  "source_fixture": "a2a-1920-fulfillment-sample",
+  "title": "FulfillmentAttestation signature commits to a placeholder signature field",
+  "verification_profile": "fulfillment-attestation-v1"
+}

@@ -101,9 +101,10 @@ class Vector:
     expected_reason_class: str | None = None
     notes: str = ""
     canonical_preimage: bytes | None = None
+    discriminates: str | None = None
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        data = {
             "schema_version": VECTOR_SCHEMA_VERSION,
             "id": self.vector_id,
             "title": self.title,
@@ -116,6 +117,9 @@ class Vector:
             "expected_reason_class": self.expected_reason_class,
             "notes": self.notes,
         }
+        if self.discriminates is not None:
+            data["discriminates"] = self.discriminates
+        return data
 
 
 @dataclass(frozen=True)
@@ -168,6 +172,17 @@ def b64url_decode(value: str) -> bytes:
 
 def b64url_encode(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).decode()
+
+
+def private_key_from_seed(seed_ascii: str) -> Ed25519PrivateKey:
+    seed = seed_ascii.encode("utf-8")
+    if len(seed) != 32:
+        raise GenerationError(f"Ed25519 seed is not 32 bytes: {seed_ascii!r}")
+    return Ed25519PrivateKey.from_private_bytes(seed)
+
+
+def sign_b64url(private_key: Ed25519PrivateKey, payload: bytes) -> str:
+    return b64url_encode(private_key.sign(payload))
 
 
 def sha256_jcs(value: Any) -> str:
@@ -541,6 +556,7 @@ TOLERATED_SIGNATURE_ESCAPE_NOTE = (
 EXPECTED_MUTATION_TOTAL = 222
 EXPECTED_MUTATION_REJECTS = 220
 EXPECTED_MUTATION_ACCEPTS = 2
+EXPECTED_CANARY_TOTAL = 3
 EXPECTED_RAW_TYPED_DIVERGENCES = (
     MutationDivergence(
         battery_name="1404/revocation_A.json",
@@ -833,6 +849,239 @@ def build_mutation_vectors() -> list[Vector]:
     return vectors
 
 
+def build_canary_preimage_includes_signature(
+    f1920: dict[str, dict[str, Any]],
+) -> Vector:
+    sample = f1920["sample"]
+    fulfillment = copy.deepcopy(f1920["fulfillment_attestation"])
+    private_key = private_key_from_seed(sample["seed_ed25519_ascii"])
+    placeholder = b64url_encode(b"\x00" * 64)
+    preimage = copy.deepcopy(fulfillment)
+    preimage["signature"]["value"] = placeholder
+    fulfillment["signature"]["value"] = sign_b64url(private_key, canonical_json(preimage))
+    return Vector(
+        vector_id="canary-preimage-includes-signature",
+        title="FulfillmentAttestation signature commits to a placeholder signature field",
+        source_fixture=INTEROP_1920.name,
+        record_type="fulfillment_attestation",
+        verification_profile="fulfillment-attestation-v1",
+        input_data=fulfillment,
+        context={
+            "forbid_raw_deal_terms": True,
+            "join_keys": sample["join_keys"],
+            "public_key_b64url": sample["public_key_b64url"],
+            "signature_preimage_value": placeholder,
+        },
+        expected="reject",
+        expected_reason_class="signature",
+        notes="canary: rejects unless the runner includes the signature placeholder in the preimage",
+        canonical_preimage=canonical_json(without_signature(fulfillment)),
+        discriminates="preimage-includes-signature",
+    )
+
+
+def build_canary_schema_skipped(f1404: dict[str, dict[str, Any]]) -> Vector:
+    vector_meta = f1404["vector"]
+    seeds = vector_meta["signing_seeds_PUBLIC_test_only_do_not_reuse"]
+    private_key = private_key_from_seed(seeds["revocation_issuer_ed25519_seed_ascii"])
+    cascade = copy.deepcopy(f1404["cascade_decision_deny"])
+    cascade["__canary_extra__"] = "schema-skipped"
+    preimage = canonicalize_cascade_decision_record(cascade)
+    cascade["decision_id"] = hashlib.sha256(preimage).hexdigest()
+    preimage = canonicalize_cascade_decision_record(cascade)
+    cascade["signature"]["value"] = sign_b64url(private_key, preimage)
+    return Vector(
+        vector_id="canary-schema-skipped",
+        title="CascadeDecisionRecord with an extra top-level key signed and re-identified",
+        source_fixture=INTEROP_1404.name,
+        record_type="cascade_decision_record",
+        verification_profile="cascade-decision-v1",
+        input_data=cascade,
+        context={
+            "expected_decision_id": f"sha256:{cascade['decision_id']}",
+            "public_keys_b64url": {
+                "issuer": vector_meta["public_keys_b64url"]["revocation_issuer"]
+            },
+        },
+        expected="reject",
+        expected_reason_class="schema",
+        notes="canary: rejects only if the cascade schema is enforced",
+        canonical_preimage=preimage,
+        discriminates="schema-skipped",
+    )
+
+
+def build_canary_decision_id_not_recomputed(
+    f1404: dict[str, dict[str, Any]],
+) -> Vector:
+    vector_meta = f1404["vector"]
+    seeds = vector_meta["signing_seeds_PUBLIC_test_only_do_not_reuse"]
+    private_key = private_key_from_seed(seeds["revocation_issuer_ed25519_seed_ascii"])
+    cascade = copy.deepcopy(f1404["cascade_decision_deny"])
+    cascade["policy_version"] = f"{cascade['policy_version']}-canary"
+    stale_decision_id = f1404["cascade_decision_deny"]["decision_id"]
+    cascade["decision_id"] = stale_decision_id
+    signature_preimage = canonical_json(without_signature(cascade))
+    cascade["signature"]["value"] = sign_b64url(private_key, signature_preimage)
+    return Vector(
+        vector_id="canary-decision-id-not-recomputed",
+        title="CascadeDecisionRecord with stale decision_id and freshly signed tampered body",
+        source_fixture=INTEROP_1404.name,
+        record_type="cascade_decision_record",
+        verification_profile="cascade-decision-v1",
+        input_data=cascade,
+        context={
+            "expected_decision_id": f"sha256:{stale_decision_id}",
+            "public_keys_b64url": {
+                "issuer": vector_meta["public_keys_b64url"]["revocation_issuer"]
+            },
+        },
+        expected="reject",
+        expected_reason_class="digest",
+        notes="canary: rejects only if decision_id is recomputed from the body",
+        canonical_preimage=canonicalize_cascade_decision_record(cascade),
+        discriminates="decision-id-not-recomputed",
+    )
+
+
+def evaluate_canary_regression(vector: Vector) -> Evaluation:
+    if vector.discriminates == "preimage-includes-signature":
+        input_data = vector.input_data
+        context = vector.context
+        schema = load_json(SCHEMA_COPIES["fulfillment_attestation.schema.json"])
+        if not schema_is_valid(schema, input_data):
+            return Evaluation(False, "schema")
+        if not has_fulfills_reference(input_data):
+            return Evaluation(False, "binding")
+        signature = input_data.get("signature")
+        if not isinstance(signature, dict) or signature.get("alg") != "Ed25519":
+            return Evaluation(False, "signature")
+        public_key = Ed25519PublicKey.from_public_bytes(
+            b64url_decode(context["public_key_b64url"])
+        )
+        placeholder_preimage = copy.deepcopy(input_data)
+        placeholder_preimage["signature"]["value"] = context["signature_preimage_value"]
+        try:
+            public_key.verify(
+                b64url_decode(str(signature.get("value", ""))),
+                canonical_json(placeholder_preimage),
+            )
+        except Exception:
+            return Evaluation(False, "signature")
+        join_keys = context.get("join_keys", {})
+        if "charge_ref" in join_keys and input_data.get("charge_ref") != join_keys["charge_ref"]:
+            return Evaluation(False, "binding")
+        if "action_ref" in join_keys and input_data.get("action_ref") != join_keys["action_ref"]:
+            return Evaluation(False, "binding")
+        if context.get("forbid_raw_deal_terms") and contains_raw_term(input_data):
+            return Evaluation(False, "binding")
+        return Evaluation(True)
+
+    if vector.discriminates == "schema-skipped":
+        input_data = vector.input_data
+        context = vector.context
+        cascade_preimage_bytes = canonicalize_cascade_decision_record(input_data)
+        claimed_id = input_data.get("decision_id")
+        if not isinstance(claimed_id, str):
+            return Evaluation(False, "digest")
+        if hashlib.sha256(cascade_preimage_bytes).hexdigest() != claimed_id:
+            return Evaluation(False, "digest")
+        if context.get("expected_decision_id") != f"sha256:{claimed_id}":
+            return Evaluation(False, "digest")
+        signature = input_data.get("signature")
+        if not isinstance(signature, dict) or signature.get("alg") != "EdDSA":
+            return Evaluation(False, "signature")
+        public_key = Ed25519PublicKey.from_public_bytes(
+            b64url_decode(context["public_keys_b64url"]["issuer"])
+        )
+        try:
+            public_key.verify(
+                b64url_decode(str(signature.get("value", ""))),
+                cascade_preimage_bytes,
+            )
+        except Exception:
+            return Evaluation(False, "signature")
+        return Evaluation(True)
+
+    if vector.discriminates == "decision-id-not-recomputed":
+        input_data = vector.input_data
+        context = vector.context
+        try:
+            validate_cascade_decision_record(input_data)
+        except Exception:
+            return Evaluation(False, "schema")
+        claimed_id = input_data.get("decision_id")
+        if not isinstance(claimed_id, str):
+            return Evaluation(False, "digest")
+        if context.get("expected_decision_id") != f"sha256:{claimed_id}":
+            return Evaluation(False, "digest")
+        cascade_preimage_bytes = canonical_json(without_signature(input_data))
+        signature = input_data.get("signature")
+        if not isinstance(signature, dict) or signature.get("alg") != "EdDSA":
+            return Evaluation(False, "signature")
+        public_key = Ed25519PublicKey.from_public_bytes(
+            b64url_decode(context["public_keys_b64url"]["issuer"])
+        )
+        try:
+            public_key.verify(
+                b64url_decode(str(signature.get("value", ""))),
+                cascade_preimage_bytes,
+            )
+        except Exception:
+            return Evaluation(False, "signature")
+        return Evaluation(True)
+
+    raise GenerationError(f"{vector.vector_id}: missing canary regression")
+
+
+def assert_canary_sanity(vectors: list[Vector]) -> None:
+    if len(vectors) != EXPECTED_CANARY_TOTAL:
+        raise GenerationError(
+            f"canary vector count drifted: {len(vectors)} != {EXPECTED_CANARY_TOTAL}"
+        )
+    discriminators = {
+        vector.discriminates for vector in vectors if vector.discriminates is not None
+    }
+    if discriminators != {
+        "preimage-includes-signature",
+        "schema-skipped",
+        "decision-id-not-recomputed",
+    }:
+        raise GenerationError(f"canary discriminator set drifted: {sorted(discriminators)}")
+    for vector in vectors:
+        if vector.expected != "reject":
+            raise GenerationError(f"{vector.vector_id}: canary must expect reject")
+        raw = evaluate_vector(vector)
+        if raw.accepted:
+            raise GenerationError(f"{vector.vector_id}: raw verifier accepted canary")
+        if raw.reason_class != vector.expected_reason_class:
+            raise GenerationError(
+                f"{vector.vector_id}: expected reason {vector.expected_reason_class}, "
+                f"got {raw.reason_class}"
+            )
+        regressed = evaluate_canary_regression(vector)
+        if not regressed.accepted:
+            raise GenerationError(
+                f"{vector.vector_id}: regressed verifier did not false-accept "
+                f"({regressed.reason_class})"
+            )
+
+
+def build_canary_vectors() -> list[Vector]:
+    f1404 = fixture_1404()
+    f1920 = fixture_1920()
+    vectors = sorted(
+        [
+            build_canary_preimage_includes_signature(f1920),
+            build_canary_schema_skipped(f1404),
+            build_canary_decision_id_not_recomputed(f1404),
+        ],
+        key=lambda vector: vector.vector_id,
+    )
+    assert_canary_sanity(vectors)
+    return vectors
+
+
 def build_vectors() -> list[Vector]:
     f1404 = fixture_1404()
     f1920 = fixture_1920()
@@ -1104,7 +1353,7 @@ def write_vector_group(
     dest_root: Path,
     vectors: list[Vector],
     *,
-    section: Literal["positive", "mutation"],
+    section: Literal["positive", "mutation", "canary"],
 ) -> tuple[list[str], list[str]]:
     vector_files: list[str] = []
     diag_files: list[str] = []
@@ -1139,6 +1388,7 @@ def write_manifest(
     schema_files: list[str],
     positive_files: list[str],
     mutation_files: list[str],
+    canary_files: list[str],
     diag_files: list[str],
 ) -> None:
     manifest = {
@@ -1153,7 +1403,7 @@ def write_manifest(
             "schemas": len(schema_files),
             "positive": len(positive_files),
             "mutation": len(mutation_files),
-            "canary": 0,
+            "canary": len(canary_files),
             "diag_canonical_bytes": len(diag_files),
         },
         "files": {
@@ -1161,7 +1411,7 @@ def write_manifest(
             "schemas": schema_files,
             "positive": positive_files,
             "mutation": mutation_files,
-            "canary": [],
+            "canary": canary_files,
             "diag_canonical_bytes": diag_files,
         },
         "phase_notes": {
@@ -1176,8 +1426,10 @@ def write_manifest(
 def generate(dest_root: Path) -> None:
     positive_vectors = build_vectors()
     mutation_vectors = build_mutation_vectors()
+    canary_vectors = build_canary_vectors()
     assert_vectors_execute(positive_vectors)
     assert_vectors_execute(mutation_vectors)
+    assert_vectors_execute(canary_vectors)
     clean_output(dest_root)
     fixture_files = copy_fixtures(dest_root)
     schema_files = copy_schemas(dest_root)
@@ -1187,13 +1439,17 @@ def generate(dest_root: Path) -> None:
     mutation_files, mutation_diag_files = write_vector_group(
         dest_root, mutation_vectors, section="mutation"
     )
+    canary_files, canary_diag_files = write_vector_group(
+        dest_root, canary_vectors, section="canary"
+    )
     write_manifest(
         dest_root,
         fixture_files=fixture_files,
         schema_files=schema_files,
         positive_files=positive_files,
         mutation_files=mutation_files,
-        diag_files=sorted(positive_diag_files + mutation_diag_files),
+        canary_files=canary_files,
+        diag_files=sorted(positive_diag_files + mutation_diag_files + canary_diag_files),
     )
 
 
@@ -1233,6 +1489,7 @@ def check_generated() -> int:
             path.relative_to(actual_root)
             for path in all_files(actual_root)
             if path.name != "RUNNER_CONTRACT.md"
+            and path.relative_to(actual_root).parts[0] != "reference-runner"
         }
         expected_rels = {path.relative_to(expected_root) for path in all_files(expected_root)}
         all_rels = sorted(actual_rels | expected_rels)

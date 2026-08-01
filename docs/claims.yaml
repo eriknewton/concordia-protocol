@@ -19,3 +19,7 @@ claims:
     claim: "Every digest a fixture publishes is recomputed from the fixture bytes by that fixture's `verify.py` and compared, and the digests used for signature and revocation checks are additionally cross-checked against the independent `rfc8785` reference library in CI (`tests/test_interop_fixtures.py`)."
     stated_in: docs/interop/README.md
     check: scripts/claims/fixture_verifiers_recompute.py
+  - id: conformance-vectors-verify-without-our-sdk
+    claim: "The Phase 1 conformance vectors verify without the Concordia SDK: the reference runner installs only RFC 8785, PyNaCl, JSON Schema, and the Python standard library, then executes the public vector manifest."
+    stated_in: conformance/RUNNER_CONTRACT.md
+    check: ci-job:conformance-clean-room

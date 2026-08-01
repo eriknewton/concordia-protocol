@@ -99,3 +99,20 @@ Verify:
 ```bash
 python scripts/claims/fixture_verifiers_recompute.py
 ```
+
+### `conformance-vectors-verify-without-our-sdk`
+
+Claim:
+
+> The Phase 1 conformance vectors verify without the Concordia SDK: the reference runner installs only RFC 8785, PyNaCl, JSON Schema, and the Python standard library, then executes the public vector manifest.
+
+Stated in: `conformance/RUNNER_CONTRACT.md`
+
+Enforced by: CI job `conformance-clean-room`
+
+Verify:
+
+```bash
+pip install rfc8785 pynacl jsonschema
+python conformance/reference-runner/runner.py conformance/vectors/
+```
