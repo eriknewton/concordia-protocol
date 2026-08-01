@@ -1,0 +1,1 @@
+{"boundary_id":"urn:a2a:boundary:acme-procurement-hitl","capability_digest":"sha256:dddfb8f55c9ff12ccd3ff0a5b065956b3a508b4be38eee74ad90c91c74aca930","decision":"approve","policy_version":"acme-procurement-policy@2026-05-01","request_digest":"sha256:2cf9882e0ceee36278318a376117cc03da510c6994c3679a57eb4777dc8e06cb","verifier":"did:web:acme.example#procurement-lead"}
