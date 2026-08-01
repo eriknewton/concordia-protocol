@@ -1,0 +1,20 @@
+{
+  "algorithm": "EdDSA",
+  "authority": "urn:concordia:authority:jcs",
+  "condition": {
+    "limit": 1e+30,
+    "result": "satisfied"
+  },
+  "expires_at": "2026-05-21T00:00:00Z",
+  "issued_at": "2026-05-14T00:00:00Z",
+  "issuer": "did:web:issuer.example#key-1",
+  "metadata": {
+    "issuer_public_key_b64": "14Jm58cqv1UuS6hzzWHLldVHyKrdqgnWHTvx7zhltM0="
+  },
+  "predicate_id": "urn:concordia:predicate:pred_jcs_002",
+  "references": [],
+  "signature": "6KzaVYMucxttU44HvsXeChc46IGDP4gV5Y6et3JYM7l4CdYdwnPYAsUE5d60_1WlNJmShP0uz1BTSvYVMqnJCg==",
+  "status": "active",
+  "subject": "did:web:subject.example#agent",
+  "type": "urn:concordia:predicate-type:jcs_edge:v1"
+}
