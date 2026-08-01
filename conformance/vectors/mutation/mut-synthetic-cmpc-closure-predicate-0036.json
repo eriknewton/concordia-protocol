@@ -1,0 +1,72 @@
+{
+  "context": {
+    "canonical_sha256": "sha256:5c9ffeae615e28599b1f18df7932a7843a544d1a83d937dd02754a832fc5cd9e",
+    "chain_session": {
+      "activated_at": null,
+      "activation_deadline": "2026-05-17T14:00:00Z",
+      "activation_proof_id": null,
+      "chain_session_id": "urn:concordia:chain-session:beer-game-2026-05-17-001",
+      "closure_predicate_ref": "urn:concordia:predicate:beer-game-closure-2026-05-17-001",
+      "commitments": [
+        "urn:concordia:commitment:retailer-beer-order-2026-05-17-001",
+        "urn:concordia:commitment:wholesaler-beer-supply-2026-05-17-001"
+      ],
+      "created_at": "2026-05-17T09:00:00Z",
+      "dissolved_at": null,
+      "participants": [
+        "did:web:retailer.example",
+        "did:web:wholesaler.example"
+      ],
+      "state": "OPEN",
+      "unwind_record_id": null
+    },
+    "digest_checks": [
+      {
+        "kind": "jcs-sha256-pointer",
+        "source": "context.chain_session",
+        "target": {
+          "object": "input",
+          "pointer": "/references/0/digest"
+        }
+      }
+    ],
+    "public_key_b64url": "18upzjeEQyfpM0tUq9BJkQGu4hloig0bgYnlkCt6tbg="
+  },
+  "expected": "reject",
+  "expected_reason_class": "schema",
+  "id": "mut-synthetic-cmpc-closure-predicate-0036",
+  "input": {
+    "algorithm": "EdDSA",
+    "authority": "did:web:beer-game-authority.example",
+    "condition": {
+      "activation_deadline_iso": "2026-05-17T14:00:00Z",
+      "aggregate_quantity_required": 100,
+      "expected_participants": [
+        "did:web:retailer.example",
+        "did:web:wholesaler.example"
+      ],
+      "mandate_check_required": true,
+      "match_tolerance": 0.0
+    },
+    "expires_at": "2026-05-17T14:00:00Z",
+    "issued_at": "2026-05-17T09:00:00Z",
+    "issuer": "did:web:beer-game-authority.example",
+    "predicate_id": "urn:concordia:predicate:beer-game-closure-2026-05-17-001",
+    "references": [
+      {
+        "digest": "sha256:fa4aa5185b2154dddd3a9acd76dc21d6a0ba0c88a3dbec876c714adc54da720e",
+        "uri": "urn:concordia:chain-session:beer-game-2026-05-17-001"
+      }
+    ],
+    "signature": "os7dtXTWdBG6Pn2Fd9LlkVK-nCnPHGenV_ybO2tqJk1-baWV-VKJkd43oQmmTLz_fkB8dk5dD_3rGWVqLLJNAw==",
+    "status": "activ0",
+    "subject": "urn:concordia:chain-session:beer-game-2026-05-17-001",
+    "type": "urn:concordia:predicate-type:bilateral_chain_closure:v1"
+  },
+  "notes": "",
+  "record_type": "closure_predicate",
+  "schema_version": "concordia-conformance-vector/v1-draft",
+  "source_fixture": "synthetic/cmpc_bilateral",
+  "title": "cmpc_closure_predicate: value status",
+  "verification_profile": "closure-predicate-v1"
+}

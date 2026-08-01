@@ -14,13 +14,14 @@ EXPECTED_REASON_CLASSES = {
     "binding",
     "temporal",
     "privacy",
+    "transition",
 }
 TOLERATED_SIGNATURE_ESCAPE_NOTE = (
     "tolerated-escape: signature block is outside its own preimage"
 )
-EXPECTED_MUTATION_REJECTS = 664
-EXPECTED_MUTATION_ACCEPTS = 34
-EXPECTED_MUTATION_TOTAL = 698
+EXPECTED_MUTATION_REJECTS = 821
+EXPECTED_MUTATION_ACCEPTS = 35
+EXPECTED_MUTATION_TOTAL = 856
 EXPECTED_BATTERY_COUNTS = {
     "1404/approval_receipt.json": (63, 62, 1),
     "1404/cascade_decision_deny.json": (35, 35, 0),
@@ -35,6 +36,11 @@ EXPECTED_BATTERY_COUNTS = {
     ),
     "synthetic/attestation/attestation.json::attestation-v1": (107, 78, 29),
     "synthetic/cosign/cosigned_receipt.json": (42, 42, 0),
+    "synthetic/cmpc_bilateral/primitives/atomic_activation_proof.json": (30, 30, 0),
+    "synthetic/cmpc_bilateral/primitives/chain_session.json": (25, 25, 0),
+    "synthetic/cmpc_bilateral/primitives/closure_predicate.json": (40, 39, 1),
+    "synthetic/cmpc_bilateral/primitives/conditional_commitment.json": (35, 35, 0),
+    "synthetic/cmpc_bilateral/primitives/unwind_record.json": (28, 28, 0),
     "synthetic/mandate/delegated_mandate.json": (82, 82, 0),
     "synthetic/mandate/mandate.json": (51, 51, 0),
     "synthetic/predicate/vector_02.json": (87, 87, 0),
@@ -74,6 +80,7 @@ EXPECTED_ACCEPTED_IDS = {
     "mut-synthetic-attestation-countersign-0045",
     "mut-synthetic-attestation-countersign-0072",
     "mut-synthetic-attestation-countersign-0105",
+    "mut-synthetic-cmpc-closure-predicate-0038",
 }
 
 

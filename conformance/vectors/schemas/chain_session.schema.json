@@ -1,0 +1,104 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "activated_at": {
+      "anyOf": [
+        {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "activation_deadline": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T",
+      "type": "string"
+    },
+    "activation_proof_id": {
+      "anyOf": [
+        {
+          "pattern": "^urn:concordia:activation-proof:",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "chain_session_id": {
+      "pattern": "^urn:concordia:chain-session:",
+      "type": "string"
+    },
+    "closure_predicate_ref": {
+      "pattern": "^urn:concordia:predicate:",
+      "type": "string"
+    },
+    "commitments": {
+      "items": {
+        "pattern": "^urn:concordia:commitment:",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "created_at": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T",
+      "type": "string"
+    },
+    "dissolved_at": {
+      "anyOf": [
+        {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "participants": {
+      "items": {
+        "pattern": "^did:",
+        "type": "string"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "state": {
+      "enum": [
+        "PROPOSED",
+        "OPEN",
+        "ACTIVATED",
+        "DISSOLVED",
+        "EXPIRED"
+      ],
+      "type": "string"
+    },
+    "unwind_record_id": {
+      "anyOf": [
+        {
+          "pattern": "^urn:concordia:unwind:",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "chain_session_id",
+    "participants",
+    "closure_predicate_ref",
+    "state",
+    "created_at",
+    "activation_deadline",
+    "activated_at",
+    "dissolved_at",
+    "commitments",
+    "unwind_record_id",
+    "activation_proof_id"
+  ],
+  "type": "object"
+}
