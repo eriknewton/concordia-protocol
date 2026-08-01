@@ -1,11 +1,12 @@
-"""Contract test: the Verascore publish envelope this client emits matches the
-committed schema for a concordia-receipt publish body.
+"""Contract test: the Concordia publish envelope this client emits matches the
+committed schema for a Concordia receipt publish body.
 
-The schema in tests/fixtures/verascore_publish_contract.schema.json describes
-the envelope on its own terms: top-level {signature, publicKey, type, data},
+The schema in tests/fixtures/publish_envelope_contract.schema.json describes the
+envelope on its own terms: top-level {signature, publicKey, type, data},
 publisher signature over JSON.stringify(data), data.did bound to the verified
 publicKey, data.receipt carrying Concordia receipt fields, and parties[] carrying
-the counterparty co-signature.
+the counterparty co-signature. Any consumer that accepts Concordia receipt
+publishes can satisfy this contract.
 
 If the publish contract changes, update BOTH the schema fixture and this test.
 The counterparty co-signature byte contract follows the bilateral-attestation
@@ -27,7 +28,7 @@ from concordia.signing import KeyPair, canonical_json
 from concordia.verascore import VerascoreClient
 
 _SCHEMA_PATH = (
-    Path(__file__).parent / "fixtures" / "verascore_publish_contract.schema.json"
+    Path(__file__).parent / "fixtures" / "publish_envelope_contract.schema.json"
 )
 
 
@@ -99,7 +100,7 @@ def test_envelope_validates_against_committed_schema() -> None:
     schema = json.loads(_SCHEMA_PATH.read_text())
     for with_cosignature in (False, True):
         cap = _capture_envelope(with_cosignature=with_cosignature)
-        # Raises ValidationError on any drift from the accepted contract.
+        # Raises ValidationError on any drift from the Concordia contract.
         jsonschema.validate(instance=cap["body"], schema=schema)
 
 
