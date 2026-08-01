@@ -15,8 +15,9 @@ from typing import Any, cast
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNNER = REPO_ROOT / "conformance" / "reference-runner" / "runner.py"
 FULL_SUITE = REPO_ROOT / "conformance" / "vectors"
-EXPECTED_FULL_SUMMARY = "[SUMMARY] positive=47 mutation=1456 canary=3 ok=1506 fail=0"
+EXPECTED_FULL_SUMMARY = "[SUMMARY] positive=47 mutation=1460 canary=4 ok=1511 fail=0"
 CANARY_REGRESSIONS = {
+    "canary-chain-splice": "skip-linkage-walk",
     "canary-preimage-includes-signature": "preimage-includes-signature",
     "canary-schema-skipped": "schema-skipped",
     "canary-decision-id-not-recomputed": "decision-id-not-recomputed",

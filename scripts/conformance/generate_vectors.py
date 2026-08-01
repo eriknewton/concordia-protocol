@@ -331,6 +331,7 @@ class SyntheticLongtailFixtures:
     receipt_bundle: dict[str, Any]
     competence_proof: dict[str, Any]
     message_chain: dict[str, Any]
+    message_chain_position: dict[str, Any]
     attestations: list[dict[str, Any]]
     seed_manifest: dict[str, Any]
 
@@ -1589,10 +1590,13 @@ COMPETENCE_PROOF_VERSION_TOLERANCE_NOTE = (
 RECEIPT_BUNDLE_VERSION_TOLERANCE_NOTE = (
     "accepted-structural: concordia_receipt_bundle is schema-valid metadata and excluded from the ReceiptBundle signable form"
 )
-EXPECTED_MUTATION_TOTAL = 1456
-EXPECTED_MUTATION_REJECTS = 1414
-EXPECTED_MUTATION_ACCEPTS = 42
-EXPECTED_CANARY_TOTAL = 3
+CHAIN_POSITION_RESIGNED_SPLICE_TOLERANCE_NOTE = (
+    "tolerated-accept: per-message signatures authenticate links, not the complete message set"
+)
+EXPECTED_MUTATION_TOTAL = 1460
+EXPECTED_MUTATION_REJECTS = 1417
+EXPECTED_MUTATION_ACCEPTS = 43
+EXPECTED_CANARY_TOTAL = 4
 EXPECTED_RAW_TYPED_DIVERGENCES = (
     MutationDivergence(
         battery_name="1404/revocation_A.json",
@@ -1630,6 +1634,7 @@ EXPECTED_MUTATION_BATTERY_COUNTS: dict[str, tuple[int, int, int]] = {
     "synthetic/longtail/agent_profile.json": (100, 96, 4),
     "synthetic/longtail/competence_proof.json": (153, 151, 2),
     "synthetic/longtail/message_chain.json": (99, 99, 0),
+    "synthetic/longtail/message_chain_position.json": (4, 3, 1),
     "synthetic/longtail/receipt_bundle.json": (248, 247, 1),
     "synthetic/mandate/delegated_mandate.json": (82, 82, 0),
     "synthetic/mandate/mandate.json": (51, 51, 0),
@@ -2281,6 +2286,147 @@ def assert_mutation_sanity(
         )
 
 
+def message_chain_position_context(
+    synthetic: SyntheticFixtures,
+) -> dict[str, Any]:
+    longtail_keys = synthetic.longtail.seed_manifest["seeds_PUBLIC_test_only_do_not_reuse"]
+    longtail_agent_ids = synthetic.longtail.seed_manifest["agent_ids"]
+    return {
+        "public_keys_b64url": {
+            longtail_agent_ids["message_chain_initiator"]: longtail_keys[
+                "message_chain_initiator"
+            ]["public_key_b64url"],
+            longtail_agent_ids["message_chain_responder"]: longtail_keys[
+                "message_chain_responder"
+            ]["public_key_b64url"],
+        }
+    }
+
+
+def resign_chain_message(message: dict[str, Any], key_pair: KeyPair) -> dict[str, Any]:
+    resigned = copy.deepcopy(message)
+    resigned["signature"] = sign_message(resigned, key_pair)
+    return resigned
+
+
+def chain_position_vector(
+    *,
+    vector_id: str,
+    title: str,
+    input_data: dict[str, Any],
+    context: dict[str, Any],
+    notes: str = "",
+    expected_reason_class: ReasonClass | None = None,
+) -> Vector:
+    probe = Vector(
+        vector_id=vector_id,
+        title=title,
+        source_fixture=f"{SYNTHETIC_SOURCE_LONGTAIL}/message_chain_position.json",
+        record_type="message_chain",
+        verification_profile="message-chain-v1",
+        input_data=input_data,
+        context=copy.deepcopy(context),
+    )
+    evaluation = evaluate_vector(probe)
+    if not evaluation.accepted and evaluation.reason_class is None:
+        raise GenerationError(f"{vector_id}: reject missing expected_reason_class")
+    return Vector(
+        vector_id=vector_id,
+        title=title,
+        source_fixture=probe.source_fixture,
+        record_type=probe.record_type,
+        verification_profile=probe.verification_profile,
+        input_data=input_data,
+        context=probe.context,
+        expected=outcome_name(evaluation.accepted),
+        expected_reason_class=(
+            None
+            if evaluation.accepted
+            else expected_reason_class or evaluation.reason_class
+        ),
+        notes=notes,
+        canonical_preimage=canonical_json(input_data),
+    )
+
+
+def build_chain_position_vectors(
+    synthetic: SyntheticFixtures,
+) -> tuple[list[Vector], dict[str, Any]]:
+    base_messages = synthetic.longtail.message_chain_position["messages"]
+    if len(base_messages) != 4:
+        raise GenerationError("message chain position fixture must have four messages")
+    msg1, _msg2, msg3, msg4 = [copy.deepcopy(message) for message in base_messages]
+    context = message_chain_position_context(synthetic)
+    initiator_key = key_pair_from_seed(SYNTHETIC_SEEDS["message_chain_initiator"])
+    responder_key = key_pair_from_seed(SYNTHETIC_SEEDS["message_chain_responder"])
+
+    deletion_splice = copy.deepcopy(msg3)
+    deletion_splice["prev_hash"] = compute_hash(msg1)
+    deletion_splice_input = {"messages": [msg1, deletion_splice, copy.deepcopy(msg4)]}
+
+    resigned_splice = resign_chain_message(deletion_splice, initiator_key)
+    relinked_tail = copy.deepcopy(msg4)
+    relinked_tail["prev_hash"] = compute_hash(resigned_splice)
+    relinked_tail = resign_chain_message(relinked_tail, responder_key)
+    resigned_splice_input = {"messages": [msg1, resigned_splice, relinked_tail]}
+
+    reordered_input = {"messages": [msg1, copy.deepcopy(msg3), copy.deepcopy(_msg2), msg4]}
+
+    genesis_substitution = copy.deepcopy(msg1)
+    genesis_substitution["prev_hash"] = "sha256:" + ("1" * 64)
+    genesis_input = {
+        "messages": [
+            genesis_substitution,
+            copy.deepcopy(_msg2),
+            copy.deepcopy(msg3),
+            copy.deepcopy(msg4),
+        ]
+    }
+
+    vectors = [
+        chain_position_vector(
+            vector_id="mut-synthetic-message-chain-position-0001",
+            title="message_chain_position: deletion splice without resigning",
+            input_data=deletion_splice_input,
+            context=context,
+            expected_reason_class="binding",
+        ),
+        chain_position_vector(
+            vector_id="mut-synthetic-message-chain-position-0002",
+            title="message_chain_position: deletion splice with resigned downstream links",
+            input_data=resigned_splice_input,
+            context=context,
+            notes=CHAIN_POSITION_RESIGNED_SPLICE_TOLERANCE_NOTE,
+        ),
+        chain_position_vector(
+            vector_id="mut-synthetic-message-chain-position-0003",
+            title="message_chain_position: reorder messages two and three without resigning",
+            input_data=reordered_input,
+            context=context,
+            expected_reason_class="binding",
+        ),
+        chain_position_vector(
+            vector_id="mut-synthetic-message-chain-position-0004",
+            title="message_chain_position: genesis prev_hash substitution",
+            input_data=genesis_input,
+            context=context,
+            expected_reason_class="binding",
+        ),
+    ]
+    summary = {
+        "battery_name": "synthetic/longtail/message_chain_position.json",
+        "source_fixture": f"{SYNTHETIC_SOURCE_LONGTAIL}/message_chain_position.json",
+        "object_name": "message_chain_position",
+        "record_type": "message_chain",
+        "verification_profile": "message-chain-v1",
+        "total": len(vectors),
+        "reject": sum(1 for vector in vectors if vector.expected == "reject"),
+        "accept": sum(1 for vector in vectors if vector.expected == "accept"),
+        "selection_note": "explicit chain-position attack vectors over a four-message synthetic chain",
+    }
+    return vectors, summary
+
+
 def build_mutation_battery(
     synthetic: SyntheticFixtures | None = None,
 ) -> tuple[list[Vector], list[dict[str, Any]]]:
@@ -2400,6 +2546,10 @@ def build_mutation_battery(
             summary["selection_note"] = P2_A2_PREDICATE_MUTATION_REASON
         battery_summaries.append(summary)
 
+    position_vectors, position_summary = build_chain_position_vectors(synthetic)
+    vectors.extend(position_vectors)
+    battery_summaries.append(position_summary)
+
     vectors = sorted(vectors, key=lambda vector: vector.vector_id)
     battery_summaries = sorted(
         battery_summaries, key=lambda summary: str(summary["battery_name"])
@@ -2508,6 +2658,28 @@ def build_canary_decision_id_not_recomputed(
     )
 
 
+def build_canary_chain_splice(synthetic: SyntheticFixtures) -> Vector:
+    msg1, _msg2, msg3, msg4 = [
+        copy.deepcopy(message)
+        for message in synthetic.longtail.message_chain_position["messages"]
+    ]
+    chain = {"messages": [msg1, msg3, msg4]}
+    return Vector(
+        vector_id="canary-chain-splice",
+        title="MessageChain with a deleted predecessor and independently valid signatures",
+        source_fixture=f"{SYNTHETIC_SOURCE_LONGTAIL}/message_chain_position.json",
+        record_type="message_chain",
+        verification_profile="message-chain-v1",
+        input_data=chain,
+        context=message_chain_position_context(synthetic),
+        expected="reject",
+        expected_reason_class="binding",
+        notes="canary: rejects only if the message-chain linkage walk is enforced",
+        canonical_preimage=canonical_json(chain),
+        discriminates="skip-linkage-walk",
+    )
+
+
 def evaluate_canary_regression(vector: Vector) -> Evaluation:
     if vector.discriminates == "preimage-includes-signature":
         input_data = vector.input_data
@@ -2595,6 +2767,32 @@ def evaluate_canary_regression(vector: Vector) -> Evaluation:
             return Evaluation(False, "signature")
         return Evaluation(True)
 
+    if vector.discriminates == "skip-linkage-walk":
+        messages = message_chain_messages(vector.input_data)
+        if messages is None:
+            return Evaluation(False, "schema")
+        public_keys = vector.context.get("public_keys_b64url")
+        if not isinstance(public_keys, dict):
+            return Evaluation(False, "signature")
+        for message in messages:
+            sender = message.get("from")
+            if not isinstance(sender, dict):
+                return Evaluation(False, "schema")
+            agent_id = sender.get("agent_id")
+            signature = message.get("signature")
+            if not isinstance(agent_id, str) or not isinstance(signature, str):
+                return Evaluation(False, "signature")
+            public_key_b64 = public_keys.get(agent_id)
+            if not isinstance(public_key_b64, str):
+                return Evaluation(False, "signature")
+            if not verify_ed25519_signature(
+                public_key_b64,
+                signature,
+                canonical_json(without_signature(message)),
+            ):
+                return Evaluation(False, "signature")
+        return Evaluation(True)
+
     raise GenerationError(f"{vector.vector_id}: missing canary regression")
 
 
@@ -2607,6 +2805,7 @@ def assert_canary_sanity(vectors: list[Vector]) -> None:
         vector.discriminates for vector in vectors if vector.discriminates is not None
     }
     if discriminators != {
+        "skip-linkage-walk",
         "preimage-includes-signature",
         "schema-skipped",
         "decision-id-not-recomputed",
@@ -2631,11 +2830,14 @@ def assert_canary_sanity(vectors: list[Vector]) -> None:
             )
 
 
-def build_canary_vectors() -> list[Vector]:
+def build_canary_vectors(synthetic: SyntheticFixtures | None = None) -> list[Vector]:
     f1404 = fixture_1404()
     f1920 = fixture_1920()
+    if synthetic is None:
+        synthetic = build_synthetic_fixtures()
     vectors = sorted(
         [
+            build_canary_chain_splice(synthetic),
             build_canary_preimage_includes_signature(f1920),
             build_canary_schema_skipped(f1404),
             build_canary_decision_id_not_recomputed(f1404),
@@ -3316,6 +3518,87 @@ def build_message_chain_fixture(
     return chain
 
 
+def build_message_chain_position_fixture(
+    initiator_key: KeyPair,
+    responder_key: KeyPair,
+) -> dict[str, Any]:
+    session_id = "sess_conformance_chain_position_0001"
+    initiator = {"agent_id": "did:concordia:agent:chain-initiator"}
+    responder = {"agent_id": "did:concordia:agent:chain-responder"}
+    open_msg = build_message(
+        message_id="msg_conformance_chain_position_0001",
+        message_type="negotiate.open",
+        session_id=session_id,
+        sender=initiator,
+        recipients=[responder],
+        body={"terms": {"deliverable": "chain-position-audit", "rounds": 4}},
+        key_pair=initiator_key,
+        prev_hash=GENESIS_HASH,
+        timestamp="2026-05-10T15:00:00Z",
+        reasoning="Open deterministic chain-position session.",
+    )
+    accept_session = build_message(
+        message_id="msg_conformance_chain_position_0002",
+        message_type="negotiate.accept_session",
+        session_id=session_id,
+        sender=responder,
+        recipients=[initiator],
+        body={"accepted": True},
+        key_pair=responder_key,
+        prev_hash=compute_hash(open_msg),
+        timestamp="2026-05-10T15:01:00Z",
+        in_reply_to=open_msg["id"],
+    )
+    offer = build_message(
+        message_id="msg_conformance_chain_position_0003",
+        message_type="negotiate.offer",
+        session_id=session_id,
+        sender=initiator,
+        recipients=[responder],
+        body={"offer": {"quality": "high", "delivery_days": 2}},
+        key_pair=initiator_key,
+        prev_hash=compute_hash(accept_session),
+        timestamp="2026-05-10T15:02:00Z",
+        in_reply_to=accept_session["id"],
+        reasoning="Offer after session acceptance.",
+    )
+    counter_offer = build_message(
+        message_id="msg_conformance_chain_position_0004",
+        message_type="negotiate.counter_offer",
+        session_id=session_id,
+        sender=responder,
+        recipients=[initiator],
+        body={"offer": {"quality": "standard", "delivery_days": 1}},
+        key_pair=responder_key,
+        prev_hash=compute_hash(offer),
+        timestamp="2026-05-10T15:03:00Z",
+        in_reply_to=offer["id"],
+        reasoning="Counter-offer preserves the fourth chain position.",
+    )
+    chain = {"messages": [open_msg, accept_session, offer, counter_offer]}
+    baseline = Vector(
+        vector_id="baseline-synthetic-message-chain-position",
+        title="message chain position baseline",
+        source_fixture=SYNTHETIC_SOURCE_LONGTAIL,
+        record_type="message_chain",
+        verification_profile="message-chain-v1",
+        input_data=chain,
+        context={
+            "expected_message_count": 4,
+            "expected_message_hashes": [
+                compute_hash(message) for message in chain["messages"]
+            ],
+            "public_keys_b64url": {
+                initiator["agent_id"]: initiator_key.public_key_b64(),
+                responder["agent_id"]: responder_key.public_key_b64(),
+            },
+        },
+    )
+    if not evaluate_message_chain_profile(baseline).accepted:
+        raise GenerationError("synthetic message chain position fixture did not verify")
+    return chain
+
+
 def build_synthetic_longtail_fixtures(
     base_attestation: dict[str, Any],
 ) -> SyntheticLongtailFixtures:
@@ -3354,6 +3637,10 @@ def build_synthetic_longtail_fixtures(
     receipt_bundle = build_receipt_bundle_fixture(agent_a, attestations, initiator_key)
     competence_proof = build_competence_proof_fixture(agent_a, attestations, initiator_key)
     message_chain = build_message_chain_fixture(chain_initiator_key, chain_responder_key)
+    message_chain_position = build_message_chain_position_fixture(
+        chain_initiator_key,
+        chain_responder_key,
+    )
 
     manifest = seed_manifest_for(
         {
@@ -3385,6 +3672,7 @@ def build_synthetic_longtail_fixtures(
         receipt_bundle=receipt_bundle,
         competence_proof=competence_proof,
         message_chain=message_chain,
+        message_chain_position=message_chain_position,
         attestations=attestations,
         seed_manifest=manifest,
     )
@@ -3449,6 +3737,9 @@ def synthetic_fixture_payloads(fixtures: SyntheticFixtures) -> dict[Path, Any]:
         fixtures.longtail.competence_proof
     )
     payloads[longtail_root / "message_chain.json"] = fixtures.longtail.message_chain
+    payloads[longtail_root / "message_chain_position.json"] = (
+        fixtures.longtail.message_chain_position
+    )
     for index, attestation in enumerate(fixtures.longtail.attestations, start=1):
         payloads[longtail_root / f"attestation_{index:02d}.json"] = attestation
     payloads[longtail_root / "seed_manifest.json"] = fixtures.longtail.seed_manifest
@@ -4202,7 +4493,8 @@ def write_manifest(
             "mutation": "P2-A2 extends the raw mutation battery to the P2-A1 profiles.",
             "cmpc": "P2-A3 adds CMPC bilateral primitive and chain-session transition profiles.",
             "longtail": "P2-A4 adds AgentProfile, CompetenceProof, ReceiptBundle, and MessageChain profiles.",
-            "canary": "C3 adds the three runner-discrimination canaries.",
+            "chain_position": "P2-B adds message-chain position vectors and a splice canary.",
+            "canary": "C3/P2-B pins the runner-discrimination canaries.",
             "reference_runner": "C3 adds the clean-room reference runner.",
         },
     }
@@ -4213,7 +4505,7 @@ def generate(dest_root: Path) -> None:
     synthetic_fixtures = build_synthetic_fixtures()
     positive_vectors = build_vectors()
     mutation_vectors, mutation_batteries = build_mutation_battery(synthetic_fixtures)
-    canary_vectors = build_canary_vectors()
+    canary_vectors = build_canary_vectors(synthetic_fixtures)
     assert_vectors_execute(positive_vectors)
     assert_vectors_execute(mutation_vectors)
     assert_vectors_execute(canary_vectors)

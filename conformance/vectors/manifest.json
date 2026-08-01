@@ -1,20 +1,22 @@
 {
   "check_command": "python3 scripts/conformance/generate_vectors.py --check",
   "counts": {
-    "canary": 3,
-    "diag_canonical_bytes": 1364,
-    "fixtures": 53,
-    "mutation": 1456,
+    "canary": 4,
+    "diag_canonical_bytes": 1369,
+    "fixtures": 54,
+    "mutation": 1460,
     "positive": 47,
     "schemas": 14
   },
   "files": {
     "canary": [
+      "conformance/vectors/canary/canary-chain-splice.json",
       "conformance/vectors/canary/canary-decision-id-not-recomputed.json",
       "conformance/vectors/canary/canary-preimage-includes-signature.json",
       "conformance/vectors/canary/canary-schema-skipped.json"
     ],
     "diag_canonical_bytes": [
+      "conformance/diag/canonical-bytes/canary-chain-splice.jcs",
       "conformance/diag/canonical-bytes/canary-decision-id-not-recomputed.jcs",
       "conformance/diag/canonical-bytes/canary-preimage-includes-signature.jcs",
       "conformance/diag/canonical-bytes/canary-schema-skipped.jcs",
@@ -1013,6 +1015,10 @@
       "conformance/diag/canonical-bytes/mut-synthetic-message-chain-0097.jcs",
       "conformance/diag/canonical-bytes/mut-synthetic-message-chain-0098.jcs",
       "conformance/diag/canonical-bytes/mut-synthetic-message-chain-0099.jcs",
+      "conformance/diag/canonical-bytes/mut-synthetic-message-chain-position-0001.jcs",
+      "conformance/diag/canonical-bytes/mut-synthetic-message-chain-position-0002.jcs",
+      "conformance/diag/canonical-bytes/mut-synthetic-message-chain-position-0003.jcs",
+      "conformance/diag/canonical-bytes/mut-synthetic-message-chain-position-0004.jcs",
       "conformance/diag/canonical-bytes/mut-synthetic-predicate-vector-02-0001.jcs",
       "conformance/diag/canonical-bytes/mut-synthetic-predicate-vector-02-0002.jcs",
       "conformance/diag/canonical-bytes/mut-synthetic-predicate-vector-02-0003.jcs",
@@ -1417,6 +1423,7 @@
       "conformance/vectors/fixtures/synthetic/longtail/attestation_02.json",
       "conformance/vectors/fixtures/synthetic/longtail/competence_proof.json",
       "conformance/vectors/fixtures/synthetic/longtail/message_chain.json",
+      "conformance/vectors/fixtures/synthetic/longtail/message_chain_position.json",
       "conformance/vectors/fixtures/synthetic/longtail/receipt_bundle.json",
       "conformance/vectors/fixtures/synthetic/longtail/seed_manifest.json",
       "conformance/vectors/fixtures/synthetic/mandate/delegated_mandate.json",
@@ -2557,6 +2564,10 @@
       "conformance/vectors/mutation/mut-synthetic-message-chain-0097.json",
       "conformance/vectors/mutation/mut-synthetic-message-chain-0098.json",
       "conformance/vectors/mutation/mut-synthetic-message-chain-0099.json",
+      "conformance/vectors/mutation/mut-synthetic-message-chain-position-0001.json",
+      "conformance/vectors/mutation/mut-synthetic-message-chain-position-0002.json",
+      "conformance/vectors/mutation/mut-synthetic-message-chain-position-0003.json",
+      "conformance/vectors/mutation/mut-synthetic-message-chain-position-0004.json",
       "conformance/vectors/mutation/mut-synthetic-predicate-vector-02-0001.json",
       "conformance/vectors/mutation/mut-synthetic-predicate-vector-02-0002.json",
       "conformance/vectors/mutation/mut-synthetic-predicate-vector-02-0003.json",
@@ -3133,6 +3144,17 @@
     },
     {
       "accept": 1,
+      "battery_name": "synthetic/longtail/message_chain_position.json",
+      "object_name": "message_chain_position",
+      "record_type": "message_chain",
+      "reject": 3,
+      "selection_note": "explicit chain-position attack vectors over a four-message synthetic chain",
+      "source_fixture": "synthetic/longtail/message_chain_position.json",
+      "total": 4,
+      "verification_profile": "message-chain-v1"
+    },
+    {
+      "accept": 1,
       "battery_name": "synthetic/longtail/receipt_bundle.json",
       "object_name": "receipt_bundle",
       "record_type": "receipt_bundle",
@@ -3174,7 +3196,8 @@
     }
   ],
   "phase_notes": {
-    "canary": "C3 adds the three runner-discrimination canaries.",
+    "canary": "C3/P2-B pins the runner-discrimination canaries.",
+    "chain_position": "P2-B adds message-chain position vectors and a splice canary.",
     "cmpc": "P2-A3 adds CMPC bilateral primitive and chain-session transition profiles.",
     "longtail": "P2-A4 adds AgentProfile, CompetenceProof, ReceiptBundle, and MessageChain profiles.",
     "mutation": "P2-A2 extends the raw mutation battery to the P2-A1 profiles.",
