@@ -122,6 +122,13 @@ signature-removal rule used by the Phase 1 profiles and by `predicate-v1` /
 JSON pointers in this contract use RFC 6901. A missing pointer is a failed
 check. Equality compares JSON values after parsing, not string rendering.
 
+Date-time assertion: for this suite's pinned schemas, validators MUST assert
+`format: "date-time"`. The value must parse as ISO 8601 using the Python SDK
+rule of replacing `Z` with `+00:00` before parsing, and the parsed value MUST
+carry explicit timezone information. This rule is scoped only to `date-time`;
+all other JSON Schema formats remain annotations unless a profile states a
+separate explicit check.
+
 Allowed `expected_reason_class` values are `schema`, `signature`, `digest`,
 `binding`, `temporal`, and `privacy`.
 
