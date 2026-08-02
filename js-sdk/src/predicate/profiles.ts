@@ -42,6 +42,14 @@ export interface PredicateTypeProfile {
   conditionSchema: ConditionSchema;
 }
 
+/** Error raised when a direct predicate type-profile lookup uses a malformed id. */
+export class PredicateTypeProfileLookupError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PredicateTypeProfileLookupError';
+  }
+}
+
 /**
  * A minimal model of the JSON-schemas the built-in profiles declare. These
  * schemas only ever use: `type: "object"`, an ordered `properties` map where
@@ -59,6 +67,26 @@ interface ConditionSchema {
 type PropertyCheck =
   | { name: string; kind: 'enum'; values: (string | number | boolean | null)[] }
   | { name: string; kind: 'type'; jsonType: 'string' | 'object' | 'array' };
+
+const PREDICATE_TYPE_URN_PREFIX = 'urn:concordia:predicate-type:';
+
+/**
+ * Start here for signed predicates: call `generateKeyPair()`, pass the key pair
+ * to `signPredicate()`, then verify with `verifyPredicate()`. The high-level
+ * verifier uses these built-in profile URNs from process-local module state.
+ * For portable signature-only verification with just a public key, use the
+ * low-level `verify()` helper instead.
+ *
+ * The four canonical built-in predicate type-profile URNs. Authority-family
+ * aliases `urn:concordia:predicate-type:approval_gate:v1` and
+ * `urn:concordia:predicate-type:jcs_edge:v1` are also registered.
+ */
+export const BUILTIN_PREDICATE_TYPE_PROFILE_URNS = [
+  'urn:concordia:predicate-type:authority_gate:v1',
+  'urn:concordia:predicate-type:procurement_eligibility:v1',
+  'urn:concordia:predicate-type:policy_gate:v1',
+  'urn:concordia:predicate-type:non_deterministic_test:v1',
+] as const;
 
 // ---------------------------------------------------------------------------
 // Built-in profile schemas (mirror the four Python profile modules verbatim).
@@ -135,6 +163,19 @@ const REGISTRY: Map<string, PredicateTypeProfile> = new Map(
   Object.entries(BUILTIN_PROFILES).map(([id, p]) => [id, p]),
 );
 
+function isBarePredicateTypeShorthand(typeId: string): boolean {
+  return !typeId.startsWith(PREDICATE_TYPE_URN_PREFIX) && /^[A-Za-z][A-Za-z0-9_]*$/.test(typeId);
+}
+
+function shorthandProfileMessage(typeId: string): string {
+  const expected = `${PREDICATE_TYPE_URN_PREFIX}${typeId}:v1`;
+  return (
+    `predicate type profile shorthand "${typeId}" is not accepted; ` +
+    `use the full URN form ${expected}. ` +
+    `Built-in profile URNs: ${BUILTIN_PREDICATE_TYPE_PROFILE_URNS.join(', ')}.`
+  );
+}
+
 /**
  * Register or replace a predicate type profile.
  * Mirrors Python `register_predicate_type_profile`.
@@ -153,12 +194,26 @@ export function registerPredicateTypeProfile(
 }
 
 /**
- * Return a registered profile (built-in or custom), or `null` if unknown.
- * Mirrors Python `get_predicate_type_profile`. Python loads built-ins lazily;
- * here they are pre-registered, which is behaviorally identical for callers.
+ * Return a registered profile (built-in or custom), or `null` for an unknown
+ * URN-shaped id. Built-in profiles are registered at module load:
+ * `urn:concordia:predicate-type:authority_gate:v1`,
+ * `urn:concordia:predicate-type:procurement_eligibility:v1`,
+ * `urn:concordia:predicate-type:policy_gate:v1`, and
+ * `urn:concordia:predicate-type:non_deterministic_test:v1`.
+ *
+ * Bare shorthand such as `"authority_gate"` is rejected with a diagnostic that
+ * names the expected URN form. Python has no shorthand mapping, so this does
+ * not silently resolve non-wire ids.
  */
 export function getPredicateTypeProfile(typeId: string): PredicateTypeProfile | null {
-  return REGISTRY.get(typeId) ?? null;
+  const profile = REGISTRY.get(typeId);
+  if (profile !== undefined) {
+    return profile;
+  }
+  if (isBarePredicateTypeShorthand(typeId)) {
+    throw new PredicateTypeProfileLookupError(shorthandProfileMessage(typeId));
+  }
+  return null;
 }
 
 /**
@@ -272,7 +327,7 @@ function schemaErrors(schema: ConditionSchema, condition: Record<string, unknown
 
 /**
  * Validate a predicate condition against its type profile's deterministic
- * semantics. Mirrors Python `validate_condition_for_profile` exactly:
+ * semantics. Mirrors Python `validate_condition_for_profile` for URN inputs:
  *
  *   1. Unknown type id -> a single "must be registered before signing" error.
  *   2. Non-object condition -> "condition must be an object".
@@ -285,7 +340,15 @@ function schemaErrors(schema: ConditionSchema, condition: Record<string, unknown
  * Returns the list of error message strings (empty when the condition is valid).
  */
 export function validateConditionForProfile(typeId: string, condition: unknown): string[] {
-  const profile = getPredicateTypeProfile(typeId);
+  let profile: PredicateTypeProfile | null;
+  try {
+    profile = getPredicateTypeProfile(typeId);
+  } catch (err) {
+    if (err instanceof PredicateTypeProfileLookupError) {
+      return [err.message];
+    }
+    throw err;
+  }
   if (profile === null) {
     return [`predicate type profile must be registered before signing: ${typeId}`];
   }
