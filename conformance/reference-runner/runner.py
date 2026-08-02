@@ -38,6 +38,7 @@ Regression = Literal[
     "schema-skipped",
     "decision-id-not-recomputed",
     "skip-linkage-walk",
+    "receipt-set-unchecked",
 ]
 
 VECTOR_SCHEMA_VERSION = "concordia-conformance-vector/v1-draft"
@@ -1052,6 +1053,8 @@ AGENT_PROFILE_REPUTATION_FIELDS = {
 AGENT_PROFILE_ENDPOINT_FIELDS = {"negotiate", "a2a_card", "mcp_manifest"}
 AGENT_PROFILE_LOCATION_FIELDS = {"regions", "jurisdictions"}
 GENESIS_HASH = "sha256:" + ("0" * 64)
+SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+\Z")
+SHA256_HEX_RE = re.compile(r"^sha256:[a-f0-9]{64}\Z")
 
 
 def require_object(value: Json, label: str) -> dict[str, Json]:
@@ -1241,14 +1244,73 @@ def message_hash(message: Json) -> str:
     return "sha256:" + hashlib.sha256(jcs_bytes(message)).hexdigest()
 
 
+def attestation_version_at_least(value: Json, major: int, minor: int) -> bool:
+    if not isinstance(value, str) or SEMVER_RE.match(value) is None:
+        return False
+    parts = value.split(".")
+    return (int(parts[0]), int(parts[1])) >= (major, minor)
+
+
+def verify_message_chain_receipt_binding(
+    suite_base: Path,
+    input_data: dict[str, Json],
+    messages: list[Json],
+    context: dict[str, Json],
+) -> None:
+    if "receipt" not in input_data:
+        return
+    receipt = require_object(input_data.get("receipt"), "message chain receipt")
+    validate_schema(suite_base, "attestation.schema.json", receipt)
+    if not attestation_version_at_least(receipt.get("concordia_attestation"), 0, 3):
+        raise Reject("receipt is legacy set-unbound")
+    chain_head = receipt.get("chain_head")
+    message_count = receipt.get("message_count")
+    if not isinstance(chain_head, str) or SHA256_HEX_RE.match(chain_head) is None:
+        raise Reject("receipt chain_head is malformed")
+    if not isinstance(message_count, int) or isinstance(message_count, bool) or message_count < 1:
+        raise Reject("receipt message_count is malformed")
+    public_keys = context.get("public_keys_b64url")
+    parties = receipt.get("parties")
+    countersignatures = receipt.get("countersignatures")
+    if not isinstance(public_keys, dict):
+        raise Reject("receipt public key map is missing")
+    if not isinstance(parties, list):
+        raise Reject("receipt parties are missing")
+    if not isinstance(countersignatures, dict):
+        raise Reject("receipt countersignatures are missing")
+    countersign_payload = countersign_preimage(receipt)
+    for party_item in parties:
+        party = require_object(party_item, "receipt party")
+        agent_id = party.get("agent_id")
+        if not isinstance(agent_id, str) or not agent_id:
+            raise Reject("receipt party agent_id is missing")
+        public_key = public_keys.get(agent_id)
+        if not isinstance(public_key, str):
+            raise Reject("receipt party public key is missing")
+        verify_ed25519(
+            public_key,
+            bare_signature(party),
+            jcs_bytes(without_top_level(party, {"signature"})),
+        )
+        countersignature = countersignatures.get(agent_id)
+        if not isinstance(countersignature, str):
+            raise Reject("receipt countersignature is missing")
+        verify_ed25519(public_key, countersignature, countersign_payload)
+    if message_count != len(messages):
+        raise Reject("receipt message_count mismatch")
+    if chain_head != message_hash(messages[-1]):
+        raise Reject("receipt chain_head mismatch")
+
+
 def verify_message_chain(
     input_data: Json,
+    suite_base: Path,
     context: dict[str, Json],
     regression: Regression | None,
 ) -> None:
     chain = require_object(input_data, "message chain")
-    if set(chain) != {"messages"}:
-        raise Reject("message chain input must only contain messages")
+    if set(chain) not in ({"messages"}, {"messages", "receipt"}):
+        raise Reject("message chain input must only contain messages or messages plus receipt")
     messages = chain.get("messages")
     if not isinstance(messages, list) or not messages:
         raise Reject("message chain messages are missing")
@@ -1282,6 +1344,8 @@ def verify_message_chain(
     if expected_hashes is not None:
         if expected_hashes != [message_hash(message) for message in messages]:
             raise Reject("message chain hash list mismatch")
+    if regression != "receipt-set-unchecked":
+        verify_message_chain_receipt_binding(suite_base, chain, messages, context)
 
 
 def verify_profile(
@@ -1349,7 +1413,7 @@ def verify_profile(
     elif profile == "receipt-bundle-v1":
         verify_receipt_bundle(suite_base, input_data, context)
     elif profile == "message-chain-v1":
-        verify_message_chain(input_data, context, regression)
+        verify_message_chain(input_data, suite_base, context, regression)
     else:
         raise Reject("unknown verification profile")
 
@@ -1401,6 +1465,7 @@ def active_regression() -> Regression | None:
         "schema-skipped",
         "decision-id-not-recomputed",
         "skip-linkage-walk",
+        "receipt-set-unchecked",
     }
     if raw not in allowed:
         raise SystemExit(f"unknown RUNNER_REGRESS value: {raw}")

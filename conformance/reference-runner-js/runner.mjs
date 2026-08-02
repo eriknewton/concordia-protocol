@@ -141,6 +141,8 @@ const AGENT_PROFILE_ENDPOINT_FIELDS = new Set([
 ]);
 const AGENT_PROFILE_LOCATION_FIELDS = new Set(["regions", "jurisdictions"]);
 const GENESIS_HASH = `sha256:${"0".repeat(64)}`;
+const SEMVER_RE = /^\d+\.\d+\.\d+$/u;
+const SHA256_HEX_RE = /^sha256:[a-f0-9]{64}$/u;
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 const ED25519_PKCS8_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
 
@@ -1423,10 +1425,76 @@ function messageHash(message) {
   return sha256Jcs(message);
 }
 
-function verifyMessageChain(inputData, context, regression) {
+function attestationVersionAtLeast(value, major, minor) {
+  if (typeof value !== "string" || !SEMVER_RE.test(value)) {
+    return false;
+  }
+  const [actualMajor, actualMinor] = value.split(".").map((item) => Number(item));
+  return actualMajor > major || (actualMajor === major && actualMinor >= minor);
+}
+
+function verifyMessageChainReceiptBinding(suiteBase, inputData, messages, context) {
+  if (!Object.hasOwn(inputData, "receipt")) {
+    return;
+  }
+  const receipt = requireObject(inputData.receipt, "message chain receipt");
+  validateSchema(suiteBase, "attestation.schema.json", receipt);
+  if (!attestationVersionAtLeast(receipt.concordia_attestation, 0, 3)) {
+    reject("receipt is legacy set-unbound");
+  }
+  if (typeof receipt.chain_head !== "string" || !SHA256_HEX_RE.test(receipt.chain_head)) {
+    reject("receipt chain_head is malformed");
+  }
+  if (
+    !Number.isInteger(receipt.message_count) ||
+    typeof receipt.message_count === "boolean" ||
+    receipt.message_count < 1
+  ) {
+    reject("receipt message_count is malformed");
+  }
+  if (!isObject(context.public_keys_b64url)) {
+    reject("receipt public key map is missing");
+  }
+  if (!Array.isArray(receipt.parties)) {
+    reject("receipt parties are missing");
+  }
+  if (!isObject(receipt.countersignatures)) {
+    reject("receipt countersignatures are missing");
+  }
+  const countersignPayload = countersignPreimage(receipt);
+  for (const partyItem of receipt.parties) {
+    const party = requireObject(partyItem, "receipt party");
+    if (typeof party.agent_id !== "string" || party.agent_id === "") {
+      reject("receipt party agent_id is missing");
+    }
+    const publicKey = context.public_keys_b64url[party.agent_id];
+    if (typeof publicKey !== "string") {
+      reject("receipt party public key is missing");
+    }
+    verifyEd25519(
+      publicKey,
+      bareSignature(party),
+      jcsBytes(withoutTopLevel(party, new Set(["signature"]))),
+    );
+    const countersignature = receipt.countersignatures[party.agent_id];
+    if (typeof countersignature !== "string") {
+      reject("receipt countersignature is missing");
+    }
+    verifyEd25519(publicKey, countersignature, countersignPayload);
+  }
+  if (receipt.message_count !== messages.length) {
+    reject("receipt message_count mismatch");
+  }
+  if (receipt.chain_head !== messageHash(messages[messages.length - 1])) {
+    reject("receipt chain_head mismatch");
+  }
+}
+
+function verifyMessageChain(suiteBase, inputData, context, regression) {
   const chain = requireObject(inputData, "message chain");
-  if (Object.keys(chain).length !== 1 || !Object.hasOwn(chain, "messages")) {
-    reject("message chain input must only contain messages");
+  const chainKeys = Object.keys(chain).sort().join("\u0000");
+  if (chainKeys !== "messages" && chainKeys !== "messages\u0000receipt") {
+    reject("message chain input must only contain messages or messages plus receipt");
   }
   const messages = chain.messages;
   if (!Array.isArray(messages) || messages.length === 0) {
@@ -1472,6 +1540,9 @@ function verifyMessageChain(inputData, context, regression) {
     ) {
       reject("message chain hash list mismatch");
     }
+  }
+  if (regression !== "receipt-set-unchecked") {
+    verifyMessageChainReceiptBinding(suiteBase, chain, messages, context);
   }
 }
 
@@ -1519,7 +1590,7 @@ function verifyProfile(suiteBase, profile, inputData, context, regression) {
   } else if (profile === "receipt-bundle-v1") {
     verifyReceiptBundle(suiteBase, inputData, context);
   } else if (profile === "message-chain-v1") {
-    verifyMessageChain(inputData, context, regression);
+    verifyMessageChain(suiteBase, inputData, context, regression);
   } else {
     reject("unknown verification profile");
   }
@@ -1576,6 +1647,7 @@ function activeRegression() {
     "schema-skipped",
     "decision-id-not-recomputed",
     "skip-linkage-walk",
+    "receipt-set-unchecked",
   ]);
   if (!allowed.has(raw)) {
     throw new Error(`unknown RUNNER_REGRESS value: ${raw}`);

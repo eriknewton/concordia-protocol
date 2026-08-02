@@ -188,3 +188,35 @@ Verify:
 npm ci --prefix conformance/reference-runner-js
 node conformance/reference-runner-js/runner.mjs conformance/vectors/
 ```
+
+### `receipt-set-binding`
+
+Claim:
+
+> A 0.3.0 receipt binds the transcript set, chain head and message count, inside its countersigned preimage, and the conformance suite rejects splice and truncation against it.
+
+Stated in: `conformance/RUNNER_CONTRACT.md`
+
+Enforced by: `scripts/claims/receipt_set_binding_vectors.py`
+
+Verify:
+
+```bash
+python scripts/claims/receipt_set_binding_vectors.py
+```
+
+### `adapter-not-exercised`
+
+Claim:
+
+> No conformance vector or reference runner imports or invokes the optional `concordia.verascore` adapter.
+
+Stated in: `conformance/RUNNER_CONTRACT.md`
+
+Enforced by: `scripts/claims/adapter_not_exercised.py`
+
+Verify:
+
+```bash
+python scripts/claims/adapter_not_exercised.py
+```
