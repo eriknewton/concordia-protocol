@@ -6,7 +6,7 @@ An open standard for structured negotiation between autonomous agents.
 import warnings
 from typing import Any
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 
 from .agent import Agent
 from .approval_receipt import ApprovalReceiptResult, verify_approval_receipt

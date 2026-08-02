@@ -142,7 +142,11 @@ SUITE_VERSION = "v1-draft"
 GENERATOR_COMMAND = "python3 scripts/conformance/generate_vectors.py"
 CHECK_COMMAND = "python3 scripts/conformance/generate_vectors.py --check"
 GENERATED_CHECK_EXCLUDED_DIRS = {"reference-runner", "reference-runner-js"}
-GENERATED_CHECK_EXCLUDED_FILES = {"IMPLEMENTATIONS.md", "RUNNER_CONTRACT.md"}
+GENERATED_CHECK_EXCLUDED_FILES = {
+    "IMPLEMENTATIONS.md",
+    "PROFILES.md",
+    "RUNNER_CONTRACT.md",
+}
 
 INTEROP_1404 = REPO_ROOT / "docs" / "interop" / "a2a-1404-receipt-revocation-vector"
 INTEROP_1920 = REPO_ROOT / "docs" / "interop" / "a2a-1920-fulfillment-sample"

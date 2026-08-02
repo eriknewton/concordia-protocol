@@ -3,7 +3,7 @@
 ### An Open Standard for Structured Negotiation Between Autonomous Agents
 
 **Version:** 0.7.0-draft  
-**Version mapping:** spec edition `0.7.0-draft` maps to Python package `0.9.0` (the package advanced past the edition's pre-release form `0.7.0a1` because breaking API changes landed after that alpha; see `CHANGELOG.md` `[0.8.0]` and `[0.9.0]`) maps to the on-the-wire envelope identifier `concordia:0.1.0`. The wire identifier is intentionally pinned at `0.1.0` and is versioned independently of the spec edition: it changes only on a breaking envelope-format change, not on every spec revision.
+**Version mapping:** spec edition `0.7.0-draft` maps to Python package `0.10.0`; the package advanced past the edition's pre-release form `0.7.0a1` because breaking API changes landed after that alpha. See `CHANGELOG.md` for stable release history. The on-the-wire envelope identifier remains `concordia:0.1.0`. The wire identifier is intentionally pinned at `0.1.0` and is versioned independently of the spec edition: it changes only on a breaking envelope-format change, not on every spec revision.
 **Status:** Draft (v0.7 adds cross-mandate revocation records, §9.6.4c; v0.6 added the predicate primitive)  
 **License:** Apache 2.0  
 **Authors:** Erik Newton
