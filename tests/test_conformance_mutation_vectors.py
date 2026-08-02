@@ -16,9 +16,9 @@ EXPECTED_REASON_CLASSES = {
     "privacy",
     "transition",
 }
-EXPECTED_MUTATION_REJECTS = 1435
+EXPECTED_MUTATION_REJECTS = 1439
 EXPECTED_MUTATION_ACCEPTS = 45
-EXPECTED_MUTATION_TOTAL = 1480
+EXPECTED_MUTATION_TOTAL = 1484
 EXPECTED_BATTERY_COUNTS = {
     "1404/approval_receipt.json": (63, 63, 0),
     "1404/cascade_decision_deny.json": (35, 35, 0),
@@ -42,6 +42,7 @@ EXPECTED_BATTERY_COUNTS = {
     "synthetic/longtail/competence_proof.json": (157, 155, 2),
     "synthetic/longtail/message_chain.json": (99, 99, 0),
     "synthetic/longtail/message_chain_position.json": (4, 3, 1),
+    "synthetic/longtail/receipt_set_binding.json": (4, 4, 0),
     "synthetic/longtail/receipt_bundle.json": (256, 255, 1),
     "synthetic/mandate/delegated_mandate.json": (82, 82, 0),
     "synthetic/mandate/mandate.json": (51, 51, 0),

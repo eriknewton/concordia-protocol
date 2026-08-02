@@ -1,11 +1,11 @@
 {
   "check_command": "python3 scripts/conformance/generate_vectors.py --check",
   "counts": {
-    "canary": 4,
-    "diag_canonical_bytes": 1385,
-    "fixtures": 54,
-    "mutation": 1480,
-    "positive": 47,
+    "canary": 5,
+    "diag_canonical_bytes": 1391,
+    "fixtures": 55,
+    "mutation": 1484,
+    "positive": 48,
     "schemas": 14
   },
   "files": {
@@ -13,12 +13,14 @@
       "conformance/vectors/canary/canary-chain-splice.json",
       "conformance/vectors/canary/canary-decision-id-not-recomputed.json",
       "conformance/vectors/canary/canary-preimage-includes-signature.json",
+      "conformance/vectors/canary/canary-receipt-set-unchecked.json",
       "conformance/vectors/canary/canary-schema-skipped.json"
     ],
     "diag_canonical_bytes": [
       "conformance/diag/canonical-bytes/canary-chain-splice.jcs",
       "conformance/diag/canonical-bytes/canary-decision-id-not-recomputed.jcs",
       "conformance/diag/canonical-bytes/canary-preimage-includes-signature.jcs",
+      "conformance/diag/canonical-bytes/canary-receipt-set-unchecked.jcs",
       "conformance/diag/canonical-bytes/canary-schema-skipped.jcs",
       "conformance/diag/canonical-bytes/mut-1404-approval-receipt-0001.jcs",
       "conformance/diag/canonical-bytes/mut-1404-approval-receipt-0002.jcs",
@@ -1370,6 +1372,10 @@
       "conformance/diag/canonical-bytes/mut-synthetic-receipt-bundle-0254.jcs",
       "conformance/diag/canonical-bytes/mut-synthetic-receipt-bundle-0255.jcs",
       "conformance/diag/canonical-bytes/mut-synthetic-receipt-bundle-0256.jcs",
+      "conformance/diag/canonical-bytes/mut-synthetic-receipt-set-binding-0001.jcs",
+      "conformance/diag/canonical-bytes/mut-synthetic-receipt-set-binding-0002.jcs",
+      "conformance/diag/canonical-bytes/mut-synthetic-receipt-set-binding-0003.jcs",
+      "conformance/diag/canonical-bytes/mut-synthetic-receipt-set-binding-0004.jcs",
       "conformance/diag/canonical-bytes/pos-1404-approval-receipt.jcs",
       "conformance/diag/canonical-bytes/pos-1404-capability-digest.jcs",
       "conformance/diag/canonical-bytes/pos-1404-cascade-deny.jcs",
@@ -1400,7 +1406,8 @@
       "conformance/diag/canonical-bytes/pos-synthetic-predicate-vector-09.jcs",
       "conformance/diag/canonical-bytes/pos-synthetic-predicate-vector-10.jcs",
       "conformance/diag/canonical-bytes/pos-synthetic-predicate-vector-11.jcs",
-      "conformance/diag/canonical-bytes/pos-synthetic-receipt-bundle.jcs"
+      "conformance/diag/canonical-bytes/pos-synthetic-receipt-bundle.jcs",
+      "conformance/diag/canonical-bytes/pos-synthetic-receipt-set-binding.jcs"
     ],
     "fixtures": [
       "conformance/vectors/fixtures/a2a-1404-receipt-revocation-vector/approval_receipt.json",
@@ -1441,6 +1448,7 @@
       "conformance/vectors/fixtures/synthetic/longtail/message_chain.json",
       "conformance/vectors/fixtures/synthetic/longtail/message_chain_position.json",
       "conformance/vectors/fixtures/synthetic/longtail/receipt_bundle.json",
+      "conformance/vectors/fixtures/synthetic/longtail/receipt_set_binding.json",
       "conformance/vectors/fixtures/synthetic/longtail/seed_manifest.json",
       "conformance/vectors/fixtures/synthetic/mandate/delegated_mandate.json",
       "conformance/vectors/fixtures/synthetic/mandate/mandate.json",
@@ -2938,7 +2946,11 @@
       "conformance/vectors/mutation/mut-synthetic-receipt-bundle-0253.json",
       "conformance/vectors/mutation/mut-synthetic-receipt-bundle-0254.json",
       "conformance/vectors/mutation/mut-synthetic-receipt-bundle-0255.json",
-      "conformance/vectors/mutation/mut-synthetic-receipt-bundle-0256.json"
+      "conformance/vectors/mutation/mut-synthetic-receipt-bundle-0256.json",
+      "conformance/vectors/mutation/mut-synthetic-receipt-set-binding-0001.json",
+      "conformance/vectors/mutation/mut-synthetic-receipt-set-binding-0002.json",
+      "conformance/vectors/mutation/mut-synthetic-receipt-set-binding-0003.json",
+      "conformance/vectors/mutation/mut-synthetic-receipt-set-binding-0004.json"
     ],
     "positive": [
       "conformance/vectors/positive/pos-1404-ancestor-status-read-binding.json",
@@ -2977,6 +2989,7 @@
       "conformance/vectors/positive/pos-synthetic-predicate-vector-10.json",
       "conformance/vectors/positive/pos-synthetic-predicate-vector-11.json",
       "conformance/vectors/positive/pos-synthetic-receipt-bundle.json",
+      "conformance/vectors/positive/pos-synthetic-receipt-set-binding.json",
       "conformance/vectors/positive/privacy-synthetic-attestation-behavior-note.json",
       "conformance/vectors/positive/transition-synthetic-cmpc-illegal-activated-to-anything.json",
       "conformance/vectors/positive/transition-synthetic-cmpc-illegal-dissolved-to-anything.json",
@@ -3201,6 +3214,17 @@
     },
     {
       "accept": 0,
+      "battery_name": "synthetic/longtail/receipt_set_binding.json",
+      "object_name": "receipt_set_binding",
+      "record_type": "message_chain",
+      "reject": 4,
+      "selection_note": "explicit receipt set-binding attack vectors over a five-message agreed transcript",
+      "source_fixture": "synthetic/longtail/receipt_set_binding.json",
+      "total": 4,
+      "verification_profile": "message-chain-v1"
+    },
+    {
+      "accept": 0,
       "battery_name": "synthetic/mandate/delegated_mandate.json",
       "object_name": "delegation_chain",
       "record_type": "mandate",
@@ -3237,6 +3261,7 @@
     "cmpc": "P2-A3 adds CMPC bilateral primitive and chain-session transition profiles.",
     "longtail": "P2-A4 adds AgentProfile, CompetenceProof, ReceiptBundle, and MessageChain profiles.",
     "mutation": "P2-A2 extends the raw mutation battery to the P2-A1 profiles.",
+    "receipt_set_binding": "P2-B adds 0.3.0 receipt chain_head/message_count set-binding vectors and a receipt-binding canary.",
     "reference_runner": "C3 adds the clean-room reference runner."
   },
   "profiles": [

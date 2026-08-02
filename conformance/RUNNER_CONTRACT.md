@@ -832,8 +832,11 @@ Checks, in order:
 Inputs:
 
 - `input.messages`: a non-empty array of session envelope messages.
+- `input.receipt`: optional v0.3.0 Reputation Attestation receipt for the
+  presented message set.
 - `context.public_keys_b64url`: object mapping each message sender
-  `agent_id` to that sender's Ed25519 public key.
+  `agent_id` to that sender's Ed25519 public key. When `input.receipt` is
+  present, the same map also supplies public keys for every receipt party.
 - `context.expected_message_count`: optional exact message count.
 - `context.expected_message_hashes`: optional array of expected full-message
   hashes after signature insertion.
@@ -864,7 +867,38 @@ Checks, in order:
    sender's public key.
 7. If `context.expected_message_hashes` is present, recompute
    `MessageHash(message)` for every message and require exact array equality.
-8. Accept only if all checks pass.
+8. If `input.receipt` is present, validate it against
+   `attestation.schema.json`, require `/concordia_attestation >= "0.3.0"` by
+   semver major/minor comparison, require `/chain_head` to match
+   `^sha256:[a-f0-9]{64}$`, and require `/message_count` to be an integer
+   greater than or equal to 1.
+9. For every receipt party, resolve `/agent_id` in
+   `context.public_keys_b64url`, verify the party signature over
+   `JCS(party without top-level signature)`, then verify that party's
+   `/countersignatures/{agent_id}` over
+   `JCS(StripSignaturesRecursive(receipt without top-level countersignatures))`.
+10. Compare `/message_count` to `len(input.messages)`.
+11. Compare `/chain_head` to `MessageHash(input.messages[-1])`.
+12. Accept only if all checks pass.
+
+#### Receipt Set-Binding
+
+<!-- claim:receipt-set-binding -->
+A 0.3.0 receipt binds the transcript set, chain head and message count,
+inside its countersigned preimage, and the conformance suite rejects splice
+and truncation against it.
+<!-- /claim -->
+
+The receipt pair vectors use `message-chain-v1` with both `messages` and
+`receipt` in the input object. Public vectors carry the parsed JSON objects and
+diagnostic canonical bytes live under `conformance/diag/`, which runners do
+not read. The positive vector verifies a countersigned agreed receipt against
+the exact five-message transcript. The mutation vectors reject a countersigned
+wrong `chain_head`, a countersigned off-by-one `message_count`, a truncated
+transcript with the original receipt, and a re-signed deletion splice with the
+original receipt. The canary `canary-receipt-set-unchecked` is accepted only by
+a deliberately regressed runner that skips this receipt comparison after
+checking message links and signatures.
 
 #### Chain position
 
@@ -875,12 +909,12 @@ later `prev_hash` to equal `MessageHash(previous_message)`, and only then
 verifies each message signature. Deletion, reorder, and genesis-substitution
 attacks reject with reason class `binding` when this linkage walk fails.
 
-The current profile does not intrinsically commit to the complete message set.
-It enforces completeness only when `context.expected_message_count` or
-`context.expected_message_hashes` is supplied. Therefore the re-signed deletion
-splice vector is a tolerated accept: the remaining messages form a
-self-consistent signed chain, but the deleted message is not recoverable from
-per-message signatures alone.
+The message-only profile does not intrinsically commit to the complete message
+set. It enforces completeness only when `context.expected_message_count`,
+`context.expected_message_hashes`, or `input.receipt` is supplied. Therefore
+the re-signed deletion splice vector in the chain-position class remains a
+tolerated accept: the remaining messages form a self-consistent signed chain,
+but the deleted message is not recoverable from per-message signatures alone.
 
 ## Decisions
 
@@ -964,6 +998,11 @@ The Verascore publish envelope is out of scope because it is a vendor adapter
 surface, not a Concordia conformance profile. A2CN adapter messages are also
 out of scope for this suite; they are adapter-specific composition surfaces,
 not core conformance vectors.
+
+<!-- claim:adapter-not-exercised -->
+No conformance vector or reference runner imports or invokes the optional
+`concordia.verascore` adapter.
+<!-- /claim -->
 
 The generated manifest pins the exact counts for fixtures, schemas, positive
 section vectors, mutation vectors, canaries, and diagnostic canonical bytes.
