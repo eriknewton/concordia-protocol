@@ -50,7 +50,7 @@ Concordia records, and Sanctuary, an agent runtime. The reference Python SDK shi
 off-by-default adapter for Verascore (`concordia.verascore`), disclosed in `SPEC.md` §9.6.7. No
 conformance runner imports or invokes it, and the clean-room CI jobs assert the Concordia SDK
 itself is absent from the runner's import path. Agent-profile vectors do carry legacy field names
-beginning `verascore_`, with `verascore.example` as their sample provider: the SDK retains those
+beginning `verascore_`, with `reputation.example` as their sample provider: the SDK retains those
 fields for signature compatibility with records issued before its provider-neutral reputation
 fields landed, and the specification defines none of them.
 

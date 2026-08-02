@@ -3595,7 +3595,7 @@ def build_agent_profile_fixture(profile_key: KeyPair) -> dict[str, Any]:
             concession_pattern="graduated",
         ),
         trust_signals=TrustSignals(
-            verascore_did="did:web:verascore.example:agent-longtail",
+            verascore_did="did:web:reputation.example:agent-longtail",
             verascore_tier="verified-sovereign",
             verascore_composite=91,
             sovereignty=Sovereignty(L1="Full", L2="Full", L3="Full", L4="Full"),
@@ -3604,8 +3604,8 @@ def build_agent_profile_fixture(profile_key: KeyPair) -> dict[str, Any]:
             concordia_preferred=True,
             reputation=[
                 ReputationAssertion(
-                    provider="verascore.example",
-                    subject_did="did:web:verascore.example:agent-longtail",
+                    provider="reputation.example",
+                    subject_did="did:web:reputation.example:agent-longtail",
                     tier="verified-sovereign",
                     composite=91,
                 )
