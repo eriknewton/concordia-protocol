@@ -1,0 +1,15 @@
+
+> @concordia-protocol/sdk@0.0.1-alpha.11 test
+> vitest run --run tests/attestation.test.ts tests/index-barrel.test.ts
+
+
+ RUN  v3.2.6 /Users/eriknewton/Code/Claude/Concordia-worktrees/chain-completeness-b/js-sdk
+
+ ✓ tests/index-barrel.test.ts (3 tests) 27ms
+ ✓ tests/attestation.test.ts (204 tests) 666ms
+
+ Test Files  2 passed (2)
+      Tests  207 passed (207)
+   Start at  22:32:01
+   Duration  991ms (transform 147ms, setup 0ms, collect 331ms, tests 693ms, environment 0ms, prepare 66ms)
+

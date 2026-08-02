@@ -1,0 +1,69 @@
+FFF                                                                      [100%]
+=================================== FAILURES ===================================
+_____________ TestAttestationGeneration.test_generates_for_agreed ______________
+
+self = <tests.test_attestation.TestAttestationGeneration object at 0x1102176b0>
+agreed_session = (<concordia.session.Session object at 0x1101f3bc0>, <concordia.agent.Agent object at 0x1101f3f20>, <concordia.agent.Agent object at 0x1101f3bf0>)
+
+    def test_generates_for_agreed(self, agreed_session):
+        session, seller, buyer = agreed_session
+        assert session.state == SessionState.AGREED
+        key_pairs = {
+            "seller_01": seller.key_pair,
+            "buyer_42": buyer.key_pair,
+        }
+        att = generate_attestation(
+            session, key_pairs,
+            category="electronics.cameras",
+            value_range="100-500_USD",
+        )
+>       assert att["concordia_attestation"] == "0.3.0"
+E       AssertionError: assert '0.2.0' == '0.3.0'
+E         
+E         - 0.3.0
+E         ?   ^
+E         + 0.2.0
+E         ?   ^
+
+tests/test_attestation.py:57: AssertionError
+_ TestAttestationVerification.test_verify_attestation_rejects_resigned_splice_transcript _
+
+self = <tests.test_attestation.TestAttestationVerification object at 0x11025d190>
+
+    def test_verify_attestation_rejects_resigned_splice_transcript(self):
+        session, spliced, seller, buyer = _same_signer_splice_fixture()
+        key_pairs = {seller.agent_id: seller.key_pair, buyer.agent_id: buyer.key_pair}
+        public_keys = {agent_id: kp.public_key for agent_id, kp in key_pairs.items()}
+        att = generate_attestation(session, key_pairs)
+    
+        assert validate_chain(spliced) is True
+>       assert compute_hash(spliced[-1]) != att["chain_head"]
+                                            ^^^^^^^^^^^^^^^^^
+E       KeyError: 'chain_head'
+
+tests/test_attestation.py:187: KeyError
+_ TestAttestationVerification.test_verify_attestation_rejects_truncated_transcript _
+
+self = <tests.test_attestation.TestAttestationVerification object at 0x110217dd0>
+agreed_session = (<concordia.session.Session object at 0x11025d5b0>, <concordia.agent.Agent object at 0x11025eae0>, <concordia.agent.Agent object at 0x11025fdd0>)
+
+    def test_verify_attestation_rejects_truncated_transcript(self, agreed_session):
+        session, seller, buyer = agreed_session
+        key_pairs = {"seller_01": seller.key_pair, "buyer_42": buyer.key_pair}
+        public_keys = {agent_id: kp.public_key for agent_id, kp in key_pairs.items()}
+        att = generate_attestation(session, key_pairs)
+        truncated = session.transcript[:-1]
+    
+        assert validate_chain(truncated) is True
+        result = verify_attestation(att, public_keys, transcript=truncated)
+    
+>       assert result.valid is False
+E       AssertionError: assert True is False
+E        +  where True = AttestationVerifyResult(valid=True, errors=[], warnings=['attestation is legacy set-unbound (<0.3.0); chain_head and m...e_errors=[], set_binding_errors=[], verified_parties=['seller_01', 'buyer_42'], set_binding_state='legacy_set_unbound').valid
+
+tests/test_attestation.py:205: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_attestation.py::TestAttestationGeneration::test_generates_for_agreed
+FAILED tests/test_attestation.py::TestAttestationVerification::test_verify_attestation_rejects_resigned_splice_transcript
+FAILED tests/test_attestation.py::TestAttestationVerification::test_verify_attestation_rejects_truncated_transcript
+3 failed in 0.05s

@@ -1,0 +1,7 @@
+probe: bridge agreement transcript hash is final message hash
+session_state=agreed
+transcript_messages=4
+computed_final_message_hash=sha256:388870714bb35be4cd07db11e1fbdda30bfec7534284a5e48120463a367327cd
+bridge_payload_transcript_hash=sha256:388870714bb35be4cd07db11e1fbdda30bfec7534284a5e48120463a367327cd
+sha256_prefixed=True
+RESULT: PASS

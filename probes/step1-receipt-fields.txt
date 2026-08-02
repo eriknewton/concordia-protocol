@@ -1,0 +1,9 @@
+probe: public API agreed-session receipt fields
+attestation_version=0.2.0
+session_state=agreed
+transcript_messages=4
+chain_head_present=False
+message_count_present=False
+transcript_hash_present=True
+transcript_hash=sha256:d947850759222f56e0dcd46a9e6dbd7f9783ed6201663642db0b505b50577abd
+RESULT: PASS

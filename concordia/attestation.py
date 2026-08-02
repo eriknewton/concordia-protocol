@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from .cosign import canonical_cosign_bytes
+from .message import compute_hash
 from .signing import KeyPair, canonical_json, sign_message, verify_signature
 from .types import (
     OutcomeStatus,
@@ -37,7 +38,15 @@ if TYPE_CHECKING:
 # map (see ``receipt_bundle.verify_bundle``); a <0.2.0 attestation is read as
 # outcome-unbound (legacy, prover-asserted) and is NOT credited, but is NOT an
 # error either. See SPEC.md §9.6.
-ATTESTATION_VERSION = "0.2.0"
+#
+# v0.3.0 adds receipt set-binding: ``chain_head`` + ``message_count`` are
+# included in the same countersigned issuance snapshot. Per-message signatures
+# authenticate links; these two fields make the closing receipt commit to the
+# transcript set.
+ATTESTATION_VERSION = "0.3.0"
+_SET_BINDING_MIN = (0, 3)
+_SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+\Z")
+_SHA256_HEX_RE = re.compile(r"^sha256:[a-f0-9]{64}\Z")
 
 
 @dataclass(frozen=True)
@@ -46,9 +55,12 @@ class AttestationVerifyResult:
 
     valid: bool
     errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     schema_errors: list[str] = field(default_factory=list)
     signature_errors: list[str] = field(default_factory=list)
+    set_binding_errors: list[str] = field(default_factory=list)
     verified_parties: list[str] = field(default_factory=list)
+    set_binding_state: str = "unknown"
 
 # v0.5 SPEC §11.5: generalized attestation-level references[] shape. Per
 # §11.5.6 the four canonical type values are receipt, chain_session,
@@ -444,6 +456,83 @@ def _map_state_to_outcome(state: SessionState) -> OutcomeStatus:
     return mapping.get(state, OutcomeStatus.REJECTED)
 
 
+def _attestation_version_at_least(ver: str, major: int, minor: int) -> bool:
+    """Return True iff ``ver`` is semver-shaped and at least ``major.minor``.
+
+    Malformed or missing versions are treated as legacy for dual-accept
+    read paths: reported as unbound, not raised as a parse error.
+    """
+    if not isinstance(ver, str) or not _SEMVER_RE.match(ver):
+        return False
+    parts = ver.split(".")
+    return (int(parts[0]), int(parts[1])) >= (major, minor)
+
+
+def evaluate_receipt_set_binding(
+    attestation: dict[str, Any],
+    transcript: list[dict[str, Any]] | None = None,
+) -> tuple[str, list[str]]:
+    """Validate the v0.3.0 receipt set-binding fields.
+
+    Returns ``(state, errors)`` where ``state`` is one of:
+      - ``"bound"``: >=0.3.0 fields are present, well-formed, and, when a
+        transcript was supplied, match its final message hash and length.
+      - ``"legacy_set_unbound"``: <0.3.0 or malformed version. This is
+        reported, not an error, and must not be credited as set-bound.
+      - ``"error"``: >=0.3.0 but required fields are missing, malformed, or do
+        not match the supplied transcript.
+    """
+    ver = attestation.get("concordia_attestation", "")
+    if not _attestation_version_at_least(ver, *_SET_BINDING_MIN):
+        return "legacy_set_unbound", []
+
+    errors: list[str] = []
+    chain_head = attestation.get("chain_head")
+    message_count = attestation.get("message_count")
+
+    if not isinstance(chain_head, str) or not _SHA256_HEX_RE.match(chain_head):
+        errors.append(
+            f"version {ver} requires chain_head as sha256:<64 lowercase hex>"
+        )
+    if (
+        not isinstance(message_count, int)
+        or isinstance(message_count, bool)
+        or message_count < 1
+    ):
+        errors.append(f"version {ver} requires message_count as an integer >= 1")
+
+    if transcript is not None:
+        if not isinstance(transcript, list):
+            errors.append("transcript must be a list when verifying set binding")
+        elif not transcript:
+            errors.append("transcript must contain at least one message")
+        else:
+            expected_count = len(transcript)
+            expected_head = compute_hash(transcript[-1])
+            if (
+                isinstance(message_count, int)
+                and not isinstance(message_count, bool)
+                and message_count != expected_count
+            ):
+                errors.append(
+                    f"message_count mismatch: attestation has {message_count}, "
+                    f"transcript has {expected_count}"
+                )
+            if (
+                isinstance(chain_head, str)
+                and _SHA256_HEX_RE.match(chain_head)
+                and chain_head != expected_head
+            ):
+                errors.append(
+                    "chain_head mismatch: attestation does not match transcript "
+                    "final message hash"
+                )
+
+    if errors:
+        return "error", errors
+    return "bound", []
+
+
 # ---------------------------------------------------------------------------
 # C-H2 outcome-binding (Option B): issuance countersignature primitive.
 #
@@ -515,6 +604,7 @@ def verify_attestation_countersignature(
 def verify_attestation(
     attestation: dict[str, Any],
     public_keys: Mapping[str, Ed25519PublicKey],
+    transcript: list[dict[str, Any]] | None = None,
 ) -> AttestationVerifyResult:
     """Validate an attestation and verify every party signature.
 
@@ -530,7 +620,10 @@ def verify_attestation(
     """
     schema_errors: list[str] = []
     signature_errors: list[str] = []
+    set_binding_errors: list[str] = []
+    warnings: list[str] = []
     verified_parties: list[str] = []
+    set_binding_state = "unknown"
 
     try:
         if not isinstance(attestation, dict):
@@ -538,6 +631,7 @@ def verify_attestation(
                 valid=False,
                 errors=["attestation must be a dict"],
                 schema_errors=["attestation must be a dict"],
+                set_binding_state="error",
             )
         if not isinstance(public_keys, Mapping):
             signature_errors.append(
@@ -583,25 +677,41 @@ def verify_attestation(
                         f"parties[{index}] ('{agent_id}') invalid signature"
                     )
 
-        errors = [*schema_errors, *signature_errors]
+        set_binding_state, set_binding_errors = evaluate_receipt_set_binding(
+            attestation,
+            transcript,
+        )
+        if set_binding_state == "legacy_set_unbound":
+            warnings.append(
+                "attestation is legacy set-unbound (<0.3.0); chain_head and "
+                "message_count are not credited as bound"
+            )
+
+        errors = [*schema_errors, *signature_errors, *set_binding_errors]
         return AttestationVerifyResult(
             valid=len(errors) == 0,
             errors=errors,
+            warnings=warnings,
             schema_errors=schema_errors,
             signature_errors=signature_errors,
+            set_binding_errors=set_binding_errors,
             verified_parties=verified_parties,
+            set_binding_state=set_binding_state,
         )
     except Exception as exc:
         signature_errors.append(
             f"attestation verification failed closed: {type(exc).__name__}"
         )
-        errors = [*schema_errors, *signature_errors]
+        errors = [*schema_errors, *signature_errors, *set_binding_errors]
         return AttestationVerifyResult(
             valid=False,
             errors=errors,
+            warnings=warnings,
             schema_errors=schema_errors,
             signature_errors=signature_errors,
+            set_binding_errors=set_binding_errors,
             verified_parties=verified_parties,
+            set_binding_state="error",
         )
 
 
@@ -691,8 +801,18 @@ def generate_attestation(
             party_record["signature"] = ""
         parties.append(party_record)
 
-    # Compute transcript hash
+    if not session.transcript:
+        raise ValueError(
+            "Cannot generate attestation for session with empty transcript; "
+            "v0.3.0 receipts require chain_head and message_count"
+        )
+
+    # Compute transcript commitments. ``transcript_hash`` is the legacy
+    # whole-transcript digest; ``chain_head`` is the final message hash defined
+    # by §9.3 and pins the chain through cascading prev_hash links.
     transcript_hash = _compute_transcript_hash(session.transcript)
+    chain_head = compute_hash(session.transcript[-1])
+    message_count = len(session.transcript)
 
     # Build meta
     meta: dict[str, Any] = {
@@ -734,6 +854,8 @@ def generate_attestation(
         "parties": parties,
         "meta": meta,
         "transcript_hash": transcript_hash,
+        "chain_head": chain_head,
+        "message_count": message_count,
         "fulfillment": None,
         "references": normalized_refs,
     }

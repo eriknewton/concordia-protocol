@@ -1,6 +1,6 @@
 {
   "context": {
-    "canonical_sha256": "sha256:ceb5aa69165455284ded558e82b684904a9493ea7e178b1bea5056897339d588",
+    "canonical_sha256": "sha256:b0116f29cabd180beb6a6d36b16da39e53010766d57dc4d9f256ba3699533385",
     "public_key_b64url": "99wNp8HVsqJcFfjN0ycm2d-9pPDlxilgTPMeWF0tRew="
   },
   "expected": "reject",
@@ -8,7 +8,7 @@
   "id": "mut-synthetic-competence-proof-0077",
   "input": {
     "agent_id": "did:concordia:agent:synthetic-initiator",
-    "agent_signature": "RAjKXJp_8lXyoQCJJDDkFsJYwU2hkcjFIEI8T8KiCE_6eD7-3pY0bj39k0Z-fDfusvimltS84bPcZjLBjsfwBw==",
+    "agent_signature": "-T0AYGR09Uq77ODVTNzb81JEiFZ6-1TrreSoPmPM9JxsgW0wnM_ZdR0EcSSas-iQLF0ymX_dJaUtKs_QnjXQBw==",
     "attestation_count": 2,
     "attestation_merkle_root": "06b216d06faecf941db1d9c0920363ae2ec3f145ee467c2fc3f86159aea1f511",
     "claims": {
@@ -40,12 +40,14 @@
     "revealed_attestations": [
       {
         "attestation_id": "att_conformance_p2a1_0001",
-        "concordia_attestation": "0.2.0",
+        "chain_head": "sha256:b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+        "concordia_attestation": "0.3.0",
         "countersignatures": {
-          "did:concordia:agent:synthetic-initiator": "6iF5xR04383bmd0lvBT86lNuLWBI7tCoOzSfzhgNtEtFILWAljC0ioXBi5WFoNuSGOV6OFcgptVm7A5JW2xpBw==",
-          "did:concordia:agent:synthetic-responder": "ykwAxTbXn3gUgcBEVPegCa7nhB6DVUBfDAXcBdbTyrjRyz2sj5kKbgr-uBUEu1hbYKX4ISD92p-tCaOaZFH0Cw=="
+          "did:concordia:agent:synthetic-initiator": "g4s0fsTHbyaGNLSSvsXw0To4uINocOHytNn_5Us32EYUH99dKV5cMmG9ps58qPsPvyljt1J92m43295wHa3_DQ==",
+          "did:concordia:agent:synthetic-responder": "7WoUSEUFgodvX4C2EXWBn9yjTYC-51zNvL5Wi2Z5Afqr3LA6zMdO7wbV42aBd895alH0ZwWTDAgjbqdFfd3NCA=="
         },
         "fulfillment": null,
+        "message_count": 6,
         "meta": {
           "category": "software.tools",
           "extensions_used": [],

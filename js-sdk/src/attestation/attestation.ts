@@ -42,6 +42,8 @@
  * - `transcriptHash` is the SHA-256 over the CONCATENATED canonical-JSON bytes of
  *   every transcript message (NOT the per-message `computeHash`; this is the
  *   distinct whole-transcript digest Python's `_compute_transcript_hash` produces).
+ * - `chain_head` is the per-message `computeHash` of the final transcript
+ *   message, and `message_count` is the transcript length. Added in v0.3.0.
  * - `references` and `validityTemporal` reuse the merged predicate-layer
  *   `validateReference` (NO re-port) and the temporal validators ported here,
  *   with Python-identical normalization, omission, and error text.
@@ -67,10 +69,76 @@ import {
   behaviorRecordToDict,
 } from '../types/index.js';
 import { validateReference } from '../predicate/references.js';
-import type { Session } from '../session/index.js';
+import { computeHash, type Session } from '../session/index.js';
 
 /** Attestation schema version, byte-identical to Python `ATTESTATION_VERSION`. */
-export const ATTESTATION_VERSION = '0.2.0';
+export const ATTESTATION_VERSION = '0.3.0';
+const SET_BINDING_MIN = { major: 0, minor: 3 } as const;
+const SEMVER_PATTERN = /^\d+\.\d+\.\d+$/;
+const SHA256_HEX_PATTERN = /^sha256:[a-f0-9]{64}$/;
+
+export type ReceiptSetBindingState = 'bound' | 'legacy_set_unbound' | 'error';
+
+export interface ReceiptSetBindingResult {
+  state: ReceiptSetBindingState;
+  errors: string[];
+}
+
+function attestationVersionAtLeast(version: unknown, major: number, minor: number): boolean {
+  if (typeof version !== 'string' || !SEMVER_PATTERN.test(version)) return false;
+  const parts = version.split('.');
+  const gotMajor = Number.parseInt(parts[0] ?? '0', 10);
+  const gotMinor = Number.parseInt(parts[1] ?? '0', 10);
+  return gotMajor > major || (gotMajor === major && gotMinor >= minor);
+}
+
+export function verifyReceiptSetBinding(
+  attestation: Record<string, unknown>,
+  transcript: Array<Record<string, unknown>> | null = null,
+): ReceiptSetBindingResult {
+  const version = attestation.concordia_attestation;
+  if (!attestationVersionAtLeast(version, SET_BINDING_MIN.major, SET_BINDING_MIN.minor)) {
+    return { state: 'legacy_set_unbound', errors: [] };
+  }
+
+  const errors: string[] = [];
+  const chainHead = attestation.chain_head;
+  const messageCount = attestation.message_count;
+  if (typeof chainHead !== 'string' || !SHA256_HEX_PATTERN.test(chainHead)) {
+    errors.push(`version ${String(version)} requires chain_head as sha256:<64 lowercase hex>`);
+  }
+  if (typeof messageCount !== 'number' || !Number.isInteger(messageCount) || messageCount < 1) {
+    errors.push(`version ${String(version)} requires message_count as an integer >= 1`);
+  }
+
+  if (transcript !== null) {
+    if (!Array.isArray(transcript)) {
+      errors.push('transcript must be a list when verifying set binding');
+    } else if (transcript.length === 0) {
+      errors.push('transcript must contain at least one message');
+    } else {
+      const expectedCount = transcript.length;
+      const expectedHead = computeHash(transcript[transcript.length - 1]!);
+      if (
+        typeof messageCount === 'number' &&
+        Number.isInteger(messageCount) &&
+        messageCount !== expectedCount
+      ) {
+        errors.push(
+          `message_count mismatch: attestation has ${messageCount}, transcript has ${expectedCount}`,
+        );
+      }
+      if (typeof chainHead === 'string' && SHA256_HEX_PATTERN.test(chainHead) && chainHead !== expectedHead) {
+        errors.push('chain_head mismatch: attestation does not match transcript final message hash');
+      }
+    }
+  }
+
+  if (errors.length > 0) {
+    return { state: 'error', errors };
+  }
+  return { state: 'bound', errors: [] };
+}
 
 /**
  * C-H2 outcome-binding (Option B): the canonical issuance-snapshot bytes a
@@ -874,8 +942,19 @@ export function generateAttestation(
     parties.push(partyRecord);
   }
 
-  // Compute the whole-transcript hash (distinct from the per-message hash).
+  if (session.transcript.length === 0) {
+    throw new AttestationError(
+      'Cannot generate attestation for session with empty transcript; ' +
+        'v0.3.0 receipts require chain_head and message_count',
+    );
+  }
+
+  // Compute transcript commitments. `transcript_hash` is the legacy
+  // whole-transcript digest; `chain_head` is the final message hash defined by
+  // SPEC §9.3 and pins the chain through cascading prev_hash links.
   const transcriptHash = computeTranscriptHash(session.transcript);
+  const chainHead = computeHash(session.transcript[session.transcript.length - 1]!);
+  const messageCount = session.transcript.length;
 
   // Build meta. L3 hardening (security audit 2026-06-09): caller-supplied
   // context is validated fail-closed at issuance so raw deal terms can never
@@ -916,6 +995,8 @@ export function generateAttestation(
     parties,
     meta,
     transcript_hash: transcriptHash,
+    chain_head: chainHead,
+    message_count: messageCount,
     fulfillment: null,
     references: normalizedRefs,
   };
