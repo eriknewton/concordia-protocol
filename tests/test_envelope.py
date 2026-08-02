@@ -364,7 +364,7 @@ class TestReferences:
         assert auto_ref["urn"] == f"urn:concordia:session:{attestation['session_id']}"
         assert auto_ref["verified_at"] == envelope["issued_at"]
         assert auto_ref["verifier_did"] == "did:web:test.ai"
-        assert auto_ref["hash"] == attestation["transcript_hash"]
+        assert auto_ref["hash"] == attestation["chain_head"]
 
     def test_auto_ref_matches_envelope_fields(self):
         """verified_at must equal issued_at and verifier_did must equal provider_did."""

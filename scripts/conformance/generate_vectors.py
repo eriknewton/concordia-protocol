@@ -1592,9 +1592,9 @@ RECEIPT_BUNDLE_VERSION_TOLERANCE_NOTE = (
 CHAIN_POSITION_RESIGNED_SPLICE_TOLERANCE_NOTE = (
     "tolerated-accept: per-message signatures authenticate links, not the complete message set"
 )
-EXPECTED_MUTATION_TOTAL = 1460
-EXPECTED_MUTATION_REJECTS = 1419
-EXPECTED_MUTATION_ACCEPTS = 41
+EXPECTED_MUTATION_TOTAL = 1480
+EXPECTED_MUTATION_REJECTS = 1435
+EXPECTED_MUTATION_ACCEPTS = 45
 EXPECTED_CANARY_TOTAL = 4
 EXPECTED_RAW_TYPED_DIVERGENCES = (
     MutationDivergence(
@@ -1614,11 +1614,11 @@ EXPECTED_MUTATION_BATTERY_COUNTS: dict[str, tuple[int, int, int]] = {
     "1404/revocation_A.json": (33, 33, 0),
     "1920/fulfillment_attestation.json": (63, 63, 0),
     "synthetic/attestation/attestation.json::attestation-countersign-v1": (
-        107,
-        104,
+        111,
+        108,
         3,
     ),
-    "synthetic/attestation/attestation.json::attestation-v1": (107, 78, 29),
+    "synthetic/attestation/attestation.json::attestation-v1": (111, 78, 33),
     "synthetic/cosign/cosigned_receipt.json": (42, 42, 0),
     "synthetic/cmpc_bilateral/primitives/atomic_activation_proof.json": (30, 30, 0),
     "synthetic/cmpc_bilateral/primitives/chain_session.json": (25, 25, 0),
@@ -1626,10 +1626,10 @@ EXPECTED_MUTATION_BATTERY_COUNTS: dict[str, tuple[int, int, int]] = {
     "synthetic/cmpc_bilateral/primitives/conditional_commitment.json": (35, 35, 0),
     "synthetic/cmpc_bilateral/primitives/unwind_record.json": (28, 28, 0),
     "synthetic/longtail/agent_profile.json": (100, 96, 4),
-    "synthetic/longtail/competence_proof.json": (153, 151, 2),
+    "synthetic/longtail/competence_proof.json": (157, 155, 2),
     "synthetic/longtail/message_chain.json": (99, 99, 0),
     "synthetic/longtail/message_chain_position.json": (4, 3, 1),
-    "synthetic/longtail/receipt_bundle.json": (248, 247, 1),
+    "synthetic/longtail/receipt_bundle.json": (256, 255, 1),
     "synthetic/mandate/delegated_mandate.json": (82, 82, 0),
     "synthetic/mandate/mandate.json": (51, 51, 0),
     "synthetic/predicate/vector_02.json": (87, 87, 0),
@@ -1820,7 +1820,7 @@ def build_mutation_fixtures(
                 "public_keys_b64url": attestation_public_keys,
             },
             sdk_rejected=0,
-            sdk_total=107,
+            sdk_total=111,
             sdk_escapes=frozenset(),
             compare_typed_path=False,
         ),
@@ -1843,7 +1843,7 @@ def build_mutation_fixtures(
                 "public_keys_b64url": attestation_public_keys,
             },
             sdk_rejected=0,
-            sdk_total=107,
+            sdk_total=111,
             sdk_escapes=frozenset(),
             compare_typed_path=False,
         ),
@@ -2091,7 +2091,7 @@ def build_mutation_fixtures(
                 ],
             },
             sdk_rejected=0,
-            sdk_total=153,
+            sdk_total=157,
             sdk_escapes=frozenset(),
             compare_typed_path=False,
         ),
@@ -2112,7 +2112,7 @@ def build_mutation_fixtures(
                 ],
             },
             sdk_rejected=0,
-            sdk_total=248,
+            sdk_total=256,
             sdk_escapes=frozenset(),
             compare_typed_path=False,
         ),
@@ -2908,7 +2908,7 @@ def build_synthetic_attestation() -> tuple[dict[str, Any], dict[str, Any]]:
         party["signature"] = sign_message(party, key_by_agent[party["agent_id"]])
 
     attestation: dict[str, Any] = {
-        "concordia_attestation": "0.2.0",
+        "concordia_attestation": "0.3.0",
         "attestation_id": "att_conformance_p2a1_0001",
         "session_id": "sess_conformance_p2a1_0001",
         "timestamp": fixed_iso_now(),
@@ -2927,6 +2927,8 @@ def build_synthetic_attestation() -> tuple[dict[str, Any], dict[str, Any]]:
             "mediator_invoked": False,
         },
         "transcript_hash": "sha256:" + ("a1" * 32),
+        "chain_head": "sha256:" + ("b2" * 32),
+        "message_count": 6,
         "fulfillment": None,
         "references": [
             {
@@ -3609,6 +3611,8 @@ def build_synthetic_longtail_fixtures(
     attestation_two["attestation_id"] = "att_conformance_p2a4_0002"
     attestation_two["session_id"] = "sess_conformance_p2a4_0002"
     attestation_two["timestamp"] = "2026-05-10T14:35:00Z"
+    attestation_two["chain_head"] = "sha256:" + ("c3" * 32)
+    attestation_two["message_count"] = 4
     attestation_two["outcome"] = {
         "status": "rejected",
         "rounds": 2,

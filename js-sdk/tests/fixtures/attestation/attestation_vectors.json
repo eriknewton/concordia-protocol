@@ -16,7 +16,7 @@
     "did:concordia:agent:alpha": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=",
     "did:concordia:agent:beta": "C7w0aldmfDgBIL2cf9flHSxf3-o3zS9b9AWyxr9vLXg="
   },
-  "attestation_version": "0.2.0",
+  "attestation_version": "0.3.0",
   "leakable_term_values": [
     1000,
     10,
@@ -173,13 +173,13 @@
         "references": null,
         "validity_temporal": null
       },
-      "attestation_id": "att_4343c615",
-      "timestamp": "2026-06-18T15:39:01Z",
+      "attestation_id": "att_a6c7dce2",
+      "timestamp": "2026-08-02T05:23:04Z",
       "expected": {
-        "concordia_attestation": "0.2.0",
-        "attestation_id": "att_4343c615",
+        "concordia_attestation": "0.3.0",
+        "attestation_id": "att_a6c7dce2",
         "session_id": "ses_agree_full",
-        "timestamp": "2026-06-18T15:39:01Z",
+        "timestamp": "2026-08-02T05:23:04Z",
         "outcome": {
           "status": "agreed",
           "rounds": 3,
@@ -228,12 +228,14 @@
           "value_range": "1000-5000_USD"
         },
         "transcript_hash": "sha256:b507d00d28b064bb9d325cbc8b3e54835f018af3e685ccd2f172166b3453d09d",
+        "chain_head": "sha256:e135ac51ce12c011615d3645fd8afa9c5319d4a1cbd853a36034cc47fb910da2",
+        "message_count": 6,
         "fulfillment": null,
         "references": [],
         "summary": "Parties: ...:agent:alpha, ...a:agent:beta\nTopic: electronics.cameras\nOutcome: AGREED\nTranscript hash: b507d00d28b064bb",
         "countersignatures": {
-          "did:concordia:agent:alpha": "DV82vQ4fh1PWF3rOQwfXrz5RpW4bhqDoNyRlIP9jxfihm91IBSqyYB3jvPBWFKnRDMDmTvJJuQPcL3CzBFd1Ag==",
-          "did:concordia:agent:beta": "fmZIbfq0Ylp9Akc7ZFvzytcQ-yQL1zruywyKTV5Z20Fc2xKektkslHH59aoSc4F5tBGk9wLKI9zO20m1632oAQ=="
+          "did:concordia:agent:alpha": "HB42mAC3P8GwPCUAUSCoH3k4k7vXIlVumStixjNvpURQSL_sjUxbUlm5Np97H9FmKdIqqJay2TZ00XBXxhIRBQ==",
+          "did:concordia:agent:beta": "D3c7vWvnEjsTtHL2khk-goq7ClRPbZ2t3nrkb8-xzqYHtMLt-lApPAYyozKvYPqzKzyQTLjnbuLrYkhVUbMfBw=="
         }
       }
     },
@@ -305,13 +307,13 @@
         "references": null,
         "validity_temporal": null
       },
-      "attestation_id": "att_e5a76297",
-      "timestamp": "2026-06-18T15:39:01Z",
+      "attestation_id": "att_8833fa10",
+      "timestamp": "2026-08-02T05:23:04Z",
       "expected": {
-        "concordia_attestation": "0.2.0",
-        "attestation_id": "att_e5a76297",
+        "concordia_attestation": "0.3.0",
+        "attestation_id": "att_8833fa10",
         "session_id": "ses_decline_session",
-        "timestamp": "2026-06-18T15:39:01Z",
+        "timestamp": "2026-08-02T05:23:04Z",
         "outcome": {
           "status": "rejected",
           "rounds": 0,
@@ -358,12 +360,14 @@
           "mediator_invoked": false
         },
         "transcript_hash": "sha256:0cdf113ada211e5d9d89fcf1d3a131b9b5e3f5a10018a94b52fa2a2e23fdc8a3",
+        "chain_head": "sha256:7bb57d82f5c63290ba46a9db09b38acd8d8a909abc3e1a38ed10b8be8c0fb9dc",
+        "message_count": 2,
         "fulfillment": null,
         "references": [],
         "summary": "Parties: ...:agent:alpha, ...a:agent:beta\nTopic: N/A\nOutcome: REJECTED\nTranscript hash: 0cdf113ada211e5d",
         "countersignatures": {
-          "did:concordia:agent:alpha": "7UHr5_vN0iMb5_RI4Yn-DeBv5RGvC1_FisS8GhH_MHlhTu29MLkqk_-zjK47Bqf68UBOoRFVWVm8psZ_doXXDA==",
-          "did:concordia:agent:beta": "lxIJXkl-52mYg10UjtgGVcfZmIdez9a7sm9whu5Io7OHRC5-OxcdnjDVzeZvNF3_nhaKuYhujufXnZZYupmMCg=="
+          "did:concordia:agent:alpha": "0K0qzAhrNTB14istQHP-spiNOJnTrjvdFvftE3elphloVPCrNEFzeM5OGfwvMpp0DQYK-k5pi4lUTPNUGK-VCQ==",
+          "did:concordia:agent:beta": "Q5uYMc727WDwYoqBrN86ruY9MUv53yj3-BvdYei61pC_8Afx8yEURIJL_W7JoRC9_oPPyI0-GnSvgdivaxtRDA=="
         }
       }
     },
@@ -469,13 +473,13 @@
         "references": null,
         "validity_temporal": null
       },
-      "attestation_id": "att_caa8329f",
-      "timestamp": "2026-06-18T15:39:01Z",
+      "attestation_id": "att_870800f0",
+      "timestamp": "2026-08-02T05:23:04Z",
       "expected": {
-        "concordia_attestation": "0.2.0",
-        "attestation_id": "att_caa8329f",
+        "concordia_attestation": "0.3.0",
+        "attestation_id": "att_870800f0",
         "session_id": "ses_partial_keys",
-        "timestamp": "2026-06-18T15:39:01Z",
+        "timestamp": "2026-08-02T05:23:04Z",
         "outcome": {
           "status": "agreed",
           "rounds": 1,
@@ -522,11 +526,13 @@
           "mediator_invoked": false
         },
         "transcript_hash": "sha256:006603cfccc03ed805f2cf281877217b3b5844a4753a0984549b065684b197b5",
+        "chain_head": "sha256:b6a6acdcb1122edd911caed2c8307a3011b477b1a2f8e21bb06a64dd6a1e68ea",
+        "message_count": 4,
         "fulfillment": null,
         "references": [],
         "summary": "Parties: ...:agent:alpha, ...a:agent:beta\nTopic: N/A\nOutcome: AGREED\nTranscript hash: 006603cfccc03ed8",
         "countersignatures": {
-          "did:concordia:agent:alpha": "-GBCT-X-ipGIBtte2523Vxvr2bSi92URnCTN1QklQkkmhaaSqrEhOQeFIJio3_hMNgd-3T3uQTPpJZ212RzpAQ=="
+          "did:concordia:agent:alpha": "4pPwwwEMVRn8O6aWZPkNH_9UQ-lytTP2Izh43ePN7ylrZm8CVbH0BlMHcPgaqT1WrFHtoBJWncNG-8LQFsMbBg=="
         }
       }
     },
@@ -574,13 +580,13 @@
         "references": null,
         "validity_temporal": null
       },
-      "attestation_id": "att_69557ea1",
-      "timestamp": "2026-06-18T15:39:01Z",
+      "attestation_id": "att_1df87b48",
+      "timestamp": "2026-08-02T05:23:04Z",
       "expected": {
-        "concordia_attestation": "0.2.0",
-        "attestation_id": "att_69557ea1",
+        "concordia_attestation": "0.3.0",
+        "attestation_id": "att_1df87b48",
         "session_id": "ses_no_terms",
-        "timestamp": "2026-06-18T15:39:01Z",
+        "timestamp": "2026-08-02T05:23:04Z",
         "outcome": {
           "status": "expired",
           "rounds": 0,
@@ -626,12 +632,14 @@
           "mediator_invoked": false
         },
         "transcript_hash": "sha256:6a9804ea750ab9671d0005a0d36d5571bcd486b64ee650869b6f3ef8e7b7439c",
+        "chain_head": "sha256:6a9804ea750ab9671d0005a0d36d5571bcd486b64ee650869b6f3ef8e7b7439c",
+        "message_count": 1,
         "fulfillment": null,
         "references": [],
         "summary": "Parties: ...:agent:alpha, ...a:agent:beta\nTopic: N/A\nOutcome: EXPIRED\nTranscript hash: 6a9804ea750ab967",
         "countersignatures": {
-          "did:concordia:agent:alpha": "4YaSNN0Ns3RAc70MqR4Brf-i7mUyeya0DLuo3X0hpIst8YGCOVGPyqWWKiGoPeePqALwwqkgrhjRB73-cFzAAg==",
-          "did:concordia:agent:beta": "uPPsjOaHMMLjLmZCfWK0RS8iBgtcIw_shJP29p3GFuzOUFaNlf9e9BAZ16xcqpX_RkAReAJeUNUBG75NLHvGBQ=="
+          "did:concordia:agent:alpha": "7V8X4ubwh7CB5tRWrXeLUZ1IjndIXusgJWcCvjbKS4M_qYu2cXoGR9e1JUk7Pt9eHT1yk6u3YHAnaMSyd2FYDw==",
+          "did:concordia:agent:beta": "_Lmmp7W9F_nj7B2OktfCOM5r3tdpbvAe3TVzRPboBaCfecsq1rpwexef-MFS2EW5vxERTlotNLsUPJr_0dqBCQ=="
         }
       }
     },
@@ -756,13 +764,13 @@
           "until": "2026-06-29T00:00:00Z"
         }
       },
-      "attestation_id": "att_515942eb",
-      "timestamp": "2026-06-18T15:39:01Z",
+      "attestation_id": "att_4ec412a9",
+      "timestamp": "2026-08-02T05:23:04Z",
       "expected": {
-        "concordia_attestation": "0.2.0",
-        "attestation_id": "att_515942eb",
+        "concordia_attestation": "0.3.0",
+        "attestation_id": "att_4ec412a9",
         "session_id": "ses_with_refs_vt",
-        "timestamp": "2026-06-18T15:39:01Z",
+        "timestamp": "2026-08-02T05:23:04Z",
         "outcome": {
           "status": "agreed",
           "rounds": 1,
@@ -809,6 +817,8 @@
           "mediator_invoked": false
         },
         "transcript_hash": "sha256:6190b671a06943de02b9b326aac0c738a8a4c29f48cfd57a8c16565bd10d5351",
+        "chain_head": "sha256:5bec0133210d9f620a75e7caf10e70bde778f424dfc2f6aa3c270b46bc687146",
+        "message_count": 4,
         "fulfillment": null,
         "references": [
           {
@@ -831,8 +841,8 @@
         },
         "summary": "Parties: ...:agent:alpha, ...a:agent:beta\nTopic: N/A\nOutcome: AGREED\nTranscript hash: 6190b671a06943de",
         "countersignatures": {
-          "did:concordia:agent:alpha": "EnUovSqR_QPnYVbfRR1nHeTCcRT1ouiNbASejH2W4DvcLFL1L0NpuPIjMh1SGFeSeidm1uKT-yAUp0Nx2oV5Cw==",
-          "did:concordia:agent:beta": "lsemwE9HFKhgpmi6Hixnl2Jv-OIWUHCA9FvTfdrMD3x6CmlZHlMyoTHdZQMFo8yjQpa0j0rLJKWQiPLqgNNFDA=="
+          "did:concordia:agent:alpha": "xS5fDoSCw-MKRa4e03C7edNiUt6K4O18JpVBxF24gkBbt69JvMeI-6nvgA7D_yGon6_aH572NM4n_auYGQ0GCQ==",
+          "did:concordia:agent:beta": "k5tKtC9Ba_y36UIcsXFpP_zzwJqYFHt42p6yKNH_stEW8az6Abm--ctiGXUQdriauX2vzYdcHKMilgAdvPc4CA=="
         }
       }
     }

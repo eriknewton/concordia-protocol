@@ -1,0 +1,17 @@
+[OK] docs/CONFORMANCE.md matches generated output
+[OK] implementable-from-spec-alone: scripts/claims/no_external_normative_deps.py
+  [INFO] SPEC.md:97: https://github.com/eriknewton/sanctuary-framework host=github.com non-normative non-allowlisted
+  [INFO] SPEC.md:645: https://www.rfc-editor.org/rfc/rfc8785 host=www.rfc-editor.org non-normative allowlisted
+  [INFO] SPEC.md:1551: https://log.foxbook.dev host=log.foxbook.dev non-normative non-allowlisted
+  [INFO] SPEC.md:1605: https://www.rfc-editor.org/rfc/rfc2119 host=www.rfc-editor.org normative allowlisted
+  [OK] no non-allowlisted external URL is normative (same-paragraph +/-2 line window)
+[OK] canonical-json-is-rfc-8785: scripts/claims/rfc_sections_cited.py
+  [OK] canonicalization section citations present (sites=27, window=12 lines)
+[OK] offline-no-issuer-callback: scripts/claims/offline_resolution.py
+  [OK] predicate resolved and verified from local mirror with urllib.request.urlopen blocked
+[OK] verification-without-our-code: ci-job:clean-room-verify exists
+[OK] fixture-digests-recomputed: scripts/claims/fixture_verifiers_recompute.py
+  [OK] every fixture publishing a digest recomputes it (fixtures=2)
+[OK] conformance-vectors-verify-without-our-sdk: ci-job:conformance-clean-room exists
+[OK] vectors-verify-under-two-independent-runners: ci-job:conformance-clean-room-js exists
+[OK] executable claims gate passed (7 claims)

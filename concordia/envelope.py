@@ -131,6 +131,7 @@ def build_trust_evidence_envelope(
 
     session_id = attestation.get("session_id", "")
     transcript_hash = attestation.get("transcript_hash", "")
+    chain_head = attestation.get("chain_head", transcript_hash)
 
     # Auto-populate source_session envelope-level reference per
     # SPEC §11.5.2. Required keys: kind, urn. Expected (but not
@@ -143,7 +144,7 @@ def build_trust_evidence_envelope(
         "urn": f"urn:concordia:session:{session_id}",
         "verified_at": issued_at,
         "verifier_did": provider_did,
-        "hash": transcript_hash,
+        "hash": chain_head,
     }
     all_references = [auto_ref]
     if references:

@@ -1,6 +1,6 @@
 {
   "context": {
-    "canonical_sha256": "sha256:00ebd29843374141c9fa566c8a4c13df98a5d0a59e85f72262d74ce42396c6b9",
+    "canonical_sha256": "sha256:2a60aa65f797bef0ff3e9c833bf7e4e98ccc08ea6f2a83b0b4ce4192b56a6ff7",
     "countersigners": [
       "did:concordia:agent:synthetic-initiator",
       "did:concordia:agent:synthetic-responder"
@@ -15,12 +15,14 @@
   "id": "mut-synthetic-attestation-countersign-0027",
   "input": {
     "attestation_id": "att_conformance_p2a1_0001",
-    "concordia_attestation": "0.2.0",
+    "chain_head": "sha256:b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "concordia_attestation": "0.3.0",
     "countersignatures": {
-      "did:concordia:agent:synthetic-initiator": "6iF5xR04383bmd0lvBT86lNuLWBI7tCoOzSfzhgNtEtFILWAljC0ioXBi5WFoNuSGOV6OFcgptVm7A5JW2xpBw==",
-      "did:concordia:agent:synthetic-responder": "ykwAxTbXn3gUgcBEVPegCa7nhB6DVUBfDAXcBdbTyrjRyz2sj5kKbgr-uBUEu1hbYKX4ISD92p-tCaOaZFH0Cw=="
+      "did:concordia:agent:synthetic-initiator": "g4s0fsTHbyaGNLSSvsXw0To4uINocOHytNn_5Us32EYUH99dKV5cMmG9ps58qPsPvyljt1J92m43295wHa3_DQ==",
+      "did:concordia:agent:synthetic-responder": "7WoUSEUFgodvX4C2EXWBn9yjTYC-51zNvL5Wi2Z5Afqr3LA6zMdO7wbV42aBd895alH0ZwWTDAgjbqdFfd3NCA=="
     },
     "fulfillment": null,
+    "message_count": 6,
     "meta": {
       "category": "software.tools",
       "extensions_used": [],

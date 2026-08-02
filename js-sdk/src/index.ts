@@ -145,10 +145,13 @@ export {
   generateAttestation,
   countersignAttestation,
   verifyAttestationCountersignature,
+  verifyReceiptSetBinding,
   generateReceiptSummary,
   computeTranscriptHash,
   validateValidityTemporal,
   isValidNow,
+  type ReceiptSetBindingResult,
+  type ReceiptSetBindingState,
   type ValidityTemporal,
   type GenerateAttestationOptions,
 } from './attestation/index.js';

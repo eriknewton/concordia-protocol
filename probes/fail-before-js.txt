@@ -1,0 +1,238 @@
+
+> @concordia-protocol/sdk@0.0.1-alpha.11 test
+> vitest run --run tests/attestation.test.ts -t ATTESTATION_VERSION matches Python
+
+
+ RUN  v3.2.6 /Users/eriknewton/Code/Claude/Concordia-worktrees/chain-completeness-b/js-sdk
+
+ ❯ tests/attestation.test.ts (204 tests | 1 failed | 203 skipped) 4ms
+   ↓ generateAttestation parity (Python-generated over real sessions) > produces a byte-identical attestation for "agree_full"
+   ↓ generateAttestation parity (Python-generated over real sessions) > per-party signatures verify under the signer's key for "agree_full"
+   ↓ generateAttestation parity (Python-generated over real sessions) > produces a byte-identical attestation for "decline_session"
+   ↓ generateAttestation parity (Python-generated over real sessions) > per-party signatures verify under the signer's key for "decline_session"
+   ↓ generateAttestation parity (Python-generated over real sessions) > produces a byte-identical attestation for "partial_keys"
+   ↓ generateAttestation parity (Python-generated over real sessions) > per-party signatures verify under the signer's key for "partial_keys"
+   ↓ generateAttestation parity (Python-generated over real sessions) > produces a byte-identical attestation for "expired_no_terms"
+   ↓ generateAttestation parity (Python-generated over real sessions) > per-party signatures verify under the signer's key for "expired_no_terms"
+   ↓ generateAttestation parity (Python-generated over real sessions) > produces a byte-identical attestation for "with_refs_vt"
+   ↓ generateAttestation parity (Python-generated over real sessions) > per-party signatures verify under the signer's key for "with_refs_vt"
+   ↓ countersignature parity + verification (C-H2 Option B) > countersignatures byte-equal Python + verify for "agree_full"
+   ↓ countersignature parity + verification (C-H2 Option B) > countersignature rejects an outcome tamper for "agree_full"
+   ↓ countersignature parity + verification (C-H2 Option B) > countersignatures byte-equal Python + verify for "decline_session"
+   ↓ countersignature parity + verification (C-H2 Option B) > countersignature rejects an outcome tamper for "decline_session"
+   ↓ countersignature parity + verification (C-H2 Option B) > countersignatures byte-equal Python + verify for "partial_keys"
+   ↓ countersignature parity + verification (C-H2 Option B) > countersignature rejects an outcome tamper for "partial_keys"
+   ↓ countersignature parity + verification (C-H2 Option B) > countersignatures byte-equal Python + verify for "expired_no_terms"
+   ↓ countersignature parity + verification (C-H2 Option B) > countersignature rejects an outcome tamper for "expired_no_terms"
+   ↓ countersignature parity + verification (C-H2 Option B) > countersignatures byte-equal Python + verify for "with_refs_vt"
+   ↓ countersignature parity + verification (C-H2 Option B) > countersignature rejects an outcome tamper for "with_refs_vt"
+   ↓ receipt set-binding verifier (v0.3.0) > accepts the generated transcript set for "agree_full"
+   ↓ receipt set-binding verifier (v0.3.0) > rejects a truncated transcript for "agree_full"
+   ↓ receipt set-binding verifier (v0.3.0) > accepts the generated transcript set for "decline_session"
+   ↓ receipt set-binding verifier (v0.3.0) > rejects a truncated transcript for "decline_session"
+   ↓ receipt set-binding verifier (v0.3.0) > accepts the generated transcript set for "partial_keys"
+   ↓ receipt set-binding verifier (v0.3.0) > rejects a truncated transcript for "partial_keys"
+   ↓ receipt set-binding verifier (v0.3.0) > accepts the generated transcript set for "expired_no_terms"
+   ↓ receipt set-binding verifier (v0.3.0) > rejects a truncated transcript for "expired_no_terms"
+   ↓ receipt set-binding verifier (v0.3.0) > accepts the generated transcript set for "with_refs_vt"
+   ↓ receipt set-binding verifier (v0.3.0) > rejects a truncated transcript for "with_refs_vt"
+   ↓ receipt set-binding verifier (v0.3.0) > fails closed when a 0.3.0 attestation is missing chain_head
+   ↓ receipt set-binding verifier (v0.3.0) > reports a 0.2.0 attestation as legacy set-unbound
+   ↓ outcome-binding verifier dual-accept (C-H2 Option B) > a 0.2.0 attestation with a valid countersignature is outcome-bound
+   ↓ outcome-binding verifier dual-accept (C-H2 Option B) > a 0.1.0 (legacy) attestation carries no countersignature and is unbound
+   ↓ outcome-binding verifier dual-accept (C-H2 Option B) > a 0.2.0 attestation with the countersignature stripped fails closed
+   ↓ no-raw-terms privacy invariant > leaks no raw term value in "agree_full"
+   ↓ no-raw-terms privacy invariant > leaks no raw term value in "decline_session"
+   ↓ no-raw-terms privacy invariant > leaks no raw term value in "partial_keys"
+   ↓ no-raw-terms privacy invariant > leaks no raw term value in "expired_no_terms"
+   ↓ no-raw-terms privacy invariant > leaks no raw term value in "with_refs_vt"
+   ↓ no-raw-terms privacy invariant > terms_count is a COUNT, never a term value, and is omitted at zero terms
+   ↓ generateAttestation rejects a non-concluded session > throws AttestationError with Python-identical text for a PROPOSED session
+   ↓ generateAttestation rejects a non-concluded session > throws for an ACTIVE session
+   ↓ validateValidityTemporal normalization parity > normalizes "absolute" identically to Python
+   ↓ validateValidityTemporal normalization parity > normalizes "relative" identically to Python
+   ↓ validateValidityTemporal normalization parity > normalizes "window" identically to Python
+   ↓ validateValidityTemporal normalization parity > normalizes "absolute_naive" identically to Python
+   ↓ validateValidityTemporal normalization parity > normalizes "absolute_explicit_offset" identically to Python
+   ↓ validateValidityTemporal normalization parity > normalizes "absolute_offset_no_colon" identically to Python
+   ↓ validateValidityTemporal normalization parity > normalizes "absolute_comma_fraction" identically to Python
+   ↓ validateValidityTemporal error-text parity > rejects "not_a_dict" with Python-identical text
+   ↓ validateValidityTemporal error-text parity > rejects "bad_mode" with Python-identical text
+   ↓ validateValidityTemporal error-text parity > rejects "none_mode" with Python-identical text
+   ↓ validateValidityTemporal error-text parity > rejects "absolute_missing" with Python-identical text
+   ↓ validateValidityTemporal error-text parity > rejects "absolute_until_not_after" with Python-identical text
+   ↓ validateValidityTemporal error-text parity > rejects "absolute_equal" with Python-identical text
+   ↓ validateValidityTemporal error-text parity > rejects "relative_missing" with Python-identical text
+   ↓ validateValidityTemporal error-text parity > rejects "relative_zero_duration" with Python-identical text
+   ↓ validateValidityTemporal error-text parity > rejects "relative_float_duration" with Python-identical text
+   ↓ validateValidityTemporal error-text parity > rejects "window_missing" with Python-identical text
+   ↓ validateValidityTemporal error-text parity > rejects "window_end_not_after" with Python-identical text
+   ↓ validateValidityTemporal error-text parity > rejects "window_duration_exceeds_span" with Python-identical text
+   ↓ validateValidityTemporal error-text parity > rejects "window_duration_exceeds_span_subms" with Python-identical text
+   ↓ validateValidityTemporal error-text parity > rejects "window_duration_exceeds_span_subms_comma" with Python-identical text
+   ↓ validateValidityTemporal error-text parity > rejects "from_not_string" with Python-identical text
+   ↓ validateValidityTemporal error-text parity > rejects "absolute_rfc822_from" with Python-identical text
+   ↓ validateValidityTemporal error-text parity > rejects "absolute_rfc1123_until" with Python-identical text
+   ↓ validateValidityTemporal error-text parity > rejects "relative_locale_month_name" with Python-identical text
+   ↓ validateValidityTemporal error-text parity > rejects "window_slash_date_start" with Python-identical text
+   ↓ isValidNow temporal containment parity > matches Python for "absolute_inside"
+   ↓ isValidNow temporal containment parity > matches Python for "absolute_before"
+   ↓ isValidNow temporal containment parity > matches Python for "absolute_after"
+   ↓ isValidNow temporal containment parity > matches Python for "absolute_at_from"
+   ↓ isValidNow temporal containment parity > matches Python for "absolute_at_until"
+   ↓ isValidNow temporal containment parity > matches Python for "relative_inside"
+   ↓ isValidNow temporal containment parity > matches Python for "relative_after"
+   ↓ isValidNow temporal containment parity > matches Python for "window_fits"
+   ↓ isValidNow temporal containment parity > matches Python for "window_tail_too_short"
+   ↓ isValidNow temporal containment parity > matches Python for "window_before"
+   ↓ isValidNow temporal containment parity > matches Python for "no_constraint"
+   ↓ isValidNow temporal containment parity > matches Python for "vt_not_dict"
+   ↓ isValidNow temporal containment parity > matches Python for "vt_no_mode"
+   ↓ isValidNow temporal containment parity > matches Python for "vt_unknown_mode"
+   ↓ isValidNow temporal containment parity > matches Python for "relative_frac_at_trunc_boundary"
+   ↓ isValidNow temporal containment parity > matches Python for "relative_frac_inside"
+   ↓ isValidNow temporal containment parity > matches Python for "relative_str_int_inside"
+   ↓ isValidNow temporal containment parity > matches Python for "window_frac_fits"
+   ↓ isValidNow temporal containment parity > matches Python for "window_str_int_fits"
+   ↓ isValidNow temporal containment parity > matches Python for "window_bad_dur_but_now_before"
+   ↓ isValidNow rejects a non-int-coercible duration_seconds (Finding 2) > rejects "relative_str_bad" where Python int() raises
+   ↓ isValidNow rejects a non-int-coercible duration_seconds (Finding 2) > rejects "relative_str_float" where Python int() raises
+   ↓ isValidNow rejects a non-int-coercible duration_seconds (Finding 2) > rejects "relative_none" where Python int() raises
+   ↓ isValidNow rejects a non-int-coercible duration_seconds (Finding 2) > rejects "window_str_bad_now_inside" where Python int() raises
+   ↓ pyIntCoerce strips surrounding whitespace without ReDoS (CodeQL js/polynomial-redos) > accepts a whitespace-wrapped integer string (leading + trailing spaces)
+   ↓ pyIntCoerce strips surrounding whitespace without ReDoS (CodeQL js/polynomial-redos) > accepts a whitespace-wrapped integer string (leading + trailing tabs)
+   ↓ pyIntCoerce strips surrounding whitespace without ReDoS (CodeQL js/polynomial-redos) > accepts a whitespace-wrapped integer string (mixed ASCII whitespace)
+   ↓ pyIntCoerce strips surrounding whitespace without ReDoS (CodeQL js/polynomial-redos) > accepts a whitespace-wrapped integer string (signed with surrounding ws)
+   ↓ pyIntCoerce strips surrounding whitespace without ReDoS (CodeQL js/polynomial-redos) > accepts a whitespace-wrapped integer string (no surrounding whitespace)
+   ↓ pyIntCoerce strips surrounding whitespace without ReDoS (CodeQL js/polynomial-redos) > rejects a non-integer literal with byte-identical Python text (interior space)
+   ↓ pyIntCoerce strips surrounding whitespace without ReDoS (CodeQL js/polynomial-redos) > rejects a non-integer literal with byte-identical Python text (interior space, whitespace-wrapped)
+   ↓ pyIntCoerce strips surrounding whitespace without ReDoS (CodeQL js/polynomial-redos) > rejects a non-integer literal with byte-identical Python text (interior tab)
+   ↓ pyIntCoerce strips surrounding whitespace without ReDoS (CodeQL js/polynomial-redos) > rejects a non-integer literal with byte-identical Python text (all whitespace)
+   ↓ pyIntCoerce strips surrounding whitespace without ReDoS (CodeQL js/polynomial-redos) > rejects a non-integer literal with byte-identical Python text (empty string)
+   ↓ pyIntCoerce strips surrounding whitespace without ReDoS (CodeQL js/polynomial-redos) > rejects a non-integer literal with byte-identical Python text (float-formatted)
+   ↓ pyIntCoerce strips surrounding whitespace without ReDoS (CodeQL js/polynomial-redos) > returns fast on the adversarial input the regex backtracked on
+   ↓ generateReceiptSummary formatting parity > formats "two_parties_category" identically to Python
+   ↓ generateReceiptSummary formatting parity > formats "one_party_no_topic" identically to Python
+   ↓ generateReceiptSummary formatting parity > formats "empty_did_and_no_status" identically to Python
+   ↓ generateReceiptSummary formatting parity > formats "topic_fallback_to_topic_key" identically to Python
+   ↓ generateReceiptSummary formatting parity > formats "long_did_truncation" identically to Python
+   ↓ generateAttestation references strictness parity (Finding 1) > matches Python accept/reject for references="empty_list"
+   ↓ generateAttestation references strictness parity (Finding 1) > matches Python accept/reject for references="empty_dict"
+   ↓ generateAttestation references strictness parity (Finding 1) > matches Python accept/reject for references="none"
+   ↓ generateAttestation references strictness parity (Finding 1) > matches Python accept/reject for references="valid_list"
+   ↓ generateAttestation references strictness parity (Finding 1) > matches Python accept/reject for references="nonempty_dict"
+   ↓ generateAttestation references strictness parity (Finding 1) > matches Python accept/reject for references="string"
+   ↓ generateAttestation references strictness parity (Finding 1) > matches Python accept/reject for references="int"
+   ↓ generateAttestation references strictness parity (Finding 1) > matches Python accept/reject for references="float"
+   ↓ generateAttestation references strictness parity (Finding 1) > matches Python accept/reject for references="bool_true"
+   ↓ generateAttestation references strictness parity (Finding 1) > matches Python accept/reject for references="list_of_int"
+   ↓ generateAttestation references strictness parity (Finding 1) > matches Python accept/reject for references="list_of_str"
+   ↓ generateAttestation references strictness parity (Finding 1) > matches Python accept/reject for references="count_at_cap"
+   ↓ generateAttestation references strictness parity (Finding 1) > matches Python accept/reject for references="count_over_cap"
+   ↓ generateAttestation references strictness parity (Finding 1) > matches Python accept/reject for references="dict_over_cap"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="bucket_0-100"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="bucket_100-500"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="bucket_500-1000"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="bucket_1000-5000"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="bucket_5000-10000"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="bucket_10000-50000"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="bucket_50000-100000"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="bucket_100000-500000"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="bucket_500000-1000000"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="bucket_1000000+"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="currency_EUR"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="currency_JPY"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="currency_GBP"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="vr_free_text"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="vr_prose_terms"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="vr_exact_price_range"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="vr_non_vocab_band"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="vr_lowercase_ccy"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="vr_four_letter_ccy"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="vr_no_ccy"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="vr_space_before_ccy"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="vr_trailing_newline"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="vr_trailing_space"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="vr_leading_space"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="vr_bucket_only"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="vr_int"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="vr_list"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="vr_true"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="vr_empty_string_skipped"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="vr_zero_skipped"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="vr_empty_list_skipped"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="vr_none_skipped"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="cat_single"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="cat_dotted"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="cat_hyphen_underscore"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="cat_at_cap"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="cat_prose"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="cat_space"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="cat_uppercase"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="cat_double_dot"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="cat_leading_dot"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="cat_trailing_dot"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="cat_over_cap"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="cat_trailing_newline"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="cat_non_string"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="cat_empty_skipped"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="both_valid"
+   ↓ generateAttestation L3 meta hardening parity (value_range/category) > matches Python accept/reject for meta="both_invalid_category_first"
+   ↓ generateAttestation terms_count strictness parity (Finding 3) > matches Python accept/reject for terms="dict_two"
+   ↓ generateAttestation terms_count strictness parity (Finding 3) > matches Python accept/reject for terms="string_three"
+   ↓ generateAttestation terms_count strictness parity (Finding 3) > matches Python accept/reject for terms="list_three"
+   ↓ generateAttestation terms_count strictness parity (Finding 3) > matches Python accept/reject for terms="empty_dict"
+   ↓ generateAttestation terms_count strictness parity (Finding 3) > matches Python accept/reject for terms="absent"
+   ↓ generateAttestation terms_count strictness parity (Finding 3) > matches Python accept/reject for terms="int"
+   ↓ generateAttestation terms_count strictness parity (Finding 3) > matches Python accept/reject for terms="float"
+   ↓ generateAttestation terms_count strictness parity (Finding 3) > matches Python accept/reject for terms="bool_true"
+   × attestation constants parity > ATTESTATION_VERSION matches Python 3ms
+     → expected '0.2.0' to be '0.3.0' // Object.is equality
+   ↓ attestation timestamp parse is fail-closed (Python parity, not Date.parse) > rejects RFC-822 / locale form "Mon, 01 Jun 2026 00:00:00 GMT" (was honored via Date.parse)
+   ↓ attestation timestamp parse is fail-closed (Python parity, not Date.parse) > rejects RFC-822 / locale form "Wed, 01 Jul 2026 00:00:00 GMT" (was honored via Date.parse)
+   ↓ attestation timestamp parse is fail-closed (Python parity, not Date.parse) > rejects RFC-822 / locale form "June 1, 2026" (was honored via Date.parse)
+   ↓ attestation timestamp parse is fail-closed (Python parity, not Date.parse) > rejects RFC-822 / locale form "2026/06/01" (was honored via Date.parse)
+   ↓ attestation timestamp parse is fail-closed (Python parity, not Date.parse) > rejects RFC-822 / locale form "Jun 1 2026" (was honored via Date.parse)
+   ↓ attestation timestamp parse is fail-closed (Python parity, not Date.parse) > still accepts valid ISO-8601 form "2026-06-01T00:00:00Z" (no over-rejection)
+   ↓ attestation timestamp parse is fail-closed (Python parity, not Date.parse) > still accepts valid ISO-8601 form "2026-06-01T00:00:00+00:00" (no over-rejection)
+   ↓ attestation timestamp parse is fail-closed (Python parity, not Date.parse) > still accepts valid ISO-8601 form "2026-06-01T00:00:00+0000" (no over-rejection)
+   ↓ attestation timestamp parse is fail-closed (Python parity, not Date.parse) > still accepts valid ISO-8601 form "2026-06-01T00:00:00" (no over-rejection)
+   ↓ attestation timestamp parse is fail-closed (Python parity, not Date.parse) > still accepts valid ISO-8601 form "2026-06-01T00:00:00.500Z" (no over-rejection)
+   ↓ attestation timestamp parse is fail-closed (Python parity, not Date.parse) > still accepts valid ISO-8601 form "2026-06-01T00:00:00,500Z" (no over-rejection)
+   ↓ attestation timestamp parse is fail-closed (Python parity, not Date.parse) > still accepts valid ISO-8601 form "2026-06-01T00:00:00-05:00" (no over-rejection)
+   ↓ attestation timestamp parse is fail-closed (Python parity, not Date.parse) > isValidNow rejects an RFC-822 timestamp too (same parser, both paths)
+   ↓ attestation timestamp parse is fail-closed (Python parity, not Date.parse) > isValidNow honors a valid naive-is-UTC absolute window unchanged
+   ↓ validity_temporal[window] span is microsecond-precise (Python parity) > rejects a 0.999001s span vs duration_seconds=1 (dot fraction)
+   ↓ validity_temporal[window] span is microsecond-precise (Python parity) > rejects a 0.999001s span vs duration_seconds=1 (comma fraction)
+   ↓ validity_temporal[window] span is microsecond-precise (Python parity) > rejects a 0.999001s span vs duration_seconds=1 (far-future dot fraction (beyond safe-micros range))
+   ↓ validity_temporal[window] span is microsecond-precise (Python parity) > still accepts a span >= duration_seconds (exactly 1s)
+   ↓ validity_temporal[window] span is microsecond-precise (Python parity) > still accepts a span >= duration_seconds (exactly 2s with fractional endpoints)
+   ↓ validity_temporal[window] span is microsecond-precise (Python parity) > still accepts a span >= duration_seconds (span comfortably larger than duration)
+   ↓ validity_temporal[window] span is microsecond-precise (Python parity) > still accepts a span >= duration_seconds (far-future exactly 1s (beyond safe-micros range))
+   ↓ validity_temporal[window] span is microsecond-precise (Python parity) > rejects a near-full-range span just under an integer-second duration
+   ↓ validity_temporal[window] span is microsecond-precise (Python parity) > accepts a near-full-range span with a small duration (no over-rejection)
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/attestation.test.ts > attestation constants parity > ATTESTATION_VERSION matches Python
+AssertionError: expected '0.2.0' to be '0.3.0' // Object.is equality
+
+Expected: "0.3.0"
+Received: "0.2.0"
+
+ ❯ tests/attestation.test.ts:864:33
+    862| describe('attestation constants parity', () => {
+    863|   it('ATTESTATION_VERSION matches Python', () => {
+    864|     expect(ATTESTATION_VERSION).toBe(fixtures.attestation_version);
+       |                                 ^
+    865|   });
+    866| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 203 skipped (204)
+   Start at  22:28:48
+   Duration  312ms (transform 68ms, setup 0ms, collect 116ms, tests 4ms, environment 0ms, prepare 33ms)
+
