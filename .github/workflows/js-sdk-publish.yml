@@ -21,7 +21,11 @@ on:
       tag:
         description: 'npm dist-tag to publish under (e.g. alpha, latest)'
         required: true
-        default: 'alpha'
+        default: 'latest'
+      extra_tag:
+        description: 'optional second dist-tag to point at the published version (empty = skip)'
+        required: false
+        default: 'next'
 
 permissions:
   contents: read
@@ -75,5 +79,12 @@ jobs:
         # --access public is required for a scoped package's first publish and
         # is harmless thereafter. The dist-tag comes from the manual input.
         run: npm publish --provenance --access public --tag "${{ github.event.inputs.tag }}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Point extra dist-tag at the published version (optional)
+        if: ${{ github.event.inputs.extra_tag != '' }}
+        working-directory: js-sdk
+        run: npm dist-tag add "@concordia-protocol/sdk@$(node -p "require('./package.json').version")" "${{ github.event.inputs.extra_tag }}"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
