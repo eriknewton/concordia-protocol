@@ -16,19 +16,16 @@ EXPECTED_REASON_CLASSES = {
     "privacy",
     "transition",
 }
-TOLERATED_SIGNATURE_ESCAPE_NOTE = (
-    "tolerated-escape: signature block is outside its own preimage"
-)
-EXPECTED_MUTATION_REJECTS = 1417
-EXPECTED_MUTATION_ACCEPTS = 43
+EXPECTED_MUTATION_REJECTS = 1419
+EXPECTED_MUTATION_ACCEPTS = 41
 EXPECTED_MUTATION_TOTAL = 1460
 EXPECTED_BATTERY_COUNTS = {
-    "1404/approval_receipt.json": (63, 62, 1),
+    "1404/approval_receipt.json": (63, 63, 0),
     "1404/cascade_decision_deny.json": (35, 35, 0),
     "1404/decision_object.json": (13, 13, 0),
     "1404/offer.json": (15, 15, 0),
     "1404/revocation_A.json": (33, 33, 0),
-    "1920/fulfillment_attestation.json": (63, 62, 1),
+    "1920/fulfillment_attestation.json": (63, 63, 0),
     "synthetic/attestation/attestation.json::attestation-countersign-v1": (
         107,
         104,
@@ -51,8 +48,6 @@ EXPECTED_BATTERY_COUNTS = {
     "synthetic/predicate/vector_02.json": (87, 87, 0),
 }
 EXPECTED_ACCEPTED_IDS = {
-    "mut-1404-approval-receipt-0061",
-    "mut-1920-fulfillment-attestation-0061",
     "mut-synthetic-agent-profile-0072",
     "mut-synthetic-agent-profile-0074",
     "mut-synthetic-agent-profile-0098",
@@ -143,14 +138,6 @@ def test_mutation_vectors_pin_justified_accepts() -> None:
 
     assert {vector["id"] for vector in accepts} == EXPECTED_ACCEPTED_IDS
     assert all(isinstance(vector["notes"], str) and vector["notes"] for vector in accepts)
-    assert {
-        vector["notes"]
-        for vector in accepts
-        if vector["id"] in {
-            "mut-1404-approval-receipt-0061",
-            "mut-1920-fulfillment-attestation-0061",
-        }
-    } == {TOLERATED_SIGNATURE_ESCAPE_NOTE}
 
 
 def test_mutation_manifest_pins_per_battery_splits() -> None:

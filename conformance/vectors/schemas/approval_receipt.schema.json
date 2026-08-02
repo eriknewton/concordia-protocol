@@ -128,7 +128,7 @@
     "signature": {
       "type": "object",
       "required": ["alg", "value"],
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "alg": {
           "type": "string",

@@ -2973,11 +2973,11 @@
   "generated_by": "python3 scripts/conformance/generate_vectors.py",
   "mutation_batteries": [
     {
-      "accept": 1,
+      "accept": 0,
       "battery_name": "1404/approval_receipt.json",
       "object_name": "approval_receipt",
       "record_type": "approval_receipt",
-      "reject": 62,
+      "reject": 63,
       "source_fixture": "a2a-1404-receipt-revocation-vector",
       "total": 63,
       "verification_profile": "receipt-v1"
@@ -3023,11 +3023,11 @@
       "verification_profile": "revocation-v1"
     },
     {
-      "accept": 1,
+      "accept": 0,
       "battery_name": "1920/fulfillment_attestation.json",
       "object_name": "fulfillment_attestation",
       "record_type": "fulfillment_attestation",
-      "reject": 62,
+      "reject": 63,
       "source_fixture": "a2a-1920-fulfillment-sample",
       "total": 63,
       "verification_profile": "fulfillment-attestation-v1"

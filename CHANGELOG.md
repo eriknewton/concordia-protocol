@@ -7,6 +7,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-01
+
+### Added
+
+- **Conformance suite Phase 2.** Added P2-A coverage for Attestation,
+  attestation countersignatures, Predicate, Mandate delegation, counterparty
+  co-signatures, CMPC bilateral primitives, chain-session transitions,
+  AgentProfile, CompetenceProof, ReceiptBundle, and message chains. Added P2-B
+  chain-position vectors for deletion, reorder, genesis substitution, and the
+  re-signed-splice protocol finding. Added P2-C's Node.js reference runner
+  against the same manifest as the Python runner.
+
+### Changed
+
+- **BREAKING (schema validation).** ApprovalReceipt and
+  FulfillmentAttestation `signature` objects now reject unknown signature
+  members. This breaks producers that stuffed extra members into those
+  signature blocks. Correctly formed records and signatures remain valid:
+  `signature` is outside every signed preimage, so the tightening does not
+  change signature bytes or verification semantics.
+
 ## [0.8.0] - 2026-08-01
 
 First stable release since 0.6.0 (0.7.0a1 was a pre-release; default

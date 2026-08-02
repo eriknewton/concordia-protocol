@@ -1558,9 +1558,6 @@ def fixture_1920() -> dict[str, dict[str, Any]]:
     }
 
 
-TOLERATED_SIGNATURE_ESCAPE_NOTE = (
-    "tolerated-escape: signature block is outside its own preimage"
-)
 ATTESTATION_TOP_LEVEL_ESCAPE_NOTE = (
     "accepted-structural: field is outside attestation-v1 party-signature preimages"
 )
@@ -1595,8 +1592,8 @@ CHAIN_POSITION_RESIGNED_SPLICE_TOLERANCE_NOTE = (
     "tolerated-accept: per-message signatures authenticate links, not the complete message set"
 )
 EXPECTED_MUTATION_TOTAL = 1460
-EXPECTED_MUTATION_REJECTS = 1417
-EXPECTED_MUTATION_ACCEPTS = 43
+EXPECTED_MUTATION_REJECTS = 1419
+EXPECTED_MUTATION_ACCEPTS = 41
 EXPECTED_CANARY_TOTAL = 4
 EXPECTED_RAW_TYPED_DIVERGENCES = (
     MutationDivergence(
@@ -1607,19 +1604,14 @@ EXPECTED_RAW_TYPED_DIVERGENCES = (
         raw_expected="reject",
     ),
 )
-EXPECTED_RAW_ACCEPTED_MUTATIONS: frozenset[tuple[str, str, MutationKind]] = frozenset(
-    {
-        ("1920/fulfillment_attestation.json", "signature", "inject"),
-        ("1404/approval_receipt.json", "signature", "inject"),
-    }
-)
+EXPECTED_RAW_ACCEPTED_MUTATIONS: frozenset[tuple[str, str, MutationKind]] = frozenset()
 EXPECTED_MUTATION_BATTERY_COUNTS: dict[str, tuple[int, int, int]] = {
-    "1404/approval_receipt.json": (63, 62, 1),
+    "1404/approval_receipt.json": (63, 63, 0),
     "1404/cascade_decision_deny.json": (35, 35, 0),
     "1404/decision_object.json": (13, 13, 0),
     "1404/offer.json": (15, 15, 0),
     "1404/revocation_A.json": (33, 33, 0),
-    "1920/fulfillment_attestation.json": (63, 62, 1),
+    "1920/fulfillment_attestation.json": (63, 63, 0),
     "synthetic/attestation/attestation.json::attestation-countersign-v1": (
         107,
         104,
@@ -1712,9 +1704,9 @@ def build_mutation_fixtures(
                 "seed_ed25519_ascii": sample["seed_ed25519_ascii"],
                 "signature_b64url": sample["signature_b64url"],
             },
-            sdk_rejected=62,
+            sdk_rejected=63,
             sdk_total=63,
-            sdk_escapes=frozenset({("signature", "inject")}),
+            sdk_escapes=frozenset(),
         ),
         MutationFixture(
             battery_name="1404/decision_object.json",
@@ -1771,9 +1763,9 @@ def build_mutation_fixtures(
                 "now": "2026-05-10T14:25:00Z",
                 "public_keys_b64url": {"issuer": public_keys_1404["approver"]},
             },
-            sdk_rejected=62,
+            sdk_rejected=63,
             sdk_total=63,
-            sdk_escapes=frozenset({("signature", "inject")}),
+            sdk_escapes=frozenset(),
         ),
         MutationFixture(
             battery_name="1404/revocation_A.json",
@@ -2199,8 +2191,6 @@ def accepted_mutation_note(
     field_path: str,
     kind: MutationKind,
 ) -> str:
-    if (fixture.battery_name, field_path, kind) in EXPECTED_RAW_ACCEPTED_MUTATIONS:
-        return TOLERATED_SIGNATURE_ESCAPE_NOTE
     if fixture.verification_profile == "attestation-v1":
         if field_path.startswith("countersignatures"):
             return ATTESTATION_COUNTERSIGNATURE_ESCAPE_NOTE
