@@ -7,8 +7,10 @@ on:
 
 jobs:
   js-sdk-gate:
-    name: js-sdk-gate
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20, 22]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6.0.2 (resolved 2026-05-18)
         with:
@@ -53,11 +55,11 @@ jobs:
         if: steps.detect.outputs.changed != 'true'
         run: echo "js-sdk untouched; gate passes vacuously"
 
-      - name: Set up Node.js 22
+      - name: Set up Node.js ${{ matrix.node-version }}
         if: steps.detect.outputs.changed == 'true'
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v4.4.0 (resolved 2026-05-18)
         with:
-          node-version: '22'
+          node-version: ${{ matrix.node-version }}
           cache: npm
           cache-dependency-path: js-sdk/package-lock.json
 
