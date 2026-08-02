@@ -116,3 +116,20 @@ Verify:
 pip install rfc8785 pynacl jsonschema
 python conformance/reference-runner/runner.py conformance/vectors/
 ```
+
+### `vectors-verify-under-two-independent-runners`
+
+Claim:
+
+> The same conformance vector manifest is executed to the same totals by two first-party-authored reference runners in independent languages: Python and Node.js. This is not third-party verification.
+
+Stated in: `conformance/RUNNER_CONTRACT.md`
+
+Enforced by: CI job `conformance-clean-room-js`
+
+Verify:
+
+```bash
+npm ci --prefix conformance/reference-runner-js
+node conformance/reference-runner-js/runner.mjs conformance/vectors/
+```

@@ -11,6 +11,24 @@ runner installs only RFC 8785, PyNaCl, JSON Schema, and the Python standard
 library, then executes the public vector manifest.
 <!-- /claim -->
 
+## Reference Runners
+
+Concordia ships two reference runners for this contract:
+
+- `conformance/reference-runner/runner.py`: Python standard library plus RFC
+  8785, PyNaCl, and JSON Schema.
+- `conformance/reference-runner-js/runner.mjs`: Node.js standard library plus
+  `node:crypto` and Ajv draft 2020-12.
+
+<!-- claim:vectors-verify-under-two-independent-runners -->
+The same conformance vector manifest is executed to the same totals by two
+first-party-authored reference runners in independent languages: Python and
+Node.js. This is not third-party verification.
+<!-- /claim -->
+
+Both runners are authored in this repository. Treat them as reproducibility
+evidence for the published vectors, not as outside validation.
+
 ## Suite Layout
 
 The generated suite lives under `conformance/vectors/`.
