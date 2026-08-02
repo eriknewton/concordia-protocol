@@ -99,7 +99,7 @@ from .degradation import InteractionManager, PeerProtocolStatus
 from .mandate import (
     verify_mandate,
 )
-from .message import validate_chain
+from .message import compute_hash, validate_chain
 from .offer import BasicOffer, Condition, ConditionalOffer, PartialOffer
 from .receipt_bundle import (
     BundleStore,
@@ -2772,8 +2772,12 @@ def tool_sanctuary_bridge_commit(
 
     transcript_hash = None
     if session.transcript:
-        last_msg = session.transcript[-1]
-        transcript_hash = last_msg.get("previous_hash")
+        # The chain head: sha256 over the canonical bytes of the LAST message,
+        # which transitively commits every earlier message through the
+        # prev_hash chain (§9.3). Deliberately not `last_msg["prev_hash"]`:
+        # that commits everything EXCEPT the final message, and the final
+        # message is the acceptance.
+        transcript_hash = compute_hash(session.transcript[-1])
 
     parties = [ctx.initiator.agent_id, ctx.responder.agent_id]
 
