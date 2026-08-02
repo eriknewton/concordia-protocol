@@ -522,6 +522,34 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
     expect(validateAttestation(attestation)).toEqual([]);
   });
 
+  it('accepts a summary whose digest slice spells a currency shape (mirrors Python)', () => {
+    // Regression: "cad" is hex-expressible, so a random digest slice can match
+    // the amount-plus-CAD pattern and a legitimate receipt then failed
+    // validation on digest luck. Only the line derived from THIS attestation's
+    // transcript_hash prefix is exempt.
+    const attestation = validAttestation();
+    attestation.transcript_hash = `sha256:0123456789012cad${'a'.repeat(48)}`;
+    attestation.summary = [
+      'Parties: agent_a, agent_b',
+      'Topic: electronics.cameras',
+      'Outcome: AGREED',
+      'Transcript hash: 0123456789012cad',
+    ].join('\n');
+    expect(validateAttestation(attestation)).toEqual([]);
+  });
+
+  it('scans a pseudo hash line that does not match transcript_hash (mirrors Python)', () => {
+    // Adversarial-gate finding: a crafted hash-shaped line must not become a
+    // smuggling channel. transcript_hash stays sha256:aaaa..., so this line is
+    // scanned like any free text and trips the amount-plus-CAD pattern.
+    const attestation = validAttestation();
+    attestation.summary = ['Parties: agent_a, agent_b', 'Outcome: AGREED', 'Transcript hash: 1900cad'].join(
+      '\n',
+    );
+    const errors = validateAttestation(attestation);
+    expect(errors).toContain('$.summary: free-text field must not contain obvious raw deal terms');
+  });
+
   it('rejects overlong attestation free text without echoing it', () => {
     const attestation = validAttestation();
     attestation.summary = 'x'.repeat(1025);

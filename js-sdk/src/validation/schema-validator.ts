@@ -335,10 +335,31 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+// Mirrors Python `_TRANSCRIPT_HASH_VALUE_RE` (see schema_validator.py): the
+// summary's machine-generated hash line is a hex digest slice, not free text,
+// and "cad" is hex-expressible, so a random digest can spell an
+// amount-plus-currency shape. Only the exact line derived from THIS
+// attestation's transcript_hash prefix is exempt from the raw-term scan.
+const TRANSCRIPT_HASH_VALUE_PATTERN = /^sha256:[a-f0-9]{64}$/;
+
 function validateAttestationFreeText(attestation: unknown): string[] {
   if (!isPlainObject(attestation)) return [];
 
-  const candidates: Array<[string, unknown]> = [['$.summary', attestation.summary]];
+  let summary = attestation.summary;
+  const transcriptHash = attestation.transcript_hash;
+  if (
+    typeof summary === 'string' &&
+    typeof transcriptHash === 'string' &&
+    TRANSCRIPT_HASH_VALUE_PATTERN.test(transcriptHash)
+  ) {
+    const generatedLine = `Transcript hash: ${transcriptHash.split(':', 2)[1]!.slice(0, 16)}`;
+    summary = summary
+      .split('\n')
+      .filter((line) => line !== generatedLine)
+      .join('\n');
+  }
+
+  const candidates: Array<[string, unknown]> = [['$.summary', summary]];
   const fulfillment = attestation.fulfillment;
   if (isPlainObject(fulfillment)) {
     const disputes = fulfillment.disputes;
