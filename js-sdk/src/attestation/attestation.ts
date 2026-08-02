@@ -128,8 +128,14 @@ export function verifyReceiptSetBinding(
           `message_count mismatch: attestation has ${messageCount}, transcript has ${expectedCount}`,
         );
       }
-      if (typeof chainHead === 'string' && SHA256_HEX_PATTERN.test(chainHead) && chainHead !== expectedHead) {
-        errors.push('chain_head mismatch: attestation does not match transcript final message hash');
+      if (
+        typeof chainHead === 'string' &&
+        SHA256_HEX_PATTERN.test(chainHead) &&
+        chainHead !== expectedHead
+      ) {
+        errors.push(
+          'chain_head mismatch: attestation does not match transcript final message hash',
+        );
       }
     }
   }
