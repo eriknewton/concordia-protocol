@@ -1,4 +1,4 @@
-"""Guard: publish.yml's test job must mirror ci.yml's test job run commands.
+"""Guard: publish.yml's publish gates must mirror ci.yml's run commands.
 
 publish.yml re-runs the CI gates on a release tag so a red tree can never
 publish. That mirror is maintained by copy, which drifts: the v0.9.0 tag
@@ -15,38 +15,47 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-def _test_job_run_commands(workflow_text: str) -> list[str]:
+def _job_run_commands(workflow_text: str, job_name: str) -> list[str]:
     lines = workflow_text.splitlines()
     commands: list[str] = []
-    in_test_job = False
+    in_target_job = False
     job_indent = None
-    for i, line in enumerate(lines):
+    job_pattern = re.compile(rf"^  {re.escape(job_name)}:\s*$")
+    for line in lines:
         stripped = line.strip()
         indent = len(line) - len(line.lstrip())
-        if re.match(r"^  test:\s*$", line):
-            in_test_job = True
+        if job_pattern.match(line):
+            in_target_job = True
             job_indent = indent
             continue
-        if in_test_job and stripped and indent <= (job_indent or 0) and not line.startswith("  test"):
-            in_test_job = False
-        if in_test_job and stripped.startswith("run:"):
+        if (
+            in_target_job
+            and stripped
+            and indent <= (job_indent or 0)
+            and not job_pattern.match(line)
+        ):
+            in_target_job = False
+        if in_target_job and stripped.startswith("run:"):
             commands.append(stripped[len("run:"):].strip())
     return commands
 
 
-def test_publish_test_job_carries_every_ci_test_run_command() -> None:
+@pytest.mark.parametrize("job_name", ["test", "onboarding-smoke"])
+def test_publish_jobs_carry_every_ci_run_command(job_name: str) -> None:
     ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     publish = (REPO_ROOT / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
 
-    ci_cmds = _test_job_run_commands(ci)
-    publish_cmds = _test_job_run_commands(publish)
+    ci_cmds = _job_run_commands(ci, job_name)
+    publish_cmds = _job_run_commands(publish, job_name)
 
-    assert ci_cmds, "parser found no run commands in ci.yml test job (parser broke?)"
+    assert ci_cmds, f"parser found no run commands in ci.yml {job_name} job (parser broke?)"
     missing = [c for c in ci_cmds if c not in publish_cmds]
     assert not missing, (
-        "publish.yml test job is missing CI test-job run commands "
+        f"publish.yml {job_name} job is missing CI {job_name} job run commands "
         f"(release tags will fail to publish): {missing}"
     )
