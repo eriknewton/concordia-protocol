@@ -33,6 +33,14 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
+      - name: Install JS conformance runner dependencies
+        run: npm ci --prefix conformance/reference-runner-js
+
+      - name: Audit dependencies for CVEs
+        # Same command + suppression as ci.yml (CVE-2026-4539: dev-only
+        # transitive pygments ReDoS, no fix version; rationale in ci.yml).
+        run: pip install pip-audit && pip-audit --requirement requirements.lock --ignore-vuln CVE-2026-4539
+
       - name: Run tests
         run: pytest -v
 
