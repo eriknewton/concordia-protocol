@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.0.1-alpha.11 -- 2026-08-02
+
+Fixes traced to the 2026-08-02 fresh-agent onboarding measurement (two agents
+against the published alpha.10; the blind trial outperformed the README trial
+because the README's examples used a shorthand the runtime rejected silently).
+
+- README examples corrected to full predicate-type URNs, plus a runnable
+  quickstart (mirrored by an executing test) ending in the portable low-level
+  verify() path.
+- Built-in predicate type profiles are available from a fresh import, proven
+  by test; the module doc's statement to that effect is now accurate.
+- getPredicateTypeProfile with a bare shorthand now returns a full-URN hint
+  instead of a silent null.
+- Type declarations document the predicate_id URN prefix, closed enums, and a
+  start-here block naming the sign/verify pair and built-in profile URNs.
+- verifyPredicate's unregistered-profile error names verify() as the portable
+  alternative that needs no process-local registration.
+
 L3 attestation-input hardening (port of Python PR #95; security audit
 2026-06-09 finding L3). `generateAttestation` previously emitted
 caller-supplied `category` / `value_range` free text verbatim and passed
@@ -48,25 +68,6 @@ previously issued attestations are unchanged.
 Pinned by regenerated Python-generated parity fixtures (48 `l3_meta_cases`,
 count-cap strictness cases, 26 new shared-reference cases) plus a dedicated
 rejection-class suite (`tests/attestation-l3.test.ts`, 98 tests).
-
-## 0.0.1-alpha.11 -- 2026-08-02
-
-Fixes traced to the 2026-08-02 fresh-agent onboarding measurement (two agents
-against the published alpha.10; the blind trial outperformed the README trial
-because the README's examples used a shorthand the runtime rejected silently).
-
-- README examples corrected to full predicate-type URNs, plus a runnable
-  quickstart (mirrored by an executing test) ending in the portable low-level
-  verify() path.
-- Built-in predicate type profiles are available from a fresh import, proven
-  by test; the module doc's statement to that effect is now accurate.
-- getPredicateTypeProfile with a bare shorthand now returns a full-URN hint
-  instead of a silent null.
-- Type declarations document the predicate_id URN prefix, closed enums, and a
-  start-here block naming the sign/verify pair and built-in profile URNs.
-- verifyPredicate's unregistered-profile error names verify() as the portable
-  alternative that needs no process-local registration.
-
 
 ## 0.0.1-alpha.10 -- 2026-06-01
 
