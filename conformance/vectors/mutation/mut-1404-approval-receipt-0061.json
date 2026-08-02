@@ -17,8 +17,8 @@
       "issuer": "szdsCKnt0TmHvv7kNquTvNClkueL9mUp_pQAhARSFt0="
     }
   },
-  "expected": "accept",
-  "expected_reason_class": null,
+  "expected": "reject",
+  "expected_reason_class": "schema",
   "id": "mut-1404-approval-receipt-0061",
   "input": {
     "approver": {
@@ -63,7 +63,7 @@
       "value": "eaUsArEAwOedzOAI24B3P-dFPMXv2tJuWxYJp_QzXK2X0mVBnYXP4JAT8yPEk-tK5gkvj1a0a6LUWgTgWYYeAQ=="
     }
   },
-  "notes": "tolerated-escape: signature block is outside its own preimage",
+  "notes": "",
   "record_type": "approval_receipt",
   "schema_version": "concordia-conformance-vector/v1-draft",
   "source_fixture": "a2a-1404-receipt-revocation-vector",

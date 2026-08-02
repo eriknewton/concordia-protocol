@@ -902,11 +902,15 @@ generator fails.
 
 Accepted mutation vectors are permitted only when the accepted field is outside
 the selected profile's signed and checked semantics, and every accepted vector
-must carry a non-empty justification note. Current tolerated lanes are:
+must carry a non-empty justification note. The Phase 1 suite tolerated extra
+members in the `signature` object of ApprovalReceipt and
+FulfillmentAttestation because those schema objects allowed additional
+properties and the signature block is outside its own signed preimage. That
+history is closed as of Python package 0.9.0: both signature schemas now reject
+unknown signature members.
 
-- Extra members in the `signature` object of ApprovalReceipt and
-  FulfillmentAttestation, because those schema objects allow additional
-  properties and the signature block is outside its own signed preimage.
+Current tolerated lanes are:
+
 - AgentProfile unknown `trust_signals` keys and unknown reputation assertion
   keys, matching the #149 / #151 forward-compatibility lane.
 - AgentProfile `verified`, because it is store-local and excluded from
@@ -919,7 +923,8 @@ must carry a non-empty justification note. Current tolerated lanes are:
 
 The schemas under `conformance/vectors/schemas/` are frozen copies for this
 suite. Tightening a schema changes published fixture behavior and belongs in a
-separate phase. Any new accepted mutation without a named tolerance is a
+separate phase. P2-D intentionally refreshed those frozen copies for the 0.9.0
+schema tightening. Any new accepted mutation without a named tolerance is a
 generator error.
 
 ## Scope Limits

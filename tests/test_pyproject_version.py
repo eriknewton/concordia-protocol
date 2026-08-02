@@ -1,4 +1,4 @@
-"""Release gate: pyproject.toml + concordia.__version__ at 0.8.0.
+"""Release gate: pyproject.toml + concordia.__version__ at 0.9.0.
 
 The package's __version__ stays in lockstep so envelope.py
 (which embeds ``concordia.__version__`` into envelope payloads via
@@ -10,12 +10,13 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 import concordia
 
 
 _PYPROJECT = Path(__file__).resolve().parent.parent / "pyproject.toml"
-EXPECTED_VERSION = "0.8.0"
+EXPECTED_VERSION = "0.9.0"
 
 
 def _read_pyproject_version() -> str:
@@ -27,16 +28,16 @@ def _read_pyproject_version() -> str:
 
 
 class TestPyprojectVersion:
-    def test_pyproject_at_expected_version(self):
+    def test_pyproject_at_expected_version(self) -> None:
         assert _read_pyproject_version() == EXPECTED_VERSION
 
-    def test_module_version_at_expected_version(self):
+    def test_module_version_at_expected_version(self) -> None:
         assert concordia.__version__ == EXPECTED_VERSION
 
-    def test_module_and_pyproject_in_lockstep(self):
+    def test_module_and_pyproject_in_lockstep(self) -> None:
         assert concordia.__version__ == _read_pyproject_version()
 
-    def test_envelope_session_protocol_version_at_expected_version(self):
+    def test_envelope_session_protocol_version_at_expected_version(self) -> None:
         """Envelope payload embeds concordia.__version__; verify on the wire."""
         from concordia import (
             Agent,
@@ -49,15 +50,18 @@ class TestPyprojectVersion:
 
         seller = Agent("seller_v06_pv")
         buyer = Agent("buyer_v06_pv")
-        terms = {"price": {"value": 10.0, "currency": "USD"},
-                 "qty": {"value": 1}}
+        terms: dict[str, dict[str, Any]] = {
+            "price": {"value": 10.0, "currency": "USD"},
+            "qty": {"value": 1},
+        }
         session = seller.open_session(counterparty=buyer.identity, terms=terms)
         buyer.join_session(session)
         buyer.accept_session()
-        seller.send_offer(BasicOffer(terms={
+        offer_terms: dict[str, dict[str, Any]] = {
             "price": {"value": 10.0, "currency": "USD"},
             "qty": {"value": 1},
-        }))
+        }
+        seller.send_offer(BasicOffer(terms=offer_terms))
         buyer.accept_offer()
         assert session.state == SessionState.AGREED
 
