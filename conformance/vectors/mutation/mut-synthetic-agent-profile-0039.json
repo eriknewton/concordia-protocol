@@ -14,7 +14,7 @@
       "ttl",
       "updated_at"
     ],
-    "canonical_sha256": "sha256:b47f8a117a9c7d5aabaf1364f28e0f8faaa391a7b0f6ec36f8e8c17d9bb0ecdf",
+    "canonical_sha256": "sha256:055433317a5b2e4a880771d0d5eb5dff99f31e557d71d5edc8a683c194b8d0e8",
     "public_key_b64url": "PASQYhr4Hh-3awFj71Bd3wK3UuySmpXzU1SRrHiXIaE="
   },
   "expected": "reject",
@@ -68,7 +68,7 @@
       "avg_session_duration_seconds": 180.0,
       "style": "collaborative"
     },
-    "signature": "InSpvimcU3rKoO0Hzi9mlCZSQH8BnXWaXxX6qYioD8a9TZASet8TJRtMMjf_j4TH_A9zCLwmbcpJvUHtwFVVCA==",
+    "signature": "CzXmd7q3Svr-4dFB-v1Lj4h8nBINv88ynVNf-YNH2dXVhDZ4M8s-vZsKBO_dnHtLVGN9zcPKtYGB-CzfFP5wDg==",
     "trust_signals": {
       "attestation_count": 2,
       "concordia_preferred": true,
@@ -76,8 +76,8 @@
       "reputation": [
         {
           "composite": 91,
-          "provider": "verascore.example",
-          "subject_did": "did:web:verascore.example:agent-longtail",
+          "provider": "reputation.example",
+          "subject_did": "did:web:reputation.example:agent-longtail",
           "tier": "verified-sovereign"
         }
       ],
@@ -88,7 +88,7 @@
         "L4": "Full"
       },
       "verascore_composite": 91,
-      "verascore_did": "did:web:verascore.example:agent-longtail",
+      "verascore_did": "did:web:reputation.example:agent-longtail",
       "verascore_tier": "verified-sovereign"
     },
     "ttl": 7200,
