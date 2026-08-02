@@ -44,6 +44,13 @@ _RAW_TERM_PATTERNS = (
     re.compile(r"\b(?:qty|quantity)\s*[:=]?\s*\d+\b", re.IGNORECASE),
     re.compile(r"\b\d+\s*(?:units?|items?|pcs|pieces)\b", re.IGNORECASE),
 )
+# The summary's machine-generated hash line is a hex digest slice, not free
+# text. "CAD" is expressible in hex, so a random digest can spell an
+# amount-plus-currency shape (measured ~1.6e-4 per digest), which made a
+# legitimate receipt fail validation on digest luck. Only this exact
+# lowercase-hex line shape is exempt from the raw-term scan; a hash line
+# carrying anything beyond bare hex is still scanned.
+_SUMMARY_HASH_LINE_RE = re.compile(r"^Transcript hash: [0-9a-f]{1,64}$", re.MULTILINE)
 
 
 @_FORMAT_CHECKER.checks("date-time", raises=ValueError)
@@ -290,8 +297,11 @@ def _validate_attestation_free_text(attestation: Any) -> list[str]:
         return []
 
     errors: list[str] = []
+    summary = attestation.get("summary")
+    if isinstance(summary, str):
+        summary = _SUMMARY_HASH_LINE_RE.sub("", summary)
     candidates: list[tuple[str, Any]] = [
-        ("$.summary", attestation.get("summary")),
+        ("$.summary", summary),
     ]
 
     fulfillment = attestation.get("fulfillment")

@@ -227,6 +227,48 @@ class TestAttestationValidation:
         errors = validate_attestation(att)
         assert not errors
 
+    def test_accepts_summary_whose_digest_slice_spells_a_currency_shape(self):
+        # Regression: "cad" is hex-expressible, so a random digest slice can
+        # match the amount-plus-CAD pattern (~1.6e-4 per digest) and a
+        # legitimate receipt then failed validation on digest luck. The exact
+        # machine-generated hash-line shape is exempt from the raw-term scan.
+        att = self._valid_attestation()
+        att["summary"] = (
+            "Parties: agent_a, agent_b\n"
+            "Topic: electronics.cameras\n"
+            "Outcome: AGREED\n"
+            "Transcript hash: 0123456789012cad"
+        )
+        errors = validate_attestation(att)
+        assert not errors
+
+    def test_hash_line_exemption_is_exact_shape_only(self):
+        # A hash line carrying anything beyond bare lowercase hex is NOT
+        # exempt: raw terms cannot hide behind the "Transcript hash:" prefix.
+        att = self._valid_attestation()
+        att["summary"] = (
+            "Parties: agent_a, agent_b\n"
+            "Outcome: AGREED\n"
+            "Transcript hash: 1900 USD for the lot"
+        )
+        errors = validate_attestation(att)
+        assert (
+            "$.summary: free-text field must not contain obvious raw deal terms"
+            in errors
+        )
+        # And a raw term on ANOTHER line of the same summary is still caught
+        # even when a legitimate exempt hash line is present.
+        att["summary"] = (
+            "Parties: agent_a, agent_b\n"
+            "Outcome: AGREED, qty: 2\n"
+            "Transcript hash: 0123456789012cad"
+        )
+        errors = validate_attestation(att)
+        assert (
+            "$.summary: free-text field must not contain obvious raw deal terms"
+            in errors
+        )
+
     def test_rejects_overlong_attestation_free_text(self):
         att = self._valid_attestation()
         att["summary"] = "x" * 1025
