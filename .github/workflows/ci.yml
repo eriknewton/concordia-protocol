@@ -31,6 +31,9 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
+      - name: Install JS conformance runner dependencies
+        run: npm ci --prefix conformance/reference-runner-js
+
       - name: Audit dependencies for CVEs
         # Suppression rationale (self-contained; reviewed 2026-06-16):
         #   CVE-2026-4539 (pygments, low-severity ReDoS in the AdlLexer GUID regex)
@@ -96,6 +99,22 @@ jobs:
 
       - name: Verify conformance vectors without Concordia
         run: python conformance/reference-runner/runner.py conformance/vectors/
+
+  conformance-clean-room-js:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6.0.2 (resolved 2026-05-18)
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v4.4.0 (resolved 2026-05-18)
+        with:
+          node-version: '20'
+
+      - name: Install JS conformance runner dependencies
+        run: npm ci --prefix conformance/reference-runner-js
+
+      - name: Verify conformance vectors with Node.js runner
+        run: node conformance/reference-runner-js/runner.mjs conformance/vectors/
 
   executable-claims:
     runs-on: ubuntu-latest

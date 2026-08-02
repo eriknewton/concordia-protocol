@@ -23,3 +23,7 @@ claims:
     claim: "The conformance vectors verify without the Concordia SDK: the reference runner installs only RFC 8785, PyNaCl, JSON Schema, and the Python standard library, then executes the public vector manifest."
     stated_in: conformance/RUNNER_CONTRACT.md
     check: ci-job:conformance-clean-room
+  - id: vectors-verify-under-two-independent-runners
+    claim: "The same conformance vector manifest is executed to the same totals by two first-party-authored reference runners in independent languages: Python and Node.js. This is not third-party verification."
+    stated_in: conformance/RUNNER_CONTRACT.md
+    check: ci-job:conformance-clean-room-js

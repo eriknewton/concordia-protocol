@@ -137,6 +137,7 @@ VECTOR_SCHEMA_VERSION = "concordia-conformance-vector/v1-draft"
 SUITE_VERSION = "v1-draft"
 GENERATOR_COMMAND = "python3 scripts/conformance/generate_vectors.py"
 CHECK_COMMAND = "python3 scripts/conformance/generate_vectors.py --check"
+GENERATED_CHECK_EXCLUDED_DIRS = {"reference-runner", "reference-runner-js"}
 
 INTEROP_1404 = REPO_ROOT / "docs" / "interop" / "a2a-1404-receipt-revocation-vector"
 INTEROP_1920 = REPO_ROOT / "docs" / "interop" / "a2a-1920-fulfillment-sample"
@@ -4572,7 +4573,7 @@ def check_generated() -> int:
             path.relative_to(actual_root)
             for path in all_files(actual_root)
             if path.name != "RUNNER_CONTRACT.md"
-            and path.relative_to(actual_root).parts[0] != "reference-runner"
+            and path.relative_to(actual_root).parts[0] not in GENERATED_CHECK_EXCLUDED_DIRS
         }
         expected_rels = {path.relative_to(expected_root) for path in all_files(expected_root)}
         all_rels = sorted(actual_rels | expected_rels)
