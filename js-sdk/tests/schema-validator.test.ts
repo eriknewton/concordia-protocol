@@ -543,9 +543,11 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
     // smuggling channel. transcript_hash stays sha256:aaaa..., so this line is
     // scanned like any free text and trips the amount-plus-CAD pattern.
     const attestation = validAttestation();
-    attestation.summary = ['Parties: agent_a, agent_b', 'Outcome: AGREED', 'Transcript hash: 1900cad'].join(
-      '\n',
-    );
+    attestation.summary = [
+      'Parties: agent_a, agent_b',
+      'Outcome: AGREED',
+      'Transcript hash: 1900cad',
+    ].join('\n');
     const errors = validateAttestation(attestation);
     expect(errors).toContain('$.summary: free-text field must not contain obvious raw deal terms');
   });
