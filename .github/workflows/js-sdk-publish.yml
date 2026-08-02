@@ -42,8 +42,15 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6.0.2 (resolved 2026-05-18)
 
+      # setup-node MUST be v5+ for trusted publishing. v4 sets NODE_AUTH_TOKEN
+      # to its literal placeholder (XXXXX-XXXXX-XXXXX-XXXXX) and writes
+      # //registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN} into the generated
+      # .npmrc, so npm sends that placeholder as its credential and never
+      # attempts the OIDC exchange. The registry answers 404 on the PUT.
+      # Observed on run 30732171360 (2026-08-02). sanctuary-framework's proven
+      # publish workflow uses v7; this matches it.
       - name: Set up Node.js 24
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v4.4.0 (resolved 2026-05-18)
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0 (resolved 2026-08-02)
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
