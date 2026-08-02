@@ -1,3 +1,25 @@
+/**
+ * Concordia JS SDK public API.
+ *
+ * Start here for signed predicates: use `generateKeyPair()` to create an
+ * Ed25519 key pair, `signPredicate()` to produce a signed predicate, and
+ * `verifyPredicate()` to run the high-level predicate verifier. For portable
+ * third-party signature checks when the verifier has only a public key and no
+ * process-local predicate profile registry, use the low-level `verify()` helper
+ * with the predicate dict and detached signature.
+ *
+ * Predicate ids must start with `urn:concordia:predicate:`. Predicate type ids
+ * must use full URNs, not bare shorthand. The four canonical built-in profile
+ * URNs are `urn:concordia:predicate-type:authority_gate:v1`,
+ * `urn:concordia:predicate-type:procurement_eligibility:v1`,
+ * `urn:concordia:predicate-type:policy_gate:v1`, and
+ * `urn:concordia:predicate-type:non_deterministic_test:v1`.
+ *
+ * Predicate `algorithm` is the closed enum `EdDSA | ES256`; `signPredicate()`
+ * emits `EdDSA` only. Predicate `status` is the closed enum
+ * `active | expired | revoked | suspended`.
+ */
+
 export {
   canonicalizeJcs,
   canonicalizePredicate,
@@ -48,9 +70,11 @@ export {
   type PredicateDict,
   type PredicateResolver,
   type PredicateVerificationResult,
+  BUILTIN_PREDICATE_TYPE_PROFILE_URNS,
   registerPredicateTypeProfile,
   getPredicateTypeProfile,
   validateConditionForProfile,
+  PredicateTypeProfileLookupError,
   type PredicateTypeProfile,
   ReferenceValidationError,
   validateReference,

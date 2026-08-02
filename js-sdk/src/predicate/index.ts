@@ -12,9 +12,11 @@ export {
   type PredicateVerificationResult,
 } from './predicate.js';
 export {
+  BUILTIN_PREDICATE_TYPE_PROFILE_URNS,
   registerPredicateTypeProfile,
   getPredicateTypeProfile,
   validateConditionForProfile,
+  PredicateTypeProfileLookupError,
   type PredicateTypeProfile,
 } from './profiles.js';
 export {
