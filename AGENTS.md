@@ -12,7 +12,7 @@ This file follows the open `AGENTS.md` standard and is read natively by a wide r
 
 ## WHAT THIS TOOL IS
 
-**Concordia** is a Python SDK and MCP server (~14,000 lines of code across `concordia/`, 59 tools exposed via FastMCP) implementing a structured multi-attribute negotiation protocol for autonomous agents. Version 0.9.0 (current published release).
+**Concordia** is a Python SDK and MCP server (~14,000 lines of code across `concordia/`, 59 tools exposed via FastMCP) implementing a structured multi-attribute negotiation protocol for autonomous agents. Version 0.10.0 release line.
 
 What it concretely does:
 

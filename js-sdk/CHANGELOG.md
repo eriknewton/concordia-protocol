@@ -4,6 +4,17 @@
 
 Nothing yet.
 
+## 0.0.1-alpha.12 -- 2026-08-02
+
+Set-bound receipt support for attestation 0.3.0.
+
+- ATTESTATION_VERSION is 0.3.0.
+- generateAttestation emits `chain_head` and `message_count` inside the
+  countersigned issuance snapshot.
+- verifyReceiptSetBinding and attestation verification compare those fields to
+  the presented transcript and report receipts below 0.3.0 as
+  `legacy_set_unbound`.
+
 ## 0.0.1-alpha.11 -- 2026-08-02
 
 Fixes traced to the 2026-08-02 fresh-agent onboarding measurement (two agents
