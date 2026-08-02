@@ -47,10 +47,12 @@ _RAW_TERM_PATTERNS = (
 # The summary's machine-generated hash line is a hex digest slice, not free
 # text. "CAD" is expressible in hex, so a random digest can spell an
 # amount-plus-currency shape (measured ~1.6e-4 per digest), which made a
-# legitimate receipt fail validation on digest luck. Only this exact
-# lowercase-hex line shape is exempt from the raw-term scan; a hash line
-# carrying anything beyond bare hex is still scanned.
-_SUMMARY_HASH_LINE_RE = re.compile(r"^Transcript hash: [0-9a-f]{1,64}$", re.MULTILINE)
+# legitimate receipt fail validation on digest luck. Exempt ONLY the line the
+# generator actually emits for THIS attestation — "Transcript hash: " plus
+# the first 16 hex chars of the attestation's own transcript_hash — so a
+# crafted pseudo-hash line (e.g. "Transcript hash: 1900cad") cannot smuggle
+# a real amount past the scan (adversarial-gate finding on the first cut).
+_TRANSCRIPT_HASH_VALUE_RE = re.compile(r"^sha256:[a-f0-9]{64}\Z")
 
 
 @_FORMAT_CHECKER.checks("date-time", raises=ValueError)
@@ -298,8 +300,14 @@ def _validate_attestation_free_text(attestation: Any) -> list[str]:
 
     errors: list[str] = []
     summary = attestation.get("summary")
-    if isinstance(summary, str):
-        summary = _SUMMARY_HASH_LINE_RE.sub("", summary)
+    transcript_hash = attestation.get("transcript_hash")
+    if isinstance(summary, str) and isinstance(transcript_hash, str) and (
+        _TRANSCRIPT_HASH_VALUE_RE.match(transcript_hash)
+    ):
+        generated_line = f"Transcript hash: {transcript_hash.split(':', 1)[1][:16]}"
+        summary = "\n".join(
+            line for line in summary.split("\n") if line != generated_line
+        )
     candidates: list[tuple[str, Any]] = [
         ("$.summary", summary),
     ]
