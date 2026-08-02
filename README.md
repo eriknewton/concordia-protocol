@@ -6,6 +6,24 @@
 
 When your agent needs to negotiate or make a deal, Concordia gives it a structured way to propose, counter, commit, and build a track record.
 
+## Verify our claims in about a minute
+
+```bash
+python3 -m venv /tmp/concordia-verify-py
+/tmp/concordia-verify-py/bin/pip install rfc8785 pynacl jsonschema
+/tmp/concordia-verify-py/bin/python conformance/reference-runner/runner.py conformance/vectors | tail -1
+```
+
+```bash
+(cd conformance/reference-runner-js && npm ci)
+node conformance/reference-runner-js/runner.mjs conformance/vectors | tail -1
+```
+
+Expected summary for both:
+`[SUMMARY] positive=47 mutation=1460 canary=4 ok=1511 fail=0`
+
+Contract: [`conformance/RUNNER_CONTRACT.md`](conformance/RUNNER_CONTRACT.md). Registry: [`conformance/IMPLEMENTATIONS.md`](conformance/IMPLEMENTATIONS.md).
+
 ---
 
 ## The Problem
