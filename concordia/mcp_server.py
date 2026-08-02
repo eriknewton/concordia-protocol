@@ -1092,7 +1092,9 @@ def tool_session_receipt(
         "Export a concluded session as a trust-evidence-format v1.0.0 envelope. "
         "Produces an interoperable signed envelope compatible with multi-provider "
         "trust evidence standards (A2A #1734). Supports EdDSA (default) and ES256 "
-        "signing. Only available for sessions in terminal state (agreed/rejected/expired)."
+        "signing. Requires explicit provider_did and provider_kid values; no default "
+        "reputation provider is used because Concordia is provider-neutral. Only "
+        "available for sessions in terminal state (agreed/rejected/expired)."
     ),
 )
 def tool_session_receipt_envelope(
@@ -3206,7 +3208,9 @@ def tool_list_receipt_bundles(
     description=(
         "Report a completed negotiation to an explicit reputation provider endpoint. "
         "Extracts behavioral metadata from the session receipt (never raw deal terms) "
-        "and posts it signed with the agent's Ed25519 key. "
+        "and posts it signed with the agent's Ed25519 key. Requires explicit "
+        "provider_endpoint and provider_did values; no default reputation provider "
+        "is used because Concordia is provider-neutral. "
         "Requires CONCORDIA_REPUTATION_REPORTING_ENABLED=true environment variable."
     ),
 )

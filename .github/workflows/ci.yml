@@ -51,6 +51,24 @@ jobs:
         # integer in .test-baseline. Catches silently-deleted tests.
         run: bash scripts/test-floor.sh
 
+  onboarding-smoke:
+    # Public-surface guard: a plain, non-editable install must be enough for a
+    # fresh adopter to sign, verify, emit an attestation, and inspect MCP tools.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6.0.2 (resolved 2026-05-18)
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0 (resolved 2026-05-18)
+        with:
+          python-version: "3.12"
+
+      - name: Install Concordia as an adopter would
+        run: pip install '.[server]'
+
+      - name: Run onboarding smoke
+        run: python scripts/onboarding_smoke.py
+
   version-coherence:
     # Hard-fail gate: the three Python publish surfaces (pyproject.toml,
     # concordia/__init__.py, server.json) must declare the same version.
