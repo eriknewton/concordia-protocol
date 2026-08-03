@@ -21,9 +21,15 @@ updates:
       prefix-development: "chore(deps-dev)"
       include: "scope"
     groups:
+      # Majors arrive as individual PRs and are judged on their merits
+      # (mcp 2.x removed mcp.server.fastmcp and broke every Python job when
+      # it rode the group, 2026-08-03).
       python-dependencies:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   # --- TypeScript SDK ---
   - package-ecosystem: "npm"
@@ -36,9 +42,15 @@ updates:
       prefix-development: "chore(deps-dev)"
       include: "scope"
     groups:
+      # Majors arrive as individual PRs and are judged on their merits
+      # (@noble/curves 2.x renamed randomPrivateKey -> randomSecretKey and
+      # broke typecheck when it rode the group, 2026-08-03).
       js-sdk-dependencies:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
     ignore:
       # TypeScript 7 major is HELD (same standing hold as sanctuary-framework):
       # typescript-eslint's peer range excludes TS 7, so a grouped bump that
