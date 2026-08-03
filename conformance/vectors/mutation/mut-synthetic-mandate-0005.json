@@ -1,0 +1,58 @@
+{
+  "context": {
+    "action": {
+      "category": "software",
+      "max_spend": 500
+    },
+    "canonical_sha256": "sha256:3c99edf221eac3b20e1d2a53849288cc9d29e29a5c019594cb0ee8cde187e17f",
+    "issuer_public_key_b64url": "Jb5r1d6tSAlgf4GA4Jfjo7MO3v2jaCkoR_1-xPCTQxA=",
+    "now": "2026-05-10T14:25:00Z"
+  },
+  "expected": "reject",
+  "expected_reason_class": "digest",
+  "id": "mut-synthetic-mandate-0005",
+  "input": {
+    "algorithm": "EdDSA",
+    "constraints": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "enum": [
+            "software",
+            "books"
+          ],
+          "type": "string"
+        },
+        "max_spend": {
+          "maximum": 1000,
+          "type": "number"
+        }
+      },
+      "required": [
+        "max_spend",
+        "category"
+      ],
+      "type": "object"
+    },
+    "issued_at": "2026-05-10T14:25:00Z",
+    "issuer": "did:key:z7QElvmvV3q1ICWB_gYDgl-Ojsw7e_aNoKShH_X7E8JNDEA",
+    "mandate_id": "urn:concordia:mandate:synthetic-direct-0001",
+    "metadata": {
+      "fixture": "conformance-p2a1-direct"
+    },
+    "signature": "lQ7LyyNpFQtYgWaYmVThF2NwLhF0vnF_fd8Z078g_cEmFPgz6Ik-ZnaFu2b4UTAtjy8K_P9n2pZd77sXmPncDw==",
+    "status": "active",
+    "subject": "did:web:agent.example#synthetic-subjecA",
+    "validity": {
+      "mode": "windowed",
+      "not_after": "2026-06-01T00:00:00Z",
+      "not_before": "2026-05-01T00:00:00Z"
+    }
+  },
+  "notes": "",
+  "record_type": "mandate",
+  "schema_version": "concordia-conformance-vector/v1-draft",
+  "source_fixture": "synthetic/mandate",
+  "title": "mandate: value subject",
+  "verification_profile": "mandate-v1"
+}

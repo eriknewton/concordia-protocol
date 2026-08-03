@@ -20,7 +20,7 @@ on the A2CN side):
   - ``meta.transaction_record_hash`` = the SHA-256 hex digest of the
     agreed transaction record (anchors back to the original commitment).
   - ``meta.a2cn_message_id`` = the DISPUTE_RESOLVED ``message_id`` so
-    downstream consumers (Verascore) have a deterministic dedupe key.
+    downstream consumers, including Verascore, have a deterministic dedupe key.
   - ``meta.evidence_references`` (optional) = A2CN-side evidence
     pointers, surfaced for downstream audit.
   - ``meta.resolution_notes`` (optional) = the resolver's free-text
@@ -184,10 +184,10 @@ def build_fulfillment_from_dispute_resolved(
 def _build_mediation_meta(message: dict[str, Any]) -> dict[str, Any]:
     """Build the meta-fields delta for a DISPUTE_RESOLVED-driven fulfillment.
 
-    Verascore's reputation scorer reads these keys. The shape is
-    deliberately flat (no nested dicts beyond ``evidence_references``)
-    so downstream consumers can stream them into a key-value scorer
-    without recursive walks.
+    Downstream reputation scorers, including Verascore, can read these keys.
+    The shape is deliberately flat (no nested dicts beyond
+    ``evidence_references``) so consumers can stream them into a key-value
+    scorer without recursive walks.
     """
     meta_delta: dict[str, Any] = {
         "mediator_invoked": True,
@@ -212,7 +212,7 @@ def _build_fulfills_reference(agreement_attestation_id: str) -> dict[str, Any]:
 
     Christian's A2CN PR #12 review explicitly endorsed this composition
     seam: every mediated fulfillment carries a ``relationship: "fulfills"``
-    reference to its agreement attestation so a Verascore scorer can walk
+    reference to its agreement attestation so downstream scorers can walk
     backward without an out-of-band lookup.
     """
     if not isinstance(agreement_attestation_id, str) or not agreement_attestation_id:

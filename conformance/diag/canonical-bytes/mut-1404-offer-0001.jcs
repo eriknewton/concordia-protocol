@@ -1,0 +1,1 @@
+{"action":"procurement.purchase_ordeA","currency":"USD","line_items":[{"quantity":3,"sku":"SRV-RACK-42U"}],"total":"150000.00","vendor":"did:web:vendor.example"}

@@ -1,0 +1,38 @@
+{
+  "context": {
+    "checks": [
+      {
+        "expected": "sha256:2cf9882e0ceee36278318a376117cc03da510c6994c3679a57eb4777dc8e06cb",
+        "kind": "jcs-sha256",
+        "source": "input"
+      },
+      {
+        "expected": "sha256:2cf9882e0ceee36278318a376117cc03da510c6994c3679a57eb4777dc8e06cb",
+        "kind": "jcs-sha256",
+        "source": "input"
+      }
+    ]
+  },
+  "expected": "reject",
+  "expected_reason_class": "digest",
+  "id": "mut-1404-offer-0015",
+  "input": {
+    "__mut_probe__": "MUT",
+    "action": "procurement.purchase_order",
+    "currency": "USD",
+    "line_items": [
+      {
+        "quantity": 3,
+        "sku": "SRV-RACK-42U"
+      }
+    ],
+    "total": "150000.00",
+    "vendor": "did:web:vendor.example"
+  },
+  "notes": "",
+  "record_type": "approval_receipt",
+  "schema_version": "concordia-conformance-vector/v1-draft",
+  "source_fixture": "a2a-1404-receipt-revocation-vector",
+  "title": "offer: inject <root>",
+  "verification_profile": "offer-binding-v1"
+}

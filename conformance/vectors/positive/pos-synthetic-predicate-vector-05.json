@@ -1,0 +1,46 @@
+{
+  "context": {
+    "canonical_sha256": "sha256:d49254dd49d94016c5227f5074e7c86bf44c41abb0fc7d60fd7abd63b7ff4ce5",
+    "now": "2026-05-10T14:25:00Z",
+    "public_key_b64url": "14Jm58cqv1UuS6hzzWHLldVHyKrdqgnWHTvx7zhltM0="
+  },
+  "expected": "accept",
+  "expected_reason_class": null,
+  "id": "pos-synthetic-predicate-vector-05",
+  "input": {
+    "algorithm": "EdDSA",
+    "authority": "urn:concordia:authority:approval",
+    "condition": {
+      "result": "satisfied"
+    },
+    "expires_at": "2026-05-21T00:00:00Z",
+    "issued_at": "2026-05-14T00:00:00Z",
+    "issuer": "did:web:issuer.example#key-1",
+    "metadata": {
+      "issuer_public_key_b64": "14Jm58cqv1UuS6hzzWHLldVHyKrdqgnWHTvx7zhltM0="
+    },
+    "predicate_id": "urn:concordia:predicate:pred_ref_002",
+    "references": [
+      {
+        "id": "urn:concordia:mandate:m_001",
+        "relationship": "references",
+        "type": "mandate"
+      },
+      {
+        "id": "urn:concordia:approval_receipt:ar_001",
+        "relationship": "fulfills",
+        "type": "receipt"
+      }
+    ],
+    "signature": "dJaQms4jtEcGtZTSWxbWaU2lFVlYOdMbDbT7x3RWxCCElSn5EDTCH81taP36_LCqIR_cDinsnGqktfccQh7SAA==",
+    "status": "active",
+    "subject": "urn:concordia:offer:off_001",
+    "type": "urn:concordia:predicate-type:approval_gate:v1"
+  },
+  "notes": "",
+  "record_type": "predicate",
+  "schema_version": "concordia-conformance-vector/v1-draft",
+  "source_fixture": "synthetic/predicate",
+  "title": "Synthetic signed Predicate from canonical fixture vector_05",
+  "verification_profile": "predicate-v1"
+}

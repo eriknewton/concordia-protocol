@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "concordia-protocol"
-version = "0.7.0a1"
+version = "0.10.0"
 description = "Reference implementation of the Concordia Protocol — structured negotiation between autonomous agents"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -30,15 +30,21 @@ dependencies = [
 
 [project.optional-dependencies]
 server = [
-    "mcp>=1.0",
+    # Upper-capped at <2: mcp 2.0.0 removed `mcp.server.fastmcp` (the FastMCP
+    # entry point `concordia/mcp_server.py` imports) in favour of
+    # `mcp.server.mcpserver`. The floor-only pin resolved to 2.0.0 and broke
+    # every CI job on every branch. This cap is a HOLD, not a decision to stay
+    # on 1.x: migrating to the mcp 2.x server API is its own change.
+    "mcp>=1.0,<2",
 ]
 dev = [
     "build>=1.2",
     "hatchling>=1.27",
-    "mcp>=1.0",
+    "mcp>=1.0,<2",
     "mypy>=1.8",
     "pytest>=8.0",
     "pytest-cov>=4.0",
+    "pynacl>=1.5",
     "rfc8785>=0.1.4",
     "ruff>=0.6",
     # Type stubs for the `jsonschema` runtime dependency so `mypy concordia`

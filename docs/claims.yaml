@@ -1,0 +1,37 @@
+claims:
+  - id: implementable-from-spec-alone
+    claim: "An LLM agent should be able to implement Concordia from reading this specification alone, with no external documentation."
+    stated_in: SPEC.md
+    check: scripts/claims/no_external_normative_deps.py
+  - id: canonical-json-is-rfc-8785
+    claim: 'Wherever this specification says "canonical JSON", "canonicalized JSON", or "JCS", it means the JSON Canonicalization Scheme defined in [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785).'
+    stated_in: SPEC.md
+    check: scripts/claims/rfc_sections_cited.py
+  - id: offline-no-issuer-callback
+    claim: "No network, no regeneration, no issuer callback:"
+    stated_in: README.md
+    check: scripts/claims/offline_resolution.py
+  - id: verification-without-our-code
+    claim: "What the vectors do establish is that the parts they cover are checkable without our code and without asking us."
+    stated_in: README.md
+    check: ci-job:clean-room-verify
+  - id: fixture-digests-recomputed
+    claim: "Every digest a fixture publishes is recomputed from the fixture bytes by that fixture's `verify.py` and compared, and the digests used for signature and revocation checks are additionally cross-checked against the independent `rfc8785` reference library in CI (`tests/test_interop_fixtures.py`)."
+    stated_in: docs/interop/README.md
+    check: scripts/claims/fixture_verifiers_recompute.py
+  - id: conformance-vectors-verify-without-our-sdk
+    claim: "The conformance vectors verify without the Concordia SDK: the reference runner installs only RFC 8785, PyNaCl, JSON Schema, and the Python standard library, then executes the public vector manifest."
+    stated_in: conformance/RUNNER_CONTRACT.md
+    check: ci-job:conformance-clean-room
+  - id: vectors-verify-under-two-independent-runners
+    claim: "The same conformance vector manifest is executed to the same totals by two first-party-authored reference runners in independent languages: Python and Node.js. This is not third-party verification."
+    stated_in: conformance/RUNNER_CONTRACT.md
+    check: ci-job:conformance-clean-room-js
+  - id: receipt-set-binding
+    claim: "A 0.3.0 receipt binds the transcript set, chain head and message count, inside its countersigned preimage, and the conformance suite rejects splice and truncation against it."
+    stated_in: conformance/RUNNER_CONTRACT.md
+    check: scripts/claims/receipt_set_binding_vectors.py
+  - id: adapter-not-exercised
+    claim: "No conformance vector or reference runner imports or invokes the optional `concordia.verascore` adapter."
+    stated_in: conformance/RUNNER_CONTRACT.md
+    check: scripts/claims/adapter_not_exercised.py

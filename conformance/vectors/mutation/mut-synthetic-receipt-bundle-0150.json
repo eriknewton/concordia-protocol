@@ -1,0 +1,178 @@
+{
+  "context": {
+    "canonical_sha256": "sha256:2c141798f4ddbb8f8a7e21452806998eaa8c1d3dc8f77521f1af03d93fcc0770",
+    "public_key_b64url": "99wNp8HVsqJcFfjN0ycm2d-9pPDlxilgTPMeWF0tRew="
+  },
+  "expected": "reject",
+  "expected_reason_class": "digest",
+  "id": "mut-synthetic-receipt-bundle-0150",
+  "input": {
+    "agent_id": "did:concordia:agent:synthetic-initiator",
+    "agent_signature": "oS_i5sedjumG8-dqvWfdWgLuwAZ6VJrtBxVL2VwaYTJO044kUNu9yGxXhukZP9xbGJIwz_xLDUjgF2OsB9rXAA==",
+    "attestations": [
+      {
+        "attestation_id": "att_conformance_p2a1_0001",
+        "chain_head": "sha256:b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+        "concordia_attestation": "0.3.0",
+        "countersignatures": {
+          "did:concordia:agent:synthetic-initiator": "g4s0fsTHbyaGNLSSvsXw0To4uINocOHytNn_5Us32EYUH99dKV5cMmG9ps58qPsPvyljt1J92m43295wHa3_DQ==",
+          "did:concordia:agent:synthetic-responder": "7WoUSEUFgodvX4C2EXWBn9yjTYC-51zNvL5Wi2Z5Afqr3LA6zMdO7wbV42aBd895alH0ZwWTDAgjbqdFfd3NCA=="
+        },
+        "fulfillment": null,
+        "message_count": 6,
+        "meta": {
+          "category": "software.tools",
+          "extensions_used": [],
+          "mediator_invoked": false,
+          "value_range": "1000-5000_USD"
+        },
+        "outcome": {
+          "duration_seconds": 312,
+          "resolution_mechanism": "direct",
+          "rounds": 4,
+          "status": "agreed",
+          "terms_count": 3
+        },
+        "parties": [
+          {
+            "agent_id": "did:concordia:agent:synthetic-initiator",
+            "behavior": {
+              "concession_magnitude": 0.25,
+              "concessions": 1,
+              "constraints_declared": 1,
+              "constraints_violated": 0,
+              "offers_made": 3,
+              "reasoning_provided": true,
+              "response_time_avg_seconds": 4.5,
+              "signals_shared": 1,
+              "withdrawal": false
+            },
+            "role": "initiator",
+            "signature": "SK5Rg4m15O7Nu-ZC7c8cfyptjjWabPT6VoHM6HNg2w4BQHFpq7WnGKKwzwilDkjptggXjOF21wIeOgfbD6KzAg=="
+          },
+          {
+            "agent_id": "did:concordia:agent:synthetic-responder",
+            "behavior": {
+              "concession_magnitude": 0.4,
+              "concessions": 2,
+              "constraints_declared": 1,
+              "constraints_violated": 0,
+              "offers_made": 2,
+              "reasoning_provided": true,
+              "response_time_avg_seconds": 6.0,
+              "signals_shared": 0,
+              "withdrawal": false
+            },
+            "role": "responder",
+            "signature": "yLMbR9gpD7CIHVOLEYC42lrcOtcRhCVzyn9COV76MJxLe2k39mrCu1ZtKiRrxz7qzLBCSl1BZdS-t0a3SLOyBw=="
+          }
+        ],
+        "references": [
+          {
+            "id": "urn:concordia:receipt:synthetic-0001",
+            "relationship": "references",
+            "signed_at": "2026-05-10T14:25:00Z",
+            "type": "receipt"
+          }
+        ],
+        "session_id": "sess_conformance_p2a1_0001",
+        "summary": "Agreement completed with four rounds, two active parties, and no mediation.",
+        "timestamp": "2026-05-10T14:25:00Z",
+        "transcript_hash": "sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+      },
+      {
+        "attestation_id": "att_conformance_p2a4_0002",
+        "chain_head": "sha256:c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+        "concordia_attestation": "0.3.0",
+        "countersignatures": {
+          "did:concordia:agent:synthetic-initiator": "rVKVYXDKGY4_Rxu7CO1QvJXM4yIUH1ZOo3NYN3C8B0Iq9Zt9I1B1MA9OFOsrfR-xzBcNj3RjWdmitC4HiXJNCg==",
+          "did:concordia:agent:synthetic-responder": "U75blTPCWRRUAAS84pK-aU4tqcy2FfDV6leLmK6PGnZD2gZf_2W1VVq8c-TIq6O3h_3hXebDJ6U3Jj6u5qNKBA=="
+        },
+        "fulfillment": null,
+        "message_count": 4,
+        "meta": {
+          "category": "software.tools",
+          "extensions_used": [],
+          "mediator_invoked": false,
+          "value_range": "1000-5000_USD"
+        },
+        "outcome": {
+          "duration_seconds": 145,
+          "resolution_mechanism": "direct",
+          "rounds": 2,
+          "status": "rejected",
+          "terms_count": 2
+        },
+        "parties": [
+          {
+            "agent_id": "did:concordia:agent:synthetic-initiator",
+            "behavior": {
+              "concession_magnitude": 0.1,
+              "concessions": 1,
+              "constraints_declared": 1,
+              "constraints_violated": 0,
+              "offers_made": 1,
+              "reasoning_provided": true,
+              "response_time_avg_seconds": 4.5,
+              "signals_shared": 2,
+              "withdrawal": false
+            },
+            "role": "initiator",
+            "signature": "KQYmIki9f2On0eqVlys5hWb9NZZ3ChJkDIdf4OJZhpJAwDsvTTAJRci6Q52hDGB1hipbTAWDRu3jA_Id7J-MDg=="
+          },
+          {
+            "agent_id": "did:concordia:agent:synthetic-responder",
+            "behavior": {
+              "concession_magnitude": 0.2,
+              "concessions": 2,
+              "constraints_declared": 1,
+              "constraints_violated": 0,
+              "offers_made": 1,
+              "reasoning_provided": true,
+              "response_time_avg_seconds": 6.0,
+              "signals_shared": 0,
+              "withdrawal": false
+            },
+            "role": "responder",
+            "signature": "hrbuDLewjF-zYOpqPMmyudT6jA_2wEXCkFZHXgFSPyvViYPu2VBEY5YT5feikrGBZQ2tMT5wn4-vOxcSBcCLBg=="
+          }
+        ],
+        "references": [
+          {
+            "id": "urn:concordia:receipt:synthetic-0001",
+            "relationship": "references",
+            "signed_at": "2026-05-10T14:25:00Z",
+            "type": "receipt"
+          }
+        ],
+        "session_id": "sess_conformance_p2a4_0002",
+        "summary": "Agreement completed with four rounds, two active parties, and no mediation.",
+        "timestamp": "2026-05-10T14:35:00Z",
+        "transcript_hash": "sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+      }
+    ],
+    "bundle_id": "bundle_aaaaaaaaaaaa",
+    "concordia_receipt_bundle": "0.1.0",
+    "created_at": "2026-05-10T14:25:00Z",
+    "summary": {
+      "agreement_rate": 0.5,
+      "agreements": 1,
+      "avg_concession_magnitude": 0.175,
+      "categories": [
+        "software.tools"
+      ],
+      "earliest": "2026-05-10T14:25:00Z",
+      "fulfillment_rate": 0.0,
+      "latest": "2026-05-10T14:35:00Z",
+      "reasoning_rate": 1.0,
+      "total_negotiations": 2,
+      "unique_counterparties": 1
+    }
+  },
+  "notes": "",
+  "record_type": "receipt_bundle",
+  "schema_version": "concordia-conformance-vector/v1-draft",
+  "source_fixture": "synthetic/longtail",
+  "title": "receipt_bundle: value attestations.1.parties.0.behavior.signals_shared",
+  "verification_profile": "receipt-bundle-v1"
+}

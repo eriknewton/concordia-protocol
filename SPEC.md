@@ -3,7 +3,7 @@
 ### An Open Standard for Structured Negotiation Between Autonomous Agents
 
 **Version:** 0.7.0-draft  
-**Version mapping:** spec edition `0.7.0-draft` maps to Python package `0.7.0a1` (PEP 440 pre-release form of the same edition) maps to the on-the-wire envelope identifier `concordia:0.1.0`. The wire identifier is intentionally pinned at `0.1.0` and is versioned independently of the spec edition: it changes only on a breaking envelope-format change, not on every spec revision.  
+**Version mapping:** spec edition `0.7.0-draft` maps to Python package `0.10.0`; the package advanced past the edition's pre-release form `0.7.0a1` because breaking API changes landed after that alpha. See `CHANGELOG.md` for stable release history. The on-the-wire envelope identifier remains `concordia:0.1.0`. The wire identifier is intentionally pinned at `0.1.0` and is versioned independently of the spec edition: it changes only on a breaking envelope-format change, not on every spec revision.
 **Status:** Draft (v0.7 adds cross-mandate revocation records, §9.6.4c; v0.6 added the predicate primitive)  
 **License:** Apache 2.0  
 **Authors:** Erik Newton
@@ -56,7 +56,7 @@ The protocol does not require agents to reveal their private preferences. But it
 
 ### 1.3 Simplicity and Parsimony
 
-An LLM agent should be able to implement Concordia from reading this specification alone, with no external documentation. Every concept maps to an intuitive real-world analogy. The message format uses standard JSON over HTTPS. The state machine has exactly six states. There are no features that exist "in case someone needs them."
+<!-- claim:implementable-from-spec-alone -->An LLM agent should be able to implement Concordia from reading this specification alone, with no external documentation.<!-- /claim --> Every concept maps to an intuitive real-world analogy. The message format uses standard JSON over HTTPS. The state machine has exactly six states. There are no features that exist "in case someone needs them."
 
 ### 1.4 Composability, Not Competition
 
@@ -94,7 +94,7 @@ Concordia takes an agreement from "two parties who might want to deal" to "a bin
 
 Agents MUST NOT be required to reveal their reservation price (walk-away point), their preference weightings across attributes, or the identity of their principal (the human or organization they represent) as a condition of negotiation. The protocol supports voluntary disclosure of any of these, but never compels it.
 
-Concordia's privacy boundary is the protocol surface: what agents choose to include in messages and the `reasoning` field. The *internal* deliberation that precedes those choices (strategy computation, reservation price calculation, counterparty assessment) is outside the protocol's scope. Agents that operate within confidential execution environments, such as hardware TEEs, secure enclaves, or sovereignty frameworks like the [Sanctuary Framework](https://github.com/eriknewton/sanctuary-framework), gain additional guarantees that this internal reasoning cannot be observed by infrastructure providers or co-tenants.
+Concordia's privacy boundary is the protocol surface: what agents choose to include in messages and the `reasoning` field. The *internal* deliberation that precedes those choices (strategy computation, reservation price calculation, counterparty assessment) is outside the protocol's scope. Agents that operate within confidential execution environments gain additional guarantees that this internal reasoning cannot be observed by infrastructure providers or co-tenants. Hardware trusted execution environments and secure enclaves are what supply that particular guarantee; Intel SGX and TDX, AMD SEV-SNP, and AWS Nitro Enclaves are examples, and the list is not exhaustive. A weaker but related protection comes from agent runtimes that mediate an agent's storage and outbound access, such as the [Sanctuary Framework](https://github.com/eriknewton/sanctuary-framework), which is authored by this specification's author. Those runtimes bound what leaves the agent's process; they do not by themselves make the agent's memory unobservable to the host. This specification requires none of these, states no requirement in terms of any of them, and confers no conformance advantage on any of them. Disclosure: the reference Python SDK ships an optional, off-by-default bridge (`concordia.sanctuary_bridge`) that builds request payloads for Sanctuary tools. It is a convenience integration, it is not part of this specification, and no conformance vector uses it.
 
 ### 1.6 Verifiability and Auditability
 
@@ -245,7 +245,7 @@ All Concordia messages are JSON objects transmitted over HTTPS. The protocol use
 - `from`: the sending agent
 - `prev_hash`: hash of the previous message in the session transcript (the genesis hash `sha256:` followed by 64 zeros for the first message); chains the transcript per Section 9.3
 - `body`: type-specific payload
-- `signature`: Ed25519 signature over the canonical JSON of all other fields
+- `signature`: Ed25519 signature over the canonical JSON (RFC 8785 JCS, §9.2.1) of all other fields
 
 **Optional fields:**
 - `to`: recipient(s); omitted for broadcast messages
@@ -296,7 +296,7 @@ The `reasoning` field is:
 - **Structurally encouraged**: agents that explain their reasoning reach better outcomes, because counterparties can identify creative solutions
 - **Included in the signed transcript**: so it serves as evidence of good faith
 
-This field is what makes Concordia native to the LLM era. Classical negotiation protocols exchanged only structured data. But LLM agents think in natural language, and the most productive negotiations between intelligent parties involve explanation, not just numbers.
+This field is what makes Concordia native to the LLM era. Classical negotiation protocols exchanged only structured data. But LLM agents think in natural language, and the most productive negotiations between intelligent parties carry explanation alongside the numbers.
 
 ---
 
@@ -633,10 +633,66 @@ Agents that root their `agent_id` in an autonomic identifier protocol such as KE
 
 ### 9.2 Message Integrity
 
-Every message is signed with Ed25519. The signature covers the canonical JSON serialization of all fields except the signature itself. This ensures:
+Every message is signed with Ed25519. The signature covers the canonical JSON serialization (RFC 8785 JCS, §9.2.1) of all fields except the top-level `signature` member itself. This ensures:
 - Messages cannot be tampered with in transit
 - The sender cannot deny having sent a message
 - The transcript is independently verifiable
+
+#### 9.2.1 Canonical JSON is RFC 8785 (JCS)
+
+<!-- claim:canonical-json-is-rfc-8785 -->Wherever this specification says "canonical JSON", "canonicalized JSON", or
+"JCS", it means the JSON Canonicalization Scheme defined in
+[RFC 8785](https://www.rfc-editor.org/rfc/rfc8785).<!-- /claim --> Serialization follows
+RFC 8785 §3.2, and each subsection below governs one part of the output:
+
+| RFC 8785 section | What it fixes |
+|------------------|---------------|
+| §3.2.1 | No whitespace between JSON tokens |
+| §3.2.2.1 | Literals serialized as `true`, `false`, `null` |
+| §3.2.2.2 | String escaping: the seven two-character escapes, `\uXXXX` for the remaining control characters U+0000 to U+001F, every other character emitted raw |
+| §3.2.2.3 | Number formatting, which RFC 8785 delegates to ECMAScript (RFC 8785 cites ECMA-262 §7.1.12.1; current ECMA-262 editions carry the same algorithm as `Number::toString`, §6.1.6.1.20), and which prohibits `NaN` and `Infinity` |
+| §3.2.3 | Object property names sorted by UTF-16 code unit |
+| §3.2.4 | UTF-8 output |
+
+RFC 8785 §3.1 (creation of input data) is out of scope here. Concordia
+canonicalizes an in-memory JSON value that an implementation has already parsed
+or constructed, not a JSON text.
+
+RFC 8785 fixes how a value is serialized. It never fixes which value is
+serialized, so wherever a signature or digest covers less than the whole
+artifact, that exclusion is Concordia's own rule. Three exclusion rules are in
+use:
+
+1. **Top-level signature removal** (§4.1, §9.2, §9.6.4a): the top-level
+   `signature` member is removed and the remainder is canonicalized. Members
+   named `signature` nested inside the artifact are retained.
+2. **Recursive signature removal plus countersignature exclusion** (§9.6.5a):
+   every `signature` member is removed at every depth AND the top-level
+   `countersignatures` map is excluded.
+3. **Enumerated preimage** (§9.6.4d): the fields covered are listed explicitly
+   rather than derived by removal.
+
+Two sites apply rule 1 without stating it in their own text: §9.6.4b lists
+`signature` among the ApprovalReceipt's required fields, and §9.6.4c lists it
+among the RevocationRecord's, but neither section defines its preimage. As a
+statement of fact rather than a requirement, the reference implementation
+computes both over the artifact with its top-level `signature` member removed.
+Specifying those two preimages normatively is a change to this document, not a
+clarification of it, so it is tracked as its own change.
+
+**Number domain (non-normative).** RFC 8785 §3.2.2.3 serializes numbers through
+the ECMAScript algorithm, which operates on IEEE-754 doubles, so integers beyond
+the safe-integer range of ±(2^53 - 1), where consecutive integers stop being
+distinguishable, are not reliably interoperable. RFC 8785 Appendix D discusses
+exactly this case and its guidance is to carry such values as JSON strings. The
+two reference SDKs currently differ at this boundary and neither should be read
+as normative: the JavaScript SDK refuses to serialize a plain-decimal integer
+beyond that range rather than emit a value it cannot represent, while the Python
+SDK emits the integer's full decimal form, which a JCS implementation backed by
+doubles will not reproduce. A digest taken over such a value is therefore not
+dependably recomputable by a second implementation. Separately, both SDKs reject
+`-0.0` rather than emitting `0` as RFC 8785 would, so the two zero forms can
+never both appear in a Concordia digest preimage.
 
 ### 9.3 Transcript Integrity
 
@@ -652,7 +708,7 @@ The negotiation transcript is a hash chain. Each message includes the hash of th
 
 ### 9.4 Confidentiality
 
-Concordia messages are signed, not encrypted. Signing (§9.2) provides integrity, authenticity, and non-repudiation: a message cannot be altered without detection, and the sender cannot deny having sent it. Signing does not provide confidentiality. Any system that carries or stores a Concordia message, including a relay, a mailbox service, or any other transport intermediary, can read its full content. The only confidentiality protection in place today is transport-layer security (TLS) on each network hop, which protects against on-path observers between hops but not against the intermediaries themselves.
+Concordia messages are signed; they are not encrypted. Signing (§9.2) provides integrity, authenticity, and non-repudiation: a message cannot be altered without detection, and the sender cannot deny having sent it. Signing does not provide confidentiality. Any system that carries or stores a Concordia message, including a relay, a mailbox service, or any other transport intermediary, can read its full content. The only confidentiality protection in place today is transport-layer security (TLS) on each network hop, which protects against on-path observers between hops but not against the intermediaries themselves.
 
 Agents and implementers SHOULD therefore treat every message field, including offer terms and the `reasoning` field, as visible to the infrastructure that delivers it. Negotiations involving sensitive terms (financial, medical, legal) SHOULD be conducted only over transport whose operators the parties trust. The Privacy by Default principle (§1.5) applies at authoring time: do not place content in a message that must remain hidden from the delivery path.
 
@@ -685,7 +741,7 @@ Every completed negotiation session (regardless of outcome) MUST produce an atte
 
 ```json
 {
-  "concordia_attestation": "0.2.0",
+  "concordia_attestation": "0.3.0",
   "attestation_id": "att_a1b2c3d4",
   "session_id": "ses_9d4e8f01",
   "timestamp": "2026-03-21T14:04:00Z",
@@ -739,6 +795,8 @@ Every completed negotiation session (regardless of outcome) MUST produce an atte
   },
 
   "transcript_hash": "sha256:0a1b2c3d4e5f...",
+  "chain_head": "sha256:8f42d9c0b7a6...",
+  "message_count": 8,
 
   "fulfillment": null,
 
@@ -749,7 +807,7 @@ Every completed negotiation session (regardless of outcome) MUST produce an atte
 }
 ```
 
-The `countersignatures` map (added in v0.2.0, C-H2) is what makes the outcome trustworthy rather than merely prover-asserted. Each present party signs the canonical issuance snapshot of the WHOLE attestation (every `signature` field stripped, and the `countersignatures` map itself excluded), so the `outcome`, `meta`, `session_id`, and `transcript_hash` are bound at issuance. See §9.6.5.
+The `countersignatures` map (added in v0.2.0, C-H2) is what makes the outcome trustworthy rather than merely prover-asserted. Each present party signs the canonical issuance snapshot (RFC 8785 JCS, §9.2.1) of the WHOLE attestation (every `signature` field stripped recursively, and the `countersignatures` map itself excluded), so the `outcome`, `meta`, `session_id`, `transcript_hash`, `chain_head`, and `message_count` are bound at issuance. See §9.6.5.
 
 #### 9.6.3 Attestation Fields
 
@@ -784,6 +842,14 @@ The `countersignatures` map (added in v0.2.0, C-H2) is what makes the outcome tr
 | `value_range` | Bucketed transaction value (preserves privacy while enabling size-weighted scoring). Drawn from the fixed bucket vocabulary in 9.6.6; free text is rejected at issuance |
 | `extensions_used` | Protocol extensions active in this session |
 | `mediator_invoked` | Whether a mediator was used |
+
+**Receipt commitment fields** bind the closing receipt to the transcript set:
+
+| Field | Description |
+|-------|-------------|
+| `transcript_hash` | Legacy whole-transcript digest emitted by the reference SDK. Its exact preimage is a reference implementation behavior unless separately specified. |
+| `chain_head` | The §9.3 message hash of the final transcript message: `sha256(canonical_json(message))` using the §9.2.1 canonical JSON rules, over the full final message, including its `signature`, rendered as `sha256:` plus 64 lowercase hex characters |
+| `message_count` | Number of messages in the transcript, integer >= 1 |
 
 #### 9.6.4 Fulfillment Attestations
 
@@ -848,7 +914,7 @@ Minimal required fields:
 | `agreement_attestation_id` | Denormalized pointer to the agreement attestation this fulfillment discharges |
 | `fulfillment.status` | `fulfilled_clean` / `fulfilled_with_mediation` / `failed` / `disputed_unresolved` |
 | `references[]` | At least one entry with `relationship: "fulfills"` pointing at the agreement attestation |
-| `signature` | Ed25519 over the canonicalized JSON |
+| `signature` | Ed25519 over the canonical JSON (RFC 8785 JCS, §9.2.1) of the artifact with the top-level `signature` member removed |
 
 Optional `meta` fields populate mediator context:
 `mediator_invoked`, `resolution_outcome`, `resolver_did`,
@@ -934,9 +1000,10 @@ ApprovalReceipt invariants:
   cryptographically binding the same way an `approve` is; the
   counterparty cannot retry the same offer without crossing the
   threshold afresh.
-- `scope.offer_hash` is the sha256 of the canonicalized offer the
-  approver evaluated. Re-canonicalize on-the-wire offers at verify
-  time and compare.
+- `scope.offer_hash` is `sha256:` followed by the hex SHA-256 of the
+  canonical JSON (RFC 8785 JCS, §9.2.1) of the offer the approver
+  evaluated. The offer is canonicalized whole, with no member removed.
+  Re-canonicalize on-the-wire offers at verify time and compare.
 - The `relationship` vocabulary used here extends §11.5.5: in
   addition to `supersedes`, `extends`, `fulfills`, `references`,
   ApprovalReceipt entries MAY use `approves` for the negotiation-
@@ -1023,15 +1090,20 @@ Canonical object (the fields the `decision_id` commits to):
 
 Identity and signature:
 
-- `decision_id = SHA-256(JCS(preimage))` where the preimage is exactly the
-  bound fields above, excluding `decision_id` and `signature`. It is the
-  RFC 8785 JCS standard hash, recomputable with any conformant JCS library.
+- `decision_id = SHA-256(JCS(preimage))` where `JCS` is RFC 8785
+  canonicalization per §9.2.1 (property ordering §3.2.3, numbers §3.2.2.3,
+  strings §3.2.2.2) and the preimage is exactly the bound fields above,
+  excluding `decision_id` and `signature`. It is the RFC 8785 JCS standard
+  hash, recomputable with any conformant JCS library, subject to the number
+  domain in §9.2.1: the schema bounds `ancestor_reads[].coordinate` only as a
+  non-negative integer, and a `coordinate` beyond the safe-integer range is not
+  dependably reproducible across implementations.
 - The record is Ed25519-signed over the same JCS preimage bytes with the
   verifier / issuer key, using the same signing path as `RevocationRecord`.
 
 Invariants (all fail-closed):
 
-- Recomputable, not asserted. Mutating ANY bound field, including a claimed
+- Recomputable end to end. Mutating ANY bound field, including a claimed
   ancestor `status` or `coordinate`, or a swapped ref, MUST diverge the
   recomputed `decision_id`, and the verifier MUST reject the record.
 - The deny commits to the ancestor read. `ancestor_reads` MUST be non-empty; a
@@ -1072,11 +1144,17 @@ Attestations inherit the security properties of the transcript:
 
 Through v0.1.0, each party's signature covered only its own behavior record. The top-level `outcome`, `meta`, and `transcript_hash` were derived from the transcript but not bound by any signature, so a holder could rewrite the outcome (for example, flip `rejected` to `agreed`) without invalidating any party signature. A bundle verifier that re-derived its summary from the rewritten outcome would then report it as accurate. C-H2 closes this.
 
-- **Payload.** The countersignature payload is `canonical_json(strip_signatures(attestation_without_countersignatures))`: the fully assembled attestation with every `signature` field stripped recursively AND the top-level `countersignatures` map excluded. Stripping every `signature` (the same rule the co-signature lane uses) plus excluding the `countersignatures` map means a countersignature never covers itself or a sibling's countersignature, and all parties sign byte-identical, mutually independent payload bytes.
+- **Payload.** The countersignature payload is `canonical_json(strip_signatures(attestation_without_countersignatures))`, where `canonical_json` is RFC 8785 JCS per §9.2.1 and `strip_signatures` is Concordia's own recursive removal rule: the fully assembled attestation with every `signature` field stripped recursively AND the top-level `countersignatures` map excluded. Stripping every `signature` (the same rule the co-signature lane uses) plus excluding the `countersignatures` map means a countersignature never covers itself or a sibling's countersignature, and all parties sign byte-identical, mutually independent payload bytes.
 - **Map.** `countersignatures` is a top-level object mapping each party `agent_id` to its base64url-padded Ed25519 signature over that payload. There is one entry per party that held a signing key at issuance; a party with no key gets no entry (an empty string is never used). A single-key issuance therefore yields a one-entry map, which is exactly as strong as a single-signed co-signed receipt for the present signer.
 - **Version-gated dual-accept (verifier MUST).** Before crediting a `concordia_attestation` >= `0.2.0` outcome as integrity-bound, a verifier MUST require a `countersignatures` map in which EVERY party listed in `parties[]` has a present signature that verifies under that party's resolved key; if any listed party's countersignature is absent, its key cannot be resolved, or its signature fails, the outcome MUST NOT be credited as bound (fail-closed). The "every listed party" rule is what makes the binding meaningful: a single holder is itself a party, so "at least one party signed" would let the holder rewrite `outcome.status` (e.g. flip `rejected` to `agreed`), drop the counterparty's countersignature, and re-sign with its OWN key alone, the precise C-H2 threat. Requiring every listed party closes that self-rebind. A genuine single-party attestation (only one entry in `parties[]`) binds with its one countersignature, exactly as strong as a single-signed co-signed receipt. An attestation below `0.2.0` (or with a malformed version) is read as legacy: its outcome is prover-asserted and MUST NOT be credited as outcome-bound, but its presence is NOT an error. This lets pre-C-H2 history remain verifiable for its party-level signals while never silently crediting an unbound outcome.
-- **What is bound.** The issuance snapshot: `concordia_attestation`, `attestation_id`, `session_id`, `timestamp`, `outcome`, `parties[*]` (signatures stripped), `meta`, `transcript_hash`, `references`, `validity_temporal`, `summary`, and `fulfillment` AS IT STOOD AT ISSUANCE (`null`).
+- **What is bound.** The issuance snapshot: `concordia_attestation`, `attestation_id`, `session_id`, `timestamp`, `outcome`, `parties[*]` (signatures stripped), `meta`, `transcript_hash`, `chain_head`, `message_count`, `references`, `validity_temporal`, `summary`, and `fulfillment` AS IT STOOD AT ISSUANCE (`null`).
 - **Fulfillment residual.** A `fulfillment` block populated AFTER issuance (for example via an A2CN dispute-resolved flow) is NOT covered by the issuance countersignature. A verifier MUST NOT treat post-issuance fulfillment as integrity-bound on the strength of the issuance countersignature; it is bound only when the fulfillment block's own `counterparty_attestation.signature` verifies under the confirming counterparty's key. Defining and wiring the producer side of that fulfillment confirmation signature is future work.
+
+##### 9.6.5b Receipt Set-Binding (v0.3.0)
+
+Per-message signatures authenticate links, not the set by themselves. A same-signer splice can remove one of that signer's earlier messages, re-link and re-sign the downstream messages, and still produce a transcript whose links validate. Starting in `concordia_attestation` `0.3.0`, a receipt therefore carries `chain_head` and `message_count` inside the countersigned issuance snapshot. `chain_head` pins the complete chain through the cascading `prev_hash` links, and `message_count` closes truncation by requiring the same number of transcript messages the receipt issuer saw. A chain presented without its closing receipt remains authenticated per link; it is not authenticated as the same transcript set a receipt countersigned.
+
+Version-gated verification is dual-accept. For `concordia_attestation` >= `0.3.0`, a verifier MUST require both fields, MUST reject malformed `chain_head` values or `message_count < 1`, and MUST reject a supplied transcript whose final §9.3 message hash or length differs from the receipt fields. An attestation below `0.3.0` (or with a malformed version) is legacy set-unbound: it may still be read for legacy signals, but it MUST NOT be credited as set-bound and its absence of these fields is NOT an error.
 
 #### 9.6.6 Attestation Privacy
 
@@ -1175,6 +1253,8 @@ Concordia defines a standard query format for agents to request reputation infor
 - Agents SHOULD query multiple reputation services and apply their own weighting; no single service should be a gatekeeper
 - Agents MAY also verify directly presented attestations from the counterparty itself (§9.6.6a), bypassing reputation services entirely
 
+Disclosure: the reference Python SDK ships an optional, off-by-default adapter (`concordia.verascore`) for Verascore, a reputation service authored by this specification's author. The adapter is not part of this specification. No conformance vector uses it. This specification defines no field, tool, or requirement in terms of that service. The provider-neutral reporting path is the reputation query and response shape in this section, together with the self-custodied attestation presentation path in §9.6.6a.
+
 #### 9.6.8 Relationship to Scoring Services
 
 The protocol's relationship to reputation scoring services mirrors the relationship between git and GitHub, or between TCP and the services built on it:
@@ -1187,7 +1267,7 @@ The protocol's relationship to reputation scoring services mirrors the relations
 | Specifies query/response format | Implements scoring algorithms |
 | Open, standardized, free | Proprietary, differentiated, monetizable |
 
-Multiple reputation services can coexist, each with different scoring models optimized for different contexts. A service optimized for high-value B2B procurement will weight different signals than one optimized for casual P2P goods transactions. This diversity is a feature, not a bug; it mirrors how the real world has multiple trust signals (credit scores, Yelp reviews, LinkedIn endorsements, personal references) for different contexts.
+Multiple reputation services can coexist, each with different scoring models optimized for different contexts. A service optimized for high-value B2B procurement will weight different signals than one optimized for casual P2P goods transactions. This diversity is deliberate; it mirrors how the real world keeps multiple trust signals (credit scores, Yelp reviews, LinkedIn endorsements, personal references) for different contexts.
 
 ---
 
@@ -1290,7 +1370,7 @@ Extensions are declared in the `negotiate.open` message and must be accepted by 
 | `concordia.ext.physical_goods` | Condition assessment, logistics, insurance |
 | `concordia.ext.multiparty` | Negotiations with 3+ parties (e.g., supply chain coordination) |
 
-*Note: Reputation attestations are a core protocol feature (§9.6), not an extension. The attestation format is part of every Concordia implementation. Reputation **scoring** is provided by external services that consume attestations.*
+*Note: Reputation attestations are defined in the core protocol (§9.6) rather than as an extension. The attestation format is part of every Concordia implementation. Reputation **scoring** is provided by external services that consume attestations.*
 
 ### 11.5 Reference Linkages
 
@@ -1321,7 +1401,7 @@ Envelope-level references appear on transport envelopes (e.g., the trust-evidenc
 
 Required keys on every envelope-level reference: `kind`, `urn`. The pair `verified_at` plus `verifier_did` plus `hash` is expected for verification-grade references but not enforced by the schema, since some reference kinds (e.g., `chain_state`, `mandate_proof`) may not have a verifier. Verifiers consuming envelope-level references SHOULD treat the reference as a verification event: the urn identifies the artifact, and the hash plus signer plus timestamp establishes that the verifier saw the artifact at that point in time.
 
-Envelope-level references are populated automatically where possible. Concordia's trust-evidence-format envelope auto-populates a `source_session` reference from the attestation's session_id and transcript_hash. Implementations MAY append additional references for cross-protocol linkages (A2A messages, AP2 mandates, x402 payment proofs, ERC-8004 reputation entries).
+Envelope-level references are populated automatically where possible. Concordia's trust-evidence-format envelope auto-populates a `source_session` reference from the attestation's session_id, with the reference `hash` taken from the attestation's `chain_head` (v0.3.0+), falling back to the legacy `transcript_hash` for older attestations. Implementations MAY append additional references for cross-protocol linkages (A2A messages, AP2 mandates, x402 payment proofs, ERC-8004 reputation entries).
 
 #### 11.5.3 Attestation-level references[]
 
@@ -1348,7 +1428,7 @@ The two surfaces serve different purposes and MUST NOT be conflated:
 
 Tooling MAY surface both layers in a unified view (e.g., a "related artifacts" panel that aggregates references from both surfaces). When tooling does this, it MUST preserve the source layer in any verification step: an envelope-level reference verified by hash plus signer plus timestamp is a different verification claim than an attestation-level reference verified by the issuer's signature on the attestation body. A unified UI MAY present both, but the verification logic MUST keep them distinct.
 
-This layering boundary is the canonical reconciliation of the v0.4.0 follow-up (c) layering question. v0.5 ratifies the shipped two-surface design rather than collapsing the two into a single canonical mapping, because the two surfaces resolve to genuinely different verification concerns.
+This layering boundary is the canonical reconciliation of the v0.4.0 follow-up (c) layering question. v0.5 ratifies the shipped two-surface design rather than collapsing the two into a single canonical mapping, because the two surfaces resolve to different verification claims: hash plus signer plus timestamp at the envelope, issuer signature over the attestation body at the attestation.
 
 #### 11.5.5 Relationship Vocabulary
 
@@ -1483,7 +1563,7 @@ This reference validates against the §11.5.6 schema fragment: `id`, `type`, and
 A v0.5-conforming implementation:
 
 - MUST validate `references[]` per the schema fragment in 11.5.6 at attestation generation and at attestation verification.
-- MUST enforce the 11.5.6 string length caps and whitespace bans (any whitespace character in `id`, `type`, `relationship`, `version`, `signed_at`, or `signer_did` is rejected; legitimate identifiers such as UUIDs, DIDs, URNs, ISO timestamps, and semver never contain whitespace) and an issuance-side cap of 32 entries per `references[]` array and 2048 canonical-JSON bytes per `extensions` map, failing closed (reject, never truncate or coerce). Implementations SHOULD structurally pre-check `extensions` (bounded nesting depth and node count) before canonical serialization so oversized objects are rejected without a full walk. The caps keep the opaque-string forward-compat clause from carrying free-text deal terms or unbounded payloads.
+- MUST enforce the 11.5.6 string length caps and whitespace bans (any whitespace character in `id`, `type`, `relationship`, `version`, `signed_at`, or `signer_did` is rejected; legitimate identifiers such as UUIDs, DIDs, URNs, ISO timestamps, and semver never contain whitespace) and an issuance-side cap of 32 entries per `references[]` array and 2048 canonical-JSON bytes per `extensions` map (RFC 8785 JCS UTF-8 bytes per §9.2.1, measured over the `extensions` map alone), failing closed (reject, never truncate or coerce). Implementations SHOULD structurally pre-check `extensions` (bounded nesting depth and node count) before canonical serialization so oversized objects are rejected without a full walk. The caps keep the opaque-string forward-compat clause from carrying free-text deal terms or unbounded payloads.
 - MUST emit clear error text for malformed entries that maps to the specific 11.5.x section that defines the violated invariant.
 - MUST preserve unknown relationship values as opaque strings rather than rejecting them, per 11.5.5 forward-compat.
 - MUST preserve unknown reference type values as opaque strings rather than rejecting them, per 11.5.3 forward-compat.
@@ -1560,7 +1640,7 @@ Concordia is an attempt to build negotiation infrastructure that is structurally
 
 We believe that as autonomous agents conduct more of the world's commerce, the protocols they use will shape the character of that commerce. Protocols are not neutral. They encode values. Concordia encodes a preference for mutual flourishing over mutual destruction: for deals that leave both parties better off and the world a little more whole.
 
-This is not naïve. It is mechanism design.
+Encoding that preference at the protocol layer is mechanism design: the same discipline that makes honest bidding the winning strategy in a well-built auction.
 
 ---
 

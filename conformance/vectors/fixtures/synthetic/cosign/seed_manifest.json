@@ -1,0 +1,17 @@
+{
+  "dids": {
+    "counterparty": "did:key:z7QEZ5vqOjuq7ye7EQsBVvPIa3B-Eq1JvWfUp3N65nGboJg",
+    "publisher": "did:key:z7QHvEiiiHMRMqs1rZcoVgZNUtK8MbkKICWn9iC6Vhcv3rw"
+  },
+  "seeds_PUBLIC_test_only_do_not_reuse": {
+    "cosign_counterparty": {
+      "public_key_b64url": "Geb6jo7qu8nuxELAVbzyGtwfhKtSb1n1KdzeuZxm6CY=",
+      "seed_ed25519_ascii": "conformance_cosign_counter_00001"
+    },
+    "cosign_publisher": {
+      "public_key_b64url": "7xIoohzETKrNa2XKFYGTVLSvDG5CiAlp_YgulYXL968=",
+      "seed_ed25519_ascii": "conformance_cosign_publisher_001"
+    }
+  },
+  "warning": "PUBLIC deterministic conformance test seeds; do not reuse"
+}

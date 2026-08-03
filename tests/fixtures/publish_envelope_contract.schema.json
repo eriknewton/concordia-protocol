@@ -1,0 +1,73 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "concordia/receipt#publish-envelope",
+  "title": "Concordia receipt publish envelope contract",
+  "description": "Committed schema for a Concordia receipt publish envelope that consumers may accept. The envelope has {signature, publicKey, type, data}; agent identity is derived from the verified publicKey, not from a caller-supplied agentId. The publisher-envelope signature is raw Ed25519 over JSON.stringify(data), base64url-encoded. data.did is bound to publicKey. data.receipt must carry session_id, counterparty_did, outcome, and concordia (protocol version); parties[] carries the counterparty co-signature.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "publicKey", "signature", "data"],
+  "properties": {
+    "type": {
+      "const": "concordia-receipt",
+      "description": "Envelope type for Concordia receipt publish bodies."
+    },
+    "publicKey": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "description": "base64url raw 32-byte Ed25519 public key; consumers require length 32 after decode."
+    },
+    "signature": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "description": "base64url raw 64-byte Ed25519 signature over JSON.stringify(data); consumers require length 64 after decode."
+    },
+    "data": {
+      "type": "object",
+      "required": ["did", "receipt"],
+      "properties": {
+        "did": {
+          "type": "string",
+          "pattern": "^did:key:",
+          "description": "Publisher did:key; rejected if it does not match publicKey."
+        },
+        "receipt": {
+          "type": "object",
+          "required": ["concordia", "session_id", "counterparty_did", "outcome", "parties"],
+          "properties": {
+            "concordia": {
+              "type": "string",
+              "description": "Protocol version required to normalize the Concordia receipt."
+            },
+            "session_id": { "type": "string", "minLength": 1 },
+            "counterparty_did": { "type": "string", "minLength": 1 },
+            "outcome": {
+              "type": "object",
+              "required": ["status"],
+              "properties": {
+                "status": {
+                  "enum": ["agreed", "rejected", "expired", "withdrawn", "fulfilled_with_mediation"],
+                  "description": "Accepted Concordia receipt outcome values."
+                }
+              }
+            },
+            "parties": {
+              "type": "array",
+              "minItems": 2,
+              "items": {
+                "type": "object",
+                "required": ["agent_id"],
+                "properties": {
+                  "agent_id": { "type": "string" },
+                  "signature": {
+                    "type": "string",
+                    "description": "base64url Ed25519 counterparty co-signature; present only on the counterparty_did party."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

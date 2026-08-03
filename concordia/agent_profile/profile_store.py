@@ -142,12 +142,12 @@ class AgentProfileStore:
     def search(
         self,
         categories: list[str] | None = None,
-        min_verascore: int | None = None,
+        min_reputation_composite: int | None = None,
         min_sovereignty_tier: str | None = None,
         offer_types_required: list[str] | None = None,
         jurisdictions: list[str] | None = None,
         concordia_preferred: bool | None = None,
-        sort_by: str = "verascore_composite",
+        sort_by: str = "reputation_composite",
         limit: int = 20,
     ) -> list[tuple[AgentCapabilityProfile, float]]:
         """Search for agents matching filters.
@@ -157,13 +157,13 @@ class AgentProfileStore:
         Args:
             categories: Overlap match — agent must have at least one category
                 matching one of these
-            min_verascore: Minimum composite score (0-100)
+            min_reputation_composite: Minimum composite reputation score (0-100)
             min_sovereignty_tier: Minimum tier (unverified, self-attested,
                 verified-degraded, verified-sovereign)
             offer_types_required: Agent must support all of these offer types
             jurisdictions: Overlap match — agent must operate in at least one
             concordia_preferred: If True, only Concordia-native agents
-            sort_by: Sort field (verascore_composite, agreement_rate,
+            sort_by: Sort field (reputation_composite, agreement_rate,
                 sessions_completed)
             limit: Maximum results to return
 
@@ -182,7 +182,7 @@ class AgentProfileStore:
             if not self._matches_filters(
                 profile,
                 categories=categories,
-                min_verascore=min_verascore,
+                min_reputation_composite=min_reputation_composite,
                 min_sovereignty_tier=min_sovereignty_tier,
                 offer_types_required=offer_types_required,
                 jurisdictions=jurisdictions,
@@ -227,7 +227,7 @@ class AgentProfileStore:
         self,
         profile: AgentCapabilityProfile,
         categories: list[str] | None = None,
-        min_verascore: int | None = None,
+        min_reputation_composite: int | None = None,
         min_sovereignty_tier: str | None = None,
         offer_types_required: list[str] | None = None,
         jurisdictions: list[str] | None = None,
@@ -243,10 +243,10 @@ class AgentProfileStore:
             ):
                 return False
 
-        # Verascore minimum
-        if min_verascore is not None:
-            score = profile.trust_signals.verascore_composite or 0
-            if score < min_verascore:
+        # Reputation composite minimum
+        if min_reputation_composite is not None:
+            score = self._reputation_composite(profile)
+            if score < min_reputation_composite:
                 return False
 
         # Sovereignty tier minimum
@@ -317,14 +317,31 @@ class AgentProfileStore:
 
     def _sort_key(self, profile: AgentCapabilityProfile, sort_by: str) -> float | int:
         """Extract the sort key from a profile."""
-        if sort_by == "verascore_composite":
-            return profile.trust_signals.verascore_composite or 0
+        if sort_by == "reputation_composite":
+            return self._reputation_composite(profile)
         elif sort_by == "agreement_rate":
             return profile.negotiation_profile.agreement_rate
         elif sort_by == "sessions_completed":
             return profile.trust_signals.concordia_sessions_completed
         else:
             return 0
+
+    def _reputation_composite(self, profile: AgentCapabilityProfile) -> int:
+        """Return the strongest known neutral composite, falling back to legacy."""
+        return self._reputation_composite_value(profile) or 0
+
+    def _reputation_composite_value(
+        self, profile: AgentCapabilityProfile
+    ) -> int | None:
+        """Return a known reputation composite, or None if absent."""
+        scores = [
+            assertion.composite
+            for assertion in profile.trust_signals.reputation or []
+            if assertion.composite is not None
+        ]
+        if scores:
+            return max(scores)
+        return profile.trust_signals.verascore_composite
 
     def _category_compatible(self, profile_cat: str, filter_cat: str) -> bool:
         """Check if profile category is compatible with filter category (prefix match).
@@ -365,19 +382,19 @@ class AgentProfileStore:
     def get_stats(self) -> dict[str, Any]:
         """Get summary statistics about the store."""
         profiles = self.list_all()
-        avg_verascore = 0.0
+        avg_reputation = 0.0
         if profiles:
-            scores = [
-                p.trust_signals.verascore_composite
-                for p in profiles
-                if p.trust_signals.verascore_composite is not None
-            ]
+            scores: list[int] = []
+            for profile in profiles:
+                score = self._reputation_composite_value(profile)
+                if score is not None:
+                    scores.append(score)
             if scores:
-                avg_verascore = sum(scores) / len(scores)
+                avg_reputation = sum(scores) / len(scores)
 
         return {
             "total_profiles": len(profiles),
-            "average_verascore": round(avg_verascore, 1),
+            "average_reputation_composite": round(avg_reputation, 1),
             "total_categories": len(set(
                 cat for p in profiles for cat in p.capabilities.categories
             )),

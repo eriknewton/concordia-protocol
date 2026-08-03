@@ -49,7 +49,7 @@ def _build_help_text() -> str:
         "  Adoption (5)                       propose protocol, respond, start degraded, message, efficiency report\n"
         "  Sanctuary Bridge (4)               configure, commit, attest, status\n"
         "  Receipt Bundles (3)                create, verify, list\n"
-        "  Verascore Reporting (1)            report completed negotiations\n"
+        "  Reputation Reporting (1)           report completed negotiations to explicit providers\n"
         "  Mandate Verification (1)           verify signed mandate credentials\n"
         "  Approval Receipt Verification (1)  verify signed approval receipts\n"
         "\n"

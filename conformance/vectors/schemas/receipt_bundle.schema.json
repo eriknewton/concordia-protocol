@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://concordia-protocol.dev/schemas/receipt_bundle.schema.json",
+  "title": "Concordia Receipt Bundle",
+  "description": "A portable, self-contained collection of session receipts that proves an agent's negotiation history. Any counterparty can verify it offline.",
+  "type": "object",
+  "required": [
+    "concordia_receipt_bundle",
+    "bundle_id",
+    "agent_id",
+    "created_at",
+    "attestations",
+    "summary",
+    "agent_signature"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "concordia_receipt_bundle": {
+      "type": "string",
+      "description": "Schema version identifier",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "bundle_id": {
+      "type": "string",
+      "description": "Unique bundle identifier",
+      "pattern": "^bundle_[a-f0-9]+$"
+    },
+    "agent_id": {
+      "type": "string",
+      "description": "The agent who created this bundle",
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "string",
+      "description": "ISO 8601 UTC timestamp of bundle creation",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "attestations": {
+      "type": "array",
+      "description": "List of full attestation dicts included in this bundle",
+      "items": {
+        "type": "object",
+        "required": ["concordia_attestation", "attestation_id", "session_id", "timestamp", "outcome", "parties"],
+        "additionalProperties": true
+      }
+    },
+    "summary": {
+      "type": "object",
+      "description": "Precomputed aggregate stats — verifiers recompute and compare",
+      "required": [
+        "total_negotiations",
+        "agreements",
+        "agreement_rate",
+        "avg_concession_magnitude",
+        "fulfillment_rate",
+        "unique_counterparties",
+        "categories",
+        "earliest",
+        "latest",
+        "reasoning_rate"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "total_negotiations": { "type": "integer", "minimum": 0 },
+        "agreements": { "type": "integer", "minimum": 0 },
+        "agreement_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "avg_concession_magnitude": { "type": "number", "minimum": 0 },
+        "fulfillment_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "unique_counterparties": { "type": "integer", "minimum": 0 },
+        "categories": { "type": "array", "items": { "type": "string" } },
+        "earliest": { "type": "string" },
+        "latest": { "type": "string" },
+        "reasoning_rate": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "agent_signature": {
+      "type": "string",
+      "description": "Ed25519 signature over the bundle (URL-safe base64)",
+      "minLength": 1
+    }
+  }
+}

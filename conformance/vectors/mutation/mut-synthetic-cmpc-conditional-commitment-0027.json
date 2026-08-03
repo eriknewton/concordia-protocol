@@ -1,0 +1,36 @@
+{
+  "context": {
+    "canonical_sha256": "sha256:07485c2e3cccba6cfc7b7c6ca337b20d0e100e8ef3774322b6b6af27270b00d5",
+    "public_key_b64url": "OOIB4EeR_3P_Cds5bQ6sxUdl5iL4Tp6PoM_wStS1OkQ="
+  },
+  "expected": "reject",
+  "expected_reason_class": "digest",
+  "id": "mut-synthetic-cmpc-conditional-commitment-0027",
+  "input": {
+    "algorithm": "EdDSA",
+    "chain_session_id": "urn:concordia:chain-session:beer-game-2026-05-17-001",
+    "commitment_id": "urn:concordia:commitment:retailer-beer-order-2026-05-17-001",
+    "commitment_terms": {
+      "delivery_date": "2026-05-24",
+      "quantity": 100,
+      "role": "retailer",
+      "sku": "beer-case-12oz",
+      "unit_price": {
+        "amount": "5.00",
+        "currency": "USD"
+      }
+    },
+    "committer_did": "did:web:retailer.example",
+    "expires_at": "2026-05-17T18:00:00Z",
+    "issued_at": "2026-05-17T09:05:00A",
+    "mandate_proof_id": "urn:concordia:mandate-proof:retailer-buy-2026-05-17-001",
+    "predicate_reference": "urn:concordia:predicate:beer-game-closure-2026-05-17-001",
+    "signature": "FLVOz4uzH4CSaM9RY3-16-0J_O70KUuHEVIZO9X3ddHWa4UClDV9___QOOJT62aRo7mSjnmq3QSoRXirpjKpBA=="
+  },
+  "notes": "",
+  "record_type": "conditional_commitment",
+  "schema_version": "concordia-conformance-vector/v1-draft",
+  "source_fixture": "synthetic/cmpc_bilateral",
+  "title": "cmpc_conditional_commitment: value issued_at",
+  "verification_profile": "conditional-commitment-v1"
+}

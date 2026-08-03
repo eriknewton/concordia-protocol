@@ -116,7 +116,7 @@ Concordia exposes 59 MCP tools: 55 from `concordia.mcp_server` plus 4 agent-prof
 | Tool | Purpose |
 |------|---------|
 | `concordia_session_public_view` | Read-only public view of a session: non-sensitive metadata and transcript summary, no auth required |
-| `concordia_session_receipt_envelope` | Export a concluded session as an interoperable trust-evidence-format v1.0.0 signed envelope |
+| `concordia_session_receipt_envelope` | Export a concluded session as an interoperable trust-evidence-format v1.0.0 signed envelope with explicit provider DID and key ID |
 | `concordia_competence_proof` | Generate a privacy-preserving competence proof: signature over prover-asserted aggregate stats plus a Merkle commitment to your attestation IDs, without revealing deal terms |
 | `concordia_verify_competence_proof` | Verify a counterparty's competence proof: confirms the signature, that revealed attestations are members of the signed set, and their party signatures. Aggregate stats are always prover-asserted, not independently verified (binding outcomes and enforcing prover party-membership is future work) |
 
@@ -131,7 +131,7 @@ Concordia exposes 59 MCP tools: 55 from `concordia.mcp_server` plus 4 agent-prof
 ### Verification & Reporting (3 tools)
 | Tool | Purpose |
 |------|---------|
-| `concordia_verascore_report` | Report a completed negotiation to Verascore for reputation scoring (behavioral metadata only, never raw terms) |
+| `concordia_reputation_report` | Report a completed negotiation to an explicit reputation provider (behavioral metadata only, never raw terms) |
 | `concordia_verify_mandate` | Verify a signed mandate credential (issuer signature, three-mode temporal validity window) |
 | `concordia_verify_approval_receipt` | Verify a signed ApprovalReceipt (schema, Ed25519 signature, expiry, canonical offer-hash binding) |
 
