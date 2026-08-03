@@ -16,24 +16,22 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytest
-
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from concordia.receipt_bundle import (
-    BundleSummary,
     BundleStore,
+    BundleSummary,
     ReceiptBundle,
-    verify_bundle,
-    screen_bundle,
-    check_freshness,
     _compute_summary,
+    check_freshness,
+    screen_bundle,
+    verify_bundle,
 )
 from concordia.signing import KeyPair, sign_message
-
 
 # ---------------------------------------------------------------------------
 # Test helpers
@@ -679,7 +677,15 @@ class TestMcpToolIntegration:
 
     def _setup_negotiation(self):
         """Run a complete negotiation and return context for bundle testing."""
-        from concordia.mcp_server import handle_tool_call, _store, _auth, _attestation_store, _key_registry, _bundle_store, _registry
+        from concordia.mcp_server import (
+            _attestation_store,
+            _auth,
+            _bundle_store,
+            _key_registry,
+            _registry,
+            _store,
+            handle_tool_call,
+        )
 
         # Reset state
         _store._sessions.clear()
@@ -772,8 +778,8 @@ class TestMcpToolIntegration:
         })
         assert result["bundle_count"] == 1
 
-    def test_verify_bundle_via_tool(self):
-        """Verify a receipt bundle through the MCP tool."""
+    def test_verify_bundle_via_tool_accepts_create_response(self):
+        """Verify accepts the exact response from the create-bundle tool."""
         from concordia.mcp_server import handle_tool_call
         ctx = self._setup_negotiation()
 
@@ -782,20 +788,10 @@ class TestMcpToolIntegration:
             "auth_token": ctx["agent_token"],
         })
         assert "error" not in bundle_result, f"Error: {bundle_result}"
-
-        # Build a clean bundle dict for verification (remove non-schema fields)
-        bundle_dict = {
-            "concordia_receipt_bundle": bundle_result["concordia_receipt_bundle"],
-            "bundle_id": bundle_result["bundle_id"],
-            "agent_id": bundle_result["agent_id"],
-            "created_at": bundle_result["created_at"],
-            "attestations": bundle_result["attestations"],
-            "summary": bundle_result["summary"],
-            "agent_signature": bundle_result["agent_signature"],
-        }
+        assert "message" in bundle_result
 
         verify_result = handle_tool_call("concordia_verify_receipt_bundle", {
-            "bundle": bundle_dict,
+            "bundle": bundle_result,
         })
         assert verify_result["valid"], f"Errors: {verify_result.get('errors')}"
         # The tool surfaces the trustworthy counterparty count. In this in-process
@@ -808,7 +804,7 @@ class TestMcpToolIntegration:
     def test_create_bundle_auth_required(self):
         """Bundle creation requires valid auth token."""
         from concordia.mcp_server import handle_tool_call
-        ctx = self._setup_negotiation()
+        self._setup_negotiation()
 
         result = handle_tool_call("concordia_create_receipt_bundle", {
             "agent_id": "seller_01",
@@ -819,7 +815,7 @@ class TestMcpToolIntegration:
     def test_list_bundles_auth_required(self):
         """Bundle listing requires valid auth token."""
         from concordia.mcp_server import handle_tool_call
-        ctx = self._setup_negotiation()
+        self._setup_negotiation()
 
         result = handle_tool_call("concordia_list_receipt_bundles", {
             "agent_id": "seller_01",
@@ -847,7 +843,7 @@ def _mint_bound_attestation(
     status: str = "agreed",
     category: str = "electronics.cameras",
 ) -> tuple[dict[str, Any], str, str]:
-    """Mint a real, countersigned (>=0.2.0) attestation over a real session and
+    """Mint a real, countersigned (>=0.3.0) attestation over a real session and
     register both parties' keys in the shared resolver registry. Returns the
     attestation plus the two agent ids."""
     seller = Agent(seller_id)
@@ -879,12 +875,12 @@ class TestOutcomeBindingBundle:
     """C-H2: verify_bundle gates outcome trust on the issuance countersignature."""
 
     def test_outcome_tamper_breaks_bundle_validity(self):
-        """Rewrite one attestation's outcome.status in a 0.2.0 bundle; the
+        """Rewrite one attestation's outcome.status in a 0.3.0 bundle; the
         bundle MUST become invalid with a countersignature error. (Pre-C-H2
         this passed as summary-accurate because both sides derived from the
         forged outcome.)"""
         att, seller_id, _ = _mint_bound_attestation("seller_bind1", "buyer_bind1")
-        assert att["concordia_attestation"] == "0.2.0"
+        assert att["concordia_attestation"] == "0.3.0"
         kp = _KEY_REGISTRY[seller_id]
         bundle = ReceiptBundle.create(seller_id, [att], kp)
         bd = bundle.to_dict()
@@ -910,7 +906,7 @@ class TestOutcomeBindingBundle:
         )
 
     def test_missing_countersignature_fail_closed(self):
-        """A 0.2.0 attestation with countersignatures removed -> invalid bundle
+        """A 0.3.0 attestation with countersignatures removed -> invalid bundle
         (no silent downgrade to prover-asserted)."""
         att, seller_id, _ = _mint_bound_attestation("seller_bind2", "buyer_bind2")
         del att["countersignatures"]
@@ -921,6 +917,46 @@ class TestOutcomeBindingBundle:
         assert any("countersignature" in e for e in result.errors), (
             f"expected a fail-closed countersignature error, got: {result.errors}"
         )
+
+    def test_missing_chain_head_fail_closed_for_v03(self):
+        """A 0.3.0 attestation cannot be set-bound without chain_head."""
+        att, seller_id, buyer_id = _mint_bound_attestation(
+            "seller_set_bind1", "buyer_set_bind1"
+        )
+        del att["chain_head"]
+        att["countersignatures"] = {
+            seller_id: countersign_attestation(att, _KEY_REGISTRY[seller_id]),
+            buyer_id: countersign_attestation(att, _KEY_REGISTRY[buyer_id]),
+        }
+        kp = _KEY_REGISTRY[seller_id]
+        bundle = ReceiptBundle.create(seller_id, [att], kp)
+
+        result = verify_bundle(bundle.to_dict(), _test_resolver)
+
+        assert result.valid is False
+        assert result.set_bound_count == 0
+        assert att["attestation_id"] in result.set_unbound_attestations
+        assert any("requires chain_head" in e for e in result.errors)
+
+    def test_malformed_message_count_fail_closed_for_v03(self):
+        """A 0.3.0 attestation cannot be set-bound with message_count < 1."""
+        att, seller_id, buyer_id = _mint_bound_attestation(
+            "seller_set_bind2", "buyer_set_bind2"
+        )
+        att["message_count"] = 0
+        att["countersignatures"] = {
+            seller_id: countersign_attestation(att, _KEY_REGISTRY[seller_id]),
+            buyer_id: countersign_attestation(att, _KEY_REGISTRY[buyer_id]),
+        }
+        kp = _KEY_REGISTRY[seller_id]
+        bundle = ReceiptBundle.create(seller_id, [att], kp)
+
+        result = verify_bundle(bundle.to_dict(), _test_resolver)
+
+        assert result.valid is False
+        assert result.set_bound_count == 0
+        assert att["attestation_id"] in result.set_unbound_attestations
+        assert any("requires message_count" in e for e in result.errors)
 
     def test_self_rebind_single_party_countersig_fail_closed(self):
         """OUTCOME-TAMPER forge (HIGH): a holder takes a GENUINE rejected session,
@@ -952,16 +988,15 @@ class TestOutcomeBindingBundle:
         ), f"expected a missing-party-countersignature error, got: {result.errors}"
 
     def test_mixed_version_no_silent_crediting(self):
-        """A bundle mixing one 0.1.0 (legacy, unbound) and one valid 0.2.0:
-        the 0.1.0 is reported outcome_unbound (NOT an error); the 0.2.0 is
-        counted as outcome_bound."""
+        """A bundle mixing one 0.1.0 (legacy, unbound) and one valid 0.3.0:
+        the 0.1.0 is reported unbound (NOT an error); the 0.3.0 is counted."""
         # Legacy 0.1.0 attestation, hand-built via the existing helper.
         legacy = _make_attestation(
             agent_a="mixagent", agent_b="legacy_cp", status="agreed"
         )
         assert legacy["concordia_attestation"] == "0.1.0"
 
-        # A real 0.2.0 attestation where the SAME agent is a party.
+        # A real 0.3.0 attestation where the SAME agent is a party.
         bound, _, _ = _mint_bound_attestation("mixagent", "buyer_mix", status="agreed")
         # _mint registers mixagent's NEW key; re-point legacy's self-sig to it
         # so the bundle agent key is consistent across both attestations.
@@ -975,10 +1010,13 @@ class TestOutcomeBindingBundle:
         result = verify_bundle(bundle.to_dict(), _test_resolver)
 
         assert result.valid is True, f"Errors: {result.errors}"
-        # The legacy 0.1.0 is reported as outcome-unbound, the 0.2.0 bound.
+        # The legacy 0.1.0 is reported as unbound, the 0.3.0 bound.
         assert legacy["attestation_id"] in result.outcome_unbound_attestations
         assert bound["attestation_id"] not in result.outcome_unbound_attestations
         assert result.outcome_bound_count == 1
+        assert legacy["attestation_id"] in result.set_unbound_attestations
+        assert bound["attestation_id"] not in result.set_unbound_attestations
+        assert result.set_bound_count == 1
 
     def test_unbound_legacy_outcome_emits_warning(self):
         """FORGE finding 1: a legacy (<0.2.0) attestation whose outcome feeds
@@ -999,6 +1037,8 @@ class TestOutcomeBindingBundle:
         assert result.valid is True, f"Errors: {result.errors}"
         assert legacy["attestation_id"] in result.outcome_unbound_attestations
         assert result.outcome_bound_count == 0
+        assert result.set_bound_count == 0
+        assert legacy["attestation_id"] in result.set_unbound_attestations
         # The summary still reflects the prover-asserted outcome (agreement),
         # so the verifier must warn that it is NOT cryptographically bound.
         assert result.summary_accurate is True
@@ -1010,13 +1050,14 @@ class TestOutcomeBindingBundle:
         """The reverse of finding 1: a bundle of ONLY bound (>=0.2.0)
         attestations must NOT emit the unbound-outcome warning."""
         att, seller_id, _ = _mint_bound_attestation("warn_bound_s", "warn_bound_b")
-        assert att["concordia_attestation"] == "0.2.0"
+        assert att["concordia_attestation"] == "0.3.0"
         kp = _KEY_REGISTRY[seller_id]
         bundle = ReceiptBundle.create(seller_id, [att], kp)
         result = verify_bundle(bundle.to_dict(), _test_resolver)
 
         assert result.valid is True, f"Errors: {result.errors}"
         assert result.outcome_bound_count == 1
+        assert result.set_bound_count == 1
         assert not any(
             "not cryptographically bound" in w.lower() for w in result.warnings
         ), f"unexpected unbound-outcome warning on a fully bound bundle: {result.warnings}"

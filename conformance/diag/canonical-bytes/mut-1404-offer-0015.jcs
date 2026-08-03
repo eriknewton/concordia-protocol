@@ -1,0 +1,1 @@
+{"__mut_probe__":"MUT","action":"procurement.purchase_order","currency":"USD","line_items":[{"quantity":3,"sku":"SRV-RACK-42U"}],"total":"150000.00","vendor":"did:web:vendor.example"}

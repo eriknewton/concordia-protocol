@@ -1,0 +1,65 @@
+{
+  "context": {
+    "canonical_sha256": "sha256:47ec4298e210d3aa18832b30f8cc087b84bfebf1f664eced187918de085bf508",
+    "forbid_raw_deal_terms": true,
+    "join_keys": {
+      "action_ref": "urn:a2a:action:2026-05-10-deliver-88f01c",
+      "charge_ref": "urn:a2a:charge:2026-05-10-tx-88f01c"
+    },
+    "public_key_b64url": "AzGbtvmQkxYKS78wqrHh_egYUl-lEtTGr_J4EZLotUU=",
+    "seed_ed25519_ascii": "a2a-1920-settlement-agent-seed01",
+    "signature_b64url": "sLNIOmz8qhx3scaDXgxc9G_G2jemSZUI1ckdYhbNV7s6RJ0NSydt9J7nn1A8I_AbrUBL1yBWQXMKu-PX7MZgAA=="
+  },
+  "expected": "accept",
+  "expected_reason_class": null,
+  "id": "pos-1920-fulfillment-attestation",
+  "input": {
+    "action_ref": "urn:a2a:action:2026-05-10-deliver-88f01c",
+    "agreement_attestation_id": "urn:concordia:attestation:agree-88f01c",
+    "attestation_type": "FulfillmentAttestation",
+    "charge_ref": "urn:a2a:charge:2026-05-10-tx-88f01c",
+    "fulfillment": {
+      "settled_at": "2026-05-10T15:03:55Z",
+      "status": "fulfilled_clean"
+    },
+    "id": "urn:concordia:fulfillment:a2a-1920-88f01c",
+    "issued_at": "2026-05-10T15:04:00Z",
+    "meta": {
+      "behavioral_signals": {
+        "counterparty_confirmed": true,
+        "delivered_within_window": true,
+        "disputes_raised": 0,
+        "on_time": true,
+        "settlement_attempts": 1
+      },
+      "mediator_invoked": false
+    },
+    "references": [
+      {
+        "id": "urn:concordia:attestation:agree-88f01c",
+        "relationship": "fulfills",
+        "type": "attestation"
+      },
+      {
+        "id": "urn:a2a:charge:2026-05-10-tx-88f01c",
+        "relationship": "references",
+        "type": "receipt"
+      },
+      {
+        "id": "sha256:ddec8a0f3be077ad1ce362cb81d79c720cd4f7ff6b09531c1896af5516e99eb5",
+        "relationship": "references",
+        "type": "delivery_evidence"
+      }
+    ],
+    "signature": {
+      "alg": "Ed25519",
+      "value": "sLNIOmz8qhx3scaDXgxc9G_G2jemSZUI1ckdYhbNV7s6RJ0NSydt9J7nn1A8I_AbrUBL1yBWQXMKu-PX7MZgAA=="
+    }
+  },
+  "notes": "",
+  "record_type": "fulfillment_attestation",
+  "schema_version": "concordia-conformance-vector/v1-draft",
+  "source_fixture": "a2a-1920-fulfillment-sample",
+  "title": "A2A 1920 FulfillmentAttestation validates, verifies, and binds join keys",
+  "verification_profile": "fulfillment-attestation-v1"
+}

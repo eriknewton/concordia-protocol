@@ -1,8 +1,17 @@
 {
   "name": "@concordia-protocol/sdk",
-  "version": "0.0.1-alpha.10",
+  "version": "0.0.1-alpha.12",
   "description": "TypeScript reference implementation of the Concordia Protocol -- signed agreement primitives for autonomous agents",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eriknewton/concordia-protocol.git",
+    "directory": "js-sdk"
+  },
+  "homepage": "https://github.com/eriknewton/concordia-protocol/tree/main/js-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/eriknewton/concordia-protocol/issues"
+  },
   "author": "Erik Newton <eriknewton@gmail.com>",
   "type": "module",
   "main": "./dist/index.cjs",

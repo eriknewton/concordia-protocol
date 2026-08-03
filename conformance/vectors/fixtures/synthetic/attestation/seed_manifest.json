@@ -1,0 +1,17 @@
+{
+  "agent_public_keys_b64url": {
+    "did:concordia:agent:synthetic-initiator": "99wNp8HVsqJcFfjN0ycm2d-9pPDlxilgTPMeWF0tRew=",
+    "did:concordia:agent:synthetic-responder": "vy0hFV5wyWltVNKvQzK2GVh71mHdEmrKFnjNTGz8aNs="
+  },
+  "seeds_PUBLIC_test_only_do_not_reuse": {
+    "attestation_initiator": {
+      "public_key_b64url": "99wNp8HVsqJcFfjN0ycm2d-9pPDlxilgTPMeWF0tRew=",
+      "seed_ed25519_ascii": "conformance_attest_initiator_001"
+    },
+    "attestation_responder": {
+      "public_key_b64url": "vy0hFV5wyWltVNKvQzK2GVh71mHdEmrKFnjNTGz8aNs=",
+      "seed_ed25519_ascii": "conformance_attest_responder_001"
+    }
+  },
+  "warning": "PUBLIC deterministic conformance test seeds; do not reuse"
+}

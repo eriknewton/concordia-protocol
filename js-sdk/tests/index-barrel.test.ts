@@ -10,6 +10,7 @@ import {
   generateKeyPair,
   countersignAttestation,
   verifyAttestationCountersignature,
+  verifyReceiptSetBinding,
   canonicalCosignBytes,
   stripSignatures,
 } from '../src/index.js';
@@ -18,6 +19,7 @@ describe('package barrel (../src/index.js) public surface', () => {
   it('re-exports the C-H2 countersign primitives and canonical cosign helpers', () => {
     expect(typeof countersignAttestation).toBe('function');
     expect(typeof verifyAttestationCountersignature).toBe('function');
+    expect(typeof verifyReceiptSetBinding).toBe('function');
     expect(typeof canonicalCosignBytes).toBe('function');
     expect(typeof stripSignatures).toBe('function');
   });

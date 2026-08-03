@@ -1,0 +1,58 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "activated_at": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T",
+      "type": "string"
+    },
+    "activation_proof_id": {
+      "pattern": "^urn:concordia:activation-proof:",
+      "type": "string"
+    },
+    "algorithm": {
+      "enum": [
+        "EdDSA"
+      ],
+      "type": "string"
+    },
+    "chain_session_id": {
+      "pattern": "^urn:concordia:chain-session:",
+      "type": "string"
+    },
+    "closure_predicate_id": {
+      "pattern": "^urn:concordia:predicate:",
+      "type": "string"
+    },
+    "commitment_ids": {
+      "items": {
+        "pattern": "^urn:concordia:commitment:",
+        "type": "string"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "issuer_did": {
+      "pattern": "^did:",
+      "type": "string"
+    },
+    "predicate_evaluation": {
+      "type": "object"
+    },
+    "signature": {
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "activation_proof_id",
+    "chain_session_id",
+    "closure_predicate_id",
+    "predicate_evaluation",
+    "commitment_ids",
+    "activated_at",
+    "issuer_did",
+    "signature",
+    "algorithm"
+  ],
+  "type": "object"
+}

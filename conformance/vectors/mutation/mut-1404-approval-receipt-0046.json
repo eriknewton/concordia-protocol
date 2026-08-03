@@ -1,0 +1,49 @@
+{
+  "context": {
+    "now": "2026-05-10T14:25:00Z",
+    "offer": {
+      "action": "procurement.purchase_order",
+      "currency": "USD",
+      "line_items": [
+        {
+          "quantity": 3,
+          "sku": "SRV-RACK-42U"
+        }
+      ],
+      "total": "150000.00",
+      "vendor": "did:web:vendor.example"
+    },
+    "public_keys_b64url": {
+      "issuer": "szdsCKnt0TmHvv7kNquTvNClkueL9mUp_pQAhARSFt0="
+    }
+  },
+  "expected": "reject",
+  "expected_reason_class": "schema",
+  "id": "mut-1404-approval-receipt-0046",
+  "input": {
+    "approver": {
+      "identity": "did:web:acme.example#procurement-lead",
+      "role": "procurement_authority"
+    },
+    "artifact_type": "ApprovalReceipt",
+    "expires_at": "2126-05-10T14:22:08Z",
+    "id": "urn:concordia:receipt:a2a-1404-B",
+    "issued_at": "2026-05-10T14:22:08Z",
+    "scope": {
+      "amount": "150000.00 USD",
+      "decision": "approve",
+      "offer_hash": "sha256:2cf9882e0ceee36278318a376117cc03da510c6994c3679a57eb4777dc8e06cb",
+      "threshold_crossed": "100000.00 USD"
+    },
+    "signature": {
+      "alg": "Ed25519",
+      "value": "eaUsArEAwOedzOAI24B3P-dFPMXv2tJuWxYJp_QzXK2X0mVBnYXP4JAT8yPEk-tK5gkvj1a0a6LUWgTgWYYeAQ=="
+    }
+  },
+  "notes": "",
+  "record_type": "approval_receipt",
+  "schema_version": "concordia-conformance-vector/v1-draft",
+  "source_fixture": "a2a-1404-receipt-revocation-vector",
+  "title": "approval_receipt: drop references",
+  "verification_profile": "receipt-v1"
+}

@@ -1,0 +1,23 @@
+{
+  "closure_signature_profile": "closure-predicate-v1 does not verify /signature; the deterministic fixture value is present only because the schema requires a non-empty field",
+  "dids": {
+    "authority": "did:web:beer-game-authority.example",
+    "retailer": "did:web:retailer.example",
+    "wholesaler": "did:web:wholesaler.example"
+  },
+  "seeds_PUBLIC_test_only_do_not_reuse": {
+    "cmpc_authority": {
+      "public_key_b64url": "18upzjeEQyfpM0tUq9BJkQGu4hloig0bgYnlkCt6tbg=",
+      "seed_ed25519_ascii": "conformance_cmpc_authority_00000"
+    },
+    "cmpc_retailer": {
+      "public_key_b64url": "OOIB4EeR_3P_Cds5bQ6sxUdl5iL4Tp6PoM_wStS1OkQ=",
+      "seed_ed25519_ascii": "conformance_cmpc_retailer_000001"
+    },
+    "cmpc_wholesaler": {
+      "public_key_b64url": "xZI4iLk0x71--JKVVEk2TVDY39ZNVFMD34zuDv2sQxY=",
+      "seed_ed25519_ascii": "conformance_cmpc_wholesaler_0000"
+    }
+  },
+  "warning": "PUBLIC deterministic conformance test seeds; do not reuse"
+}

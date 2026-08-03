@@ -1,0 +1,73 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "affected_commitment_ids": {
+      "items": {
+        "pattern": "^urn:concordia:commitment:",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "algorithm": {
+      "enum": [
+        "EdDSA"
+      ],
+      "type": "string"
+    },
+    "chain_session_id": {
+      "pattern": "^urn:concordia:chain-session:",
+      "type": "string"
+    },
+    "counterparty_acknowledgment": {
+      "anyOf": [
+        {
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "dissolution_details": {
+      "type": "object"
+    },
+    "dissolution_reason": {
+      "enum": [
+        "predicate_failed",
+        "timeout",
+        "explicit_withdrawal",
+        "mandate_violation"
+      ],
+      "type": "string"
+    },
+    "issued_at": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T",
+      "type": "string"
+    },
+    "issuer_did": {
+      "pattern": "^did:",
+      "type": "string"
+    },
+    "signature": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "unwind_record_id": {
+      "pattern": "^urn:concordia:unwind:",
+      "type": "string"
+    }
+  },
+  "required": [
+    "unwind_record_id",
+    "chain_session_id",
+    "dissolution_reason",
+    "dissolution_details",
+    "affected_commitment_ids",
+    "issuer_did",
+    "issued_at",
+    "counterparty_acknowledgment",
+    "signature",
+    "algorithm"
+  ],
+  "type": "object"
+}

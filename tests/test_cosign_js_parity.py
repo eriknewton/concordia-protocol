@@ -2,10 +2,10 @@
 
 Shells to ``node scripts/js-parity/verify_cosign_fixture.mjs`` and asserts the
 Concordia-produced fixture (tests/fixtures/concordia_cosigned_receipt.json)
-verifies under a faithful copy of Verascore's verifier running on the SAME V8
-runtime Verascore uses. This catches any Python-vs-V8 canonicalization
-divergence (string escaping, number formatting, key sort) that the in-Python
-parity port in test_cosign_producer.py cannot.
+verifies under Concordia's JavaScript JCS verifier running on V8. This catches
+any Python-vs-V8 canonicalization divergence (string escaping, number
+formatting, key sort) that the in-Python parity port in test_cosign_producer.py
+cannot.
 
 Mirrors the shell-to-node pattern in test_js_predicate_parity.py: skip cleanly
 when ``node`` is not on PATH (so local Python-only environments stay green); CI
@@ -40,4 +40,7 @@ def test_cosign_fixture_verifies_under_v8() -> None:
         f"verifier exited {result.returncode}\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
-    assert "PARITY: cosign fixture verifies under V8/Node" in result.stdout, result.stdout
+    assert (
+        "PARITY: cosign fixture verifies under V8/Node JCS verifier"
+        in result.stdout
+    ), result.stdout

@@ -17,7 +17,10 @@ from typing import Any, Callable
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from .attestation import verify_attestation_countersignature
+from .attestation import (
+    evaluate_receipt_set_binding,
+    verify_attestation_countersignature,
+)
 from .signing import KeyPair, canonical_json, sign_message, verify_signature
 
 # C-H2 outcome-binding (Option B): attestations at or above this version MUST
@@ -367,11 +370,11 @@ class BundleVerificationResult:
     snapshot by a dual-accept countersignature map (>=0.2.0 with EVERY listed
     party's countersignature verifying -- a single holder cannot self-rebind).
     ``outcome_unbound_attestations`` names the attestation_ids whose outcome is
-    only prover-asserted -- legacy <0.2.0 records that predate C-H2. A consumer
-    (Verascore, competence-proof aggregation) must credit ONLY bound outcomes;
-    unbound ones are reported, not errored. A >=0.2.0 attestation with a
-    missing/invalid countersignature is a hard ERROR (the bundle is invalid),
-    so it never appears as merely "unbound."
+    only prover-asserted -- legacy <0.2.0 records that predate C-H2. Reputation
+    consumers, including Verascore and competence-proof aggregation, must credit
+    ONLY bound outcomes; unbound ones are reported, not errored. A >=0.2.0
+    attestation with a missing/invalid countersignature is a hard ERROR (the
+    bundle is invalid), so it never appears as merely "unbound."
 
     ``summary_accurate`` is a SELF-CONSISTENCY check (claimed summary == summary
     recomputed over ALL attestations), retained for backward compatibility. It
@@ -393,6 +396,8 @@ class BundleVerificationResult:
     unverified_counterparties: list[str] = field(default_factory=list)
     outcome_bound_count: int = 0
     outcome_unbound_attestations: list[str] = field(default_factory=list)
+    set_bound_count: int = 0
+    set_unbound_attestations: list[str] = field(default_factory=list)
 
 
 def verify_bundle(
@@ -537,6 +542,8 @@ def verify_bundle(
     # False), so the summary derived from its forged outcome cannot be trusted.
     outcome_bound_count = 0
     outcome_unbound_attestations: list[str] = []
+    set_bound_count = 0
+    set_unbound_attestations: list[str] = []
     for i, att in enumerate(attestations):
         att_id = att.get("attestation_id", "")
 
@@ -555,6 +562,15 @@ def verify_bundle(
         else:  # state == "error"
             errors.append(f"Attestation {i}: {reason}")
             outcome_unbound_attestations.append(att_id)
+
+        set_state, set_errors = evaluate_receipt_set_binding(att)
+        if set_state == "bound":
+            set_bound_count += 1
+        elif set_state == "legacy_set_unbound":
+            set_unbound_attestations.append(att_id)
+        else:
+            errors.extend(f"Attestation {i}: {err}" for err in set_errors)
+            set_unbound_attestations.append(att_id)
 
         # C-H2 fulfillment residual: fulfillment added post-issuance is NOT
         # covered by the issuance countersignature. Credit it as integrity-bound
@@ -671,6 +687,8 @@ def verify_bundle(
         unverified_counterparties=sorted(unverified_cp),
         outcome_bound_count=outcome_bound_count,
         outcome_unbound_attestations=outcome_unbound_attestations,
+        set_bound_count=set_bound_count,
+        set_unbound_attestations=set_unbound_attestations,
     )
 
 

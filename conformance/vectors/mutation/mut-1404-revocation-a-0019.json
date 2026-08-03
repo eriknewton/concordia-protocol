@@ -1,0 +1,38 @@
+{
+  "context": {
+    "public_keys_b64url": {
+      "issuer": "KDtj8MqsbbinL-FtuaCFscndcPH_-2pomq_qX6Fd5KU="
+    }
+  },
+  "expected": "reject",
+  "expected_reason_class": "signature",
+  "id": "mut-1404-revocation-a-0019",
+  "input": {
+    "cascade_depth": 3,
+    "effective_at": "2026-05-10T14:30:00Z",
+    "issued_at": "2026-05-10T14:30:00Z",
+    "issuer_did": "did:web:acme.example#delegating-principal",
+    "reason": "principal_revoked_delegation",
+    "references": [
+      {
+        "id": "urn:concordia:receipt:a2a-1404-A",
+        "relationship": "revokes",
+        "type": "approval_receipt"
+      }
+    ],
+    "revocation_id": "urn:concordia:revocation:a2a-1404-B",
+    "revocation_scope": "cascade_to_dependents",
+    "revoked_artifact_id": "urn:concordia:receipt:a2a-1404-A",
+    "revoked_artifact_type": "approval_receipt",
+    "signature": {
+      "alg": "EdDSA",
+      "value": "rKJi2wzyZK6ZmSzuIrrAAzVCJgepw1IuhRI7-OpaS9TmPvWqP2cCxOiPhWeXxSK7lqWAwTAwV3gdQXugiXgdDw=="
+    }
+  },
+  "notes": "",
+  "record_type": "revocation_record",
+  "schema_version": "concordia-conformance-vector/v1-draft",
+  "source_fixture": "a2a-1404-receipt-revocation-vector",
+  "title": "revocation_A: value revocation_id",
+  "verification_profile": "revocation-v1"
+}

@@ -47,3 +47,7 @@ launch/
 review/
 *_BUILD_SUMMARY.md
 *_SUMMARY.md
+
+# Internal build-thread artifacts (never committed; see spawn-prompt convention)
+/probes/
+/BUILD_REPORT_*.md

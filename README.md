@@ -6,6 +6,24 @@
 
 When your agent needs to negotiate or make a deal, Concordia gives it a structured way to propose, counter, commit, and build a track record.
 
+## Verify our claims in about a minute
+
+```bash
+python3 -m venv /tmp/concordia-verify-py
+/tmp/concordia-verify-py/bin/pip install rfc8785 pynacl jsonschema
+/tmp/concordia-verify-py/bin/python conformance/reference-runner/runner.py conformance/vectors | tail -1
+```
+
+```bash
+(cd conformance/reference-runner-js && npm ci)
+node conformance/reference-runner-js/runner.mjs conformance/vectors | tail -1
+```
+
+Expected summary for both:
+`[SUMMARY] positive=48 mutation=1484 canary=5 ok=1537 fail=0`
+
+Contract: [`conformance/RUNNER_CONTRACT.md`](conformance/RUNNER_CONTRACT.md). Profiles: [`conformance/PROFILES.md`](conformance/PROFILES.md). Registry: [`conformance/IMPLEMENTATIONS.md`](conformance/IMPLEMENTATIONS.md).
+
 ---
 
 ## The Problem
@@ -217,6 +235,26 @@ att = generate_attestation(session, {"seller": seller.key_pair, "buyer": buyer.k
 print(att["outcome"]["status"])  # "agreed"
 ```
 
+## Verify what you produced, without us
+
+When you share a signed object, include verification material with it:
+
+```python
+from concordia import KeyPair, public_key_from_b64url, sign_message, verify_signature
+
+producer = KeyPair.generate()
+record = {"type": "example.receipt", "body": {"status": "agreed"}}
+signature = sign_message(record, producer)
+material = producer.verification_material()
+
+verifier_key = public_key_from_b64url(material["public_key_b64url"])
+assert verify_signature(record, signature, verifier_key)
+tampered = {**record, "body": {"status": "rejected"}}
+assert not verify_signature(tampered, signature, verifier_key)
+```
+
+For a no-SDK path, see [`conformance/RUNNER_CONTRACT.md`](conformance/RUNNER_CONTRACT.md). It defines the canonical bytes and verifier behavior for conformance runners.
+
 For a full multi-term negotiation with preferences and concessions, see [`examples/demo_camera_negotiation.py`](examples/demo_camera_negotiation.py).
 
 ---
@@ -277,7 +315,7 @@ Concordia defines:
 - **Predicate primitive**: signed v0.6 authority, policy, eligibility, and bounds evaluations
 
 **The tool set:**
-- 59 MCP tools across negotiation, session receipts, competence proofs, reputation, discovery, agent profiles, want registry, relay, adoption, Sanctuary bridge, receipt bundles, Verascore reporting, mandate verification, and approval receipt verification
+- 59 MCP tools across negotiation, session receipts, competence proofs, reputation, discovery, agent profiles, want registry, relay, adoption, Sanctuary bridge, receipt bundles, provider-parameterized reputation reporting, mandate verification, and approval receipt verification
 - Tool registration: 55 in `concordia.mcp_server` plus 4 agent-profile discovery tools registered via `register_discovery_tools()`, for 59 active runtime tools
 - Predicate CLI verification with `python -m concordia predicate verify <file>`
 - Cryptographic signing and verification
@@ -288,6 +326,7 @@ Concordia defines:
 **Documentation:**
 - [Documentation Index](docs/index.md): curated guide to all docs, examples, and runbooks
 - [Full Specification](SPEC.md): complete protocol specification
+- [Interop vectors](docs/interop/): runnable worked vectors a second implementer can reproduce offline. Each ships the fixture bytes, a deterministic generator, and a `verify.py` that checks the vector against those bytes with no network and no regeneration. They demonstrate that a record's identity is `SHA-256` over its RFC 8785 JCS canonical form, so it is checkable with an independent JCS library, with no Concordia code and no call to the issuer.
 - [v0.6 Predicate Primitive](docs/v0.6_predicate_primitive.md): signed predicate artifact, verifier, resolver, and CTEF mapping
 - [Python SDK](concordia/): reference implementation
 - [Examples](examples/): negotiation scripts and use cases
@@ -357,6 +396,27 @@ If you are an AI agent reading this README, the [specification](SPEC.md) is writ
 pytest -v
 ```
 
+### Checking conformance without trusting us
+
+The vectors in [`docs/interop/`](docs/interop/) run offline against the retained
+fixture bytes. <!-- claim:offline-no-issuer-callback -->No network, no regeneration, no issuer callback:<!-- /claim -->
+
+```bash
+for d in docs/interop/*/; do
+  [ -f "$d/verify.py" ] && (cd "$d" && python verify.py) || true
+done
+```
+
+The `a2a-1404` vector recomputes its decision identifiers from the fixture bytes
+rather than reading them, and CI cross-checks those identifiers against an
+independent RFC 8785 reference library rather than Concordia's own
+canonicalizer. The vectors cover the artifact identity and verification path,
+not the whole protocol: the conformance levels themselves are defined in
+[SPEC §12](SPEC.md#12-conformance-requirements), and most of the specification
+has no vector yet. <!-- claim:verification-without-our-code -->What the vectors do establish is that the parts they cover
+are checkable without our code and without asking us.<!-- /claim --> There is no membership, no
+listing, and no permission from anyone.
+
 ---
 
 ## Contributing
@@ -381,7 +441,7 @@ Apache License 2.0. Use it, build on it, extend it.
 
 ## Why "Concordia"?
 
-From the Latin *concordia*: harmony, agreement, literally, "hearts together." The Roman goddess of understanding between parties. Because negotiation, done well, is not a contest. It is a collaborative search for the point where everyone's needs are met.
+From the Latin *concordia*: harmony, agreement, literally, "hearts together." The Roman goddess of understanding between parties. The name fits a protocol for collaborative negotiation: parties search for terms each side can accept.
 
 ---
 

@@ -1,0 +1,14 @@
+Use Concordia as a Python SDK and MCP server for structured multi-attribute negotiation between autonomous agents.
+Install: pip install "concordia-protocol[server]"
+Launch MCP server: concordia-mcp-server
+Create first signed record with concordia.signing.KeyPair, concordia.signing.sign_message, and concordia.signing.verify_signature.
+Create negotiated sessions with concordia.Agent and the offer classes in concordia.offers.
+Verify with clean-room Python command 1: python3 -m venv /tmp/concordia-verify-py && /tmp/concordia-verify-py/bin/pip install rfc8785 pynacl jsonschema
+Verify with clean-room Python command 2: /tmp/concordia-verify-py/bin/python conformance/reference-runner/runner.py conformance/vectors
+Verify with JavaScript setup: (cd conformance/reference-runner-js && npm ci)
+Verify with JavaScript command: node conformance/reference-runner-js/runner.mjs conformance/vectors
+Read conformance contract: conformance/RUNNER_CONTRACT.md
+Read conformance vectors: conformance/vectors/
+Read implementations registry: conformance/IMPLEMENTATIONS.md
+Open implementation reports with: .github/ISSUE_TEMPLATE/implementation-report.yml
+Pass an explicit provider to reputation reporting tools; no provider is implied.
