@@ -39,6 +39,12 @@ updates:
       js-sdk-dependencies:
         patterns:
           - "*"
+    ignore:
+      # TypeScript 7 major is HELD (same standing hold as sanctuary-framework):
+      # typescript-eslint's peer range excludes TS 7, so a grouped bump that
+      # carries it fails `npm ci` before any test runs (PR #131, 2026-08-02).
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   # --- GitHub Actions ---
   - package-ecosystem: "github-actions"
