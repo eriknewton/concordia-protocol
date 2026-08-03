@@ -754,8 +754,7 @@ export function verifyPredicate(
   const resolver = options.resolver;
 
   let working: Predicate | Record<string, unknown> = predicate as
-    | Predicate
-    | Record<string, unknown>;
+    Predicate | Record<string, unknown>;
 
   if (typeof predicate === 'string') {
     if (!resolver) {
