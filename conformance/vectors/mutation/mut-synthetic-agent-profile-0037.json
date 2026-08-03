@@ -1,0 +1,106 @@
+{
+  "context": {
+    "canonical_fields": [
+      "type",
+      "version",
+      "agent_id",
+      "name",
+      "description",
+      "capabilities",
+      "negotiation_profile",
+      "trust_signals",
+      "endpoints",
+      "location",
+      "ttl",
+      "updated_at"
+    ],
+    "canonical_sha256": "sha256:055433317a5b2e4a880771d0d5eb5dff99f31e557d71d5edc8a683c194b8d0e8",
+    "public_key_b64url": "PASQYhr4Hh-3awFj71Bd3wK3UuySmpXzU1SRrHiXIaE="
+  },
+  "expected": "reject",
+  "expected_reason_class": "digest",
+  "id": "mut-synthetic-agent-profile-0037",
+  "input": {
+    "agent_id": "did:concordia:agent:profile-longtail",
+    "capabilities": {
+      "categories": [
+        "software.tools",
+        "data.analysis"
+      ],
+      "currencies": [
+        "USD",
+        "EUR"
+      ],
+      "languages": [
+        "en",
+        "es"
+      ],
+      "max_concurrent_sessions": 4,
+      "offer_types": [
+        "basic",
+        "conditional"
+      ],
+      "resolution_methods": [
+        "split_difference",
+        "tradeoff_optimization"
+      ]
+    },
+    "description": "Deterministic agent profile fixture for conformance.",
+    "endpoints": {
+      "a2a_card": "https://agent.example/.well-known/agent-card.json",
+      "mcp_manifest": "https://agent.example/.well-known/mcp.json",
+      "negotiate": "https://agent.example/.well-known/concordia"
+    },
+    "location": {
+      "jurisdictions": [
+        "US-CA",
+        "EU"
+      ],
+      "regions": [
+        "us-west1",
+        "eu-west1"
+      ]
+    },
+    "name": "Conformance Profile Agent",
+    "negotiation_profile": {
+      "agreement_rate": 0.75,
+      "avg_rounds_to_agreement": 3.5,
+      "concession_pattern": "graduated",
+      "style": "collaborative"
+    },
+    "signature": "CzXmd7q3Svr-4dFB-v1Lj4h8nBINv88ynVNf-YNH2dXVhDZ4M8s-vZsKBO_dnHtLVGN9zcPKtYGB-CzfFP5wDg==",
+    "trust_signals": {
+      "attestation_count": 2,
+      "concordia_preferred": true,
+      "concordia_sessions_completed": 8,
+      "reputation": [
+        {
+          "composite": 91,
+          "provider": "reputation.example",
+          "subject_did": "did:web:reputation.example:agent-longtail",
+          "tier": "verified-sovereign"
+        }
+      ],
+      "sovereignty": {
+        "L1": "Full",
+        "L2": "Full",
+        "L3": "Full",
+        "L4": "Full"
+      },
+      "verascore_composite": 91,
+      "verascore_did": "did:web:reputation.example:agent-longtail",
+      "verascore_tier": "verified-sovereign"
+    },
+    "ttl": 7200,
+    "type": "concordia.agent_profile",
+    "updated_at": "2026-05-10T14:25:00Z",
+    "verified": true,
+    "version": "1.0"
+  },
+  "notes": "",
+  "record_type": "agent_profile",
+  "schema_version": "concordia-conformance-vector/v1-draft",
+  "source_fixture": "synthetic/longtail",
+  "title": "agent_profile: drop negotiation_profile.avg_session_duration_seconds",
+  "verification_profile": "agent-profile-v1"
+}

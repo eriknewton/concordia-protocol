@@ -1,0 +1,32 @@
+{
+  "context": {
+    "canonical_sha256": "sha256:fa4aa5185b2154dddd3a9acd76dc21d6a0ba0c88a3dbec876c714adc54da720e"
+  },
+  "expected": "reject",
+  "expected_reason_class": "schema",
+  "id": "mut-synthetic-cmpc-chain-session-0022",
+  "input": {
+    "activated_at": null,
+    "activation_deadline": "2026-05-17T14:00:00Z",
+    "activation_proof_id": null,
+    "chain_session_id": "urn:concordia:chain-session:beer-game-2026-05-17-001",
+    "closure_predicate_ref": "urn:concordia:predicate:beer-game-closure-2026-05-17-001",
+    "commitments": [
+      "urn:concordia:commitment:retailer-beer-order-2026-05-17-001",
+      "urn:concordia:commitment:wholesaler-beer-supply-2026-05-17-001"
+    ],
+    "created_at": "2026-05-17T09:00:00Z",
+    "dissolved_at": null,
+    "participants": [
+      "did:web:retailer.example",
+      "did:web:wholesaler.example"
+    ],
+    "state": "OPEN"
+  },
+  "notes": "",
+  "record_type": "chain_session",
+  "schema_version": "concordia-conformance-vector/v1-draft",
+  "source_fixture": "synthetic/cmpc_bilateral",
+  "title": "cmpc_chain_session: drop unwind_record_id",
+  "verification_profile": "chain-session-v1"
+}

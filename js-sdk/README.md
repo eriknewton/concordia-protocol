@@ -24,8 +24,55 @@ TypeScript types, so both `import` and `require` work.
 
 ## Quickstart
 
-Generate a key pair, sign an offer, and verify it. The signature is taken over
-the canonical JSON of the object, so any tampering is detected.
+Generate a key pair, sign an authority predicate, and verify it. The built-in
+`urn:concordia:predicate-type:authority_gate:v1` profile is registered when the
+module loads, so no profile registration call is needed.
+
+```ts
+import { generateKeyPair, signPredicate, verifyPredicate, verify } from '@concordia-protocol/sdk';
+
+const keyPair = generateKeyPair();
+
+const signed = signPredicate(
+  {
+    predicate_id: 'urn:concordia:predicate:quickstart_authority',
+    type: 'urn:concordia:predicate-type:authority_gate:v1',
+    authority: 'urn:concordia:authority:procurement',
+    issuer: 'did:web:issuer.example#key-1',
+    subject: 'did:web:buyer.example#agent',
+    condition: { result: 'satisfied' },
+    issued_at: '2026-05-14T00:00:00Z',
+    expires_at: '2126-06-14T00:00:00Z',
+    references: [],
+    algorithm: 'EdDSA',
+    status: 'active',
+    signature: '',
+  },
+  keyPair,
+);
+
+const semanticResult = verifyPredicate(signed);
+console.log(semanticResult.valid); // true
+
+const publicKey = keyPair.publicKeyBytes();
+const signatureOnly = verify(signed.toDict(), signed.signature, publicKey);
+console.log(signatureOnly); // true
+```
+
+`verifyPredicate` checks the predicate schema, built-in type profile, signature,
+lifecycle, subject binding, and references. The low-level `verify()` call checks
+only the Ed25519 signature over canonical JSON using the public key. It is the
+portable path for a third party that has an artifact, its signature, and the
+issuer public key; it needs no process-local predicate profile registration.
+
+Predicate ids must start with `urn:concordia:predicate:`. Built-in predicate
+types use full URNs such as `urn:concordia:predicate-type:authority_gate:v1`;
+bare shorthand such as `authority_gate` is not accepted.
+
+## Low-Level Object Signing
+
+You can also sign and verify any Concordia object directly. The signature is
+taken over the canonical JSON of the object, so any tampering is detected.
 
 ```ts
 import { generateKeyPair, sign, verify } from '@concordia-protocol/sdk';

@@ -4,7 +4,10 @@
 A third party runs this against the retained JSON bytes in this directory
 (no network, no regeneration required) to confirm:
 
-  1. decision_id recomputes from bytes: SHA-256(JCS(decision_object)).
+  1. Every digest vector.json publishes recomputes from the shipped bytes:
+     decision_id = SHA-256(JCS(decision_object)), capability_digest from
+     capability.json, receipt_offer_hash / request_digest from offer.json, and
+     deny_decision_id at check 6. No recorded value is read as a source.
   2. The receipt's native fields (scope.decision, scope.offer_hash) equal the
      decision object's `decision` and `request_digest` -- the honest mapping
      check that makes the wrapper checkable, not merely asserted.
@@ -29,6 +32,7 @@ Run:  python verify.py
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import sys
 from datetime import datetime, timezone
@@ -136,7 +140,13 @@ def main() -> int:
     # available, prove the decision_id is the RFC 8785 STANDARD hash, not a
     # Concordia-specific one. Skipped (not failed) if rfc8785 is absent, so a
     # third party with only `concordia` installed still gets a clean run.
-    try:
+    # ABSENCE is the only condition that skips. `find_spec` answers "is it
+    # installed" without executing the module, so an ImportError raised from
+    # INSIDE a broken rfc8785 propagates and fails the run rather than being
+    # swallowed as a skip.
+    if importlib.util.find_spec("rfc8785") is None:
+        print("[SKIP] rfc8785 not installed; standard-JCS cross-check skipped")
+    else:
         import rfc8785  # type: ignore
 
         ref = "sha256:" + hashlib.sha256(rfc8785.dumps(decision_object)).hexdigest()
@@ -145,8 +155,28 @@ def main() -> int:
             ref == expected,
             ref,
         )
-    except ImportError:
-        print("[SKIP] rfc8785 not installed; standard-JCS cross-check skipped")
+
+    # 1c. Every OTHER digest vector.json publishes also recomputes from the
+    # shipped bytes. A recorded digest that no verifier derives is an answer
+    # key, not a test: a regressed canonicalizer would emit a different value
+    # and nothing would notice. `offer_hash` is additionally recomputed inside
+    # the shipped verifier at check 3, but stating it here makes the property
+    # visible to a reader rather than implicit.
+    capability = load("capability.json")
+    recomputed_capability = "sha256:" + sha256_jcs(capability)
+    check(
+        "capability_digest RECOMPUTES from capability.json",
+        recomputed_capability == vector["hashes"]["capability_digest"],
+        recomputed_capability,
+    )
+    recomputed_offer = "sha256:" + sha256_jcs(offer)
+    check(
+        "receipt_offer_hash / request_digest RECOMPUTE from offer.json",
+        recomputed_offer == vector["hashes"]["receipt_offer_hash"]
+        and recomputed_offer == vector["hashes"]["request_digest"]
+        and recomputed_offer == receipt["scope"]["offer_hash"],
+        recomputed_offer,
+    )
 
     # 2. Honest native-vs-wrapped mapping is checkable.
     ext = receipt["references"][0]["extensions"]
@@ -258,7 +288,9 @@ def main() -> int:
 
     # 6b. Independent rfc8785 cross-check: it is the RFC 8785 STANDARD hash, so
     # it cross-runs byte-for-byte with any conformant decision-log family.
-    try:
+    if importlib.util.find_spec("rfc8785") is None:
+        print("[SKIP] rfc8785 not installed; deny standard-JCS cross-check skipped")
+    else:
         import rfc8785  # type: ignore
 
         deny_ref = "sha256:" + hashlib.sha256(
@@ -269,8 +301,6 @@ def main() -> int:
             deny_ref == deny_expected,
             deny_ref,
         )
-    except ImportError:
-        print("[SKIP] rfc8785 not installed; deny standard-JCS cross-check skipped")
 
     # 6c. The deny is a terminal deny that COMMITS to the ancestor read: the
     # exact {element_digest, status, source_digest, coordinate} is in the

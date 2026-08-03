@@ -1,0 +1,95 @@
+{
+  "context": {
+    "public_keys_b64url": {
+      "did:concordia:agent:chain-initiator": "PvpsKWi2oPBbZv2mzdOf6tKmumdTrbV9rDyGb8m3NBA=",
+      "did:concordia:agent:chain-responder": "xgl2oSl1XU6m7Otw_eHFkZuaTfw0F7R9ZfNFV6xGhDU="
+    }
+  },
+  "expected": "accept",
+  "expected_reason_class": null,
+  "id": "mut-synthetic-message-chain-position-0002",
+  "input": {
+    "messages": [
+      {
+        "body": {
+          "terms": {
+            "deliverable": "chain-position-audit",
+            "rounds": 4
+          }
+        },
+        "concordia": "0.1.0",
+        "from": {
+          "agent_id": "did:concordia:agent:chain-initiator"
+        },
+        "id": "msg_conformance_chain_position_0001",
+        "prev_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "reasoning": "Open deterministic chain-position session.",
+        "session_id": "sess_conformance_chain_position_0001",
+        "signature": "wHL1R08j2ndBqwT5FxfBLCEU8TYZR2CY1RivRwmJXob_Vu0E_X4zxHJOCnKCuKK2CRU-E089Q4Dw0wxL22ooAQ==",
+        "timestamp": "2026-05-10T15:00:00Z",
+        "to": [
+          {
+            "agent_id": "did:concordia:agent:chain-responder"
+          }
+        ],
+        "type": "negotiate.open"
+      },
+      {
+        "body": {
+          "offer": {
+            "delivery_days": 2,
+            "quality": "high"
+          }
+        },
+        "concordia": "0.1.0",
+        "from": {
+          "agent_id": "did:concordia:agent:chain-initiator"
+        },
+        "id": "msg_conformance_chain_position_0003",
+        "in_reply_to": "msg_conformance_chain_position_0002",
+        "prev_hash": "sha256:c473be7bfa0cf936107906236edb26d91cbf44dce85985ec6216663f74a26656",
+        "reasoning": "Offer after session acceptance.",
+        "session_id": "sess_conformance_chain_position_0001",
+        "signature": "9Glob8mwnscIYXqpdi8oDYa36ne1OYjfuFS6-N-5c6P-aQ_w6v9C-eLbsyYDTrKWAgxuB_93FStrFJumjjEOBQ==",
+        "timestamp": "2026-05-10T15:02:00Z",
+        "to": [
+          {
+            "agent_id": "did:concordia:agent:chain-responder"
+          }
+        ],
+        "type": "negotiate.offer"
+      },
+      {
+        "body": {
+          "offer": {
+            "delivery_days": 1,
+            "quality": "standard"
+          }
+        },
+        "concordia": "0.1.0",
+        "from": {
+          "agent_id": "did:concordia:agent:chain-responder"
+        },
+        "id": "msg_conformance_chain_position_0004",
+        "in_reply_to": "msg_conformance_chain_position_0003",
+        "prev_hash": "sha256:a74417af27b19b037d6789bc0e52deee96c98a4a98f269c57cb8a9262ad73b25",
+        "reasoning": "Counter-offer preserves the fourth chain position.",
+        "session_id": "sess_conformance_chain_position_0001",
+        "signature": "c-O9dtBK8GeZxKvPD29iV3ttPtHjQKrL5bvtvqiDTeZTz8Y2WCdGLh7q20LCmxrE-mBFm6vCZyB74w3gwoS_Bw==",
+        "timestamp": "2026-05-10T15:03:00Z",
+        "to": [
+          {
+            "agent_id": "did:concordia:agent:chain-initiator"
+          }
+        ],
+        "type": "negotiate.counter_offer"
+      }
+    ]
+  },
+  "notes": "tolerated-accept: per-message signatures authenticate links, not the complete message set",
+  "record_type": "message_chain",
+  "schema_version": "concordia-conformance-vector/v1-draft",
+  "source_fixture": "synthetic/longtail/message_chain_position.json",
+  "title": "message_chain_position: deletion splice with resigned downstream links",
+  "verification_profile": "message-chain-v1"
+}

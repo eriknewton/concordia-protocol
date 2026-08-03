@@ -187,6 +187,18 @@
       "description": "SHA-256 hash of the complete negotiation transcript. Allows independent verification."
     },
 
+    "chain_head": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "v0.3.0 receipt set-binding: SHA-256 message hash (§9.3) of the final transcript message, including its signature. With prev_hash links, this pins the chain head inside the countersigned issuance snapshot. Required by verifiers for concordia_attestation >= 0.3.0."
+    },
+
+    "message_count": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "v0.3.0 receipt set-binding: number of messages in the transcript. Closes truncation when paired with chain_head. Required by verifiers for concordia_attestation >= 0.3.0."
+    },
+
     "summary": {
       "type": "string",
       "maxLength": 1024,

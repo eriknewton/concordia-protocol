@@ -1,0 +1,198 @@
+{
+  "$id": "urn:concordia:schema:mandate:v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A signed credential authorizing an agent to act within constraints.",
+  "properties": {
+    "algorithm": {
+      "description": "Signing algorithm",
+      "enum": [
+        "EdDSA",
+        "ES256"
+      ],
+      "type": "string"
+    },
+    "constraints": {
+      "description": "JSON Schema defining what the mandate authorizes",
+      "minProperties": 1,
+      "type": "object"
+    },
+    "delegation_chain": {
+      "items": {
+        "properties": {
+          "algorithm": {
+            "enum": [
+              "EdDSA",
+              "ES256"
+            ],
+            "type": "string"
+          },
+          "delegate": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "delegated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "delegator": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "scope_restriction": {
+            "type": "object"
+          },
+          "signature": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "delegator",
+          "delegate",
+          "delegated_at",
+          "signature",
+          "algorithm"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "issued_at": {
+      "description": "ISO 8601 issuance timestamp",
+      "format": "date-time",
+      "type": "string"
+    },
+    "issuer": {
+      "description": "DID or agent_id of the mandate issuer",
+      "minLength": 1,
+      "type": "string"
+    },
+    "mandate_id": {
+      "description": "Unique mandate identifier in URN format",
+      "pattern": "^urn:concordia:mandate:",
+      "type": "string"
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "revocation_endpoint": {
+      "format": "uri",
+      "type": "string"
+    },
+    "revoked_at": {
+      "description": "ISO 8601 revocation timestamp surfaced by a resolver",
+      "format": "date-time",
+      "type": "string"
+    },
+    "signature": {
+      "description": "Base64url signature over all fields except signature",
+      "type": "string"
+    },
+    "status": {
+      "default": "active",
+      "enum": [
+        "active",
+        "expired",
+        "revoked",
+        "suspended"
+      ],
+      "type": "string"
+    },
+    "subject": {
+      "description": "DID or agent_id of the authorized agent",
+      "minLength": 1,
+      "type": "string"
+    },
+    "validity": {
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "windowed"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "not_before",
+              "not_after"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "sequence"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "sequence_key"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "state_bound"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "state_condition"
+            ]
+          }
+        }
+      ],
+      "properties": {
+        "max_uses": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "mode": {
+          "enum": [
+            "sequence",
+            "windowed",
+            "state_bound"
+          ],
+          "type": "string"
+        },
+        "not_after": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "not_before": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "sequence_key": {
+          "type": "string"
+        },
+        "state_condition": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "mandate_id",
+    "issuer",
+    "subject",
+    "issued_at",
+    "validity",
+    "constraints",
+    "algorithm"
+  ],
+  "title": "Concordia Mandate Credential",
+  "type": "object"
+}

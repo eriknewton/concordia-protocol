@@ -2,11 +2,17 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { Session, type Message, type PublicKeyResolver } from '../src/session/index.js';
+import {
+  computeHash,
+  Session,
+  type Message,
+  type PublicKeyResolver,
+} from '../src/session/index.js';
 import {
   generateAttestation,
   countersignAttestation,
   verifyAttestationCountersignature,
+  verifyReceiptSetBinding,
   generateReceiptSummary,
   validateValidityTemporal,
   isValidNow,
@@ -236,8 +242,13 @@ describe('generateAttestation parity (Python-generated over real sessions)', () 
       // Whole-object byte parity: header fields, outcome (with conditional
       // terms_count + insertion order), per-party behavioral records and their
       // real Python Ed25519 signatures, transcript_hash, meta, normalized
-      // references, validity_temporal, and the 4-line summary.
+      // chain_head, message_count, references, validity_temporal, and the
+      // 4-line summary.
       expect(attestation).toEqual(c.expected);
+      expect(attestation.chain_head).toBe(
+        computeHash(session.transcript[session.transcript.length - 1]!),
+      );
+      expect(attestation.message_count).toBe(session.transcript.length);
     });
 
     it(`per-party signatures verify under the signer's key for "${c.name}"`, () => {
@@ -313,6 +324,70 @@ describe('countersignature parity + verification (C-H2 Option B)', () => {
       }
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// v0.3.0 receipt set-binding: chain_head + message_count are inside the
+// countersigned issuance snapshot. The helper mirrors Python's verifier.
+// ---------------------------------------------------------------------------
+describe('receipt set-binding verifier (v0.3.0)', () => {
+  for (const c of fixtures.cases) {
+    it(`accepts the generated transcript set for "${c.name}"`, () => {
+      const session = rebuildSession(c.session);
+      const attestation = generateAttestation(session, keyPairsFromCase(c), optionsFromCase(c));
+
+      expect(verifyReceiptSetBinding(attestation, session.transcript)).toEqual({
+        state: 'bound',
+        errors: [],
+      });
+    });
+
+    it(`rejects a truncated transcript for "${c.name}"`, () => {
+      const session = rebuildSession(c.session);
+      const attestation = generateAttestation(session, keyPairsFromCase(c), optionsFromCase(c));
+      const truncated = session.transcript.slice(0, -1);
+      const result = verifyReceiptSetBinding(attestation, truncated);
+
+      expect(result.state).toBe('error');
+      expect(
+        result.errors.some(
+          (e) =>
+            e.includes('message_count mismatch') ||
+            e.includes('transcript must contain at least one message'),
+        ),
+      ).toBe(true);
+    });
+  }
+
+  it('fails closed when a 0.3.0 attestation is missing chain_head', () => {
+    const c = fixtures.cases[0]!;
+    const session = rebuildSession(c.session);
+    const attestation = generateAttestation(session, keyPairsFromCase(c), optionsFromCase(c));
+    delete attestation.chain_head;
+
+    const result = verifyReceiptSetBinding(attestation, session.transcript);
+
+    expect(result.state).toBe('error');
+    expect(result.errors.some((e) => e.includes('requires chain_head'))).toBe(true);
+  });
+
+  it('reports a 0.2.0 attestation as legacy set-unbound', () => {
+    const legacy: Record<string, unknown> = {
+      concordia_attestation: '0.2.0',
+      attestation_id: 'att_legacy_set',
+      session_id: 'ses_legacy_set',
+      timestamp: '2026-05-29T12:00:00Z',
+      outcome: { status: 'agreed', rounds: 1, duration_seconds: 0 },
+      parties: [],
+      meta: {},
+      transcript_hash: 'sha256:' + '0'.repeat(64),
+    };
+
+    expect(verifyReceiptSetBinding(legacy)).toEqual({
+      state: 'legacy_set_unbound',
+      errors: [],
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

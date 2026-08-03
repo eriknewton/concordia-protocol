@@ -227,6 +227,66 @@ class TestAttestationValidation:
         errors = validate_attestation(att)
         assert not errors
 
+    def test_accepts_summary_whose_digest_slice_spells_a_currency_shape(self):
+        # Regression: "cad" is hex-expressible, so a random digest slice can
+        # match the amount-plus-CAD pattern (~1.6e-4 per digest) and a
+        # legitimate receipt then failed validation on digest luck. Only the
+        # line derived from THIS attestation's transcript_hash is exempt.
+        att = self._valid_attestation()
+        att["transcript_hash"] = "sha256:0123456789012cad" + "a" * 48
+        att["summary"] = (
+            "Parties: agent_a, agent_b\n"
+            "Topic: electronics.cameras\n"
+            "Outcome: AGREED\n"
+            "Transcript hash: 0123456789012cad"
+        )
+        errors = validate_attestation(att)
+        assert not errors
+
+    def test_pseudo_hash_line_not_matching_transcript_hash_is_scanned(self):
+        # Adversarial-gate finding on the first cut of this fix: a CRAFTED
+        # hash-shaped line must not become a smuggling channel. The exemption
+        # binds to the attestation's own transcript_hash prefix, so a line
+        # that does not match it is scanned like any free text.
+        att = self._valid_attestation()  # transcript_hash = sha256:aaaa...
+        att["summary"] = (
+            "Parties: agent_a, agent_b\n"
+            "Outcome: AGREED\n"
+            "Transcript hash: 1900cad"
+        )
+        errors = validate_attestation(att)
+        assert (
+            "$.summary: free-text field must not contain obvious raw deal terms"
+            in errors
+        )
+
+    def test_hash_line_exemption_is_exact_shape_only(self):
+        # A hash line carrying anything beyond the generated digest prefix is
+        # NOT exempt: raw terms cannot hide behind the "Transcript hash:" label.
+        att = self._valid_attestation()
+        att["summary"] = (
+            "Parties: agent_a, agent_b\n"
+            "Outcome: AGREED\n"
+            "Transcript hash: 1900 USD for the lot"
+        )
+        errors = validate_attestation(att)
+        assert (
+            "$.summary: free-text field must not contain obvious raw deal terms"
+            in errors
+        )
+        # And a raw term on ANOTHER line of the same summary is still caught
+        # even when the legitimate exempt hash line is present.
+        att["summary"] = (
+            "Parties: agent_a, agent_b\n"
+            "Outcome: AGREED, qty: 2\n"
+            "Transcript hash: " + "a" * 16
+        )
+        errors = validate_attestation(att)
+        assert (
+            "$.summary: free-text field must not contain obvious raw deal terms"
+            in errors
+        )
+
     def test_rejects_overlong_attestation_free_text(self):
         att = self._valid_attestation()
         att["summary"] = "x" * 1025

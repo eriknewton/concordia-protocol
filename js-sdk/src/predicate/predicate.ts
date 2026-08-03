@@ -97,7 +97,13 @@ export type PredicateResolver = (predicateId: string) => Predicate | null | unde
 
 /** The wire/dict shape of a predicate. Mirrors Python `Predicate.to_dict()`. */
 export interface PredicateDict {
+  /** Predicate URN. Must start with `urn:concordia:predicate:`. */
   predicate_id: string;
+  /**
+   * Predicate type-profile URN. Built-in profiles use full URNs such as
+   * `urn:concordia:predicate-type:authority_gate:v1`; bare shorthand such as
+   * `authority_gate` is not a wire-valid type id.
+   */
   type: string;
   authority: string;
   issuer: string;
@@ -106,7 +112,9 @@ export interface PredicateDict {
   issued_at: string;
   expires_at: string;
   references: Record<string, unknown>[];
+  /** Closed predicate-signature algorithm enum: `EdDSA` or `ES256`. */
   algorithm: string;
+  /** Closed lifecycle status enum: `active`, `expired`, `revoked`, or `suspended`. */
   status: string;
   signature?: string;
   validity?: Record<string, unknown> | null;
@@ -345,6 +353,23 @@ function failResult(
     revoked_at: predicate ? predicate.revoked_at : null,
     tier: null,
   };
+}
+
+const UNREGISTERED_PROFILE_PREFIX = 'predicate type profile must be registered before signing:';
+
+function isProfileLookupFailure(error: string): boolean {
+  return (
+    error.startsWith(UNREGISTERED_PROFILE_PREFIX) ||
+    error.startsWith('predicate type profile shorthand ')
+  );
+}
+
+function verifyPredicateProfileFailure(typeId: string, errorText: string): string {
+  return (
+    `predicate type profile is unregistered for verifyPredicate: ${typeId}; ` +
+    `${errorText}; portable low-level alternative: verify() with the predicate ` +
+    'dict, signature, and public key. verify() needs no process-local profile registration.'
+  );
 }
 
 /**
@@ -767,10 +792,13 @@ export function verifyPredicate(
   const profileErrors = validateConditionForProfile(parsed.type, parsed.condition);
   checks.profile_condition = profileErrors.length === 0;
   if (profileErrors.length > 0) {
+    const errorText = profileErrors.join('; ');
     return failResult(
       parsed,
       PredicateFailureReason.SCHEMA_INVALID,
-      profileErrors.join('; '),
+      profileErrors.some(isProfileLookupFailure)
+        ? verifyPredicateProfileFailure(parsed.type, errorText)
+        : errorText,
       checks,
       warnings,
     );

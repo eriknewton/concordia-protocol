@@ -10,6 +10,7 @@ from concordia.agent_profile import (
     Capabilities,
     Location,
     NegotiationProfile,
+    ReputationAssertion,
     TrustSignals,
 )
 
@@ -30,6 +31,7 @@ def _profile(
     preferred: bool = True,
     sessions: int = 0,
     agreement_rate: float = 0.0,
+    reputation: list[ReputationAssertion] | None = None,
     ttl: int = 86400,
     updated_at: str | None = None,
 ) -> AgentCapabilityProfile:
@@ -47,6 +49,7 @@ def _profile(
             verascore_composite=score,
             concordia_preferred=preferred,
             concordia_sessions_completed=sessions,
+            reputation=reputation,
         ),
         negotiation_profile=NegotiationProfile(agreement_rate=agreement_rate),
         ttl=ttl,
@@ -180,6 +183,36 @@ def test_search_combines_tier_offer_jurisdiction_and_preferred_filters() -> None
     ]
 
 
+def test_min_sovereignty_tier_uses_legacy_tier_order_only() -> None:
+    store = AgentProfileStore()
+    store.publish(
+        _profile("legacy-pass", tier="verified-degraded", score=70),
+        verify_signature=False,
+    )
+    store.publish(
+        _profile("legacy-too-low", tier="self-attested", score=95),
+        verify_signature=False,
+    )
+    store.publish(
+        _profile(
+            "neutral-tier-only",
+            score=None,
+            reputation=[
+                ReputationAssertion(
+                    provider="example-scores.test",
+                    tier="verified-sovereign",
+                    composite=100,
+                )
+            ],
+        ),
+        verify_signature=False,
+    )
+
+    results = store.search(min_sovereignty_tier="verified-degraded")
+
+    assert [profile.agent_id for profile, _score in results] == ["legacy-pass"]
+
+
 def test_search_sort_options_and_unknown_sort_pin_current_ordering() -> None:
     store = AgentProfileStore()
     store.publish(
@@ -218,7 +251,7 @@ def test_get_stats_ignores_missing_scores_and_counts_distinct_categories() -> No
 
     assert store.get_stats() == {
         "total_profiles": 2,
-        "average_verascore": 80.0,
+        "average_reputation_composite": 80.0,
         "total_categories": 2,
         "concordia_preferred_count": 1,
     }

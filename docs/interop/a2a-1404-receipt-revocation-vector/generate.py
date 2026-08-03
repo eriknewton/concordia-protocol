@@ -344,7 +344,7 @@ def main() -> None:
     }
     write_json("vector.json", vector)
 
-    # Human-readable console echo of the load-bearing hashes.
+    # Human-readable console echo of the hashes used by verification.
     print("decision_id           =", "sha256:" + decision_id)
     print("deny_decision_id      =", "sha256:" + committed_deny.decision_id)
     print("capability_digest     =", capability_digest)

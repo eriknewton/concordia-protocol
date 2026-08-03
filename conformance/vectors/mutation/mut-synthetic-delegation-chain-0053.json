@@ -1,0 +1,84 @@
+{
+  "context": {
+    "action": {
+      "category": "software",
+      "max_spend": 500
+    },
+    "canonical_sha256": "sha256:74eb2c66ee0ee2bd154588334a3270b50c0769b83d4c04123806a3c0eead78f6",
+    "delegation_public_keys_b64url": {
+      "did:key:z7QElvmvV3q1ICWB_gYDgl-Ojsw7e_aNoKShH_X7E8JNDEA": "Jb5r1d6tSAlgf4GA4Jfjo7MO3v2jaCkoR_1-xPCTQxA=",
+      "did:key:z7QEtN5MjekZCP2pA9wRDMnM1R1EMY-vo2_sL1DHoOHQ4IA": "LTeTI3pGQj9qQPcEQzJzNUdRDGPr6Nv7C9Qx6Dh0OCA="
+    },
+    "issuer_public_key_b64url": "Jb5r1d6tSAlgf4GA4Jfjo7MO3v2jaCkoR_1-xPCTQxA=",
+    "now": "2026-05-10T14:25:00Z"
+  },
+  "expected": "reject",
+  "expected_reason_class": "schema",
+  "id": "mut-synthetic-delegation-chain-0053",
+  "input": {
+    "algorithm": "EdDSA",
+    "constraints": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "enum": [
+            "software",
+            "books"
+          ],
+          "type": "string"
+        },
+        "max_spend": {
+          "maximum": 1000,
+          "type": "number"
+        }
+      },
+      "required": [
+        "max_spend",
+        "category"
+      ],
+      "type": "object"
+    },
+    "delegation_chain": [
+      {
+        "algorithm": "EdDSB",
+        "delegate": "did:key:z7QEtN5MjekZCP2pA9wRDMnM1R1EMY-vo2_sL1DHoOHQ4IA",
+        "delegated_at": "2026-05-10T14:25:00Z",
+        "delegator": "did:key:z7QElvmvV3q1ICWB_gYDgl-Ojsw7e_aNoKShH_X7E8JNDEA",
+        "scope_restriction": {
+          "max_spend": 1000
+        },
+        "signature": "L8QqJyqqtfyKTfEaoK47_lUv3Zq3wc_uGzLVmwn3FwCCtXRjFH74_i870eNnzDn8PCsSXkE4Wr_XqjyJcCXQBg=="
+      },
+      {
+        "algorithm": "EdDSA",
+        "delegate": "did:web:agent.example#synthetic-subject",
+        "delegated_at": "2026-05-10T14:25:00Z",
+        "delegator": "did:key:z7QEtN5MjekZCP2pA9wRDMnM1R1EMY-vo2_sL1DHoOHQ4IA",
+        "scope_restriction": {
+          "max_spend": 750
+        },
+        "signature": "ea74uA-pT2t8q9qJe5qzCPtlMWSLCtIOAHjlPNoh-RGJTVCzZt1jGc9Uf8niTUy3cBP6a19qgZgzIgnmi7cFCA=="
+      }
+    ],
+    "issued_at": "2026-05-10T14:25:00Z",
+    "issuer": "did:key:z7QElvmvV3q1ICWB_gYDgl-Ojsw7e_aNoKShH_X7E8JNDEA",
+    "mandate_id": "urn:concordia:mandate:synthetic-delegated-0001",
+    "metadata": {
+      "fixture": "conformance-p2a1-delegated"
+    },
+    "signature": "VS-QzC1dEqQRN51AZEb_Bs-v2_lcP9qM5AlX0Sg7_vpvUOVV_TfLO9dgCOSFTogE1B2s9z9yWkLZYxMPuE9FBw==",
+    "status": "active",
+    "subject": "did:web:agent.example#synthetic-subject",
+    "validity": {
+      "mode": "windowed",
+      "not_after": "2026-06-01T00:00:00Z",
+      "not_before": "2026-05-01T00:00:00Z"
+    }
+  },
+  "notes": "",
+  "record_type": "mandate",
+  "schema_version": "concordia-conformance-vector/v1-draft",
+  "source_fixture": "synthetic/mandate",
+  "title": "delegation_chain: value delegation_chain.0.algorithm",
+  "verification_profile": "delegation-chain-v1"
+}

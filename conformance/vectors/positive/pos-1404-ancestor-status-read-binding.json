@@ -1,0 +1,90 @@
+{
+  "context": {
+    "checks": [
+      {
+        "kind": "json-pointer-equal",
+        "left": {
+          "object": "input",
+          "pointer": "/references/0/extensions/a2a_1404_evidence_refs/ancestor_status_read"
+        },
+        "right": {
+          "object": "context.revocation_record",
+          "pointer": "/revocation_id"
+        }
+      }
+    ],
+    "revocation_record": {
+      "cascade_depth": 3,
+      "effective_at": "2026-05-10T14:30:00Z",
+      "issued_at": "2026-05-10T14:30:00Z",
+      "issuer_did": "did:web:acme.example#delegating-principal",
+      "reason": "principal_revoked_delegation",
+      "references": [
+        {
+          "id": "urn:concordia:receipt:a2a-1404-A",
+          "relationship": "revokes",
+          "type": "approval_receipt"
+        }
+      ],
+      "revocation_id": "urn:concordia:revocation:a2a-1404-A",
+      "revocation_scope": "cascade_to_dependents",
+      "revoked_artifact_id": "urn:concordia:receipt:a2a-1404-A",
+      "revoked_artifact_type": "approval_receipt",
+      "signature": {
+        "alg": "EdDSA",
+        "value": "rKJi2wzyZK6ZmSzuIrrAAzVCJgepw1IuhRI7-OpaS9TmPvWqP2cCxOiPhWeXxSK7lqWAwTAwV3gdQXugiXgdDw=="
+      }
+    }
+  },
+  "expected": "accept",
+  "expected_reason_class": null,
+  "id": "pos-1404-ancestor-status-read-binding",
+  "input": {
+    "approver": {
+      "identity": "did:web:acme.example#procurement-lead",
+      "role": "procurement_authority"
+    },
+    "artifact_type": "ApprovalReceipt",
+    "expires_at": "2126-05-10T14:22:08Z",
+    "id": "urn:concordia:receipt:a2a-1404-B",
+    "issued_at": "2026-05-10T14:22:08Z",
+    "references": [
+      {
+        "extensions": {
+          "a2a_1404_decision_id": "sha256:15f84f2cf53ba52a6d0ba7d859d7c1a7bb6c21cfd5be7d036d2d998fd2eec28e",
+          "a2a_1404_decision_object": {
+            "boundary_id": "urn:a2a:boundary:acme-procurement-hitl",
+            "capability_digest": "sha256:dddfb8f55c9ff12ccd3ff0a5b065956b3a508b4be38eee74ad90c91c74aca932",
+            "decision": "approve",
+            "policy_version": "acme-procurement-policy@2026-05-01",
+            "request_digest": "sha256:2cf9882e0ceee36278318a376117cc03da510c6994c3679a57eb4777dc8e06cb",
+            "verifier": "did:web:acme.example#procurement-lead"
+          },
+          "a2a_1404_evidence_refs": {
+            "ancestor_status_read": "urn:concordia:revocation:a2a-1404-A",
+            "parent_delegation": "urn:concordia:receipt:a2a-1404-A"
+          }
+        },
+        "id": "urn:a2a:session:9e4d2c11",
+        "relationship": "approves",
+        "type": "negotiation_session"
+      }
+    ],
+    "scope": {
+      "amount": "150000.00 USD",
+      "decision": "approve",
+      "offer_hash": "sha256:2cf9882e0ceee36278318a376117cc03da510c6994c3679a57eb4777dc8e06cb",
+      "threshold_crossed": "100000.00 USD"
+    },
+    "signature": {
+      "alg": "Ed25519",
+      "value": "eaUsArEAwOedzOAI24B3P-dFPMXv2tJuWxYJp_QzXK2X0mVBnYXP4JAT8yPEk-tK5gkvj1a0a6LUWgTgWYYeAQ=="
+    }
+  },
+  "notes": "",
+  "record_type": "approval_receipt",
+  "schema_version": "concordia-conformance-vector/v1-draft",
+  "source_fixture": "a2a-1404-receipt-revocation-vector",
+  "title": "A2A 1404 evidence extension names the ancestor status read",
+  "verification_profile": "offer-binding-v1"
+}

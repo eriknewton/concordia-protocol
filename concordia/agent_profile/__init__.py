@@ -16,6 +16,7 @@ from .profile import (
     Endpoints,
     Location,
     NegotiationProfile,
+    ReputationAssertion,
     Sovereignty,
     TrustSignals,
 )
@@ -27,6 +28,7 @@ __all__ = [
     "Endpoints",
     "Location",
     "NegotiationProfile",
+    "ReputationAssertion",
     "Sovereignty",
     "TrustSignals",
     "AgentProfileStore",

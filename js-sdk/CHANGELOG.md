@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.0.1-alpha.12 -- 2026-08-02
+
+Set-bound receipt support for attestation 0.3.0.
+
+- ATTESTATION_VERSION is 0.3.0.
+- generateAttestation emits `chain_head` and `message_count` inside the
+  countersigned issuance snapshot.
+- verifyReceiptSetBinding and attestation verification compare those fields to
+  the presented transcript and report receipts below 0.3.0 as
+  `legacy_set_unbound`.
+
+## 0.0.1-alpha.11 -- 2026-08-02
+
+Fixes traced to the 2026-08-02 fresh-agent onboarding measurement (two agents
+against the published alpha.10; the blind trial outperformed the README trial
+because the README's examples used a shorthand the runtime rejected silently).
+
+- README examples corrected to full predicate-type URNs, plus a runnable
+  quickstart (mirrored by an executing test) ending in the portable low-level
+  verify() path.
+- Built-in predicate type profiles are available from a fresh import, proven
+  by test; the module doc's statement to that effect is now accurate.
+- getPredicateTypeProfile with a bare shorthand now returns a full-URN hint
+  instead of a silent null.
+- Type declarations document the predicate_id URN prefix, closed enums, and a
+  start-here block naming the sign/verify pair and built-in profile URNs.
+- verifyPredicate's unregistered-profile error names verify() as the portable
+  alternative that needs no process-local registration.
+
 L3 attestation-input hardening (port of Python PR #95; security audit
 2026-06-09 finding L3). `generateAttestation` previously emitted
 caller-supplied `category` / `value_range` free text verbatim and passed

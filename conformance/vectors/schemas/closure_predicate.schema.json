@@ -1,0 +1,76 @@
+{
+  "additionalProperties": true,
+  "properties": {
+    "algorithm": {
+      "enum": [
+        "EdDSA"
+      ],
+      "type": "string"
+    },
+    "authority": {
+      "pattern": "^did:",
+      "type": "string"
+    },
+    "condition": {
+      "type": "object"
+    },
+    "expires_at": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T",
+      "type": "string"
+    },
+    "issued_at": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T",
+      "type": "string"
+    },
+    "issuer": {
+      "pattern": "^did:",
+      "type": "string"
+    },
+    "predicate_id": {
+      "pattern": "^urn:concordia:predicate:",
+      "type": "string"
+    },
+    "references": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "signature": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "active",
+        "expired",
+        "revoked",
+        "suspended"
+      ],
+      "type": "string"
+    },
+    "subject": {
+      "pattern": "^urn:concordia:chain-session:",
+      "type": "string"
+    },
+    "type": {
+      "pattern": "^urn:concordia:predicate-type:",
+      "type": "string"
+    }
+  },
+  "required": [
+    "predicate_id",
+    "type",
+    "authority",
+    "issuer",
+    "subject",
+    "condition",
+    "issued_at",
+    "expires_at",
+    "references",
+    "algorithm",
+    "status",
+    "signature"
+  ],
+  "type": "object"
+}

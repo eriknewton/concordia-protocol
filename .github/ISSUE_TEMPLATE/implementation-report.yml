@@ -1,0 +1,55 @@
+name: Implementation report
+description: Report a Concordia conformance runner or subset run.
+title: "[impl-report] "
+labels: ["implementation-report"]
+body:
+  - type: input
+    id: language
+    attributes:
+      label: Language
+      description: Name the implementation language or runtime.
+      placeholder: "Rust 1.82, Go 1.23, JavaScript on Node 22"
+    validations:
+      required: true
+  - type: input
+    id: runner-link
+    attributes:
+      label: Runner link
+      description: Link to the runner, reproduction note, discussion comment, or commit.
+      placeholder: "https://..."
+    validations:
+      required: true
+  - type: input
+    id: summary-line
+    attributes:
+      label: Summary line produced
+      description: Paste the exact summary line from the run.
+      placeholder: "[SUMMARY] positive=47 mutation=1460 canary=4 ok=1511 fail=0"
+    validations:
+      required: true
+  - type: textarea
+    id: profiles-covered
+    attributes:
+      label: Profiles covered
+      description: Name the profiles covered, or say full suite.
+      placeholder: "full suite, or decision-object-v1 plus receipt-v1"
+    validations:
+      required: true
+  - type: textarea
+    id: method-notes
+    attributes:
+      label: Method notes
+      description: Describe the command, dependencies, and any subset selection.
+      placeholder: "Command run, package versions, manifest path, and any deviations."
+    validations:
+      required: true
+  - type: dropdown
+    id: diag-read
+    attributes:
+      label: Did the runner read conformance/diag before producing the summary?
+      options:
+        - "No, the runner did not read conformance/diag before producing the summary."
+        - "Yes, diagnostics were read before producing the summary; explain in method notes."
+        - "Unknown."
+    validations:
+      required: true
