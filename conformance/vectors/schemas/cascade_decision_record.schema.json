@@ -1,0 +1,109 @@
+{
+  "$id": "urn:concordia:schema:cascade_decision_record:v0.7",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "ancestor_reads": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "coordinate": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "element_digest": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "source_digest": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "status": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "element_digest",
+          "status",
+          "source_digest",
+          "coordinate"
+        ],
+        "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "approval_receipt_ref": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "boundary_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "capability_digest": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "decision": {
+      "enum": [
+        "deny"
+      ],
+      "type": "string"
+    },
+    "decision_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "policy_version": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "request_digest": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "revocation_record_ref": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "signature": {
+      "additionalProperties": false,
+      "properties": {
+        "alg": {
+          "enum": [
+            "EdDSA"
+          ],
+          "type": "string"
+        },
+        "value": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "alg",
+        "value"
+      ],
+      "type": "object"
+    },
+    "verifier": {
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "capability_digest",
+    "request_digest",
+    "boundary_id",
+    "decision",
+    "verifier",
+    "policy_version",
+    "ancestor_reads",
+    "decision_id",
+    "signature"
+  ],
+  "type": "object"
+}

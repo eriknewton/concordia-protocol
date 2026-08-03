@@ -1,0 +1,33 @@
+{
+  "context": {},
+  "expected": "reject",
+  "expected_reason_class": "transition",
+  "id": "transition-synthetic-cmpc-illegal-proposed-to-expired",
+  "input": {
+    "attempt_transition": "EXPIRED",
+    "expected": "InvalidTransitionError",
+    "initial_session": {
+      "activated_at": null,
+      "activation_deadline": "2026-05-18T11:00:00+00:00",
+      "activation_proof_id": null,
+      "chain_session_id": "urn:concordia:chain-session:transition-vector",
+      "closure_predicate_ref": "urn:concordia:predicate:transition-vector",
+      "commitments": [],
+      "created_at": "2026-05-18T10:00:00+00:00",
+      "dissolved_at": null,
+      "participants": [
+        "did:web:r.test",
+        "did:web:w.test"
+      ],
+      "state": "PROPOSED",
+      "unwind_record_id": null
+    },
+    "transition_now": "2026-05-18T12:00:00+00:00"
+  },
+  "notes": "illegal transition",
+  "record_type": "chain_session_transition",
+  "schema_version": "concordia-conformance-vector/v1-draft",
+  "source_fixture": "synthetic/cmpc_bilateral/state_machine",
+  "title": "CMPC ChainSession transition fixture illegal_proposed_to_expired",
+  "verification_profile": "chain-session-transition-v1"
+}

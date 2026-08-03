@@ -1,0 +1,21 @@
+{
+  "attempt_transition": "ACTIVATED",
+  "expected": "ok",
+  "initial_session": {
+    "activated_at": null,
+    "activation_deadline": "2026-05-18T13:00:00+00:00",
+    "activation_proof_id": "urn:concordia:activation-proof:1",
+    "chain_session_id": "urn:concordia:chain-session:transition-vector",
+    "closure_predicate_ref": "urn:concordia:predicate:transition-vector",
+    "commitments": [],
+    "created_at": "2026-05-18T10:00:00+00:00",
+    "dissolved_at": null,
+    "participants": [
+      "did:web:r.test",
+      "did:web:w.test"
+    ],
+    "state": "OPEN",
+    "unwind_record_id": null
+  },
+  "transition_now": "2026-05-18T12:00:00+00:00"
+}

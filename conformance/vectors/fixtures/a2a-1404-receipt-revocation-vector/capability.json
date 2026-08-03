@@ -1,0 +1,8 @@
+{
+  "action": "procurement.purchase_order",
+  "constraints": {
+    "currency": "USD",
+    "max_total": "200000.00"
+  },
+  "granted_to": "did:web:buyer-agent.example"
+}

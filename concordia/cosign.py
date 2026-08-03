@@ -7,22 +7,28 @@ history naming any counterparty and pump its own trust-bearing score (H1), and
 let a 2-DID actor manufacture the "counterparty evidence" that unlocks the
 transactions Reliability gate (H2).
 
-Verascore (the consumer, verascore#63) now REQUIRES the named ``counterparty_did``
-party to have cryptographically co-signed a receipt before it can move a
-trust-bearing score. This module is the PRODUCER half: it collects the
-counterparty's Ed25519 signature over the canonical (signature-stripped) receipt
-and places it on the counterparty's ``parties[]`` entry, so legitimate bilateral
-receipts can earn the ``cryptographic`` tier and count again.
+The SPEC is the authority for signature preimages. SPEC.md:1137 defines the
+normative attestation countersignature payload as recursive signature removal
+plus exclusion of the top-level ``countersignatures`` map, and SPEC.md:669
+enumerates that exclusion rule. This module applies the same recursive
+signature-removal canonicalization to the portable receipt co-sign lane. The
+exact co-signed receipt shape is not normatively specified in SPEC; it is an
+interoperability contract exercised by tests. Verascore is one observed consumer
+that agrees with this contract, not the authority for it.
 
-The co-sign contract is the shared cross-repo anchor
-(Wiki/concepts/concordia-bilateral-attestation-anchor-2026-06-09.md):
+This module is the PRODUCER half: it collects the counterparty's Ed25519
+signature over the canonical (signature-stripped) receipt and places it on the
+counterparty's ``parties[]`` entry, so legitimate bilateral receipts can earn
+the ``cryptographic`` tier and count again.
+
+The co-sign contract used by this producer:
 
 1. **Who signs:** the ``counterparty_did`` party, in addition to the publisher.
-2. **What they sign:** ``canonical_json`` of the receipt with EVERY ``signature``
-   field removed recursively (so a signature can never cover itself or a
-   sibling's signature). This is byte-identical to Verascore's
-   ``canonicalCosignBytes`` (src/lib/concordia-cosignature.ts) and reuses the
-   exact ``concordia/signing.py`` ``canonical_json`` serialization.
+2. **What they sign:** ``canonical_json`` of the receipt with EVERY
+   ``signature`` field removed recursively (so a signature can never cover
+   itself or a sibling's signature). This mirrors observed consumer
+   canonicalization and reuses the exact ``concordia/signing.py``
+   ``canonical_json`` serialization.
 3. **Where it goes:** ``signature`` (base64url Ed25519) on the single
    ``parties[]`` entry whose ``agent_id == counterparty_did``.
 4. **Identity:** first interop target is ``did:key`` counterparties — the Ed25519
@@ -36,9 +42,10 @@ malformed or empty co-signature field is NEVER written, and a co-signature is
 NEVER fabricated under any error path.
 
 If you change the canonical message (the strip rule or the serialization) or the
-signature placement, that is an ANCHOR change requiring coordinator sign-off and
-a same-change update to the anchor doc — not a unilateral edit. Canonicalization
-must stay byte-identical across repos or every co-signed receipt fails.
+signature placement, that is an interoperability-anchor change requiring
+coordinator sign-off and a same-change update to the anchor documentation.
+Canonicalization must stay byte-identical across implementations or every
+co-signed receipt fails.
 """
 
 from __future__ import annotations
@@ -50,10 +57,8 @@ from typing import Any, Callable
 from .signing import KeyPair, canonical_json
 
 # Ed25519 multicodec prefix (0xed 0x01) used by the ``did:key`` multibase
-# encoding. Verascore's publicKeyFromDid (src/lib/crypto.ts) decodes the same
-# two-byte header. We emit the base64url variant under the "z" multibase prefix,
-# matching Sanctuary's publicKeyToDidBase64url / deriveAgentId, which Verascore
-# tries first.
+# encoding. We emit the base64url variant under the "z" multibase prefix, which
+# observed did:key decoders accept without network resolution.
 _ED25519_MULTICODEC = b"\xed\x01"
 _DID_KEY_PREFIX = "did:key:z"
 
@@ -82,8 +87,7 @@ def strip_signatures(value: Any) -> Any:
 
     The canonical message both parties sign is the receipt with ALL signature
     fields removed, so a signature can never sign over itself or over a
-    sibling's signature. Byte-for-byte mirror of Verascore's ``stripSignatures``
-    (src/lib/concordia-cosignature.ts).
+    sibling's signature. Mirrors observed consumer ``stripSignatures`` behavior.
     """
     if isinstance(value, dict):
         return {
@@ -99,10 +103,9 @@ def strip_signatures(value: Any) -> Any:
 def canonical_cosign_bytes(receipt: dict[str, Any]) -> bytes:
     """The exact bytes a counterparty signs: signature-stripped, canonicalized.
 
-    Equivalent to Verascore's ``canonicalCosignBytes``:
-    ``stableStringify(stripSignatures(receipt))`` as UTF-8. Reuses the shared
-    ``canonical_json`` (RFC 8785 / ECMAScript JSON.stringify, UTF-16 key sort,
-    raw non-ASCII) so a signature produced here verifies there.
+    Equivalent to ``stableStringify(stripSignatures(receipt))`` as UTF-8.
+    Reuses the shared ``canonical_json`` (RFC 8785 / ECMAScript JSON.stringify,
+    UTF-16 key sort, raw non-ASCII) so signatures verify across implementations.
 
     Raises ``ValueError`` for inputs that are not canonicalizable (special
     floats, lone UTF-16 surrogates — composes with the #69 fail-closed rule).
@@ -117,8 +120,8 @@ def canonical_cosign_bytes(receipt: dict[str, Any]) -> bytes:
 def ed25519_did_key(public_key_bytes: bytes) -> str:
     """Encode a raw 32-byte Ed25519 public key as a ``did:key`` string.
 
-    Produces ``did:key:z<base64url(0xed01 || pubkey)>`` — the base64url variant
-    Sanctuary/Concordia emit and Verascore's publicKeyFromDid decodes first.
+    Produces ``did:key:z<base64url(0xed01 || pubkey)>`` -- the base64url variant
+    Sanctuary/Concordia emit and observed consumers decode.
     """
     if len(public_key_bytes) != 32:
         raise ValueError("Ed25519 public key must be exactly 32 bytes")
@@ -132,12 +135,12 @@ def public_key_bytes_from_did_key(did: str) -> bytes | None:
 
     Returns ``None`` for any DID that is not a base64url Ed25519 ``did:key:z``
     (e.g. did:web, base58btc-only, wrong multicodec). Mirrors the base64url
-    branch of Verascore's publicKeyFromDid.
+    branch used by observed did:key decoders.
     """
     if not did.startswith(_DID_KEY_PREFIX):
         return None
     encoded = did[len(_DID_KEY_PREFIX):]
-    # Restore base64url padding (Verascore's base64urlToBuffer does the same).
+    # Restore base64url padding before decoding.
     padding = (4 - (len(encoded) % 4)) % 4
     try:
         decoded = base64.urlsafe_b64decode(encoded + "=" * padding)
@@ -168,8 +171,7 @@ def cosign_receipt(receipt: dict[str, Any], key_pair: KeyPair) -> str:
     composes with #69 surrogate rejection).
     """
     raw_sig = key_pair.private_key.sign(canonical_cosign_bytes(receipt))
-    # Unpadded base64url, matching Verascore's bufferToBase64url convention.
-    # Verascore's base64urlToBuffer re-adds padding on the verify side.
+    # Unpadded base64url for compact wire output; decoders re-add padding.
     return base64.urlsafe_b64encode(raw_sig).rstrip(b"=").decode("ascii")
 
 
@@ -186,7 +188,7 @@ def place_counterparty_cosignature(
       - ``parties`` is absent or not a list,
       - zero entries match ``counterparty_did`` (nothing to co-sign), or
       - more than one entry matches (ambiguous — an attacker must not be able to
-        smuggle a second counterparty entry; Verascore rejects >1 too).
+        smuggle a second counterparty entry; consumers must reject this too).
 
     Never writes an empty/placeholder ``signature`` field.
     """
@@ -228,17 +230,16 @@ def build_concordia_receipt(
     protocol_version: str = "0.5",
     graceful_degradation: bool = False,
 ) -> dict[str, Any]:
-    """Build the receipt object Verascore consumes, in single-signed form.
+    """Build a portable receipt object in single-signed form.
 
-    Shape matches Verascore's ``normalizeConcordiaReceipt`` /
-    ``verifyCounterpartyCosignatureStructural``: a top-level ``outcome`` object,
-    and a ``parties[]`` array with the publisher first (no signature — the
-    publisher authenticates the publish envelope) and the counterparty second
-    (its ``signature`` is added later by the co-sign step).
+    Shape used by observed publish-envelope consumers: a top-level ``outcome``
+    object, and a ``parties[]`` array with the publisher first (no signature,
+    because the publisher authenticates the publish envelope) and the
+    counterparty second (its ``signature`` is added later by the co-sign step).
 
-    ``session_data`` is the behavioral-signal dict from
-    ``verascore._extract_session_data`` (session_id, counterparty_did, outcome,
-    rounds, duration_seconds, terms_count, concessions_made, fulfillment_status).
+    ``session_data`` is the behavioral-signal dict from the reporting client
+    (session_id, counterparty_did, outcome, rounds, duration_seconds,
+    terms_count, concessions_made, fulfillment_status).
     No deal terms or prices (the no-raw-deal-terms privacy invariant, AGENTS.md rule #8).
     """
     counterparty_did = session_data["counterparty_did"]
@@ -282,7 +283,7 @@ def build_cosigned_receipt(
     ``counterparty_signer`` is a collector that returns the counterparty's
     base64url signature over the receipt (e.g. backed by the counterparty's key
     via ``cosign_receipt``). It is invoked on the fully-built, signature-free
-    receipt so the bytes it signs match what Verascore re-derives.
+    receipt so the bytes it signs match what verifiers re-derive.
 
     FAIL CLOSED: if no signer is supplied, or the signer returns nothing /
     raises, or the signature cannot be placed safely, the receipt is returned

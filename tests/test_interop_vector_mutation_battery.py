@@ -23,8 +23,8 @@ requires the object's real verifier to reject it. It then pins:
   - that Concordia's own canonicalizer is independent of the ``rfc8785``
     reference library (the SDK does not secretly delegate to it).
 
-The three known escapes are all "outside the signed preimage" structural cases,
-NOT forgery vectors: none can alter a load-bearing field. See the results doc
+The one known escape is an "outside the signed preimage" structural case, NOT a
+forgery vector: it cannot alter a load-bearing field. See the results doc
 Review/A2A/Concordia_Vector_Mutation_Battery_2026-07-25.md for the full writeup.
 """
 
@@ -36,9 +36,10 @@ import hashlib
 import json
 import subprocess
 import sys
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal, cast
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
@@ -58,10 +59,15 @@ D1404 = REPO_ROOT / "docs" / "interop" / "a2a-1404-receipt-revocation-vector"
 # A wall-clock at which both the #1404 parent A and child B are live (matches
 # the published verify.py), so failures come from the mutation, not expiry.
 FIXED_NOW = datetime(2026, 5, 10, 14, 25, 0, tzinfo=timezone.utc)
+JsonObject = dict[str, Any]
+MutationKind = Literal["value", "drop", "inject"]
+MutationResult = tuple[str, MutationKind, JsonObject]
+EscapeSet = set[tuple[str, MutationKind]]
+Verifier = Callable[[JsonObject], bool]
 
 
-def _json(path: Path) -> dict:
-    return json.loads(path.read_text())
+def _json(path: Path) -> JsonObject:
+    return cast(JsonObject, json.loads(path.read_text()))
 
 
 def _pubkey(b64url: str) -> Ed25519PublicKey:
@@ -95,14 +101,14 @@ def _mutate_scalar(value: Any) -> Any:
     return value
 
 
-def _ref(root: Any, path: list) -> Any:
+def _ref(root: Any, path: list[str | int]) -> Any:
     cur = root
     for step in path:
         cur = cur[step]
     return cur
 
 
-def _mutations(obj: dict):
+def _mutations(obj: JsonObject) -> Iterator[MutationResult]:
     """Yield (field_path, kind, mutated_copy) for every single-field mutation.
 
     Kinds:
@@ -112,7 +118,7 @@ def _mutations(obj: dict):
     Every mutation touches exactly one field and yields a fresh deep copy.
     """
 
-    def walk(node: Any, path: list):
+    def walk(node: Any, path: list[str | int]) -> Iterator[MutationResult]:
         if isinstance(node, dict):
             for key in list(node.keys()):
                 child_path = path + [key]
@@ -143,8 +149,8 @@ def _mutations(obj: dict):
 
 
 def _run_battery(
-    obj: dict, verifier: Callable[[dict], bool]
-) -> tuple[int, int, set[tuple[str, str]]]:
+    obj: JsonObject, verifier: Verifier
+) -> tuple[int, int, EscapeSet]:
     """Return (rejected, total, escapes) for one object under one verifier.
 
     An escape = the verifier ACCEPTED a mutation that actually changed the
@@ -153,7 +159,7 @@ def _run_battery(
     assert verifier(obj) is True, "baseline artifact must verify (ACCEPT)"
     rejected = 0
     total = 0
-    escapes: set[tuple[str, str]] = set()
+    escapes: EscapeSet = set()
     for field_path, kind, mutated in _mutations(obj):
         if mutated == obj:
             continue
@@ -173,12 +179,12 @@ def _run_battery(
 # ---------------------------------------------------------------------------
 # Per-vector verifiers: each mirrors what the published verify.py actually runs.
 # ---------------------------------------------------------------------------
-def _verifier_1920_fulfillment() -> Callable[[dict], bool]:
+def _verifier_1920_fulfillment() -> Verifier:
     sample = _json(D1920 / "sample.json")
-    pubkey = _pubkey(sample["public_key_b64url"])
-    join = sample["join_keys"]
+    pubkey = _pubkey(cast(str, sample["public_key_b64url"]))
+    join = cast(JsonObject, sample["join_keys"])
 
-    def verify(att: dict) -> bool:
+    def verify(att: JsonObject) -> bool:
         if validate_fulfillment_attestation(att) != []:
             return False
         try:
@@ -189,7 +195,7 @@ def _verifier_1920_fulfillment() -> Callable[[dict], bool]:
             )
         except Exception:
             return False
-        return (
+        return bool(
             att.get("charge_ref") == join["charge_ref"]
             and att.get("action_ref") == join["action_ref"]
         )
@@ -197,10 +203,11 @@ def _verifier_1920_fulfillment() -> Callable[[dict], bool]:
     return verify
 
 
-def _verifier_1404_decision_object() -> Callable[[dict], bool]:
-    expected = _json(D1404 / "vector.json")["hashes"]["decision_id"]
+def _verifier_1404_decision_object() -> Verifier:
+    hashes = cast(JsonObject, _json(D1404 / "vector.json")["hashes"])
+    expected = cast(str, hashes["decision_id"])
 
-    def verify(decision_object: dict) -> bool:
+    def verify(decision_object: JsonObject) -> bool:
         return (
             "sha256:" + hashlib.sha256(canonicalize_jcs(decision_object)).hexdigest()
             == expected
@@ -209,43 +216,44 @@ def _verifier_1404_decision_object() -> Callable[[dict], bool]:
     return verify
 
 
-def _verifier_1404_offer() -> Callable[[dict], bool]:
+def _verifier_1404_offer() -> Verifier:
     receipt = _json(D1404 / "approval_receipt.json")
-    approver_pk = _pubkey(
-        _json(D1404 / "vector.json")["public_keys_b64url"]["approver"]
-    )
+    public_keys = cast(JsonObject, _json(D1404 / "vector.json")["public_keys_b64url"])
+    approver_pk = _pubkey(cast(str, public_keys["approver"]))
 
-    def verify(offer: dict) -> bool:
-        return verify_approval_receipt(
-            receipt, offer, now=FIXED_NOW, issuer_public_key=approver_pk
-        ).valid
+    def verify(offer: JsonObject) -> bool:
+        return bool(
+            verify_approval_receipt(
+                receipt, offer, now=FIXED_NOW, issuer_public_key=approver_pk
+            ).valid
+        )
 
     return verify
 
 
-def _verifier_1404_receipt() -> Callable[[dict], bool]:
+def _verifier_1404_receipt() -> Verifier:
     offer = _json(D1404 / "offer.json")
-    approver_pk = _pubkey(
-        _json(D1404 / "vector.json")["public_keys_b64url"]["approver"]
-    )
+    public_keys = cast(JsonObject, _json(D1404 / "vector.json")["public_keys_b64url"])
+    approver_pk = _pubkey(cast(str, public_keys["approver"]))
 
-    def verify(receipt: dict) -> bool:
-        return verify_approval_receipt(
-            receipt, offer, now=FIXED_NOW, issuer_public_key=approver_pk
-        ).valid
+    def verify(receipt: JsonObject) -> bool:
+        return bool(
+            verify_approval_receipt(
+                receipt, offer, now=FIXED_NOW, issuer_public_key=approver_pk
+            ).valid
+        )
 
     return verify
 
 
-def _verifier_1404_revocation() -> Callable[[dict], bool]:
-    issuer_pk = _pubkey(
-        _json(D1404 / "vector.json")["public_keys_b64url"]["revocation_issuer"]
-    )
+def _verifier_1404_revocation() -> Verifier:
+    public_keys = cast(JsonObject, _json(D1404 / "vector.json")["public_keys_b64url"])
+    issuer_pk = _pubkey(cast(str, public_keys["revocation_issuer"]))
 
-    def verify(record: dict) -> bool:
+    def verify(record: JsonObject) -> bool:
         try:
-            return verify_revocation_record(
-                RevocationRecord.from_dict(record), issuer_pk
+            return bool(
+                verify_revocation_record(RevocationRecord.from_dict(record), issuer_pk)
             )
         except Exception:
             return False
@@ -253,13 +261,12 @@ def _verifier_1404_revocation() -> Callable[[dict], bool]:
     return verify
 
 
-def _verifier_1404_deny() -> Callable[[dict], bool]:
-    issuer_pk = _pubkey(
-        _json(D1404 / "vector.json")["public_keys_b64url"]["revocation_issuer"]
-    )
+def _verifier_1404_deny() -> Verifier:
+    public_keys = cast(JsonObject, _json(D1404 / "vector.json")["public_keys_b64url"])
+    issuer_pk = _pubkey(cast(str, public_keys["revocation_issuer"]))
 
-    def verify(deny: dict) -> bool:
-        return verify_cascade_decision_record(deny, issuer_pk)
+    def verify(deny: JsonObject) -> bool:
+        return bool(verify_cascade_decision_record(deny, issuer_pk))
 
     return verify
 
@@ -269,21 +276,13 @@ def _verifier_1404_deny() -> Callable[[dict], bool]:
 # escapes are the exact accepted-mutation set, each with a mechanism note.
 # ---------------------------------------------------------------------------
 # name -> (fixture file, verifier factory, rejected, total, expected_escapes)
-_BATTERY: dict[str, tuple[Path, Callable[[], Callable[[dict], bool]], int, int, set]] = {
+_BATTERY: dict[str, tuple[Path, Callable[[], Verifier], int, int, EscapeSet]] = {
     "1920/fulfillment_attestation.json": (
         D1920 / "fulfillment_attestation.json",
         _verifier_1920_fulfillment,
-        62,
         63,
-        # ESCAPE (structural, LOW): an unknown key injected INTO the `signature`
-        # object is accepted. The signature object is (correctly) excluded from
-        # its own signed preimage, and fulfillment_attestation.schema.json sets
-        # `additionalProperties: true` on the signature block, so a decorative
-        # extra field there is invisible to both the signature check and the
-        # schema. It cannot alter any load-bearing field (all 62 other mutations
-        # reject); it is only unsigned-annotation surface in the signature
-        # wrapper.
-        {("signature", "inject")},
+        63,
+        set(),  # signature wrapper is schema-closed as of 0.9.0.
     ),
     "1404/decision_object.json": (
         D1404 / "decision_object.json",
@@ -302,13 +301,9 @@ _BATTERY: dict[str, tuple[Path, Callable[[], Callable[[dict], bool]], int, int, 
     "1404/approval_receipt.json": (
         D1404 / "approval_receipt.json",
         _verifier_1404_receipt,
-        62,
         63,
-        # Same class as the #1920 escape: approval_receipt.schema.json sets
-        # `additionalProperties: true` on the signature block, which sits
-        # outside the signed preimage, so an unknown key injected into
-        # `signature` is accepted. Not a forgery vector.
-        {("signature", "inject")},
+        63,
+        set(),  # signature wrapper is schema-closed as of 0.9.0.
     ),
     "1404/revocation_A.json": (
         D1404 / "revocation_A.json",
@@ -357,20 +352,20 @@ def test_mutation_battery_catch_rate_and_escapes() -> None:
 def test_mutation_battery_headline_numbers() -> None:
     """Pin the headline catch rate reported in the results doc."""
     v1920 = _BATTERY["1920/fulfillment_attestation.json"]
-    assert (v1920[2], v1920[3]) == (62, 63)
+    assert (v1920[2], v1920[3]) == (63, 63)
     total_1404 = sum(v[3] for k, v in _BATTERY.items() if k.startswith("1404/"))
     rej_1404 = sum(v[2] for k, v in _BATTERY.items() if k.startswith("1404/"))
-    assert (rej_1404, total_1404) == (157, 159)
+    assert (rej_1404, total_1404) == (158, 159)
     grand_rejected = sum(v[2] for v in _BATTERY.values())
     grand_total = sum(v[3] for v in _BATTERY.values())
-    assert (grand_rejected, grand_total) == (219, 222)
+    assert (grand_rejected, grand_total) == (221, 222)
 
 
 def test_jcs_key_reorder_is_a_canonical_noop_not_a_tamper() -> None:
     """Reordering object keys MUST be accepted: JCS sorts keys, so it does not
     change the signed/hashed bytes. A verifier that rejected it would be wrong."""
 
-    def reordered(obj: dict) -> dict:
+    def reordered(obj: JsonObject) -> JsonObject:
         # Reverse the top-level key order; JSON round-trip preserves insertion
         # order, so this produces a genuinely reordered dict.
         return {k: obj[k] for k in reversed(list(obj.keys()))}

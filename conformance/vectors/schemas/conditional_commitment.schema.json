@@ -1,0 +1,66 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "algorithm": {
+      "enum": [
+        "EdDSA"
+      ],
+      "type": "string"
+    },
+    "chain_session_id": {
+      "pattern": "^urn:concordia:chain-session:",
+      "type": "string"
+    },
+    "commitment_id": {
+      "pattern": "^urn:concordia:commitment:",
+      "type": "string"
+    },
+    "commitment_terms": {
+      "type": "object"
+    },
+    "committer_did": {
+      "pattern": "^did:",
+      "type": "string"
+    },
+    "expires_at": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T",
+      "type": "string"
+    },
+    "issued_at": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T",
+      "type": "string"
+    },
+    "mandate_proof_id": {
+      "anyOf": [
+        {
+          "pattern": "^urn:concordia:",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "predicate_reference": {
+      "pattern": "^urn:concordia:predicate:",
+      "type": "string"
+    },
+    "signature": {
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "commitment_id",
+    "chain_session_id",
+    "committer_did",
+    "predicate_reference",
+    "commitment_terms",
+    "mandate_proof_id",
+    "issued_at",
+    "expires_at",
+    "signature",
+    "algorithm"
+  ],
+  "type": "object"
+}

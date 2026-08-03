@@ -1,0 +1,18 @@
+{
+  "agent_ids": {
+    "delegate": "did:key:z7QEtN5MjekZCP2pA9wRDMnM1R1EMY-vo2_sL1DHoOHQ4IA",
+    "issuer": "did:key:z7QElvmvV3q1ICWB_gYDgl-Ojsw7e_aNoKShH_X7E8JNDEA",
+    "subject": "did:web:agent.example#synthetic-subject"
+  },
+  "seeds_PUBLIC_test_only_do_not_reuse": {
+    "mandate_delegate": {
+      "public_key_b64url": "LTeTI3pGQj9qQPcEQzJzNUdRDGPr6Nv7C9Qx6Dh0OCA=",
+      "seed_ed25519_ascii": "conformance_mand_delegate_000001"
+    },
+    "mandate_issuer": {
+      "public_key_b64url": "Jb5r1d6tSAlgf4GA4Jfjo7MO3v2jaCkoR_1-xPCTQxA=",
+      "seed_ed25519_ascii": "conformance_mand_issuer_00000001"
+    }
+  },
+  "warning": "PUBLIC deterministic conformance test seeds; do not reuse"
+}

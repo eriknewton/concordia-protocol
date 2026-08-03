@@ -1,0 +1,21 @@
+{
+  "context": {
+    "expected_decision_id": "sha256:15f84f2cf53ba52a6d0ba7d859d7c1a7bb6c21cfd5be7d036d2d998fd2eec28e"
+  },
+  "expected": "reject",
+  "expected_reason_class": "digest",
+  "id": "mut-1404-decision-object-0004",
+  "input": {
+    "boundary_id": "urn:a2a:boundary:acme-procurement-hitl",
+    "decision": "approve",
+    "policy_version": "acme-procurement-policy@2026-05-01",
+    "request_digest": "sha256:2cf9882e0ceee36278318a376117cc03da510c6994c3679a57eb4777dc8e06cb",
+    "verifier": "did:web:acme.example#procurement-lead"
+  },
+  "notes": "",
+  "record_type": "decision_object",
+  "schema_version": "concordia-conformance-vector/v1-draft",
+  "source_fixture": "a2a-1404-receipt-revocation-vector",
+  "title": "decision_object: drop capability_digest",
+  "verification_profile": "decision-object-v1"
+}

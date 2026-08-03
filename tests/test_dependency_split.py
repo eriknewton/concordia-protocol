@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import importlib
 import builtins
+import importlib
 import pathlib
 import re
 import sys
@@ -31,22 +31,24 @@ def _mcp_requirements(specs: list[str]) -> list[str]:
 
 
 def test_core_dependencies_do_not_include_mcp() -> None:
-    """`mcp` is a server EXTRA, never a core runtime dependency."""
+    """A library-only install does not pull MCP server dependencies."""
     project = _pyproject()["project"]
 
     assert _mcp_requirements(project["dependencies"]) == []
 
 
-def test_server_extra_declares_mcp() -> None:
-    """The `server` extra declares `mcp` with at least the 1.0 floor."""
+def test_server_extra_carries_mcp() -> None:
+    """The `server` extra carries the FastMCP runtime dependency."""
     extras = _pyproject()["project"]["optional-dependencies"]
 
+    assert "server" in extras
     mcp_specs = _mcp_requirements(extras["server"])
     assert len(mcp_specs) == 1, f"expected exactly one mcp requirement, got {mcp_specs}"
     assert ">=1.0" in mcp_specs[0], f"mcp floor must remain >=1.0, got {mcp_specs[0]!r}"
+    assert "<2" in mcp_specs[0], f"mcp must remain capped below 2.x, got {mcp_specs[0]!r}"
 
 
-def test_console_entrypoint_import_defers_mcp(monkeypatch) -> None:
+def test_console_entrypoint_missing_mcp_reports_server_extra_hint(monkeypatch) -> None:
     def block_mcp(name: str, *args, **kwargs):
         if name.endswith("mcp_server"):
             raise ModuleNotFoundError("No module named 'mcp'", name="mcp")
@@ -60,6 +62,8 @@ def test_console_entrypoint_import_defers_mcp(monkeypatch) -> None:
     try:
         main_module.main()
     except SystemExit as exc:
-        assert "concordia-protocol[server]" in str(exc)
+        message = str(exc)
+        assert "server extra" in message
+        assert "concordia-protocol[server]" in message
     else:
         raise AssertionError("missing server extra must exit with install hint")

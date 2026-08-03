@@ -1,0 +1,27 @@
+{
+  "approver": {
+    "identity": "did:web:acme.example#delegating-principal",
+    "role": "delegating_principal"
+  },
+  "artifact_type": "ApprovalReceipt",
+  "expires_at": "2126-05-10T14:20:00Z",
+  "id": "urn:concordia:receipt:a2a-1404-A",
+  "issued_at": "2026-05-10T14:20:00Z",
+  "references": [
+    {
+      "id": "urn:a2a:session:9e4d2c11",
+      "relationship": "approves",
+      "type": "negotiation_session"
+    }
+  ],
+  "scope": {
+    "amount": "200000.00 USD",
+    "decision": "approve",
+    "offer_hash": "sha256:dddfb8f55c9ff12ccd3ff0a5b065956b3a508b4be38eee74ad90c91c74aca932",
+    "threshold_crossed": "100000.00 USD"
+  },
+  "signature": {
+    "alg": "Ed25519",
+    "value": "qsUWTF2q_947A43yp4pvVRTIZW-nVt3ovnAeimbnSZEy22VDOYrdjjnmThxIAanLhn0YIWlmrWbWaZraRyKtAg=="
+  }
+}

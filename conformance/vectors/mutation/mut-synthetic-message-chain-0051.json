@@ -1,0 +1,95 @@
+{
+  "context": {
+    "expected_message_count": 3,
+    "expected_message_hashes": [
+      "sha256:705c54d33038d73c9ef3ae4b580de5b295613d374c2bdfccc2c9930ec5ccb0c0",
+      "sha256:398fea2652b36838eb2dc299037662021421e91d09a78733312a52cd2ed9e835",
+      "sha256:88f4a3c55430d9a3182400382f8022266a71ffbfd34d156ca3592478b20557d9"
+    ],
+    "public_keys_b64url": {
+      "did:concordia:agent:chain-initiator": "PvpsKWi2oPBbZv2mzdOf6tKmumdTrbV9rDyGb8m3NBA=",
+      "did:concordia:agent:chain-responder": "xgl2oSl1XU6m7Otw_eHFkZuaTfw0F7R9ZfNFV6xGhDU="
+    }
+  },
+  "expected": "reject",
+  "expected_reason_class": "binding",
+  "id": "mut-synthetic-message-chain-0051",
+  "input": {
+    "messages": [
+      {
+        "body": {
+          "terms": {
+            "deliverable": "analysis",
+            "rounds": 3
+          }
+        },
+        "concordia": "0.1.0",
+        "from": {
+          "agent_id": "did:concordia:agent:chain-initiator"
+        },
+        "id": "msg_conformance_chain_0001",
+        "prev_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "reasoning": "Open deterministic conformance session.",
+        "session_id": "sess_conformance_message_chain_0001",
+        "signature": "F1D2swtYm2t0sS4f-d4IF_OP2-4Lbqr0738LvnFO19Krpy4ulYGaJH3K37wExgwuQcIpgleEduLTZGp865DjBw==",
+        "timestamp": "2026-05-10T14:25:00Z",
+        "to": [
+          {
+            "agent_id": "did:concordia:agent:chain-responder"
+          }
+        ],
+        "type": "negotiate.open"
+      },
+      {
+        "body": {},
+        "concordia": "0.1.0",
+        "from": {
+          "agent_id": "did:concordia:agent:chain-responder"
+        },
+        "id": "msg_conformance_chain_0002",
+        "in_reply_to": "msg_conformance_chain_0001",
+        "prev_hash": "sha256:705c54d33038d73c9ef3ae4b580de5b295613d374c2bdfccc2c9930ec5ccb0c0",
+        "session_id": "sess_conformance_message_chain_0001",
+        "signature": "LKOBrSu-7QqZ4cQzzHWkXiMpekFzWX-ebkLG1YAasrGticPkviu9LsRcTTZNRMM5xRh7hvyyA0qGEb3VVXmiCQ==",
+        "timestamp": "2026-05-10T14:26:00Z",
+        "to": [
+          {
+            "agent_id": "did:concordia:agent:chain-initiator"
+          }
+        ],
+        "type": "negotiate.accept_session"
+      },
+      {
+        "body": {
+          "offer": {
+            "delivery_days": 2,
+            "quality": "high"
+          }
+        },
+        "concordia": "0.1.0",
+        "from": {
+          "agent_id": "did:concordia:agent:chain-initiator"
+        },
+        "id": "msg_conformance_chain_0003",
+        "in_reply_to": "msg_conformance_chain_0002",
+        "prev_hash": "sha256:398fea2652b36838eb2dc299037662021421e91d09a78733312a52cd2ed9e835",
+        "reasoning": "First signed offer after session acceptance.",
+        "session_id": "sess_conformance_message_chain_0001",
+        "signature": "5apqmmBbsy5NmlKe5mSR0mTnAh89v6CmttdpmDn4zcGwIFAzK7CxonIe9w66hJcMkvWNSx-3B2f2uwR5IBbEAA==",
+        "timestamp": "2026-05-10T14:27:00Z",
+        "to": [
+          {
+            "agent_id": "did:concordia:agent:chain-responder"
+          }
+        ],
+        "type": "negotiate.offer"
+      }
+    ]
+  },
+  "notes": "",
+  "record_type": "message_chain",
+  "schema_version": "concordia-conformance-vector/v1-draft",
+  "source_fixture": "synthetic/longtail",
+  "title": "message_chain: drop messages.1.body.accepted",
+  "verification_profile": "message-chain-v1"
+}

@@ -6,8 +6,16 @@ from cryptography.hazmat.primitives.asymmetric.utils import (
     decode_dss_signature,
     encode_dss_signature,
 )
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-from concordia import KeyPair, ES256KeyPair, sign_message, verify_signature
+from concordia import (
+    ES256KeyPair,
+    KeyPair,
+    canonicalize_jcs,
+    public_key_from_b64url,
+    sign_message,
+    verify_signature,
+)
 from concordia.signing import P256_HALF_ORDER, P256_ORDER
 
 
@@ -26,6 +34,50 @@ class TestKeyPair:
         b64 = kp.public_key_b64()
         assert isinstance(b64, str)
         assert len(b64) > 0
+
+    def test_public_key_from_b64url_round_trip_verifies_and_rejects_tamper(self):
+        kp = KeyPair.generate()
+        data = {"concordia": "0.1.0", "type": "negotiate.offer", "body": {}}
+        sig = sign_message(data, kp)
+
+        public_key = public_key_from_b64url(kp.public_key_b64())
+
+        assert verify_signature(data, sig, public_key)
+        tampered = {**data, "type": "negotiate.accept"}
+        assert not verify_signature(tampered, sig, public_key)
+
+    def test_public_key_from_b64url_accepts_unpadded_and_standard_base64(self):
+        kp = KeyPair.generate()
+        unpadded = kp.public_key_b64().rstrip("=")
+        standard_raw = bytes([251]) * 32
+        standard_b64 = base64.b64encode(standard_raw).decode()
+        assert "+" in standard_b64 or "/" in standard_b64
+
+        assert public_key_from_b64url(unpadded).public_bytes(
+            Encoding.Raw, PublicFormat.Raw
+        ) == kp.public_key_bytes()
+        assert public_key_from_b64url(standard_b64).public_bytes(
+            Encoding.Raw, PublicFormat.Raw
+        ) == standard_raw
+
+    def test_verification_material_contract(self):
+        kp = KeyPair.generate()
+        material = kp.verification_material()
+
+        assert material == {
+            "key_type": "Ed25519",
+            "public_key_b64url": kp.public_key_b64(),
+            "alg": "EdDSA",
+            "canonicalization": "RFC8785-JCS",
+            "preimage_rule": "object minus top-level 'signature'",
+        }
+        data = {"status": "agreed"}
+        sig = sign_message(data, kp)
+        reconstructed = public_key_from_b64url(material["public_key_b64url"])
+        assert verify_signature(data, sig, reconstructed)
+
+    def test_canonicalize_jcs_is_top_level_export(self):
+        assert canonicalize_jcs({"b": 1, "a": 2}) == b'{"a":2,"b":1}'
 
     def test_different_keys(self):
         kp1 = KeyPair.generate()
@@ -143,19 +195,21 @@ class TestCrossLanguageCanonicalJSON:
 
     def test_rejects_negative_zero(self):
         import pytest
+
         from concordia.signing import canonical_json
         with pytest.raises(ValueError, match="negative zero"):
             canonical_json({"v": -0.0})
 
     def test_rejects_nan(self):
-        import math
         import pytest
+
         from concordia.signing import canonical_json
         with pytest.raises(ValueError, match="special float"):
             canonical_json({"v": float("nan")})
 
     def test_rejects_infinity(self):
         import pytest
+
         from concordia.signing import canonical_json
         with pytest.raises(ValueError, match="special float"):
             canonical_json({"v": float("inf")})
@@ -164,6 +218,7 @@ class TestCrossLanguageCanonicalJSON:
 
     def test_rejects_lone_high_surrogate_value(self):
         import pytest
+
         from concordia.signing import canonical_json
         # A lone surrogate cannot encode to UTF-8 and diverges from the JS SDK
         # (whose JSON.stringify happily emits \udXXX). Reject with ValueError,
@@ -173,12 +228,14 @@ class TestCrossLanguageCanonicalJSON:
 
     def test_rejects_lone_low_surrogate_value(self):
         import pytest
+
         from concordia.signing import canonical_json
         with pytest.raises(ValueError, match="surrogate"):
             canonical_json({"v": "ab\udd1ecd"})
 
     def test_rejects_lone_surrogate_in_key(self):
         import pytest
+
         from concordia.signing import canonical_json
         with pytest.raises(ValueError, match="surrogate"):
             canonical_json({"\ud834": "v"})
@@ -257,7 +314,7 @@ class TestHashChain:
     """Test transcript hash chain integrity (§9.3)."""
 
     def test_valid_chain(self):
-        from concordia import validate_chain, GENESIS_HASH, compute_hash
+        from concordia import GENESIS_HASH, compute_hash, validate_chain
 
         msg1 = {"concordia": "0.1.0", "id": "1", "prev_hash": GENESIS_HASH, "body": {}}
         msg2 = {"concordia": "0.1.0", "id": "2", "prev_hash": compute_hash(msg1), "body": {}}
@@ -265,7 +322,7 @@ class TestHashChain:
         assert validate_chain([msg1, msg2, msg3])
 
     def test_broken_chain(self):
-        from concordia import validate_chain, GENESIS_HASH
+        from concordia import GENESIS_HASH, validate_chain
 
         msg1 = {"concordia": "0.1.0", "id": "1", "prev_hash": GENESIS_HASH, "body": {}}
         msg2 = {"concordia": "0.1.0", "id": "2", "prev_hash": "sha256:wrong", "body": {}}
@@ -456,14 +513,16 @@ class TestResolveAlgorithm:
 
     def test_unsupported_algorithm_raises(self, monkeypatch):
         monkeypatch.delenv("CONCORDIA_JWS_ALG", raising=False)
-        from concordia.signing import resolve_algorithm
         import pytest
+
+        from concordia.signing import resolve_algorithm
         with pytest.raises(ValueError):
             resolve_algorithm("RS256")
 
     def test_unsupported_env_var_raises(self, monkeypatch):
         monkeypatch.setenv("CONCORDIA_JWS_ALG", "HS256")
-        from concordia.signing import resolve_algorithm
         import pytest
+
+        from concordia.signing import resolve_algorithm
         with pytest.raises(ValueError):
             resolve_algorithm()

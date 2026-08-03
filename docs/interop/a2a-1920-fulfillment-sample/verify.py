@@ -14,8 +14,30 @@ Confirms, from the retained JSON bytes (no network, no regeneration):
      PASS. A synthetic term injected into a copy is caught: REJECT.
   5. The composition join key (charge_ref / action_ref) is present and matches
      sample.json.
+  6. Every value sample.json publishes is RECOMPUTED from the artifact bytes
+     and compared, never read as a source of truth: canonical_sha256, the
+     signature string, and the public key (re-derived from the published
+     seed). A recorded value that no verifier derives is an answer key, not a
+     test, so each one is derived here and the derivation is the source.
 
 Exit code 0 == every assertion held.
+
+Two deliberate limits, stated rather than left to be discovered:
+
+  - The independent `rfc8785` cross-check is SKIPPED when that library is not
+    installed, so a third party with only `concordia` installed still gets a
+    clean run. Absence is the only skip condition (see `find_spec` below); a
+    broken rfc8785 fails the run. Because a skip is possible here, this script
+    is not the regression gate: `tests/test_interop_fixtures.py` imports
+    rfc8785 unconditionally and runs in CI, which is where a canonicalizer
+    regression that was baked into BOTH the artifact and the recorded digest
+    gets caught.
+  - A missing or malformed field in the fixture raises rather than printing a
+    REJECT/FAIL line. That is fail-closed: the traceback exits nonzero, which
+    is the same signal a failed check gives.
+
+This fixture exercises one artifact shape. It is not a JCS conformance suite;
+`tests/test_canonicalization_rfc8785.py` covers the edge vectors.
 
 Run:  python verify.py
 """
@@ -23,12 +45,17 @@ Run:  python verify.py
 from __future__ import annotations
 
 import base64
+import hashlib
+import importlib.util
 import json
 import sys
 from pathlib import Path
 from typing import Any
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
 
 from concordia.schema_validator import (
     _RAW_TERM_PATTERNS,  # shipped raw-deal-term detectors (SPEC 9.6.6)
@@ -101,13 +128,81 @@ def main() -> int:
 
     # 2. Ed25519 signature verifies over shipped canonical JSON.
     signable = {k: v for k, v in att.items() if k != "signature"}
+    canonical_bytes = canonical_json(signable)
     sig = base64.urlsafe_b64decode(att["signature"]["value"])
     sig_ok = True
     try:
-        pubkey.verify(sig, canonical_json(signable))
+        pubkey.verify(sig, canonical_bytes)
     except Exception:
         sig_ok = False
     check("Ed25519 signature verifies over canonical JSON", sig_ok)
+
+    # 2a. canonical_sha256 RECOMPUTES from the artifact bytes.
+    #
+    # sample.json publishes this digest. A published digest that no verifier
+    # derives is an answer key: an implementation whose canonicalizer regressed
+    # would emit a different digest and nothing here would notice, because
+    # nothing would compare. So the recompute below is the source of truth and
+    # sample.json holds the expectation. Preimage: the attestation with its
+    # top-level `signature` member removed, canonicalized per RFC 8785 JCS.
+    recomputed_canonical = "sha256:" + hashlib.sha256(canonical_bytes).hexdigest()
+    recorded_canonical = sample["canonical_sha256"]
+    check(
+        "canonical_sha256 RECOMPUTES from artifact bytes and matches sample.json",
+        recomputed_canonical == recorded_canonical,
+        f"recomputed={recomputed_canonical} recorded={recorded_canonical}",
+    )
+
+    # 2b. Independent-JCS cross-check: if the rfc8785 reference library is
+    # available, prove the digest is the RFC 8785 STANDARD hash rather than an
+    # artifact of Concordia's own canonicalizer. Skipped (not failed) if
+    # rfc8785 is absent, so a third party with only `concordia` installed still
+    # gets a clean run. Mirrors the same cross-check in the #1404 vector.
+    # ABSENCE is the only condition that skips. `find_spec` answers "is the
+    # module installed" without executing it, so an ImportError raised from
+    # INSIDE a broken rfc8785 propagates and fails the run instead of being
+    # swallowed as a skip. A bare `try: import ... except ImportError` cannot
+    # tell those two cases apart.
+    if importlib.util.find_spec("rfc8785") is None:
+        print("[SKIP] rfc8785 not installed; standard-JCS cross-check skipped")
+    else:
+        import rfc8785  # type: ignore
+
+        reference_canonical = (
+            "sha256:" + hashlib.sha256(rfc8785.dumps(signable)).hexdigest()
+        )
+        check(
+            "canonical_sha256 matches INDEPENDENT rfc8785 reference JCS",
+            reference_canonical == recorded_canonical,
+            reference_canonical,
+        )
+
+    # 2c. The private key RE-DERIVES from the published seed, and the published
+    # signature RE-DERIVES from that key over the same canonical bytes. Ed25519
+    # is deterministic (RFC 8032), so this is a derivation, not a comparison of
+    # two recorded strings: the fixture is reproducible end to end from
+    # sample.json alone. (The seed is a PUBLIC test-vector seed. It is
+    # private-key material by form and must never be reused for anything real.)
+    derived_private = Ed25519PrivateKey.from_private_bytes(
+        sample["seed_ed25519_ascii"].encode()
+    )
+    derived_pubkey_b64 = base64.urlsafe_b64encode(
+        derived_private.public_key().public_bytes_raw()
+    ).decode()
+    check(
+        "public_key_b64url RE-DERIVES from the published seed",
+        derived_pubkey_b64 == sample["public_key_b64url"],
+        derived_pubkey_b64,
+    )
+    derived_sig_b64 = base64.urlsafe_b64encode(
+        derived_private.sign(canonical_bytes)
+    ).decode()
+    check(
+        "signature RE-DERIVES from the seed and matches artifact and sample.json",
+        derived_sig_b64 == att["signature"]["value"]
+        and derived_sig_b64 == sample["signature_b64url"],
+        derived_sig_b64,
+    )
 
     # 3. One-byte tamper -> signature REJECT.
     tampered = json.loads(json.dumps(signable))
@@ -120,6 +215,19 @@ def main() -> int:
     except Exception:
         tamper_rejected = True
     check("one-byte tamper of signed body -> signature REJECTS", tamper_rejected)
+
+    # 3a. Negative control for 2a: the digest comparison is live, not a
+    # restatement. The SAME one-byte tamper diverges the recomputed canonical
+    # digest from the recorded one, so a regressed producer cannot slip past
+    # check 2a.
+    tampered_digest = (
+        "sha256:" + hashlib.sha256(canonical_json(tampered)).hexdigest()
+    )
+    check(
+        "negative control: tampered body diverges the recomputed digest",
+        tampered_digest != recorded_canonical,
+        tampered_digest,
+    )
 
     # 4. Privacy invariant.
     has_term, hit = contains_raw_term(att)
