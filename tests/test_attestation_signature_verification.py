@@ -280,7 +280,7 @@ from concordia.attestation import (  # noqa: E402
 
 
 def _agreed_attestation():
-    """Mint a real, countersigned (>=0.2.0) attestation over an AGREED session."""
+    """Mint a real, countersigned (>=0.3.0) attestation over an AGREED session."""
     seller = Agent("seller_01")
     buyer = Agent("buyer_42")
     terms = {
@@ -316,7 +316,7 @@ class TestOutcomeBindingCountersignature:
         countersignature. This is the exact pre-C-H2 exploit: the party sigs
         still verify, but the OUTCOME is no longer bound."""
         att, key_pairs = _agreed_attestation()
-        assert att["concordia_attestation"] == "0.2.0"
+        assert att["concordia_attestation"] == "0.3.0"
         cs = att["countersignatures"]
         assert isinstance(cs, dict) and cs
 
@@ -338,7 +338,7 @@ class TestOutcomeBindingCountersignature:
             )
 
     def test_sec014_countersignature_covers_meta_and_transcript(self):
-        """meta.category and transcript_hash are each inside the bound snapshot;
+        """meta.category, transcript_hash, and chain_head are each bound;
         tampering either independently breaks the countersignature."""
         # meta.category tamper
         att, key_pairs = _agreed_attestation()
@@ -357,6 +357,15 @@ class TestOutcomeBindingCountersignature:
             assert verify_attestation_countersignature(
                 att2, sig, key_pairs2[aid].public_key
             ) is False, f"transcript_hash tamper must break {aid}"
+
+        # chain_head tamper (fresh attestation)
+        att3, key_pairs3 = _agreed_attestation()
+        cs3 = att3["countersignatures"]
+        att3["chain_head"] = "sha256:" + "1" * 64
+        for aid, sig in cs3.items():
+            assert verify_attestation_countersignature(
+                att3, sig, key_pairs3[aid].public_key
+            ) is False, f"chain_head tamper must break {aid}"
 
     def test_single_key_countersignature_degraded_form(self):
         """Degraded single-key form ({AGENT_A: KP_A}, B omitted) yields a

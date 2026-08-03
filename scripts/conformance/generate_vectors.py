@@ -9,6 +9,7 @@ import copy
 import difflib
 import hashlib
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -120,6 +121,9 @@ from concordia.schema_validator import (  # noqa: E402
 )
 from concordia.signing import KeyPair, canonical_json, sign_message  # noqa: E402
 
+SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+\Z")
+SHA256_HEX_RE = re.compile(r"^sha256:[a-f0-9]{64}\Z")
+
 ReasonClass: TypeAlias = Literal[
     "schema",
     "signature",
@@ -138,7 +142,11 @@ SUITE_VERSION = "v1-draft"
 GENERATOR_COMMAND = "python3 scripts/conformance/generate_vectors.py"
 CHECK_COMMAND = "python3 scripts/conformance/generate_vectors.py --check"
 GENERATED_CHECK_EXCLUDED_DIRS = {"reference-runner", "reference-runner-js"}
-GENERATED_CHECK_EXCLUDED_FILES = {"IMPLEMENTATIONS.md", "RUNNER_CONTRACT.md"}
+GENERATED_CHECK_EXCLUDED_FILES = {
+    "IMPLEMENTATIONS.md",
+    "PROFILES.md",
+    "RUNNER_CONTRACT.md",
+}
 
 INTEROP_1404 = REPO_ROOT / "docs" / "interop" / "a2a-1404-receipt-revocation-vector"
 INTEROP_1920 = REPO_ROOT / "docs" / "interop" / "a2a-1920-fulfillment-sample"
@@ -334,6 +342,7 @@ class SyntheticLongtailFixtures:
     competence_proof: dict[str, Any]
     message_chain: dict[str, Any]
     message_chain_position: dict[str, Any]
+    receipt_set_binding: dict[str, Any]
     attestations: list[dict[str, Any]]
     seed_manifest: dict[str, Any]
 
@@ -1269,7 +1278,7 @@ def evaluate_competence_proof_profile(vector: Vector) -> Evaluation:
 
 
 def message_chain_messages(input_data: dict[str, Any]) -> list[dict[str, Any]] | None:
-    if set(input_data) != {"messages"}:
+    if set(input_data) not in ({"messages"}, {"messages", "receipt"}):
         return None
     messages = input_data.get("messages")
     if not isinstance(messages, list) or not messages:
@@ -1282,7 +1291,88 @@ def message_chain_messages(input_data: dict[str, Any]) -> list[dict[str, Any]] |
     return normalized
 
 
-def evaluate_message_chain_profile(vector: Vector) -> Evaluation:
+def attestation_version_at_least(value: Any, major: int, minor: int) -> bool:
+    if not isinstance(value, str) or SEMVER_RE.match(value) is None:
+        return False
+    parts = value.split(".")
+    return (int(parts[0]), int(parts[1])) >= (major, minor)
+
+
+def evaluate_message_chain_receipt_binding(
+    input_data: dict[str, Any],
+    messages: list[dict[str, Any]],
+    context: dict[str, Any],
+) -> Evaluation:
+    receipt = input_data.get("receipt")
+    if receipt is None:
+        return Evaluation(True)
+    if not isinstance(receipt, dict):
+        return Evaluation(False, "schema")
+
+    schema = load_json(SCHEMA_COPIES["attestation.schema.json"])
+    if not schema_is_valid(schema, receipt):
+        return Evaluation(False, "schema")
+    if not attestation_version_at_least(receipt.get("concordia_attestation"), 0, 3):
+        return Evaluation(False, "binding")
+    if not isinstance(receipt.get("chain_head"), str) or not SHA256_HEX_RE.match(
+        receipt["chain_head"]
+    ):
+        return Evaluation(False, "binding")
+    if (
+        not isinstance(receipt.get("message_count"), int)
+        or isinstance(receipt.get("message_count"), bool)
+        or receipt["message_count"] < 1
+    ):
+        return Evaluation(False, "binding")
+
+    public_keys = context.get("public_keys_b64url")
+    parties = receipt.get("parties")
+    countersignatures = receipt.get("countersignatures")
+    if (
+        not isinstance(public_keys, dict)
+        or not isinstance(parties, list)
+        or not isinstance(countersignatures, dict)
+    ):
+        return Evaluation(False, "signature")
+    countersign_payload = attestation_countersign_payload(receipt)
+    for party in parties:
+        if not isinstance(party, dict):
+            return Evaluation(False, "schema")
+        agent_id = party.get("agent_id")
+        signature = party.get("signature")
+        if not isinstance(agent_id, str) or not isinstance(signature, str):
+            return Evaluation(False, "signature")
+        public_key_b64 = public_keys.get(agent_id)
+        if not isinstance(public_key_b64, str):
+            return Evaluation(False, "signature")
+        if not verify_ed25519_signature(
+            public_key_b64,
+            signature,
+            canonical_json(without_signature(party)),
+        ):
+            return Evaluation(False, "signature")
+        countersignature = countersignatures.get(agent_id)
+        if not isinstance(countersignature, str):
+            return Evaluation(False, "signature")
+        if not verify_ed25519_signature(
+            public_key_b64,
+            countersignature,
+            countersign_payload,
+        ):
+            return Evaluation(False, "signature")
+
+    if receipt["message_count"] != len(messages):
+        return Evaluation(False, "binding")
+    if receipt["chain_head"] != compute_hash(messages[-1]):
+        return Evaluation(False, "binding")
+    return Evaluation(True)
+
+
+def evaluate_message_chain_profile(
+    vector: Vector,
+    *,
+    skip_receipt_set_binding: bool = False,
+) -> Evaluation:
     input_data = vector.input_data
     context = vector.context
     messages = message_chain_messages(input_data)
@@ -1320,6 +1410,14 @@ def evaluate_message_chain_profile(vector: Vector) -> Evaluation:
     if expected_hashes is not None:
         if expected_hashes != [compute_hash(message) for message in messages]:
             return Evaluation(False, "digest")
+    if not skip_receipt_set_binding:
+        receipt_binding = evaluate_message_chain_receipt_binding(
+            input_data,
+            messages,
+            context,
+        )
+        if not receipt_binding.accepted:
+            return receipt_binding
     return Evaluation(True)
 
 
@@ -1592,10 +1690,10 @@ RECEIPT_BUNDLE_VERSION_TOLERANCE_NOTE = (
 CHAIN_POSITION_RESIGNED_SPLICE_TOLERANCE_NOTE = (
     "tolerated-accept: per-message signatures authenticate links, not the complete message set"
 )
-EXPECTED_MUTATION_TOTAL = 1460
-EXPECTED_MUTATION_REJECTS = 1419
-EXPECTED_MUTATION_ACCEPTS = 41
-EXPECTED_CANARY_TOTAL = 4
+EXPECTED_MUTATION_TOTAL = 1484
+EXPECTED_MUTATION_REJECTS = 1439
+EXPECTED_MUTATION_ACCEPTS = 45
+EXPECTED_CANARY_TOTAL = 5
 EXPECTED_RAW_TYPED_DIVERGENCES = (
     MutationDivergence(
         battery_name="1404/revocation_A.json",
@@ -1614,11 +1712,11 @@ EXPECTED_MUTATION_BATTERY_COUNTS: dict[str, tuple[int, int, int]] = {
     "1404/revocation_A.json": (33, 33, 0),
     "1920/fulfillment_attestation.json": (63, 63, 0),
     "synthetic/attestation/attestation.json::attestation-countersign-v1": (
-        107,
-        104,
+        111,
+        108,
         3,
     ),
-    "synthetic/attestation/attestation.json::attestation-v1": (107, 78, 29),
+    "synthetic/attestation/attestation.json::attestation-v1": (111, 78, 33),
     "synthetic/cosign/cosigned_receipt.json": (42, 42, 0),
     "synthetic/cmpc_bilateral/primitives/atomic_activation_proof.json": (30, 30, 0),
     "synthetic/cmpc_bilateral/primitives/chain_session.json": (25, 25, 0),
@@ -1626,10 +1724,11 @@ EXPECTED_MUTATION_BATTERY_COUNTS: dict[str, tuple[int, int, int]] = {
     "synthetic/cmpc_bilateral/primitives/conditional_commitment.json": (35, 35, 0),
     "synthetic/cmpc_bilateral/primitives/unwind_record.json": (28, 28, 0),
     "synthetic/longtail/agent_profile.json": (100, 96, 4),
-    "synthetic/longtail/competence_proof.json": (153, 151, 2),
+    "synthetic/longtail/competence_proof.json": (157, 155, 2),
     "synthetic/longtail/message_chain.json": (99, 99, 0),
     "synthetic/longtail/message_chain_position.json": (4, 3, 1),
-    "synthetic/longtail/receipt_bundle.json": (248, 247, 1),
+    "synthetic/longtail/receipt_set_binding.json": (4, 4, 0),
+    "synthetic/longtail/receipt_bundle.json": (256, 255, 1),
     "synthetic/mandate/delegated_mandate.json": (82, 82, 0),
     "synthetic/mandate/mandate.json": (51, 51, 0),
     "synthetic/predicate/vector_02.json": (87, 87, 0),
@@ -1820,7 +1919,7 @@ def build_mutation_fixtures(
                 "public_keys_b64url": attestation_public_keys,
             },
             sdk_rejected=0,
-            sdk_total=107,
+            sdk_total=111,
             sdk_escapes=frozenset(),
             compare_typed_path=False,
         ),
@@ -1843,7 +1942,7 @@ def build_mutation_fixtures(
                 "public_keys_b64url": attestation_public_keys,
             },
             sdk_rejected=0,
-            sdk_total=107,
+            sdk_total=111,
             sdk_escapes=frozenset(),
             compare_typed_path=False,
         ),
@@ -2091,7 +2190,7 @@ def build_mutation_fixtures(
                 ],
             },
             sdk_rejected=0,
-            sdk_total=153,
+            sdk_total=157,
             sdk_escapes=frozenset(),
             compare_typed_path=False,
         ),
@@ -2112,7 +2211,7 @@ def build_mutation_fixtures(
                 ],
             },
             sdk_rejected=0,
-            sdk_total=248,
+            sdk_total=256,
             sdk_escapes=frozenset(),
             compare_typed_path=False,
         ),
@@ -2295,6 +2394,21 @@ def message_chain_position_context(
     }
 
 
+def receipt_set_binding_context(synthetic: SyntheticFixtures) -> dict[str, Any]:
+    longtail_keys = synthetic.longtail.seed_manifest["seeds_PUBLIC_test_only_do_not_reuse"]
+    longtail_agent_ids = synthetic.longtail.seed_manifest["agent_ids"]
+    return {
+        "public_keys_b64url": {
+            longtail_agent_ids["receipt_set_binding_initiator"]: longtail_keys[
+                "message_chain_initiator"
+            ]["public_key_b64url"],
+            longtail_agent_ids["receipt_set_binding_responder"]: longtail_keys[
+                "message_chain_responder"
+            ]["public_key_b64url"],
+        }
+    }
+
+
 def resign_chain_message(message: dict[str, Any], key_pair: KeyPair) -> dict[str, Any]:
     resigned = copy.deepcopy(message)
     resigned["signature"] = sign_message(resigned, key_pair)
@@ -2415,6 +2529,154 @@ def build_chain_position_vectors(
         "reject": sum(1 for vector in vectors if vector.expected == "reject"),
         "accept": sum(1 for vector in vectors if vector.expected == "accept"),
         "selection_note": "explicit chain-position attack vectors over a four-message synthetic chain",
+    }
+    return vectors, summary
+
+
+def receipt_set_binding_vector(
+    *,
+    vector_id: str,
+    title: str,
+    input_data: dict[str, Any],
+    context: dict[str, Any],
+    expected_reason_class: ReasonClass | None = None,
+    notes: str = "",
+    discriminates: str | None = None,
+) -> Vector:
+    probe = Vector(
+        vector_id=vector_id,
+        title=title,
+        source_fixture=f"{SYNTHETIC_SOURCE_LONGTAIL}/receipt_set_binding.json",
+        record_type="message_chain",
+        verification_profile="message-chain-v1",
+        input_data=input_data,
+        context=copy.deepcopy(context),
+    )
+    evaluation = evaluate_vector(probe)
+    if not evaluation.accepted and evaluation.reason_class is None:
+        raise GenerationError(f"{vector_id}: reject missing expected_reason_class")
+    return Vector(
+        vector_id=vector_id,
+        title=title,
+        source_fixture=probe.source_fixture,
+        record_type=probe.record_type,
+        verification_profile=probe.verification_profile,
+        input_data=input_data,
+        context=probe.context,
+        expected=outcome_name(evaluation.accepted),
+        expected_reason_class=(
+            None
+            if evaluation.accepted
+            else expected_reason_class or evaluation.reason_class
+        ),
+        notes=notes,
+        canonical_preimage=canonical_json(input_data),
+        discriminates=discriminates,
+    )
+
+
+def receipt_set_binding_key_map() -> dict[str, KeyPair]:
+    return receipt_set_binding_key_by_agent()
+
+
+def receipt_with_resigned_snapshot(
+    receipt: dict[str, Any],
+    updates: dict[str, Any],
+) -> dict[str, Any]:
+    key_by_agent = receipt_set_binding_key_map()
+    mutated = copy.deepcopy(receipt)
+    mutated.update(updates)
+    return resign_attestation(mutated, key_by_agent)
+
+
+def receipt_set_binding_resigned_splice(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if len(messages) != 5:
+        raise GenerationError("receipt set-binding transcript must have five messages")
+    key_by_agent = receipt_set_binding_key_map()
+    msg1, msg2, _removed, msg4, msg5 = [copy.deepcopy(message) for message in messages]
+    msg4["prev_hash"] = compute_hash(msg2)
+    msg4 = resign_chain_message(msg4, key_by_agent[msg4["from"]["agent_id"]])
+    msg5["prev_hash"] = compute_hash(msg4)
+    msg5 = resign_chain_message(msg5, key_by_agent[msg5["from"]["agent_id"]])
+    return [msg1, msg2, msg4, msg5]
+
+
+def build_receipt_set_binding_mutation_vectors(
+    synthetic: SyntheticFixtures,
+) -> tuple[list[Vector], dict[str, Any]]:
+    base_pair = synthetic.longtail.receipt_set_binding
+    base_receipt = base_pair["receipt"]
+    base_messages = base_pair["messages"]
+    context = receipt_set_binding_context(synthetic)
+
+    altered_chain_head = {
+        "messages": copy.deepcopy(base_messages),
+        "receipt": receipt_with_resigned_snapshot(
+            base_receipt,
+            {"chain_head": "sha256:" + ("d4" * 32)},
+        ),
+    }
+    altered_message_count = {
+        "messages": copy.deepcopy(base_messages),
+        "receipt": receipt_with_resigned_snapshot(
+            base_receipt,
+            {"message_count": len(base_messages) + 1},
+        ),
+    }
+    truncated_transcript = {
+        "messages": copy.deepcopy(base_messages[:-1]),
+        "receipt": copy.deepcopy(base_receipt),
+    }
+    resigned_splice = {
+        "messages": receipt_set_binding_resigned_splice(base_messages),
+        "receipt": copy.deepcopy(base_receipt),
+    }
+
+    vectors = [
+        receipt_set_binding_vector(
+            vector_id="mut-synthetic-receipt-set-binding-0001",
+            title="receipt_set_binding: countersigned chain_head does not match transcript head",
+            input_data=altered_chain_head,
+            context=context,
+            expected_reason_class="binding",
+        ),
+        receipt_set_binding_vector(
+            vector_id="mut-synthetic-receipt-set-binding-0002",
+            title="receipt_set_binding: countersigned message_count is off by one",
+            input_data=altered_message_count,
+            context=context,
+            expected_reason_class="binding",
+        ),
+        receipt_set_binding_vector(
+            vector_id="mut-synthetic-receipt-set-binding-0003",
+            title="receipt_set_binding: truncated transcript presented with original receipt",
+            input_data=truncated_transcript,
+            context=context,
+            expected_reason_class="binding",
+        ),
+        receipt_set_binding_vector(
+            vector_id="mut-synthetic-receipt-set-binding-0004",
+            title="receipt_set_binding: re-signed deletion splice presented with original receipt",
+            input_data=resigned_splice,
+            context=context,
+            expected_reason_class="binding",
+        ),
+    ]
+    summary = {
+        "battery_name": "synthetic/longtail/receipt_set_binding.json",
+        "source_fixture": f"{SYNTHETIC_SOURCE_LONGTAIL}/receipt_set_binding.json",
+        "object_name": "receipt_set_binding",
+        "record_type": "message_chain",
+        "verification_profile": "message-chain-v1",
+        "total": len(vectors),
+        "reject": sum(1 for vector in vectors if vector.expected == "reject"),
+        "accept": sum(1 for vector in vectors if vector.expected == "accept"),
+        "selection_note": (
+            "explicit receipt set-binding attack vectors over a five-message "
+            "agreed transcript"
+        ),
     }
     return vectors, summary
 
@@ -2541,6 +2803,12 @@ def build_mutation_battery(
     position_vectors, position_summary = build_chain_position_vectors(synthetic)
     vectors.extend(position_vectors)
     battery_summaries.append(position_summary)
+
+    receipt_vectors, receipt_summary = build_receipt_set_binding_mutation_vectors(
+        synthetic
+    )
+    vectors.extend(receipt_vectors)
+    battery_summaries.append(receipt_summary)
 
     vectors = sorted(vectors, key=lambda vector: vector.vector_id)
     battery_summaries = sorted(
@@ -2672,6 +2940,31 @@ def build_canary_chain_splice(synthetic: SyntheticFixtures) -> Vector:
     )
 
 
+def build_canary_receipt_set_unchecked(synthetic: SyntheticFixtures) -> Vector:
+    base_pair = synthetic.longtail.receipt_set_binding
+    canary_input = {
+        "messages": receipt_set_binding_resigned_splice(base_pair["messages"]),
+        "receipt": copy.deepcopy(base_pair["receipt"]),
+    }
+    return Vector(
+        vector_id="canary-receipt-set-unchecked",
+        title="Receipt set-binding skipped over a re-signed transcript splice",
+        source_fixture=f"{SYNTHETIC_SOURCE_LONGTAIL}/receipt_set_binding.json",
+        record_type="message_chain",
+        verification_profile="message-chain-v1",
+        input_data=canary_input,
+        context=receipt_set_binding_context(synthetic),
+        expected="reject",
+        expected_reason_class="binding",
+        notes=(
+            "canary: rejects only if the runner compares the 0.3.0 receipt "
+            "chain_head and message_count to the presented transcript"
+        ),
+        canonical_preimage=canonical_json(canary_input),
+        discriminates="receipt-set-unchecked",
+    )
+
+
 def evaluate_canary_regression(vector: Vector) -> Evaluation:
     if vector.discriminates == "preimage-includes-signature":
         input_data = vector.input_data
@@ -2785,6 +3078,9 @@ def evaluate_canary_regression(vector: Vector) -> Evaluation:
                 return Evaluation(False, "signature")
         return Evaluation(True)
 
+    if vector.discriminates == "receipt-set-unchecked":
+        return evaluate_message_chain_profile(vector, skip_receipt_set_binding=True)
+
     raise GenerationError(f"{vector.vector_id}: missing canary regression")
 
 
@@ -2798,6 +3094,7 @@ def assert_canary_sanity(vectors: list[Vector]) -> None:
     }
     if discriminators != {
         "skip-linkage-walk",
+        "receipt-set-unchecked",
         "preimage-includes-signature",
         "schema-skipped",
         "decision-id-not-recomputed",
@@ -2830,6 +3127,7 @@ def build_canary_vectors(synthetic: SyntheticFixtures | None = None) -> list[Vec
     vectors = sorted(
         [
             build_canary_chain_splice(synthetic),
+            build_canary_receipt_set_unchecked(synthetic),
             build_canary_preimage_includes_signature(f1920),
             build_canary_schema_skipped(f1404),
             build_canary_decision_id_not_recomputed(f1404),
@@ -2908,7 +3206,7 @@ def build_synthetic_attestation() -> tuple[dict[str, Any], dict[str, Any]]:
         party["signature"] = sign_message(party, key_by_agent[party["agent_id"]])
 
     attestation: dict[str, Any] = {
-        "concordia_attestation": "0.2.0",
+        "concordia_attestation": "0.3.0",
         "attestation_id": "att_conformance_p2a1_0001",
         "session_id": "sess_conformance_p2a1_0001",
         "timestamp": fixed_iso_now(),
@@ -2927,6 +3225,8 @@ def build_synthetic_attestation() -> tuple[dict[str, Any], dict[str, Any]]:
             "mediator_invoked": False,
         },
         "transcript_hash": "sha256:" + ("a1" * 32),
+        "chain_head": "sha256:" + ("b2" * 32),
+        "message_count": 6,
         "fulfillment": None,
         "references": [
             {
@@ -3299,7 +3599,7 @@ def build_agent_profile_fixture(profile_key: KeyPair) -> dict[str, Any]:
             concession_pattern="graduated",
         ),
         trust_signals=TrustSignals(
-            verascore_did="did:web:verascore.example:agent-longtail",
+            verascore_did="did:web:reputation.example:agent-longtail",
             verascore_tier="verified-sovereign",
             verascore_composite=91,
             sovereignty=Sovereignty(L1="Full", L2="Full", L3="Full", L4="Full"),
@@ -3308,8 +3608,8 @@ def build_agent_profile_fixture(profile_key: KeyPair) -> dict[str, Any]:
             concordia_preferred=True,
             reputation=[
                 ReputationAssertion(
-                    provider="verascore.example",
-                    subject_did="did:web:verascore.example:agent-longtail",
+                    provider="reputation.example",
+                    subject_did="did:web:reputation.example:agent-longtail",
                     tier="verified-sovereign",
                     composite=91,
                 )
@@ -3591,6 +3891,180 @@ def build_message_chain_position_fixture(
     return chain
 
 
+def compute_transcript_hash(messages: list[dict[str, Any]]) -> str:
+    combined = b"".join(canonical_json(message) for message in messages)
+    return "sha256:" + hashlib.sha256(combined).hexdigest()
+
+
+def receipt_set_binding_key_by_agent() -> dict[str, KeyPair]:
+    return {
+        "did:concordia:agent:receipt-chain-initiator": key_pair_from_seed(
+            SYNTHETIC_SEEDS["message_chain_initiator"]
+        ),
+        "did:concordia:agent:receipt-chain-responder": key_pair_from_seed(
+            SYNTHETIC_SEEDS["message_chain_responder"]
+        ),
+    }
+
+
+def build_receipt_set_binding_fixture() -> dict[str, Any]:
+    key_by_agent = receipt_set_binding_key_by_agent()
+    initiator = {"agent_id": "did:concordia:agent:receipt-chain-initiator"}
+    responder = {"agent_id": "did:concordia:agent:receipt-chain-responder"}
+    session_id = "sess_conformance_receipt_set_binding_0001"
+
+    open_msg = build_message(
+        message_id="msg_conformance_receipt_binding_0001",
+        message_type="negotiate.open",
+        session_id=session_id,
+        sender=initiator,
+        recipients=[responder],
+        body={"proposal": {"workstream": "analysis", "assurance_level": "standard"}},
+        key_pair=key_by_agent[initiator["agent_id"]],
+        prev_hash=GENESIS_HASH,
+        timestamp="2026-05-10T16:00:00Z",
+        reasoning="Open deterministic receipt set-binding session.",
+    )
+    accept_session = build_message(
+        message_id="msg_conformance_receipt_binding_0002",
+        message_type="negotiate.accept_session",
+        session_id=session_id,
+        sender=responder,
+        recipients=[initiator],
+        body={"accepted": True},
+        key_pair=key_by_agent[responder["agent_id"]],
+        prev_hash=compute_hash(open_msg),
+        timestamp="2026-05-10T16:01:00Z",
+        in_reply_to=open_msg["id"],
+    )
+    offer = build_message(
+        message_id="msg_conformance_receipt_binding_0003",
+        message_type="negotiate.offer",
+        session_id=session_id,
+        sender=initiator,
+        recipients=[responder],
+        body={"offer": {"scope": "analysis-summary", "assurance": "standard"}},
+        key_pair=key_by_agent[initiator["agent_id"]],
+        prev_hash=compute_hash(accept_session),
+        timestamp="2026-05-10T16:02:00Z",
+        in_reply_to=accept_session["id"],
+        reasoning="First offer in the deterministic receipt-binding chain.",
+    )
+    inquiry = build_message(
+        message_id="msg_conformance_receipt_binding_0004",
+        message_type="negotiate.inquire",
+        session_id=session_id,
+        sender=initiator,
+        recipients=[responder],
+        body={"questions": ["acceptance_criteria"]},
+        key_pair=key_by_agent[initiator["agent_id"]],
+        prev_hash=compute_hash(offer),
+        timestamp="2026-05-10T16:03:00Z",
+        in_reply_to=offer["id"],
+        reasoning="Same-signer downstream message for splice coverage.",
+    )
+    accept_offer = build_message(
+        message_id="msg_conformance_receipt_binding_0005",
+        message_type="negotiate.accept_offer",
+        session_id=session_id,
+        sender=initiator,
+        recipients=[responder],
+        body={"accepted": True},
+        key_pair=key_by_agent[initiator["agent_id"]],
+        prev_hash=compute_hash(inquiry),
+        timestamp="2026-05-10T16:04:00Z",
+        in_reply_to=offer["id"],
+        reasoning="Terminal agreement message for receipt set-binding.",
+    )
+    messages = [open_msg, accept_session, offer, inquiry, accept_offer]
+
+    parties = [
+        {
+            "agent_id": initiator["agent_id"],
+            "role": "initiator",
+            "behavior": {
+                "offers_made": 1,
+                "concessions": 0,
+                "concession_magnitude": 0.0,
+                "signals_shared": 1,
+                "constraints_declared": 1,
+                "constraints_violated": 0,
+                "reasoning_provided": True,
+                "withdrawal": False,
+                "response_time_avg_seconds": 2.0,
+            },
+        },
+        {
+            "agent_id": responder["agent_id"],
+            "role": "responder",
+            "behavior": {
+                "offers_made": 0,
+                "concessions": 0,
+                "concession_magnitude": 0.0,
+                "signals_shared": 1,
+                "constraints_declared": 1,
+                "constraints_violated": 0,
+                "reasoning_provided": False,
+                "withdrawal": False,
+                "response_time_avg_seconds": 3.0,
+            },
+        },
+    ]
+    for party in parties:
+        party["signature"] = sign_message(party, key_by_agent[party["agent_id"]])
+
+    receipt = {
+        "concordia_attestation": "0.3.0",
+        "attestation_id": "att_conformance_receipt_set_binding_0001",
+        "session_id": session_id,
+        "timestamp": "2026-05-10T16:05:00Z",
+        "outcome": {
+            "status": "agreed",
+            "rounds": 3,
+            "duration_seconds": 300,
+            "terms_count": 1,
+            "resolution_mechanism": "direct",
+        },
+        "parties": parties,
+        "meta": {
+            "category": "software.tools",
+            "extensions_used": [],
+            "mediator_invoked": False,
+        },
+        "transcript_hash": compute_transcript_hash(messages),
+        "chain_head": compute_hash(messages[-1]),
+        "message_count": len(messages),
+        "fulfillment": None,
+        "references": [],
+        "summary": (
+            "Agreement completed with a deterministic transcript and no mediation."
+        ),
+    }
+    receipt["countersignatures"] = {
+        agent_id: countersign_attestation(receipt, key_by_agent[agent_id])
+        for agent_id in sorted(key_by_agent)
+    }
+    pair = {"messages": messages, "receipt": receipt}
+    context = {
+        "public_keys_b64url": {
+            agent_id: key_pair.public_key_b64()
+            for agent_id, key_pair in sorted(key_by_agent.items())
+        }
+    }
+    baseline = Vector(
+        vector_id="baseline-synthetic-receipt-set-binding",
+        title="receipt set-binding baseline",
+        source_fixture=f"{SYNTHETIC_SOURCE_LONGTAIL}/receipt_set_binding.json",
+        record_type="message_chain",
+        verification_profile="message-chain-v1",
+        input_data=pair,
+        context=context,
+    )
+    if not evaluate_message_chain_profile(baseline).accepted:
+        raise GenerationError("synthetic receipt set-binding fixture did not verify")
+    return pair
+
+
 def build_synthetic_longtail_fixtures(
     base_attestation: dict[str, Any],
 ) -> SyntheticLongtailFixtures:
@@ -3609,6 +4083,8 @@ def build_synthetic_longtail_fixtures(
     attestation_two["attestation_id"] = "att_conformance_p2a4_0002"
     attestation_two["session_id"] = "sess_conformance_p2a4_0002"
     attestation_two["timestamp"] = "2026-05-10T14:35:00Z"
+    attestation_two["chain_head"] = "sha256:" + ("c3" * 32)
+    attestation_two["message_count"] = 4
     attestation_two["outcome"] = {
         "status": "rejected",
         "rounds": 2,
@@ -3633,6 +4109,7 @@ def build_synthetic_longtail_fixtures(
         chain_initiator_key,
         chain_responder_key,
     )
+    receipt_set_binding = build_receipt_set_binding_fixture()
 
     manifest = seed_manifest_for(
         {
@@ -3649,6 +4126,12 @@ def build_synthetic_longtail_fixtures(
         "receipt_bundle_counterparty": agent_b,
         "message_chain_initiator": "did:concordia:agent:chain-initiator",
         "message_chain_responder": "did:concordia:agent:chain-responder",
+        "receipt_set_binding_initiator": (
+            "did:concordia:agent:receipt-chain-initiator"
+        ),
+        "receipt_set_binding_responder": (
+            "did:concordia:agent:receipt-chain-responder"
+        ),
     }
     manifest["agent_profile_canonical_fields"] = list(AGENT_PROFILE_CANONICAL_FIELDS)
     manifest["competence_proof_reveal"] = {
@@ -3665,6 +4148,7 @@ def build_synthetic_longtail_fixtures(
         competence_proof=competence_proof,
         message_chain=message_chain,
         message_chain_position=message_chain_position,
+        receipt_set_binding=receipt_set_binding,
         attestations=attestations,
         seed_manifest=manifest,
     )
@@ -3732,6 +4216,9 @@ def synthetic_fixture_payloads(fixtures: SyntheticFixtures) -> dict[Path, Any]:
     payloads[longtail_root / "message_chain_position.json"] = (
         fixtures.longtail.message_chain_position
     )
+    payloads[longtail_root / "receipt_set_binding.json"] = (
+        fixtures.longtail.receipt_set_binding
+    )
     for index, attestation in enumerate(fixtures.longtail.attestations, start=1):
         payloads[longtail_root / f"attestation_{index:02d}.json"] = attestation
     payloads[longtail_root / "seed_manifest.json"] = fixtures.longtail.seed_manifest
@@ -3788,6 +4275,10 @@ def build_phase2_vectors(fixtures: SyntheticFixtures) -> list[Vector]:
     )
     message_hashes = [
         compute_hash(message) for message in fixtures.longtail.message_chain["messages"]
+    ]
+    receipt_set_binding_hashes = [
+        compute_hash(message)
+        for message in fixtures.longtail.receipt_set_binding["messages"]
     ]
     longtail_agent_ids = fixtures.longtail.seed_manifest["agent_ids"]
 
@@ -4064,6 +4555,25 @@ def build_phase2_vectors(fixtures: SyntheticFixtures) -> list[Vector]:
                 "signature verification"
             ),
             canonical_preimage=canonical_json(fixtures.longtail.message_chain),
+        ),
+        Vector(
+            vector_id="pos-synthetic-receipt-set-binding",
+            title="Synthetic 0.3.0 receipt binds chain_head and message_count to an agreed transcript",
+            source_fixture=f"{SYNTHETIC_SOURCE_LONGTAIL}/receipt_set_binding.json",
+            record_type="message_chain",
+            verification_profile="message-chain-v1",
+            input_data=fixtures.longtail.receipt_set_binding,
+            context={
+                **receipt_set_binding_context(fixtures),
+                "expected_message_count": 5,
+                "expected_message_hashes": receipt_set_binding_hashes,
+            },
+            notes=(
+                "receipt set-binding checks the transcript links and signatures, "
+                "then verifies the 0.3.0 receipt countersignatures and compares "
+                "chain_head/message_count to the presented transcript"
+            ),
+            canonical_preimage=canonical_json(fixtures.longtail.receipt_set_binding),
         ),
     ]
 
@@ -4486,6 +4996,7 @@ def write_manifest(
             "cmpc": "P2-A3 adds CMPC bilateral primitive and chain-session transition profiles.",
             "longtail": "P2-A4 adds AgentProfile, CompetenceProof, ReceiptBundle, and MessageChain profiles.",
             "chain_position": "P2-B adds message-chain position vectors and a splice canary.",
+            "receipt_set_binding": "P2-B adds 0.3.0 receipt chain_head/message_count set-binding vectors and a receipt-binding canary.",
             "canary": "C3/P2-B pins the runner-discrimination canaries.",
             "reference_runner": "C3 adds the clean-room reference runner.",
         },

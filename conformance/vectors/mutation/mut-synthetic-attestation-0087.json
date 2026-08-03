@@ -10,17 +10,19 @@
       "did:concordia:agent:synthetic-responder": "vy0hFV5wyWltVNKvQzK2GVh71mHdEmrKFnjNTGz8aNs="
     }
   },
-  "expected": "reject",
-  "expected_reason_class": "schema",
+  "expected": "accept",
+  "expected_reason_class": null,
   "id": "mut-synthetic-attestation-0087",
   "input": {
     "attestation_id": "att_conformance_p2a1_0001",
-    "concordia_attestation": "0.2.0",
+    "chain_head": "sha256:b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b0",
+    "concordia_attestation": "0.3.0",
     "countersignatures": {
-      "did:concordia:agent:synthetic-initiator": "6iF5xR04383bmd0lvBT86lNuLWBI7tCoOzSfzhgNtEtFILWAljC0ioXBi5WFoNuSGOV6OFcgptVm7A5JW2xpBw==",
-      "did:concordia:agent:synthetic-responder": "ykwAxTbXn3gUgcBEVPegCa7nhB6DVUBfDAXcBdbTyrjRyz2sj5kKbgr-uBUEu1hbYKX4ISD92p-tCaOaZFH0Cw=="
+      "did:concordia:agent:synthetic-initiator": "g4s0fsTHbyaGNLSSvsXw0To4uINocOHytNn_5Us32EYUH99dKV5cMmG9ps58qPsPvyljt1J92m43295wHa3_DQ==",
+      "did:concordia:agent:synthetic-responder": "7WoUSEUFgodvX4C2EXWBn9yjTYC-51zNvL5Wi2Z5Afqr3LA6zMdO7wbV42aBd895alH0ZwWTDAgjbqdFfd3NCA=="
     },
-    "fulfillment": "MUTATED",
+    "fulfillment": null,
+    "message_count": 6,
     "meta": {
       "category": "software.tools",
       "extensions_used": [],
@@ -81,10 +83,10 @@
     "timestamp": "2026-05-10T14:25:00Z",
     "transcript_hash": "sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
   },
-  "notes": "",
+  "notes": "accepted-structural: field is outside attestation-v1 party-signature preimages",
   "record_type": "attestation",
   "schema_version": "concordia-conformance-vector/v1-draft",
   "source_fixture": "synthetic/attestation",
-  "title": "attestation: value fulfillment",
+  "title": "attestation: value chain_head",
   "verification_profile": "attestation-v1"
 }

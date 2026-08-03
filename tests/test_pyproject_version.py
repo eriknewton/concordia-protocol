@@ -1,4 +1,4 @@
-"""Release gate: pyproject.toml + concordia.__version__ at 0.9.0.
+"""Release gate: pyproject.toml + concordia.__version__ at 0.10.0.
 
 The package's __version__ stays in lockstep so envelope.py
 (which embeds ``concordia.__version__`` into envelope payloads via
@@ -16,7 +16,7 @@ import concordia
 
 
 _PYPROJECT = Path(__file__).resolve().parent.parent / "pyproject.toml"
-EXPECTED_VERSION = "0.9.0"
+EXPECTED_VERSION = "0.10.0"
 
 
 def _read_pyproject_version() -> str:

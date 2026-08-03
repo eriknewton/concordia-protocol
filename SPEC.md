@@ -3,7 +3,7 @@
 ### An Open Standard for Structured Negotiation Between Autonomous Agents
 
 **Version:** 0.7.0-draft  
-**Version mapping:** spec edition `0.7.0-draft` maps to Python package `0.9.0` (the package advanced past the edition's pre-release form `0.7.0a1` because breaking API changes landed after that alpha; see `CHANGELOG.md` `[0.8.0]` and `[0.9.0]`) maps to the on-the-wire envelope identifier `concordia:0.1.0`. The wire identifier is intentionally pinned at `0.1.0` and is versioned independently of the spec edition: it changes only on a breaking envelope-format change, not on every spec revision.
+**Version mapping:** spec edition `0.7.0-draft` maps to Python package `0.10.0`; the package advanced past the edition's pre-release form `0.7.0a1` because breaking API changes landed after that alpha. See `CHANGELOG.md` for stable release history. The on-the-wire envelope identifier remains `concordia:0.1.0`. The wire identifier is intentionally pinned at `0.1.0` and is versioned independently of the spec edition: it changes only on a breaking envelope-format change, not on every spec revision.
 **Status:** Draft (v0.7 adds cross-mandate revocation records, §9.6.4c; v0.6 added the predicate primitive)  
 **License:** Apache 2.0  
 **Authors:** Erik Newton
@@ -741,7 +741,7 @@ Every completed negotiation session (regardless of outcome) MUST produce an atte
 
 ```json
 {
-  "concordia_attestation": "0.2.0",
+  "concordia_attestation": "0.3.0",
   "attestation_id": "att_a1b2c3d4",
   "session_id": "ses_9d4e8f01",
   "timestamp": "2026-03-21T14:04:00Z",
@@ -795,6 +795,8 @@ Every completed negotiation session (regardless of outcome) MUST produce an atte
   },
 
   "transcript_hash": "sha256:0a1b2c3d4e5f...",
+  "chain_head": "sha256:8f42d9c0b7a6...",
+  "message_count": 8,
 
   "fulfillment": null,
 
@@ -805,7 +807,7 @@ Every completed negotiation session (regardless of outcome) MUST produce an atte
 }
 ```
 
-The `countersignatures` map (added in v0.2.0, C-H2) is what makes the outcome trustworthy rather than merely prover-asserted. Each present party signs the canonical issuance snapshot (RFC 8785 JCS, §9.2.1) of the WHOLE attestation (every `signature` field stripped recursively, and the `countersignatures` map itself excluded), so the `outcome`, `meta`, `session_id`, and `transcript_hash` are bound at issuance. See §9.6.5.
+The `countersignatures` map (added in v0.2.0, C-H2) is what makes the outcome trustworthy rather than merely prover-asserted. Each present party signs the canonical issuance snapshot (RFC 8785 JCS, §9.2.1) of the WHOLE attestation (every `signature` field stripped recursively, and the `countersignatures` map itself excluded), so the `outcome`, `meta`, `session_id`, `transcript_hash`, `chain_head`, and `message_count` are bound at issuance. See §9.6.5.
 
 #### 9.6.3 Attestation Fields
 
@@ -840,6 +842,14 @@ The `countersignatures` map (added in v0.2.0, C-H2) is what makes the outcome tr
 | `value_range` | Bucketed transaction value (preserves privacy while enabling size-weighted scoring). Drawn from the fixed bucket vocabulary in 9.6.6; free text is rejected at issuance |
 | `extensions_used` | Protocol extensions active in this session |
 | `mediator_invoked` | Whether a mediator was used |
+
+**Receipt commitment fields** bind the closing receipt to the transcript set:
+
+| Field | Description |
+|-------|-------------|
+| `transcript_hash` | Legacy whole-transcript digest emitted by the reference SDK. Its exact preimage is a reference implementation behavior unless separately specified. |
+| `chain_head` | The §9.3 message hash of the final transcript message: `sha256(canonical_json(message))` using the §9.2.1 canonical JSON rules, over the full final message, including its `signature`, rendered as `sha256:` plus 64 lowercase hex characters |
+| `message_count` | Number of messages in the transcript, integer >= 1 |
 
 #### 9.6.4 Fulfillment Attestations
 
@@ -1137,8 +1147,14 @@ Through v0.1.0, each party's signature covered only its own behavior record. The
 - **Payload.** The countersignature payload is `canonical_json(strip_signatures(attestation_without_countersignatures))`, where `canonical_json` is RFC 8785 JCS per §9.2.1 and `strip_signatures` is Concordia's own recursive removal rule: the fully assembled attestation with every `signature` field stripped recursively AND the top-level `countersignatures` map excluded. Stripping every `signature` (the same rule the co-signature lane uses) plus excluding the `countersignatures` map means a countersignature never covers itself or a sibling's countersignature, and all parties sign byte-identical, mutually independent payload bytes.
 - **Map.** `countersignatures` is a top-level object mapping each party `agent_id` to its base64url-padded Ed25519 signature over that payload. There is one entry per party that held a signing key at issuance; a party with no key gets no entry (an empty string is never used). A single-key issuance therefore yields a one-entry map, which is exactly as strong as a single-signed co-signed receipt for the present signer.
 - **Version-gated dual-accept (verifier MUST).** Before crediting a `concordia_attestation` >= `0.2.0` outcome as integrity-bound, a verifier MUST require a `countersignatures` map in which EVERY party listed in `parties[]` has a present signature that verifies under that party's resolved key; if any listed party's countersignature is absent, its key cannot be resolved, or its signature fails, the outcome MUST NOT be credited as bound (fail-closed). The "every listed party" rule is what makes the binding meaningful: a single holder is itself a party, so "at least one party signed" would let the holder rewrite `outcome.status` (e.g. flip `rejected` to `agreed`), drop the counterparty's countersignature, and re-sign with its OWN key alone, the precise C-H2 threat. Requiring every listed party closes that self-rebind. A genuine single-party attestation (only one entry in `parties[]`) binds with its one countersignature, exactly as strong as a single-signed co-signed receipt. An attestation below `0.2.0` (or with a malformed version) is read as legacy: its outcome is prover-asserted and MUST NOT be credited as outcome-bound, but its presence is NOT an error. This lets pre-C-H2 history remain verifiable for its party-level signals while never silently crediting an unbound outcome.
-- **What is bound.** The issuance snapshot: `concordia_attestation`, `attestation_id`, `session_id`, `timestamp`, `outcome`, `parties[*]` (signatures stripped), `meta`, `transcript_hash`, `references`, `validity_temporal`, `summary`, and `fulfillment` AS IT STOOD AT ISSUANCE (`null`).
+- **What is bound.** The issuance snapshot: `concordia_attestation`, `attestation_id`, `session_id`, `timestamp`, `outcome`, `parties[*]` (signatures stripped), `meta`, `transcript_hash`, `chain_head`, `message_count`, `references`, `validity_temporal`, `summary`, and `fulfillment` AS IT STOOD AT ISSUANCE (`null`).
 - **Fulfillment residual.** A `fulfillment` block populated AFTER issuance (for example via an A2CN dispute-resolved flow) is NOT covered by the issuance countersignature. A verifier MUST NOT treat post-issuance fulfillment as integrity-bound on the strength of the issuance countersignature; it is bound only when the fulfillment block's own `counterparty_attestation.signature` verifies under the confirming counterparty's key. Defining and wiring the producer side of that fulfillment confirmation signature is future work.
+
+##### 9.6.5b Receipt Set-Binding (v0.3.0)
+
+Per-message signatures authenticate links, not the set by themselves. A same-signer splice can remove one of that signer's earlier messages, re-link and re-sign the downstream messages, and still produce a transcript whose links validate. Starting in `concordia_attestation` `0.3.0`, a receipt therefore carries `chain_head` and `message_count` inside the countersigned issuance snapshot. `chain_head` pins the complete chain through the cascading `prev_hash` links, and `message_count` closes truncation by requiring the same number of transcript messages the receipt issuer saw. A chain presented without its closing receipt remains authenticated per link; it is not authenticated as the same transcript set a receipt countersigned.
+
+Version-gated verification is dual-accept. For `concordia_attestation` >= `0.3.0`, a verifier MUST require both fields, MUST reject malformed `chain_head` values or `message_count < 1`, and MUST reject a supplied transcript whose final §9.3 message hash or length differs from the receipt fields. An attestation below `0.3.0` (or with a malformed version) is legacy set-unbound: it may still be read for legacy signals, but it MUST NOT be credited as set-bound and its absence of these fields is NOT an error.
 
 #### 9.6.6 Attestation Privacy
 
@@ -1385,7 +1401,7 @@ Envelope-level references appear on transport envelopes (e.g., the trust-evidenc
 
 Required keys on every envelope-level reference: `kind`, `urn`. The pair `verified_at` plus `verifier_did` plus `hash` is expected for verification-grade references but not enforced by the schema, since some reference kinds (e.g., `chain_state`, `mandate_proof`) may not have a verifier. Verifiers consuming envelope-level references SHOULD treat the reference as a verification event: the urn identifies the artifact, and the hash plus signer plus timestamp establishes that the verifier saw the artifact at that point in time.
 
-Envelope-level references are populated automatically where possible. Concordia's trust-evidence-format envelope auto-populates a `source_session` reference from the attestation's session_id and transcript_hash. Implementations MAY append additional references for cross-protocol linkages (A2A messages, AP2 mandates, x402 payment proofs, ERC-8004 reputation entries).
+Envelope-level references are populated automatically where possible. Concordia's trust-evidence-format envelope auto-populates a `source_session` reference from the attestation's session_id, with the reference `hash` taken from the attestation's `chain_head` (v0.3.0+), falling back to the legacy `transcript_hash` for older attestations. Implementations MAY append additional references for cross-protocol linkages (A2A messages, AP2 mandates, x402 payment proofs, ERC-8004 reputation entries).
 
 #### 11.5.3 Attestation-level references[]
 

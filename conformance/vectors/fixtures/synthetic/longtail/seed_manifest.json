@@ -4,7 +4,9 @@
     "message_chain_initiator": "did:concordia:agent:chain-initiator",
     "message_chain_responder": "did:concordia:agent:chain-responder",
     "receipt_bundle_agent": "did:concordia:agent:synthetic-initiator",
-    "receipt_bundle_counterparty": "did:concordia:agent:synthetic-responder"
+    "receipt_bundle_counterparty": "did:concordia:agent:synthetic-responder",
+    "receipt_set_binding_initiator": "did:concordia:agent:receipt-chain-initiator",
+    "receipt_set_binding_responder": "did:concordia:agent:receipt-chain-responder"
   },
   "agent_profile_canonical_fields": [
     "type",

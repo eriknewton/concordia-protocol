@@ -7,6 +7,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-02
+
+### Added
+
+- **Receipt set-binding.** Reputation attestations now use attestation 0.3.0,
+  and countersigned receipts bind `{chain_head, message_count}` in the
+  preimage so verification can detect transcript splice and truncation against
+  the signed message set (#183, #186).
+- **Receipt set-binding conformance coverage.** Added set-binding vectors and
+  the `canary-receipt-set-unchecked` runner-discrimination canary for runners
+  that skip the receipt-to-transcript comparison (#186).
+- **Receipt transcript-binding profile.** Added
+  `receipt-transcript-binding-v1` as the public conformance profile name for
+  the existing receipt set-binding checks.
+
+### Changed
+
+- Agent-profile conformance fixtures now use the neutral sample provider
+  `reputation.example`.
+
+### Fixed
+
+- Privacy-scan digest-line matching now ignores digest-shaped text inside
+  legitimate receipt bytes (#185).
+
 ## [0.9.0] - 2026-08-01
 
 ### Added
