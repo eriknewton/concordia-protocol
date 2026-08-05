@@ -21,6 +21,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   force Intel Mac adopters to a source build for a surface Concordia never
   reaches.
 
+### Added
+
+- **A2A #1734 interop fixture: a signed receipt that binds its decision
+  context.** `docs/interop/a2a-1734-context-digest-receipt/` carries a
+  `decision_binding_ref` preimage, `context_digest` included, inside a shipped
+  ApprovalReceipt, so a verifier holding the presented context set confirms
+  which artifacts were in a decision's input. A dropped context artifact fails
+  closed (`CONTEXT_SET_MISMATCH`), and substituting the smaller set's digest
+  breaks the receipt signature. Four conformance vectors (three accept, one
+  reject) run under both reference runners.
+- **Cross-check of giskard09's `decision-binding-ref-v1.0` vectors.**
+  `tests/test_a2a_1734_context_digest_interop.py` recomputes their four
+  published conformance vectors, both published context sets, and the four
+  inline spec fixtures under Concordia's RFC 8785 canonicalizer and under the
+  independent `rfc8785` library, comparing canonical bytes as well as digests.
+  The retained third-party bytes live in `docs/external/`, pinned by SHA-256.
+- **`jcs-sha256-pointer` check kind in `offer-binding-v1`.** Compares a
+  recomputed digest against a value carried inside the artifact instead of
+  against a literal in the vector, so drift on either side fails. Already in
+  use by `closure-predicate-v1`; now documented and available to the
+  offer-binding profile.
+
 ## [0.10.0] - 2026-08-02
 
 ### Added

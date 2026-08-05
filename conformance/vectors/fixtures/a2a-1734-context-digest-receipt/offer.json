@@ -1,0 +1,6 @@
+{
+  "action": "governance.publish_external_statement",
+  "audience": "public",
+  "channel": "a2a_discussion",
+  "requested_by": "did:web:newton.example#drafting-agent"
+}

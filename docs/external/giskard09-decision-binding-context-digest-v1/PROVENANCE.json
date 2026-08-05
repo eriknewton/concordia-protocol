@@ -1,0 +1,27 @@
+{
+  "_note": "Provenance for the retained third-party artifact in this directory. The file is kept BYTE-VERBATIM as retrieved; nothing in this repository rewrites, reformats, or normalizes it. Failure mode this record guards against: a silently re-fetched or hand-edited copy would still cross-check cleanly against itself, so the cross-check would report agreement while proving nothing. The retained_sha256 below is over the retained bytes and is asserted by tests/test_a2a_1734_context_digest_interop.py.",
+  "artifacts": [
+    {
+      "file": "vectors.json",
+      "author": "giskard09",
+      "repository": "https://github.com/giskard09/argentum-core",
+      "source_path": "examples/conformance/decision-binding-context-digest-v1/vectors.json",
+      "source_url": "https://github.com/giskard09/argentum-core/blob/e04fc4b699dddd4e50074ab4b1639043723975ae/examples/conformance/decision-binding-context-digest-v1/vectors.json",
+      "git_blob_sha1": "402ed7711e7997cb47fab1e68f9708e4ee61ecbf",
+      "last_commit_sha": "e04fc4b699dddd4e50074ab4b1639043723975ae",
+      "last_commit_date": "2026-08-04T16:57:08Z",
+      "retrieved_at": "2026-08-05",
+      "retained_sha256": "eacac7f70ab7ad04016281fc4e7ecd24bd3390f51e3c962faea968837ef9a3e3",
+      "spec": "https://github.com/giskard09/argentum-core/blob/main/docs/spec/decision-binding-ref-v1.0.md",
+      "announced_in": "https://github.com/a2aproject/A2A/discussions/1734#discussioncomment-17896767"
+    }
+  ],
+  "license_note": "Retained for interoperability cross-checking only. Authorship and copyright remain with giskard09; this repository claims neither.",
+  "spec_fixtures_A_to_D": {
+    "_note": "Fixtures A-D are published inline in decision-binding-ref-v1.0.md rather than in vectors.json, so they are transcribed into the cross-check script rather than retained as a file. Each transcribed digest is recomputed from the transcribed preimage, so a transcription error surfaces as a mismatch instead of passing quietly.",
+    "A_policy_ref_only": "sha256:dec9af2f3bf362442fd25ebc4bf1dc9e3499981d6d25df0626e05bb08312a943",
+    "B_neither": "sha256:a114ce067cf804a3cd4c3b06edc91d4e9f0746bfc4700329f43974df77e70634",
+    "C_context_digest_only": "sha256:5caf1298c5c8ea661effc266d8e0179505a84fc63507533ac97d3b38ea4eccdf",
+    "D_both": "sha256:4b0220dcd431f313f0c06510c163d561e787a32567cb55fa42bb906df9ac60cd"
+  }
+}

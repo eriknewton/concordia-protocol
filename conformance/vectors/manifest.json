@@ -2,10 +2,10 @@
   "check_command": "python3 scripts/conformance/generate_vectors.py --check",
   "counts": {
     "canary": 5,
-    "diag_canonical_bytes": 1391,
-    "fixtures": 55,
+    "diag_canonical_bytes": 1392,
+    "fixtures": 61,
     "mutation": 1484,
-    "positive": 48,
+    "positive": 52,
     "schemas": 14
   },
   "files": {
@@ -1382,6 +1382,7 @@
       "conformance/diag/canonical-bytes/pos-1404-decision-id.jcs",
       "conformance/diag/canonical-bytes/pos-1404-offer-digest.jcs",
       "conformance/diag/canonical-bytes/pos-1404-revocation-record.jcs",
+      "conformance/diag/canonical-bytes/pos-1734-receipt-signed-binding.jcs",
       "conformance/diag/canonical-bytes/pos-1920-fulfillment-attestation.jcs",
       "conformance/diag/canonical-bytes/pos-synthetic-agent-profile.jcs",
       "conformance/diag/canonical-bytes/pos-synthetic-attestation-countersign.jcs",
@@ -1419,6 +1420,12 @@
       "conformance/vectors/fixtures/a2a-1404-receipt-revocation-vector/offer.json",
       "conformance/vectors/fixtures/a2a-1404-receipt-revocation-vector/revocation_A.json",
       "conformance/vectors/fixtures/a2a-1404-receipt-revocation-vector/vector.json",
+      "conformance/vectors/fixtures/a2a-1734-context-digest-receipt/approval_receipt.json",
+      "conformance/vectors/fixtures/a2a-1734-context-digest-receipt/assembled_context.json",
+      "conformance/vectors/fixtures/a2a-1734-context-digest-receipt/assembled_context_dropped_artifact.json",
+      "conformance/vectors/fixtures/a2a-1734-context-digest-receipt/decision_binding_preimage.json",
+      "conformance/vectors/fixtures/a2a-1734-context-digest-receipt/offer.json",
+      "conformance/vectors/fixtures/a2a-1734-context-digest-receipt/vector.json",
       "conformance/vectors/fixtures/a2a-1920-fulfillment-sample/fulfillment_attestation.json",
       "conformance/vectors/fixtures/a2a-1920-fulfillment-sample/sample.json",
       "conformance/vectors/fixtures/synthetic/attestation/attestation.json",
@@ -2953,6 +2960,7 @@
       "conformance/vectors/mutation/mut-synthetic-receipt-set-binding-0004.json"
     ],
     "positive": [
+      "conformance/vectors/positive/binding-1734-context-set-mismatch.json",
       "conformance/vectors/positive/pos-1404-ancestor-status-read-binding.json",
       "conformance/vectors/positive/pos-1404-approval-receipt.json",
       "conformance/vectors/positive/pos-1404-capability-digest.json",
@@ -2963,6 +2971,9 @@
       "conformance/vectors/positive/pos-1404-receipt-offer-binding.json",
       "conformance/vectors/positive/pos-1404-revocation-record.json",
       "conformance/vectors/positive/pos-1404-wrapped-decision-id-binding.json",
+      "conformance/vectors/positive/pos-1734-context-digest-recomputes.json",
+      "conformance/vectors/positive/pos-1734-decision-binding-ref-recomputes.json",
+      "conformance/vectors/positive/pos-1734-receipt-signed-binding.json",
       "conformance/vectors/positive/pos-1920-fulfillment-attestation.json",
       "conformance/vectors/positive/pos-synthetic-agent-profile.json",
       "conformance/vectors/positive/pos-synthetic-attestation-countersign.json",

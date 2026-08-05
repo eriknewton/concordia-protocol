@@ -506,6 +506,18 @@ def verify_offer_binding(input_data: Json, context: dict[str, Json]) -> None:
             source = resolve_object(check.get("source"), input_data, context)
             if sha256_jcs(source) != check.get("expected"):
                 raise Reject("digest check failed")
+        elif kind == "jcs-sha256-pointer":
+            # Recompute a digest and compare it against a value carried inside
+            # the artifact, rather than against a literal in the vector: a
+            # literal-only check still passes when the artifact's own field has
+            # drifted away from the data it claims to commit to.
+            # Must match the `jcs-sha256-pointer` arm of the offer-binding
+            # evaluator in scripts/conformance/generate_vectors.py and of
+            # verifyOfferBinding in conformance/reference-runner-js/runner.mjs.
+            source = resolve_object(check.get("source"), input_data, context)
+            target = resolve_side(check.get("target"), input_data, context)
+            if sha256_jcs(source) != target:
+                raise Reject("committed digest mismatch")
         elif kind == "json-pointer-equal":
             left = resolve_side(check.get("left"), input_data, context)
             right = resolve_side(check.get("right"), input_data, context)

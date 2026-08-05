@@ -1,0 +1,41 @@
+{
+  "cross_check": {
+    "_note": "The context_digest this receipt signs is the value giskard09 published, recomputed here from their published context set with Concordia's own RFC 8785 canonicalizer. verify.py additionally recomputes all four of their vectors and both of their context sets from the retained bytes under docs/external/. A divergence on either side fails the check.",
+    "_source": "giskard09, decision-binding-context-digest-v1, retained at docs/external/giskard09-decision-binding-context-digest-v1/",
+    "context_digest": "sha256:c2bf3a88a2e5d8d63b95b22eab6b31bf2b7ab6108002b37a9b0945b722d4b9bb",
+    "dropped_artifact_set": {
+      "context_digest": "sha256:ae75912aae50b1e461fcc02d716a2fedc5f6b5c9fdc478a1581150cb733b4bf4"
+    }
+  },
+  "description": "A2A #1734 receipt-side worked example: a signed Concordia ApprovalReceipt carrying giskard09's decision_binding_ref preimage, including context_digest, so the two artifacts cross-check each other rather than describing each other.",
+  "external_fixture": "https://github.com/giskard09/argentum-core/tree/e04fc4b699dddd4e50074ab4b1639043723975ae/examples/conformance/decision-binding-context-digest-v1",
+  "external_spec": "https://github.com/giskard09/argentum-core/blob/e04fc4b699dddd4e50074ab4b1639043723975ae/docs/spec/decision-binding-ref-v1.0.md",
+  "hashes": {
+    "context_digest": "sha256:c2bf3a88a2e5d8d63b95b22eab6b31bf2b7ab6108002b37a9b0945b722d4b9bb",
+    "decision_binding_ref": "sha256:8e9457e814877fa7fca5f58c51c0e3596fd2f0568835c8be0aa049eac6442a55",
+    "dropped_artifact_set": {
+      "context_digest": "sha256:ae75912aae50b1e461fcc02d716a2fedc5f6b5c9fdc478a1581150cb733b4bf4"
+    },
+    "receipt_offer_hash": "sha256:94135ca09abf07605a70faa78f5755e2d1c2e12fe8a3e7d82de419c708ec67ce"
+  },
+  "native_vs_wrapped": {
+    "_note": "action_ref inside the wrapped preimage is SHA-256 over the JCS bytes of offer.json, the same digest scope.offer_hash carries. Every digest this fixture publishes is derivable from bytes in this directory; nothing is carried as an opaque value.",
+    "native_receipt_fields": [
+      "scope.offer_hash",
+      "scope.decision"
+    ],
+    "wrapped_in_reference_extensions": [
+      "a2a_1734_decision_binding_ref",
+      "a2a_1734_decision_binding_preimage",
+      "a2a_1734_decision_binding_spec"
+    ]
+  },
+  "public_keys_b64url": {
+    "approver": "tqA40UrEdFmyKtK7Ah-Ml9kqQM7Xbc5JsNX485Bag0U="
+  },
+  "signing_seeds_PUBLIC_test_only_do_not_reuse": {
+    "_warning": "PUBLIC test-vector seed. Private-key material by form; published only to reproduce this fixture. NEVER use in production or reuse for any real key.",
+    "approver_ed25519_seed_ascii": "a2a-1734-approver-seed-000000001"
+  },
+  "thread": "https://github.com/a2aproject/A2A/discussions/1734"
+}

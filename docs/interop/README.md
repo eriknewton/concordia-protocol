@@ -9,6 +9,7 @@ through the shipped verifier, and a README with the honest field mapping.
 |-----------|------------|----------------|
 | [`a2a-1404-receipt-revocation-vector/`](a2a-1404-receipt-revocation-vector/) | #1404 (capability-authorization SEP) | Recomputable `decision_id = SHA-256(JCS(six-field object))` on a shipped ApprovalReceipt, plus a negative revocation vector: revoke parent `A` with one status write, unchanged child `B` re-verifies to `revoked` through the shipped cascade verifier. |
 | [`a2a-1920-fulfillment-sample/`](a2a-1920-fulfillment-sample/) | #1920 (v0.4 transactional per-action receipts) | A shipped-shape FulfillmentAttestation keyed on `charge_ref` / `action_ref`, behavioral-signal + hash-reference only, with the SPEC §9.6.6 privacy invariant proven by scanning the artifact with the SDK's own raw-term detectors. |
+| [`a2a-1734-context-digest-receipt/`](a2a-1734-context-digest-receipt/) | #1734 (trust evidence format) | A signed ApprovalReceipt binding `context_digest = SHA-256(JCS(assembled_context))` per giskard09's `decision-binding-ref-v1.0`, so a verifier confirms which artifacts were in a decision's input. Cross-checks their four published vectors under Concordia's canonicalizer, and shows that a dropped context artifact fails closed while a substituted digest breaks the signature. |
 
 Every fixture is deterministic (fixed Ed25519 seeds, documented in each
 directory's expectations file) and uses only shipped Concordia v0.7.0a1
