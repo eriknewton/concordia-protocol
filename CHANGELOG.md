@@ -7,6 +7,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Security
+
+- Pinned `cryptography` to 50.0.0 in `requirements.lock`, clearing
+  PYSEC-2026-3552 (CVE-2026-69247, PKCS#7 decryption Bleichenbacher oracle),
+  PYSEC-2026-3553 (CVE-2026-69249, x509 chain-building resource exhaustion),
+  and PYSEC-2026-3554 (CVE-2026-69248, x509 name-constraint wildcard escape).
+  All three sit in PKCS#7 and x509 path validation, which Concordia does not
+  call: the SDK uses only Ed25519, ECDSA P-256, SHA-256, and raw or PKCS8 key
+  serialization. The pin matters for adopters who install the pinned closure.
+  The `cryptography>=42.0` floor in `pyproject.toml` is unchanged, because
+  cryptography 49.0.0 dropped x86_64 macOS wheels and raising the floor would
+  force Intel Mac adopters to a source build for a surface Concordia never
+  reaches.
+
 ## [0.10.0] - 2026-08-02
 
 ### Added
