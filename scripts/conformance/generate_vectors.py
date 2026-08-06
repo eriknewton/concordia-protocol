@@ -150,6 +150,7 @@ GENERATED_CHECK_EXCLUDED_FILES = {
 
 INTEROP_1404 = REPO_ROOT / "docs" / "interop" / "a2a-1404-receipt-revocation-vector"
 INTEROP_1920 = REPO_ROOT / "docs" / "interop" / "a2a-1920-fulfillment-sample"
+INTEROP_1734 = REPO_ROOT / "docs" / "interop" / "a2a-1734-context-digest-receipt"
 CMPC_PRIMITIVES = REPO_ROOT / "tests" / "fixtures" / "cmpc_bilateral" / "primitives"
 CMPC_STATE_MACHINE = (
     REPO_ROOT / "tests" / "fixtures" / "cmpc_bilateral" / "state_machine"
@@ -168,7 +169,7 @@ SCHEMA_COPIES = {
     "reference.schema.json": REPO_ROOT / "schemas" / "reference.schema.json",
 }
 
-FIXTURE_DIRS = (INTEROP_1404, INTEROP_1920)
+FIXTURE_DIRS = (INTEROP_1404, INTEROP_1920, INTEROP_1734)
 PROFILES = (
     "decision-object-v1",
     "offer-binding-v1",
@@ -1442,6 +1443,22 @@ def evaluate_vector(vector: Vector) -> Evaluation:
                 source = resolve_object(check["source"], input_data, context)
                 if sha256_jcs(source) != check["expected"]:
                     return Evaluation(False, "digest")
+            elif kind == "jcs-sha256-pointer":
+                # Recompute a digest and compare it against a value carried
+                # inside the artifact, rather than against a literal in the
+                # vector. A literal-only check passes even when the artifact's
+                # own field has drifted, which is the failure this kind closes.
+                # Must match the `jcs-sha256-pointer` arm of
+                # verify_offer_binding in conformance/reference-runner/runner.py
+                # and verifyOfferBinding in
+                # conformance/reference-runner-js/runner.mjs.
+                try:
+                    source = resolve_object(check["source"], input_data, context)
+                    target = resolve_side(check["target"], input_data, context)
+                except (GenerationError, KeyError, TypeError, ValueError, IndexError):
+                    return Evaluation(False, "binding")
+                if sha256_jcs(source) != target:
+                    return Evaluation(False, "binding")
             elif kind == "json-pointer-equal":
                 try:
                     left = resolve_side(check["left"], input_data, context)
@@ -1648,6 +1665,18 @@ def fixture_1404() -> dict[str, dict[str, Any]]:
         "vector",
     )
     return {name: load_json(INTEROP_1404 / f"{name}.json") for name in names}
+
+
+def fixture_1734() -> dict[str, dict[str, Any]]:
+    names = (
+        "approval_receipt",
+        "assembled_context",
+        "assembled_context_dropped_artifact",
+        "decision_binding_preimage",
+        "offer",
+        "vector",
+    )
+    return {name: load_json(INTEROP_1734 / f"{name}.json") for name in names}
 
 
 def fixture_1920() -> dict[str, dict[str, Any]]:
@@ -4624,6 +4653,7 @@ def build_phase2_vectors(fixtures: SyntheticFixtures) -> list[Vector]:
 def build_vectors() -> list[Vector]:
     f1404 = fixture_1404()
     f1920 = fixture_1920()
+    f1734 = fixture_1734()
     synthetic = build_synthetic_fixtures()
     hashes = f1404["vector"]["hashes"]
     public_keys_1404 = f1404["vector"]["public_keys_b64url"]
@@ -4834,6 +4864,142 @@ def build_vectors() -> list[Vector]:
                 "signature_b64url": sample["signature_b64url"],
             },
             canonical_preimage=canonical_json(signable_fulfillment),
+        ),
+        Vector(
+            vector_id="pos-1734-receipt-signed-binding",
+            title="A2A 1734 context_digest receipt validates and verifies under the approver key",
+            source_fixture=INTEROP_1734.name,
+            record_type="approval_receipt",
+            verification_profile="receipt-v1",
+            input_data=f1734["approval_receipt"],
+            context={
+                "now": "2026-08-04T10:05:00Z",
+                "offer": f1734["offer"],
+                "public_keys_b64url": {
+                    "issuer": f1734["vector"]["public_keys_b64url"]["approver"]
+                },
+            },
+            canonical_preimage=canonical_json(
+                without_signature(f1734["approval_receipt"])
+            ),
+        ),
+        Vector(
+            vector_id="pos-1734-context-digest-recomputes",
+            title="A2A 1734 context_digest recomputes from the presented context set",
+            source_fixture=INTEROP_1734.name,
+            record_type="approval_receipt",
+            verification_profile="offer-binding-v1",
+            input_data=f1734["approval_receipt"],
+            context={
+                "assembled_context": f1734["assembled_context"],
+                "checks": [
+                    {
+                        "kind": "jcs-sha256-pointer",
+                        "source": "context.assembled_context",
+                        "target": {
+                            "object": "input",
+                            "pointer": (
+                                "/references/0/extensions"
+                                "/a2a_1734_decision_binding_preimage/context_digest"
+                            ),
+                        },
+                    }
+                ],
+            },
+        ),
+        Vector(
+            vector_id="pos-1734-decision-binding-ref-recomputes",
+            title="A2A 1734 decision_binding_ref recomputes from the embedded preimage",
+            source_fixture=INTEROP_1734.name,
+            record_type="approval_receipt",
+            verification_profile="offer-binding-v1",
+            input_data=f1734["approval_receipt"],
+            context={
+                "external": {
+                    # giskard09's published digest for the same context set.
+                    # Pinned here so this vector fails if either side's
+                    # canonicalization drifts, rather than only if ours does.
+                    "context_digest": f1734["vector"]["cross_check"][
+                        "context_digest"
+                    ]
+                },
+                "checks": [
+                    {
+                        "kind": "jcs-sha256-pointer",
+                        "source": "context.preimage",
+                        "target": {
+                            "object": "input",
+                            "pointer": (
+                                "/references/0/extensions"
+                                "/a2a_1734_decision_binding_ref"
+                            ),
+                        },
+                    },
+                    {
+                        "kind": "json-pointer-equal",
+                        "left": {
+                            "object": "input",
+                            "pointer": (
+                                "/references/0/extensions"
+                                "/a2a_1734_decision_binding_preimage"
+                                "/context_digest"
+                            ),
+                        },
+                        "right": {
+                            "object": "context.external",
+                            "pointer": "/context_digest",
+                        },
+                    },
+                    {
+                        # action_ref and the native offer_hash are the same
+                        # digest by construction; checking it keeps the wrapped
+                        # preimage tied to a Concordia field a verifier already
+                        # recomputes.
+                        "kind": "json-pointer-equal",
+                        "left": {
+                            "object": "input",
+                            "pointer": (
+                                "/references/0/extensions"
+                                "/a2a_1734_decision_binding_preimage/action_ref"
+                            ),
+                        },
+                        "right": {"object": "input", "pointer": "/scope/offer_hash"},
+                    },
+                ],
+                "preimage": f1734["decision_binding_preimage"],
+            },
+        ),
+        Vector(
+            vector_id="binding-1734-context-set-mismatch",
+            title="A2A 1734 dropped context artifact fails the context_digest recompute",
+            source_fixture=INTEROP_1734.name,
+            record_type="approval_receipt",
+            verification_profile="offer-binding-v1",
+            input_data=f1734["approval_receipt"],
+            context={
+                "assembled_context": f1734["assembled_context_dropped_artifact"],
+                "checks": [
+                    {
+                        "kind": "jcs-sha256-pointer",
+                        "source": "context.assembled_context",
+                        "target": {
+                            "object": "input",
+                            "pointer": (
+                                "/references/0/extensions"
+                                "/a2a_1734_decision_binding_preimage/context_digest"
+                            ),
+                        },
+                    }
+                ],
+            },
+            expected="reject",
+            expected_reason_class="binding",
+            notes=(
+                "CONTEXT_SET_MISMATCH: the presented context set is missing one "
+                "artifact, so its recomputed digest diverges from the one the "
+                "receipt signed. A verifier rejects rather than accepting a "
+                "partial set as the one that fed the decision."
+            ),
         ),
     ]
 

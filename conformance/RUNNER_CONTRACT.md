@@ -193,6 +193,14 @@ Allowed check object forms:
 
 ```json
 {
+  "kind": "jcs-sha256-pointer",
+  "source": "context.assembled_context",
+  "target": {"object": "input", "pointer": "/references/0/extensions/x/digest"}
+}
+```
+
+```json
+{
   "kind": "json-pointer-equal",
   "left": {"object": "input", "pointer": "/scope/decision"},
   "right": {"object": "context.decision_object", "pointer": "/decision"}
@@ -204,10 +212,18 @@ Checks, in order:
 1. For `jcs-sha256`, resolve `source`. `input` refers to the vector input.
    `context.<name>` refers to that named context member. Compute
    `SHA256-JCS(source)` and compare it to `expected`.
-2. For `json-pointer-equal`, resolve both sides and compare the parsed JSON
+2. For `jcs-sha256-pointer`, resolve `source` the same way, compute
+   `SHA256-JCS(source)`, resolve `target` as a JSON pointer, and compare them.
+   This is the same check kind `closure-predicate-v1` uses in
+   `context.digest_checks`. It differs from `jcs-sha256` in where the expected
+   value comes from: `jcs-sha256` compares against a literal recorded in the
+   vector, so it still passes when the artifact's own committed field has
+   drifted away from the data it names; `jcs-sha256-pointer` compares against
+   the artifact's field, so drift on either side fails.
+3. For `json-pointer-equal`, resolve both sides and compare the parsed JSON
    values for equality.
-3. Reject unknown check kinds.
-4. Accept only if every listed check passes.
+4. Reject unknown check kinds.
+5. Accept only if every listed check passes.
 
 ### `receipt-v1`
 

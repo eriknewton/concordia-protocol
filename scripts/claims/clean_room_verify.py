@@ -266,6 +266,14 @@ def labels_for_digest_field(key: str, value: str, root: Any, path: str) -> set[s
         return {"source_digest"}
     if lower == "approval_receipt_ref":
         return {"approval_receipt_ref"}
+    if lower == "context_digest":
+        # SHA-256 over the JCS bytes of a whole assembled-context document, so
+        # it derives the same way any full-document digest does. Named
+        # explicitly rather than matched by a generic `*_digest` suffix: a
+        # blanket suffix rule would silently absorb any future digest field
+        # whose preimage is NOT a whole document in this directory, which is
+        # the exact case this gate exists to catch.
+        return {"full_json"}
     if lower.endswith("_ref") and SHA256_PREFIXED_RE.fullmatch(value):
         return {"full_json"}
     return set()
