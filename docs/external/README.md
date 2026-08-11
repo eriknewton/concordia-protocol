@@ -14,6 +14,7 @@ digest whose preimage the author never published.
 | Directory | Author | What it is |
 |-----------|--------|------------|
 | [`giskard09-decision-binding-context-digest-v1/`](giskard09-decision-binding-context-digest-v1/) | giskard09 | The `decision_binding_ref` `context_digest` conformance vectors from `argentum-core`, announced in [A2A Discussion #1734](https://github.com/a2aproject/A2A/discussions/1734#discussioncomment-17896767). Cross-checked against Concordia's RFC 8785 canonicalizer by `tests/test_a2a_1734_context_digest_interop.py`. |
+| [`chopmob-cloud-jcs-edge-v1/`](chopmob-cloud-jcs-edge-v1/) | chopmob-cloud (AlgoVoi) | The `jcs_edge_v1` RFC 8785 canonicalization edge-case vectors from `algovoi-jcs-conformance-vectors`, announced in [A2A Issue #1140](https://github.com/a2aproject/A2A/issues/1140). Retained with the upstream Apache-2.0 `LICENSE` and `NOTICE`. Cross-checked against Concordia's RFC 8785 canonicalizer by `tests/test_a2a_1140_jcs_edge_interop.py`, converting the one-time 2026-07-19 10/10 reproduction into a standing check. |
 
 Each directory carries a `PROVENANCE.json` recording the source repository,
 path, commit, retrieval date, and a SHA-256 over the retained bytes. The digest
