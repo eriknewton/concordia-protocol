@@ -120,9 +120,7 @@ def test_vector_set_shape_is_the_published_one(vector_set: dict[str, Any]) -> No
 
 
 @pytest.mark.parametrize("vector_id", VECTOR_IDS)
-def test_canonical_bytes_byte_for_byte(
-    vector_set: dict[str, Any], vector_id: str
-) -> None:
+def test_canonical_bytes_byte_for_byte(vector_set: dict[str, Any], vector_id: str) -> None:
     """Concordia's canonicalizer emits exactly their published JCS bytes.
 
     Compare canonical bytes as well as the digest: equal digests over
@@ -134,9 +132,7 @@ def test_canonical_bytes_byte_for_byte(
 
 
 @pytest.mark.parametrize("vector_id", VECTOR_IDS)
-def test_published_sha256_recomputes(
-    vector_set: dict[str, Any], vector_id: str
-) -> None:
+def test_published_sha256_recomputes(vector_set: dict[str, Any], vector_id: str) -> None:
     vector = _vector(vector_set, vector_id)
     digest = hashlib.sha256(canonicalize_jcs(vector["preimage"])).hexdigest()
     assert digest == vector["expected_sha256"]
@@ -148,9 +144,7 @@ def test_published_sha256_recomputes(
 
 
 @pytest.mark.parametrize("vector_id", VECTOR_IDS)
-def test_receipt_content_hash_recomputes(
-    vector_set: dict[str, Any], vector_id: str
-) -> None:
+def test_receipt_content_hash_recomputes(vector_set: dict[str, Any], vector_id: str) -> None:
     vector = _vector(vector_set, vector_id)
     digest = hashlib.sha256(canonicalize_jcs(vector["receipt"])).hexdigest()
     assert digest == vector["expected_content_hash"]
@@ -181,9 +175,7 @@ def test_number_form_one_float_equals_one_int(vector_set: dict[str, Any]) -> Non
     """
     float_vector = _vector(vector_set, "jcs-edge-005-number-one-float")
     int_vector = _vector(vector_set, "jcs-edge-006-number-one-int")
-    assert canonicalize_jcs(float_vector["preimage"]) == canonicalize_jcs(
-        int_vector["preimage"]
-    )
+    assert canonicalize_jcs(float_vector["preimage"]) == canonicalize_jcs(int_vector["preimage"])
     assert float_vector["expected_sha256"] == int_vector["expected_sha256"]
 
 
