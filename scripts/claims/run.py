@@ -41,6 +41,13 @@ MANIFEST_PATH = REPO_ROOT / "docs" / "claims.yaml"
 CI_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 GENERATED_CONFORMANCE_RELATIVE = "docs/CONFORMANCE.md"
 GENERATED_CONFORMANCE_CHECK = "scripts/claims/generate_conformance.py"
+GENERATED_ASSURANCE_RELATIVES = frozenset(
+    {
+        "docs/ASSURANCE_ROADMAP.md",
+        "docs/CLAIM_VOCABULARY.md",
+    }
+)
+GENERATED_ASSURANCE_CHECK = "scripts/assurance/generate.py"
 REQUIRED_KEYS = {"id", "claim", "stated_in", "check"}
 CHECK_TIMEOUT_SECONDS = 120
 CLAIM_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
@@ -431,10 +438,13 @@ def post_baseline_doc_paths() -> set[Path]:
         relative_text = relative.as_posix()
         if is_internal_doc_path(relative):
             continue
-        # See the matching exemption in public_doc_paths(). This exemption must
-        # stay paired with validate_generated_conformance(), which runs before
-        # scanner exemptions are applied.
-        if relative_text == GENERATED_CONFORMANCE_RELATIVE:
+        # Generated projections are validated from their canonical sources before
+        # scanner exemptions are applied. Keep this paired with the two
+        # validate_generated_*() calls in main().
+        if (
+            relative_text == GENERATED_CONFORMANCE_RELATIVE
+            or relative_text in GENERATED_ASSURANCE_RELATIVES
+        ):
             continue
         if relative_text not in BASELINE_DOC_MARKDOWN_PATHS:
             paths.add(path)
@@ -805,6 +815,21 @@ def validate_generated_conformance() -> bool:
     return completed.returncode == 0
 
 
+def validate_generated_assurance() -> bool:
+    completed = subprocess.run(
+        [sys.executable, GENERATED_ASSURANCE_CHECK, "--check"],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.stdout:
+        print(completed.stdout.rstrip())
+    if completed.stderr:
+        print(completed.stderr.rstrip(), file=sys.stderr)
+    return completed.returncode == 0
+
+
 def print_result(result: ClaimResult) -> None:
     status = "OK" if result.ok else "FAIL"
     print(f"[{status}] {result.claim_id}: {result.message}")
@@ -821,7 +846,7 @@ def main() -> int:
         print(f"[FAIL] {exc}", file=sys.stderr)
         return 1
 
-    if not validate_generated_conformance():
+    if not validate_generated_conformance() or not validate_generated_assurance():
         print("[FAIL] executable claims gate failed", file=sys.stderr)
         return 1
 

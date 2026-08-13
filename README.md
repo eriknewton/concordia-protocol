@@ -325,6 +325,7 @@ Concordia defines:
 
 **Documentation:**
 - [Documentation Index](docs/index.md): curated guide to all docs, examples, and runbooks
+- [Assurance Matrix](ASSURANCE_MATRIX.md): generated, evidence-bounded status and limitations across six stable assurance dimensions
 - [Full Specification](SPEC.md): complete protocol specification
 - [Interop vectors](docs/interop/): runnable worked vectors a second implementer can reproduce offline. Each ships the fixture bytes, a deterministic generator, and a `verify.py` that checks the vector against those bytes with no network and no regeneration. They demonstrate that a record's identity is `SHA-256` over its RFC 8785 JCS canonical form, so it is checkable with an independent JCS library, with no Concordia code and no call to the issuer.
 - [v0.6 Predicate Primitive](docs/v0.6_predicate_primitive.md): signed predicate artifact, verifier, resolver, and CTEF mapping

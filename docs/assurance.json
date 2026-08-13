@@ -1,0 +1,328 @@
+{
+  "schema_version": 1,
+  "title": "Concordia assurance registry",
+  "scope": "Current reference implementations and published conformance evidence. This registry does not change the protocol specification or runtime behavior.",
+  "status_vocabulary": {
+    "design": {
+      "specified": "A normative or maintained design defines the bounded behavior and its limits.",
+      "partial": "A design names relevant mechanisms or limits but does not define the whole dimension.",
+      "not_specified": "No maintained design defines the dimension."
+    },
+    "implementation": {
+      "implemented": "The current reference implementation provides the bounded behavior.",
+      "partial": "The current reference implementation provides only a bounded subset or depends on supplied trust inputs.",
+      "not_implemented": "The current reference implementation does not provide the dimension."
+    },
+    "test": {
+      "verified": "Current first-party tests verify the bounded implemented behavior.",
+      "partial": "Current first-party tests cover only a subset of the bounded behavior.",
+      "not_verified": "No current test verifies the dimension itself."
+    },
+    "drill": {
+      "verified": "A recorded operational or adversarial drill verifies the bounded behavior.",
+      "partial": "A recorded drill covers only a subset of the bounded behavior.",
+      "not_verified": "No recorded drill verifies the dimension.",
+      "not_applicable": "An operational drill does not apply to this dimension."
+    },
+    "external_reproduction": {
+      "verified": "A registered external implementation reproduces the full bounded profile.",
+      "partial": "A registered external implementation reproduces only a bounded subset.",
+      "none": "No registered external implementation reproduces the dimension."
+    },
+    "public_claim": {
+      "bounded": "Published wording states both the supported claim and its limits.",
+      "not_claimed": "No public capability claim is made for the dimension.",
+      "overclaimed": "Published wording exceeds the evidence and must be corrected."
+    }
+  },
+  "dimensions": [
+    {
+      "id": "agreement_integrity",
+      "name": "Agreement integrity",
+      "definition": "Whether the retained bytes prove that the resolved signing keys approved the same bounded artifact and, when the closing receipt is supplied, the same transcript set.",
+      "bounded_claim": "Concordia verifies signatures over canonical bytes. A countersigned receipt at concordia_attestation 0.3.0 or later binds its outcome, chain head, and message count to the parties listed in that receipt. A message chain without that closing receipt does not prove transcript-set completeness.",
+      "not_claimed": "A valid signature does not establish a signer's real-world identity, mandate, voluntariness, truthfulness, or the justice of the agreement.",
+      "statuses": {
+        "design": "specified",
+        "implementation": "implemented",
+        "test": "verified",
+        "drill": "not_verified",
+        "external_reproduction": "partial",
+        "public_claim": "bounded"
+      },
+      "evidence": [
+        {
+          "kind": "spec",
+          "path": "SPEC.md",
+          "anchor": "9.6.5b Receipt Set-Binding (v0.3.0)",
+          "summary": "Defines the countersigned closing receipt, chain_head, message_count, and the legacy set-unbound case."
+        },
+        {
+          "kind": "conformance",
+          "path": "conformance/RUNNER_CONTRACT.md",
+          "anchor": "message-chain-v1",
+          "summary": "Requires every listed party's countersignature and compares the receipt's chain head and message count to the presented transcript."
+        },
+        {
+          "kind": "test",
+          "path": "tests/test_conformance_reference_runner.py",
+          "anchor": "EXPECTED_FULL_SUMMARY",
+          "summary": "The first-party Python runner verifies 1,541 vectors with zero failures."
+        },
+        {
+          "kind": "test",
+          "path": "tests/test_conformance_js_runner.py",
+          "anchor": "EXPECTED_FULL_SUMMARY",
+          "summary": "The first-party Node.js runner verifies the same 1,541 vectors with zero failures."
+        },
+        {
+          "kind": "external_reproduction",
+          "path": "docs/interop/a2a-1920-fulfillment-sample/README.md",
+          "anchor": "Second-implementation reproductions",
+          "summary": "One external implementation reproduced one FulfillmentAttestation digest and verified its signature and tamper rejection."
+        }
+      ],
+      "limitations": [
+        "The Python and Node.js conformance runners are different runtimes but are both first-party authored. Their 1,541-vector zero-divergence result is cross-runtime parity, not an independent implementation of Concordia.",
+        "The sole external reproduction covers one FulfillmentAttestation record, not the whole protocol or the receipt-set-binding profile.",
+        "A FulfillmentAttestation proves what its signer asserted and bound to the artifact. It does not objectively prove that physical or external-world fulfillment occurred."
+      ],
+      "next_proof": "Obtain and register a third-party run of the receipt-set-binding profile, including splice and truncation rejection, from an implementation that shares neither Concordia code nor authorship.",
+      "dependencies": [
+        "conformance/IMPLEMENTATIONS.md",
+        "conformance/vectors/manifest.json"
+      ]
+    },
+    {
+      "id": "agreement_authority",
+      "name": "Agreement authority",
+      "definition": "Whether a signer was authorized, under a configured trust policy, to make the bounded commitment represented by the artifact.",
+      "bounded_claim": "Concordia can verify a signed mandate, its delegation chain, scope restrictions, time bounds, and configured revocation evidence. Authority is established only relative to the issuer keys, resolver results, context, and policy supplied to that verification.",
+      "not_claimed": "A signature or agent_id alone does not prove real-world identity or authority. Concordia does not independently establish that an issuer had legal or organizational power to grant a mandate.",
+      "statuses": {
+        "design": "specified",
+        "implementation": "partial",
+        "test": "verified",
+        "drill": "not_verified",
+        "external_reproduction": "none",
+        "public_claim": "bounded"
+      },
+      "evidence": [
+        {
+          "kind": "spec",
+          "path": "SPEC.md",
+          "anchor": "9.1 Identity",
+          "summary": "Keeps identity-layer choice outside Concordia and describes external delegation credentials as optional authorization proof."
+        },
+        {
+          "kind": "implementation",
+          "path": "concordia/mandate.py",
+          "anchor": "verify_mandate",
+          "summary": "Verifies mandate signatures, constraints, delegation, temporal validity, and resolver-supplied status."
+        },
+        {
+          "kind": "conformance",
+          "path": "conformance/RUNNER_CONTRACT.md",
+          "anchor": "delegation-chain-v1",
+          "summary": "Pins delegation continuity, signer verification, and composed scope restrictions."
+        },
+        {
+          "kind": "test",
+          "path": "tests/test_mandate_resolver.py",
+          "anchor": "module",
+          "summary": "Exercises resolver-backed mandate status and failure behavior."
+        }
+      ],
+      "limitations": [
+        "Authority depends on configured issuer keys, resolvers, verification time, action context, and local policy; naming an issuer or DID confers no authority by itself.",
+        "Mandate verification does not prove that the principal knowingly or freely authorized the mandate.",
+        "The conformance suite does not cover every signature algorithm supported by the Python SDK; its mandate and predicate profiles use Ed25519 only."
+      ],
+      "next_proof": "Publish a provider-neutral authority profile with pinned issuer resolution and revocation inputs, then obtain an external implementation run over valid, over-scope, expired, rotated, and revoked mandate cases.",
+      "dependencies": [
+        "agreement_integrity",
+        "concordia/mandate_resolver.py"
+      ]
+    },
+    {
+      "id": "agreement_voluntariness",
+      "name": "Agreement voluntariness",
+      "definition": "Whether participation and assent were free from coercion, hidden pressure, incapacitation, or policy-induced compulsion.",
+      "bounded_claim": "Concordia can retain signed accept, reject, withdraw, approval, and denial artifacts. Those artifacts show what a signing key asserted at a boundary; they do not prove that the decision was voluntary.",
+      "not_claimed": "Cryptography cannot establish freedom from duress, competence, absence of training-induced compliance, informed human consent, or authentic self-authorship.",
+      "statuses": {
+        "design": "partial",
+        "implementation": "not_implemented",
+        "test": "not_verified",
+        "drill": "not_verified",
+        "external_reproduction": "none",
+        "public_claim": "bounded"
+      },
+      "evidence": [
+        {
+          "kind": "spec",
+          "path": "SPEC.md",
+          "anchor": "5. Negotiation Lifecycle",
+          "summary": "Defines explicit acceptance, rejection, withdrawal, expiry, and dormant paths."
+        },
+        {
+          "kind": "spec",
+          "path": "SPEC.md",
+          "anchor": "9.6.4b ApprovalReceipt",
+          "summary": "Defines signed approve and deny decisions over a bounded offer hash."
+        },
+        {
+          "kind": "test",
+          "path": "tests/test_validity_temporal.py",
+          "anchor": "module",
+          "summary": "Exercises participant joining and time-bounded artifact validity."
+        }
+      ],
+      "limitations": [
+        "A signed acceptance proves control of a signing key at verification time, not freedom from duress or manipulation.",
+        "ApprovalReceipt records a decision and its scope; it does not prove the approver was competent, informed, or independent.",
+        "No voluntariness threat model, duress signal profile, or independent drill is complete."
+      ],
+      "next_proof": "Define a voluntariness threat model and a non-overclaiming conformance profile for contested assent, revocation during negotiation, and explicit human escalation, while keeping subjective freedom outside cryptographic proof.",
+      "dependencies": [
+        "agreement_authority",
+        "agreement_integrity"
+      ]
+    },
+    {
+      "id": "agreement_justice",
+      "name": "Agreement justice",
+      "definition": "Whether an agreement is substantively fair, non-exploitative, and compatible with the rights and welfare of affected parties.",
+      "bounded_claim": "Concordia supplies structured multi-attribute offers, explicit constraints, optional resolution mechanisms, signed records, and portable evidence that a separate evaluator may use. It does not guarantee a fair or just result.",
+      "not_claimed": "Pareto efficiency, mutual signatures, or protocol conformance do not prove distributive justice, equal bargaining power, absence of exploitation, or benefit to affected non-signers.",
+      "statuses": {
+        "design": "partial",
+        "implementation": "not_implemented",
+        "test": "not_verified",
+        "drill": "not_verified",
+        "external_reproduction": "none",
+        "public_claim": "bounded"
+      },
+      "evidence": [
+        {
+          "kind": "spec",
+          "path": "SPEC.md",
+          "anchor": "1. Design Principles",
+          "summary": "States the protocol's fairness intent and multi-attribute design constraints."
+        },
+        {
+          "kind": "spec",
+          "path": "SPEC.md",
+          "anchor": "8. Resolution Mechanisms",
+          "summary": "Defines optional split, final-offer, trade-off, and human-escalation mechanisms."
+        },
+        {
+          "kind": "implementation",
+          "path": "concordia/offer.py",
+          "anchor": "module",
+          "summary": "Implements structured offers and constraints without adjudicating substantive fairness."
+        }
+      ],
+      "limitations": [
+        "A structurally valid bargain can still be exploitative or unjust.",
+        "The reference implementation does not measure bargaining power, externalities, duress, or harms to non-signers.",
+        "Resolution mechanisms are optional and their fairness properties are not formally proven for arbitrary agent strategies."
+      ],
+      "next_proof": "Define fairness limits and evaluation fixtures that separate mechanical agreement quality from normative justice, with explicit treatment of bargaining-power asymmetry and affected non-signers.",
+      "dependencies": [
+        "agreement_voluntariness",
+        "agreement_authority"
+      ]
+    },
+    {
+      "id": "payload_confidentiality",
+      "name": "Payload confidentiality",
+      "definition": "Whether message contents remain unreadable to relays, mailbox operators, storage services, and other transport intermediaries.",
+      "bounded_claim": "Concordia messages are signed but not end-to-end encrypted. TLS can protect each network hop, while the current relay and any other intermediary carrying plaintext messages can read their contents.",
+      "not_claimed": "Current Concordia deployments must not be described as end-to-end encrypted, confidential from the relay, or protected from a compromised transport operator.",
+      "statuses": {
+        "design": "partial",
+        "implementation": "not_implemented",
+        "test": "not_verified",
+        "drill": "not_verified",
+        "external_reproduction": "none",
+        "public_claim": "bounded"
+      },
+      "evidence": [
+        {
+          "kind": "spec",
+          "path": "SPEC.md",
+          "anchor": "9.4 Confidentiality",
+          "summary": "States that messages are not encrypted and that relays and intermediaries can read them."
+        },
+        {
+          "kind": "implementation",
+          "path": "concordia/relay.py",
+          "anchor": "module",
+          "summary": "Implements store-and-forward message handling without an end-to-end encryption layer."
+        },
+        {
+          "kind": "test",
+          "path": "tests/test_mcp_server_relay_bridge_edges.py",
+          "anchor": "module",
+          "summary": "Exercises relay boundaries but does not establish payload confidentiality."
+        }
+      ],
+      "limitations": [
+        "Transport-layer TLS does not hide content from an endpoint, relay, mailbox, or storage operator.",
+        "Signatures provide integrity and authenticity, not secrecy.",
+        "The X25519 and XChaCha20-Poly1305 construction named in the spec is a future candidate, not a specified or implemented feature."
+      ],
+      "next_proof": "Complete a cross-runtime end-to-end encryption threat model and compatibility design before implementation, including key discovery, rotation, forward secrecy, multi-party sessions, recovery, and relay-visible failure behavior.",
+      "dependencies": [
+        "agreement_integrity",
+        "cross-runtime encryption design"
+      ]
+    },
+    {
+      "id": "metadata_privacy",
+      "name": "Metadata privacy",
+      "definition": "Whether protocol and transport observers are prevented from learning counterparties, timing, volume, routing, relationship, and other interaction metadata.",
+      "bounded_claim": "Concordia minimizes fields in reputation attestations by excluding raw deal terms and using bounded behavioral signals, coarse categories, and value buckets. This is record-content minimization, not transport metadata privacy.",
+      "not_claimed": "Concordia does not currently hide counterparties, timing, message counts, routing, access patterns, relay participation, or other traffic metadata from the systems that carry or store the interaction.",
+      "statuses": {
+        "design": "partial",
+        "implementation": "not_implemented",
+        "test": "not_verified",
+        "drill": "not_verified",
+        "external_reproduction": "none",
+        "public_claim": "bounded"
+      },
+      "evidence": [
+        {
+          "kind": "spec",
+          "path": "SPEC.md",
+          "anchor": "9.6.6 Attestation Privacy",
+          "summary": "Defines the behavioral-signal-only attestation shape, value buckets, category bounds, and the accepted self-disclosure residual."
+        },
+        {
+          "kind": "implementation",
+          "path": "concordia/schema_validator.py",
+          "anchor": "_RAW_TERM_PATTERNS",
+          "summary": "Provides raw-deal-term detectors used at the attestation boundary."
+        },
+        {
+          "kind": "test",
+          "path": "docs/interop/a2a-1920-fulfillment-sample/verify.py",
+          "anchor": "privacy invariant",
+          "summary": "Checks the sample for raw deal terms and proves the detector catches an injected term."
+        }
+      ],
+      "limitations": [
+        "Field minimization does not provide transport confidentiality or metadata privacy.",
+        "Coarse category and value-range fields still reveal information and can be deliberately abused for self-disclosure within their allowed grammar.",
+        "The relay can observe participants, timing, message volume, and stored content; no mix network, padding, private information retrieval, or query-anonymity mechanism is implemented."
+      ],
+      "next_proof": "Write a metadata threat model that inventories observer-visible fields and traffic patterns, then define separate content-minimization and metadata-privacy profiles with measurable leakage bounds.",
+      "dependencies": [
+        "payload_confidentiality",
+        "relay threat model"
+      ]
+    }
+  ]
+}
