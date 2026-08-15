@@ -80,6 +80,23 @@ def test_validator_rejects_dimension_id_drift() -> None:
         raise AssertionError("validator accepted a renamed stable dimension id")
 
 
+def test_validator_rejects_evidence_neutral_status_promotion() -> None:
+    module = _load_generator()
+    data = json.loads(SOURCE.read_text(encoding="utf-8"))
+    voluntariness = next(
+        item for item in data["dimensions"] if item["id"] == "agreement_voluntariness"
+    )
+    voluntariness["statuses"]["implementation"] = "implemented"
+    try:
+        module.validate(data)
+    except module.AssuranceError as exc:
+        assert "reviewed current-status floor" in str(exc)
+    else:
+        raise AssertionError(
+            "validator accepted an evidence-neutral implementation promotion"
+        )
+
+
 def test_generated_truth_surfaces_are_current() -> None:
     result = subprocess.run(
         [sys.executable, str(GENERATOR), "--check"],

@@ -33,6 +33,60 @@ STATUS_FIELDS = [
     "external_reproduction",
     "public_claim",
 ]
+# Reviewed current-status floor for every public assurance cell. This is an
+# exact pin rather than an ordering heuristic because some vocabularies contain
+# non-monotonic states (for example, public_claim.overclaimed). Any status
+# change therefore requires both new evidence and a reviewed validator edit.
+CURRENT_STATUS_FLOORS = {
+    "agreement_integrity": {
+        "design": "specified",
+        "implementation": "implemented",
+        "test": "verified",
+        "drill": "not_verified",
+        "external_reproduction": "partial",
+        "public_claim": "bounded",
+    },
+    "agreement_authority": {
+        "design": "specified",
+        "implementation": "partial",
+        "test": "verified",
+        "drill": "not_verified",
+        "external_reproduction": "none",
+        "public_claim": "bounded",
+    },
+    "agreement_voluntariness": {
+        "design": "partial",
+        "implementation": "not_implemented",
+        "test": "not_verified",
+        "drill": "not_verified",
+        "external_reproduction": "none",
+        "public_claim": "bounded",
+    },
+    "agreement_justice": {
+        "design": "partial",
+        "implementation": "not_implemented",
+        "test": "not_verified",
+        "drill": "not_verified",
+        "external_reproduction": "none",
+        "public_claim": "bounded",
+    },
+    "payload_confidentiality": {
+        "design": "partial",
+        "implementation": "not_implemented",
+        "test": "not_verified",
+        "drill": "not_verified",
+        "external_reproduction": "none",
+        "public_claim": "bounded",
+    },
+    "metadata_privacy": {
+        "design": "partial",
+        "implementation": "not_implemented",
+        "test": "not_verified",
+        "drill": "not_verified",
+        "external_reproduction": "none",
+        "public_claim": "bounded",
+    },
+}
 DIMENSION_FIELDS = {
     "id",
     "name",
@@ -144,6 +198,13 @@ def validate(data: Any) -> dict[str, Any]:
                 raise AssuranceError(
                     f"dimensions[{dimension_id}].statuses.{field} has unknown value "
                     f"{statuses[field]!r}"
+                )
+            reviewed_floor = CURRENT_STATUS_FLOORS[dimension_id][field]
+            if statuses[field] != reviewed_floor:
+                raise AssuranceError(
+                    f"dimensions[{dimension_id}].statuses.{field} differs from reviewed "
+                    f"current-status floor {reviewed_floor!r}; a status change requires "
+                    "new evidence and a paired validator update"
                 )
         if not isinstance(item["evidence"], list) or not item["evidence"]:
             raise AssuranceError(f"dimensions[{dimension_id}].evidence must be non-empty")
