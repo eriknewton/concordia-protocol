@@ -46,6 +46,7 @@ fail=0
 # release record, per house precedent).
 MD_DOCS=(
   README.md
+  ASSURANCE_MATRIX.md
   SPEC.md
   CONTRIBUTING.md
   AGENTS.md
@@ -59,13 +60,13 @@ for f in docs/*.md; do
 done
 
 # Layer-numbering guard scope: the agent-facing surface only.
-LAYER_DOCS=(README.md SPEC.md AGENTS.md)
+LAYER_DOCS=(README.md ASSURANCE_MATRIX.md SPEC.md AGENTS.md)
 for f in docs/*.md; do
   [ -e "$f" ] && LAYER_DOCS+=("$f")
 done
 
 # Attribution guard scope: every public doc that could carry a byline.
-ATTR_DOCS=(README.md SPEC.md CONTRIBUTING.md AGENTS.md rfcs/README.md js-sdk/README.md)
+ATTR_DOCS=(README.md ASSURANCE_MATRIX.md SPEC.md CONTRIBUTING.md AGENTS.md rfcs/README.md js-sdk/README.md)
 for f in docs/*.md; do
   [ -e "$f" ] && ATTR_DOCS+=("$f")
 done

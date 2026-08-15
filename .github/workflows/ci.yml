@@ -150,6 +150,9 @@ jobs:
       - name: Check generated conformance document
         run: python scripts/claims/generate_conformance.py --check
 
+      - name: Check generated assurance truth surfaces
+        run: python scripts/assurance/generate.py --check
+
       - name: Run executable claims gate
         run: python scripts/claims/run.py
 
