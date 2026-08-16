@@ -36,6 +36,8 @@ The name is from the Latin *concordia*: harmony, agreement, literally, "hearts t
 9. [Security and Trust Model](#9-security-and-trust-model)
    - 9.1-9.5: Identity, Integrity, Confidentiality, Anti-Abuse
    - 9.6: [Reputation Attestations](#96-reputation-attestations) *(core feature)*
+   - 9.7: Relying-Side Verification Obligations (freshness and replay)
+   - 9.8: Security Considerations by Threat Actor
 10. [Integration with Existing Protocols](#10-integration-with-existing-protocols)
 11. [Extension Points](#11-extension-points)
 12. [Conformance Requirements](#12-conformance-requirements)
@@ -1281,6 +1283,34 @@ The protocol's relationship to reputation scoring services mirrors the relations
 | Open, standardized, free | Proprietary, differentiated, monetizable |
 
 Multiple reputation services can coexist, each with different scoring models optimized for different contexts. A service optimized for high-value B2B procurement will weight different signals than one optimized for casual P2P goods transactions. This diversity is deliberate; it mirrors how the real world keeps multiple trust signals (credit scores, Yelp reviews, LinkedIn endorsements, personal references) for different contexts.
+
+### 9.7 Relying-Side Verification Obligations (Freshness and Replay)
+
+#### 9.7.1 General Principle
+
+A signature over a deterministic artifact proves who signed it and exactly which bytes were signed. It does not, by itself, prove that the signed claim is still true at the moment a relying party acts on it: if the bytes a signer produces are fully determined by inputs that do not change, a valid signature captured once remains valid to present again later, after the state it described has moved on.
+
+- A relying party MUST enforce its own bound on how old accepted evidence may be, independent of whatever validity window the signer chose to assert.
+- A relying party MUST NOT treat a currently-valid signature as proof that the signed claim remains true.
+- Where this specification defines a signer-asserted validity window (§9.7.3), that window is the signer's own ceiling on the claim, not a floor the relying party is obligated to accept in full; a relying party MAY apply a tighter bound of its own.
+
+This is a general discipline, not a single mechanism. §9.7.2 names where it is already enforced structurally; §9.7.3 resolves the one place in this specification where enforcement is currently uneven.
+
+#### 9.7.2 Existing Worked Instances
+
+Several artifacts already enforce §9.7.1 structurally:
+
+- **ApprovalReceipt (§9.6.4b).** `expires_at`, when present, MUST be honored, and verifiers MUST reject an expired receipt at verification time regardless of what the receipt itself claims.
+- **RevocationRecord (§9.6.4c).** Verifiers MUST NOT consider an artifact revoked before the record's own `effective_at` timestamp. This closes both a future-dated revocation presented early and a past one presented late.
+- **Receipt set-binding (§9.6.5b).** `chain_head` and `message_count` close the neighboring failure mode: a splice that keeps every individual link's signature valid while silently dropping messages from the middle of the transcript. Set-binding is not a freshness check by itself, but it is the same discipline applied to transcript completeness rather than to clock time: a relying party cannot infer, from per-link validity alone, that it is holding the set the issuer actually countersigned.
+
+#### 9.7.3 `validity_temporal` Becomes the Working Default on the Base Attestation
+
+The base Reputation Attestation (§9.6.2) carries a `validity_temporal` field (added v0.4.0, WP3): a tagged union over three modes, `absolute` (`from`/`until`), `relative` (`from`/`duration_seconds`), and `window` (`start`/`end`/`duration_seconds`, bounded within the `[start, end]` span). Today this is the one artifact family in §9.6 where freshness coverage is uneven: ApprovalReceipt's `expires_at` is present-when-supplied and MUST be honored; the base attestation's equivalent field is optional, and a verifier that only checks signature validity has nothing forcing it to also check currency.
+
+This specification's working default, starting with this revision, is that `validity_temporal` is REQUIRED on every base attestation, not merely optional: an attestation with no `validity_temporal` value carries no signer-asserted bound on its own currency, which leaves every consuming relying party to either invent its own convention or skip the §9.7.1 freshness check entirely for that artifact. Making the field required does not by itself satisfy §9.7.1's relying-side obligation, since the relying party's own bound is still required regardless; it removes the ambiguity of an attestation that carries no signer-asserted window to bound against in the first place.
+
+*Editor's note (implementation status, not yet enforced).* `schemas/attestation.schema.json` and both reference SDKs currently model `validity_temporal` as optional, and the conformance suite's attestation vectors include attestations with `validity_temporal: null`. This paragraph states the specification's direction for this revision; it is not yet reflected in the JSON Schema `required` list, the reference implementations, or the conformance vectors, and this change does not modify any of those. Promoting the field to schema-required is tracked as follow-up SDK and conformance work, out of scope for a spec-prose-only change.
 
 ---
 
