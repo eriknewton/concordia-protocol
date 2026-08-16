@@ -1166,13 +1166,18 @@ Version-gated verification is dual-accept. For `concordia_attestation` >= `0.3.0
 
 #### 9.6.6 Attestation Privacy
 
-Attestations are designed to reveal behavioral patterns without exposing deal specifics:
+Attestations are designed to reveal behavioral patterns without exposing deal specifics. **Included (informative):** outcome, timing, round count, concession patterns, behavioral signals. The enumerated list below is this section's normative restatement of the same privacy invariant, for direct citation; it changes presentation, not substance.
 
-- **Included:** Outcome, timing, round count, concession patterns, behavioral signals
-- **Excluded:** Specific term values, actual prices, item descriptions, agent reasoning text, principal identities
-- The `value_range` field uses logarithmic buckets rather than exact amounts. The bucket vocabulary is normative and enumerated: `0-100`, `100-500`, `500-1000`, `1000-5000`, `5000-10000`, `10000-50000`, `50000-100000`, `100000-500000`, `500000-1000000`, `1000000+`, each suffixed with `_` and a 3-letter uppercase currency code (e.g., "100-500_USD", "1000-5000_USD"). Issuers MUST reject any other value rather than coerce it; an enumerated vocabulary (not a free range grammar) is required so an exact price cannot be encoded as a degenerate range such as "4350-4351_USD"
-- Category is included at a coarse level as a dotted lowercase taxonomy path of at most 64 chars (e.g., "electronics.cameras"); issuers MUST reject free text. Agents MAY omit it for additional privacy
-- Reference strings are length-capped and whitespace-free at issuance (see 11.5.6) so the references surface cannot carry free-text deal terms either
+1. An attestation issuer MUST NOT populate any field with a specific negotiated term value (an exact price, quantity, date, or other negotiated figure).
+2. An attestation issuer MUST NOT populate any field with an item or service description beyond the bucketed `category` and `value_range` fields defined below.
+3. An attestation issuer MUST NOT populate any field with the free-text `reasoning` content from any negotiation message.
+4. An attestation issuer MUST NOT populate any field with a principal identity (the human or organization an agent represents); only the agent_id is carried.
+5. The `value_range` field, when present, MUST be drawn from the fixed bucket vocabulary: `0-100`, `100-500`, `500-1000`, `1000-5000`, `5000-10000`, `10000-50000`, `50000-100000`, `100000-500000`, `500000-1000000`, `1000000+`, each suffixed with `_` and a 3-letter uppercase currency code (for example `100-500_USD`, `1000-5000_USD`).
+6. Issuers MUST reject any `value_range` value outside that vocabulary rather than coerce it. An enumerated vocabulary, not a free-range grammar, is required so an exact price cannot be encoded as a degenerate range such as `4350-4351_USD`.
+7. The `category` field, when present, MUST be a dotted lowercase taxonomy path of at most 64 characters (for example `electronics.cameras`).
+8. Issuers MUST reject free text in `category`.
+9. Agents MAY omit `category` entirely for additional privacy.
+10. Reference strings MUST be length-capped and whitespace-free at issuance (§11.5.6), so the `references[]` surface cannot carry free-text deal terms either.
 
 **Known residual channel (bounded, accepted):** the `category` taxonomy grammar constrains shape, not meaning, so an issuer can still encode its own terms inside conforming segments (for example, `price_4350_usd` is a valid taxonomy path). This is a self-doxxing channel, not a counterparty privacy leak: each party signs only its own behavior record, so an issuer can leak only its OWN deal terms, never the counterparty's, and a counterparty's signature never endorses the issuer's `meta` content. Digit bans or segment allowlists are deliberately not applied because they would falsely reject legitimate taxonomies (e.g., "gpu.h100", "iso.9001"). A registered-taxonomy scheme, where conforming categories must come from a published vocabulary, is a possible future mitigation and is out of scope for this version.
 
