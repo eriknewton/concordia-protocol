@@ -7,6 +7,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Documentation
+
+- **Spec-prose additions in support of a possible IETF filing
+  (agreement-evidence layer, Option A posture).** SPEC.md gains: §3.6
+  clarifies which signed artifact is the citable evidence object for a
+  completed agreement (the attestation, distinct from the term-bearing
+  `negotiate.commit` messages); §5.5 (informative) maps
+  `negotiate.decline_session` and DORMANT reactivation onto an external
+  evidence-request challenge pattern, with no new message type or field;
+  §9.6.6 is restated as an enumerated normative MUST/MUST NOT
+  privacy-invariant list (presentation only, no substance change); §9.7 adds
+  a general freshness and replay obligation (relying-side age and lifetime
+  bounds, a bounded clock-skew hard-fail, and a generating-side
+  maximum-lifetime clamp) and names the artifacts that already enforce it;
+  `validity_temporal` is REQUIRED on the base attestation (Erik ruling,
+  2026-08-16), and the §9.6.2 worked example now carries a
+  `validity_temporal` value to match (an editor's note in §9.7.3 records
+  that the JSON Schema, both reference SDKs, and the conformance vectors
+  still model the field as optional; promoting them is tracked follow-up
+  work, and this change does not touch the schema, the SDKs, or the
+  conformance vectors); §9.8 (informative) reorganizes existing §9.1-9.7
+  security content by threat actor for direct citation, including the
+  Sybil/identity threat actor. None of this changes wire behavior, SDK code,
+  the assurance registry (`docs/assurance.json`, `ASSURANCE_MATRIX.md`), or
+  any conformance-pinned status cell.
+
 ### Security
 
 - Pinned `cryptography` to 50.0.0 in `requirements.lock`, clearing
