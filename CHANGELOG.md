@@ -17,7 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   reactivation onto an external evidence-request challenge pattern, with no
   new message type or field; §9.6.6 is restated as an enumerated normative
   MUST/MUST NOT privacy-invariant list (presentation only, no substance
-  change); §9.7 adds a general relying-side freshness and replay obligation,
+  change); §9.7 adds a general freshness and replay obligation: relying-side age and lifetime bounds with a bounded clock-skew hard-fail, and a generating-side maximum-lifetime clamp,
   names the artifacts that already enforce it, and states `validity_temporal`
   as the working default REQUIRED field on the base attestation going forward
   (an editor's note in §9.7.3 records that the JSON Schema and reference SDKs
