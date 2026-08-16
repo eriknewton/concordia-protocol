@@ -1305,8 +1305,8 @@ This is a general discipline, not a single mechanism. §9.7.2 names where it is 
 Several artifacts already enforce §9.7.1 structurally:
 
 - **ApprovalReceipt (§9.6.4b).** `expires_at`, when present, MUST be honored, and verifiers MUST reject an expired receipt at verification time regardless of what the receipt itself claims.
-- **RevocationRecord (§9.6.4c).** Verifiers MUST NOT consider an artifact revoked before the record's own `effective_at` timestamp. This closes both a future-dated revocation presented early and a past one presented late.
-- **Receipt set-binding (§9.6.5b).** `chain_head` and `message_count` close the neighboring failure mode: a splice that keeps every individual link's signature valid while silently dropping messages from the middle of the transcript. Set-binding is not a freshness check by itself, but it is the same discipline applied to transcript completeness rather than to clock time: a relying party cannot infer, from per-link validity alone, that it is holding the set the issuer actually countersigned.
+- **RevocationRecord (§9.6.4c).** Verifiers MUST NOT consider an artifact revoked before the record's own `effective_at` timestamp: a future-dated revocation does not take effect early. §9.6.4c states this one direction only; it does not itself state a rule for how long a past revocation remains presentable.
+- **Receipt set-binding (§9.6.5b).** `chain_head` and `message_count` close the neighboring failure mode: a splice that keeps every individual link's signature valid while silently dropping messages from the middle of the transcript. Set-binding applies the same discipline to transcript completeness rather than to clock time: a relying party cannot infer, from per-link validity alone, that it is holding the set the issuer actually countersigned.
 
 #### 9.7.3 `validity_temporal` Becomes the Working Default on the Base Attestation
 
