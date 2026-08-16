@@ -383,6 +383,12 @@ The protocol tracks the **concession trajectory**: how each party's offers have 
 
 Concession is measured per-term as the distance between successive offers, normalized by the term's range. The protocol does not *enforce* concession, but it makes non-concession visible.
 
+### 5.5 Relationship to External Evidence-Request Challenges (Informative)
+
+This subsection is informative and additive. It names a compatible pattern with an external evidence-request challenge format; it does not define a new Concordia primitive, add a message type, add a session state, or add a required field, and Concordia does not depend on any such external format existing or continuing to exist.
+
+A relying party outside this specification may refuse an interaction with a structured challenge: which evidence it found insufficient, how fresh a replacement must be, what presentation it will accept, and whether the caller may retry. An agent that receives such a challenge and wants to reopen a Concordia negotiation with the missing evidence in hand has two existing message types available, unchanged: `negotiate.decline_session` (§4.2) to end the current session with a stated reason, and, once a session is REJECTED or EXPIRED and flagged `reactivatable: true`, a DORMANT-state reactivation via a fresh `negotiate.offer` (§5.1, §5.2) once the requested evidence is assembled. Today `negotiate.decline_session`'s reason is free text (§4.2); this specification does not define a machine-readable outstanding-evidence vocabulary for it, so the correspondence above is a pattern match at the message-type level, not a structured field mapping. Defining such a vocabulary, if warranted, is future work for a later revision and is not part of this change.
+
 ---
 
 ## 6. Offer Schema
