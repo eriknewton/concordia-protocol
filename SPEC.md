@@ -1294,6 +1294,10 @@ A signature over a deterministic artifact proves who signed it and exactly which
 - A relying party MUST NOT treat a currently-valid signature as proof that the signed claim remains true.
 - Where this specification defines a signer-asserted validity window (§9.7.3), that window is the signer's own ceiling on the claim, not a floor the relying party is obligated to accept in full; a relying party MAY apply a tighter bound of its own.
 
+The relying side additionally carries a bounded clock-skew obligation. When a signer-asserted anchor timestamp, a `from`, `start`, `timestamp`, or `issued_at` value, is future-dated beyond a bounded clock-skew allowance, the relying party MUST reject the artifact outright rather than accept it with a warning. The allowance's exact size is an implementation parameter; exceeding it MUST fail closed, since an unbounded allowance for clock disagreement lets a signer manufacture apparent freshness by asserting a timestamp that has not yet arrived.
+
+The generating side carries a matching obligation, distinct from the relying-side bounds above. A signer MUST NOT sign a validity window whose lifetime (the span the window covers regardless of mode: `until` minus `from` for `absolute`, `duration_seconds` for `relative`, `end` minus `start` for `window`) exceeds a maximum lifetime the signer's own policy states in advance. The relying-side bullets above govern what a relying party will accept; this clamp governs what a signer may assert in the first place, so the signer cannot unilaterally select its own trust duration by asserting an arbitrarily long window.
+
 This is a general discipline, not a single mechanism. §9.7.2 names where it is already enforced structurally; §9.7.3 resolves the one place in this specification where enforcement is currently uneven.
 
 #### 9.7.2 Existing Worked Instances
