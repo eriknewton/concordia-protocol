@@ -1312,6 +1312,32 @@ This specification's working default, starting with this revision, is that `vali
 
 *Editor's note (implementation status, not yet enforced).* `schemas/attestation.schema.json` and both reference SDKs currently model `validity_temporal` as optional, and the conformance suite's attestation vectors include attestations with `validity_temporal: null`. This paragraph states the specification's direction for this revision; it is not yet reflected in the JSON Schema `required` list, the reference implementations, or the conformance vectors, and this change does not modify any of those. Promoting the field to schema-required is tracked as follow-up SDK and conformance work, out of scope for a spec-prose-only change.
 
+### 9.8 Security Considerations by Threat Actor
+
+This section restates the security content of §9.1 through §9.7 by what an attacker can attempt, rather than by protocol feature, for direct citation as a filing's Security Considerations section. It states no new normative rule; every obligation named here is defined normatively at the cross-referenced section.
+
+**A malicious or dishonest counterparty (a party to the negotiation) can attempt to:**
+
+- Send a false or exaggerated behavioral record. Countered by outcome-binding countersignature (§9.6.5a): a bundle is credited as outcome-bound only when every listed party's countersignature verifies, so a single dishonest holder cannot rewrite `outcome.status` and re-sign alone.
+- Present a spliced or truncated transcript that keeps every individual message signature valid. Countered by receipt set-binding (§9.6.5b): the countersigned `chain_head` and `message_count` must match the presented transcript.
+- Retry an already-declined offer after crossing an approval threshold. Countered by ApprovalReceipt's binding `deny` decision (§9.6.4b): a deny is cryptographically binding the same way an approve is.
+- Present a revoked artifact as though it were still valid, either before or after the revocation's stated effective time. Countered by RevocationRecord's `effective_at` bound and bounded cascade traversal (§9.6.4c), and by the relying-side freshness obligation in §9.7.1.
+- Replay a stale, currently-valid signature as though the state it described were still current. Countered by §9.7 in general and by the specific mechanisms in §9.7.2.
+- Fabricate deal terms inside an attestation. Structurally prevented: attestation issuance rejects free-text `category` and non-enumerated `value_range` values (§9.6.6), and the schema carries no field for raw term values at all.
+
+**A malicious or compromised transport intermediary (a relay, mailbox service, or any other delivery-path system) can attempt to:**
+
+- Read message content, including offer terms and the `reasoning` field. Concordia messages are signed but unencrypted (§9.4), a stated, permanent scope limit recorded there; deployments MUST NOT be described as end-to-end encrypted until payload encryption is specified and implemented.
+- Tamper with a message in transit. Countered by Ed25519 signing over canonical JSON (§9.2, §9.2.1): any modification invalidates the signature.
+- Deny or delay message delivery. Not fully countered: session and offer TTLs (§5.3) bound how long a party will wait, but availability against a hostile intermediary is outside this specification's scope.
+
+**An agent attempting to extract information without negotiating in good faith can attempt to:**
+
+- Open sessions, extract preference signals, and withdraw repeatedly. Addressed at the service level, not the protocol level (§9.5): a hosted service can flag and block this pattern, but the base protocol does not itself rate-limit or detect it beyond `max_rounds` (§5.3).
+- Hold a negotiation open indefinitely to deny the counterparty other opportunities. Countered by session TTL (§5.3, §9.5).
+
+This organization exists to support a filing's Security Considerations section; it is descriptive, not an additional normative layer over §9.1 through §9.7.
+
 ---
 
 ## 10. Integration with Existing Protocols
