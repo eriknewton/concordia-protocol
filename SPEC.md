@@ -1340,6 +1340,10 @@ This section restates the security content of §9.1 through §9.7 by what an att
 - Open sessions, extract preference signals, and withdraw repeatedly. Addressed at the service level, not the protocol level (§9.5): a hosted service can flag and block this pattern, but the base protocol does not itself rate-limit or detect it beyond `max_rounds` (§5.3).
 - Hold a negotiation open indefinitely to deny the counterparty other opportunities. Countered by session TTL (§5.3, §9.5).
 
+**An agent attempting to evade identity-based limits or accumulate reputation across manufactured identities (Sybil behavior) can attempt to:**
+
+- Create multiple agent identities to spread activity across identities that each look new, evading rate limits, reputation history, or a block placed on a prior identity. Addressed at the service level (§9.5): a hosted service MAY require a verifiable identity or a staked deposit before allowing negotiation. Concordia's identity-agnostic posture (§9.1) means the base protocol itself does not verify real-world identity uniqueness; Sybil resistance is a deployment choice, not a protocol-level guarantee.
+
 This organization exists to support a filing's Security Considerations section; it is descriptive, not an additional normative layer over §9.1 through §9.7.
 
 ---
