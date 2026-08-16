@@ -751,7 +751,7 @@ Every completed negotiation session (regardless of outcome) MUST produce an atte
 
 ```json
 {
-  "concordia_attestation": "0.3.0",
+  "concordia_attestation": "0.5.0",
   "attestation_id": "att_a1b2c3d4",
   "session_id": "ses_9d4e8f01",
   "timestamp": "2026-03-21T14:04:00Z",
@@ -809,6 +809,12 @@ Every completed negotiation session (regardless of outcome) MUST produce an atte
   "message_count": 8,
 
   "fulfillment": null,
+
+  "validity_temporal": {
+    "mode": "absolute",
+    "from": "2026-03-21T14:04:00Z",
+    "until": "2026-06-19T14:04:00Z"
+  },
 
   "countersignatures": {
     "agent_seller_sf_01": "base64_ed25519_countersignature",
@@ -1308,13 +1314,13 @@ Several artifacts already enforce §9.7.1 structurally:
 - **RevocationRecord (§9.6.4c).** Verifiers MUST NOT consider an artifact revoked before the record's own `effective_at` timestamp: a future-dated revocation does not take effect early. §9.6.4c states this one direction only; it does not itself state a rule for how long a past revocation remains presentable.
 - **Receipt set-binding (§9.6.5b).** `chain_head` and `message_count` close the neighboring failure mode: a splice that keeps every individual link's signature valid while silently dropping messages from the middle of the transcript. Set-binding applies the same discipline to transcript completeness rather than to clock time: a relying party cannot infer, from per-link validity alone, that it is holding the set the issuer actually countersigned.
 
-#### 9.7.3 `validity_temporal` Becomes the Working Default on the Base Attestation
+#### 9.7.3 `validity_temporal` Is REQUIRED on the Base Attestation
 
-The base Reputation Attestation (§9.6.2) carries a `validity_temporal` field (added v0.4.0, WP3): a tagged union over three modes, `absolute` (`from`/`until`), `relative` (`from`/`duration_seconds`), and `window` (`start`/`end`/`duration_seconds`, bounded within the `[start, end]` span). Today this is the one artifact family in §9.6 where freshness coverage is uneven: ApprovalReceipt's `expires_at` is present-when-supplied and MUST be honored; the base attestation's equivalent field is optional, and a verifier that only checks signature validity has nothing forcing it to also check currency.
+The base Reputation Attestation (§9.6.2) carries a `validity_temporal` field (added v0.4.0, WP3): a tagged union over three modes, `absolute` (`from`/`until`), `relative` (`from`/`duration_seconds`), and `window` (`start`/`end`/`duration_seconds`, bounded within the `[start, end]` span). Before this revision, `validity_temporal` was the one artifact family in §9.6 where freshness coverage was uneven: ApprovalReceipt's `expires_at` is present-when-supplied and MUST be honored; the base attestation's equivalent field was optional, leaving a verifier that only checked signature validity nothing forcing it to also check currency.
 
-This specification's working default, starting with this revision, is that `validity_temporal` is REQUIRED on every base attestation, not merely optional: an attestation with no `validity_temporal` value carries no signer-asserted bound on its own currency, which leaves every consuming relying party to either invent its own convention or skip the §9.7.1 freshness check entirely for that artifact. Making the field required does not by itself satisfy §9.7.1's relying-side obligation, since the relying party's own bound is still required regardless; it removes the ambiguity of an attestation that carries no signer-asserted window to bound against in the first place.
+`validity_temporal` is REQUIRED on every base attestation: an attestation issued without a `validity_temporal` value carries no signer-asserted bound on its own currency, leaving every consuming relying party to either invent its own convention or skip the §9.7.1 freshness check entirely for that artifact. Making the field required does not by itself satisfy §9.7.1's relying-side obligation, since the relying party's own bound is still required regardless; it removes the ambiguity of an attestation that carries no signer-asserted window to bound against in the first place. The §9.6.2 worked example carries a `validity_temporal` value to match this requirement.
 
-*Editor's note (implementation status, not yet enforced).* `schemas/attestation.schema.json` and both reference SDKs currently model `validity_temporal` as optional, and the conformance suite's attestation vectors include attestations with `validity_temporal: null`. This specification's own worked example (§9.6.2, a `concordia_attestation: "0.3.0"` attestation) omits `validity_temporal` entirely, the same gap. This paragraph states the specification's direction for this revision; it is not yet reflected in the JSON Schema `required` list, the reference implementations, the conformance vectors, or this document's own §9.6.2 example, and this change does not modify any of those. Promoting the field to schema-required, and updating the §9.6.2 example to carry a `validity_temporal` value, are tracked as follow-up work, out of scope for a spec-prose-only change.
+*Editor's note (ruling: REQUIRED, Erik, 2026-08-16; implementation status, tracked follow-up).* This revision's spec-prose work on `validity_temporal` is complete, including the §9.6.2 worked example, which now carries a `validity_temporal` value. What remains open is promotion of the requirement into `schemas/attestation.schema.json`, both reference SDKs, and the conformance suite's attestation vectors: all three still model the field as optional today, and the conformance vectors still include attestations with `validity_temporal: null` (valid to read for legacy signals under the version-gated rules in §9.6.5, but not yet enforced as required by the schema). That promotion, not the field's normative status, is the open item; this document does not change the schema, the SDKs, or the conformance vectors.
 
 ### 9.8 Security Considerations by Threat Actor
 
