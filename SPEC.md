@@ -1327,7 +1327,7 @@ This section restates the security content of §9.1 through §9.7 by what an att
 - Retry an already-declined offer after crossing an approval threshold. Countered by ApprovalReceipt's binding `deny` decision (§9.6.4b): a deny is cryptographically binding the same way an approve is.
 - Present a revoked artifact as though it were still valid, either before or after the revocation's stated effective time. Countered by RevocationRecord's `effective_at` bound and bounded cascade traversal (§9.6.4c), and by the relying-side freshness obligation in §9.7.1.
 - Replay a stale, currently-valid signature as though the state it described were still current. Countered by §9.7 in general and by the specific mechanisms in §9.7.2.
-- Fabricate deal terms inside an attestation. Structurally prevented: attestation issuance rejects free-text `category` and non-enumerated `value_range` values (§9.6.6), and the schema carries no field for raw term values at all.
+- Fabricate deal terms inside an attestation. Constrained: attestation issuance rejects free-text `category` and non-enumerated `value_range` values, and the schema carries no field for raw term values at all (§9.6.6 rules 1-9). A documented residual channel remains open (§9.6.6, "Known residual channel"): a conforming `category` segment can still encode an issuer's own terms, for example `price_4350_usd`, though only the issuer's own, never a counterparty's, since each party signs only its own behavior record.
 
 **A malicious or compromised transport intermediary (a relay, mailbox service, or any other delivery-path system) can attempt to:**
 
