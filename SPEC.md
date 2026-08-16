@@ -207,6 +207,8 @@ An agreement contains:
 - An expiration (after which the agreement is void if not settled)
 - References to settlement protocols (how payment will occur)
 
+**The agreement's schema-citable signed form.** The list above describes an agreement conceptually. Two different signed artifacts carry it on the wire, for two different audiences, and this specification does not define a third, standalone "agreement record" schema distinct from either. The parties themselves hold the actual term values in the final `negotiate.commit` messages (§4.1, §4.2), Ed25519-signed and hash-chained into the transcript (§9.2, §9.3, §9.2.1); this is where the real price, delivery date, and other term values live. A third party verifying that an agreement was reached, without needing or wanting to see those term values, uses the Reputation Attestation instead (§9.6.2, schema `$id` `urn:concordia:schema:attestation:v0.5`, `schemas/attestation.schema.json`): its `outcome`, `parties[*]`, `transcript_hash`, `chain_head`, and `message_count` fields, bound by the outcome-binding countersignature (§9.6.5a) and the receipt set-binding (§9.6.5b), are the standalone, schema-defined proof that a specific set of parties reached a specific outcome over a specific transcript, deliberately without exposing what was agreed (§9.6.6). Where a citable, third-party-verifiable evidence object for an agreement is needed and the audience is not a negotiating party, the attestation is that object.
+
 ---
 
 ## 4. Message Format
