@@ -353,28 +353,31 @@ are marked BREAKING in the entries below.
   module surfaces a `warnings` entry rather than a hard failure,
   preserving the non-dependency principle between primitives.
 - **Standalone Fulfillment Attestation artifact (SPEC §9.6.4a).** New
-  v0.5 artifact type emitted on a discrete delivery boundary (e.g.,
-  A2CN `DELIVERY_ACKNOWLEDGED`). Distinct from the in-line
-  `fulfillment` block on a reputation attestation (§9.6.4): the
-  standalone shape links back to the agreement attestation via
+  v0.5 artifact type emitted on a discrete delivery boundary
+  (designed for composition with a proposed A2CN
+  delivery-acknowledgment event; not a mechanism defined in current
+  A2CN v0.2). Distinct from the in-line `fulfillment` block on a
+  reputation attestation (§9.6.4): the standalone shape links back
+  to the agreement attestation via
   `references[]` with `relationship: "fulfills"` and uses the
   A2CN-aligned status enum (`fulfilled_clean`,
   `fulfilled_with_mediation`, `failed`, `disputed_unresolved`).
   Schema at `schemas/fulfillment_attestation.schema.json` (`$id`
   `urn:concordia:schema:fulfillment_attestation:v0.5`).
-- **Adds ApprovalReceipt artifact type and example for HITL
-  pause-resume composition with A2CN Section 14 (per A2A Discussion
-  #1737).** Schema at `schemas/approval_receipt.schema.json` (`$id`
+- **Adds ApprovalReceipt artifact type and example for a proposed
+  HITL pause-resume composition with A2CN (per A2A Discussion
+  #1737; not a mechanism defined in current A2CN v0.2).** Schema at
+  `schemas/approval_receipt.schema.json` (`$id`
   `urn:concordia:schema:approval_receipt:v0.5`). Spec coverage at
   SPEC §9.6.4b with the Draft A worked example reproduced verbatim
   so public-draft readers and the in-tree spec line up. Extends the
   §11.5.5 relationship vocabulary with `approves` (artifact-specific;
   preserved by the §11.5.3 forward-compat rule).
 - **`docs/A2CN_FULFILLMENT.md`.** Integrator walkthrough for emitting
-  a Fulfillment Attestation on `DELIVERY_ACKNOWLEDGED`, the canonical
-  mapping between the standalone shape and the §9.6.4 in-line block,
-  and the v0.5 ApprovalReceipt shape with worked JSON examples for
-  each status enum value.
+  a Fulfillment Attestation at a proposed A2CN delivery-acknowledgment
+  boundary, the canonical mapping between the standalone shape and
+  the §9.6.4 in-line block, and the v0.5 ApprovalReceipt shape with
+  worked JSON examples for each status enum value.
 
 ### Changed
 

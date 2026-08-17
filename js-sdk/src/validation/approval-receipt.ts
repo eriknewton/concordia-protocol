@@ -3,8 +3,9 @@
  *
  * Port of `concordia/approval_receipt.py`. An ApprovalReceipt is a standalone
  * signed artifact emitted when a human-in-the-loop authority approves (or denies)
- * a negotiation event that crossed an approval threshold (A2CN §14 HITL
- * pause-resume). {@link verifyApprovalReceipt} runs the same five ordered checks
+ * a negotiation event that crossed an approval threshold (proposed A2CN §14
+ * HITL pause-resume composition; not a mechanism defined in current A2CN
+ * v0.2). {@link verifyApprovalReceipt} runs the same five ordered checks
  * Python does and returns the same typed result:
  *   1. schema (via {@link validateApprovalReceipt}),
  *   2. an `approves` reference to a negotiation session,

@@ -792,7 +792,7 @@ export const APPROVAL_RECEIPT_SCHEMA = {
   $id: 'urn:concordia:schema:approval_receipt:v0.5',
   title: 'Concordia Approval Receipt',
   description:
-    'Standalone signed artifact emitted when a human-in-the-loop authority approves (or denies) a negotiation event that crossed an approval threshold. Pairs with A2CN Section 14 HITL pause-resume composition (A2A Discussion #1737, Draft A). The receipt is bounded in time (`expires_at`) and links back to the negotiation session and any mandate it discharges via `references[]`. v0.5 ratifies the worked example published in Draft A.',
+    'Standalone signed artifact emitted when a human-in-the-loop authority approves (or denies) a negotiation event that crossed an approval threshold. Designed for composition with a proposed A2CN HITL pause-resume mechanism (A2A Discussion #1737, Draft A; not a mechanism defined in current A2CN v0.2). The receipt is bounded in time (`expires_at`) and links back to the negotiation session and any mandate it discharges via `references[]`. v0.5 ratifies the worked example published in Draft A.',
   type: 'object',
   required: [
     'artifact_type',
@@ -987,7 +987,7 @@ export const FULFILLMENT_ATTESTATION_SCHEMA = {
   $id: 'urn:concordia:schema:fulfillment_attestation:v0.5',
   title: 'Concordia Fulfillment Attestation',
   description:
-    'A standalone signed artifact emitted after settlement, recording whether an agreement was honored. Distinct from the in-line `fulfillment` block on a reputation attestation (SPEC.md §9.6.4) — this is the A2CN-aligned shape emitted on a discrete DELIVERY_ACKNOWLEDGED boundary, linking back to the agreement attestation via `references[]` with `relationship: "fulfills"`. Introduced in v0.5 per A2A Discussion #1737. See docs/A2CN_FULFILLMENT.md for the integrator walkthrough and SPEC.md §9.6.4 for the relationship with the in-line fulfillment block.',
+    'A standalone signed artifact emitted after settlement, recording whether an agreement was honored. Distinct from the in-line `fulfillment` block on a reputation attestation (SPEC.md §9.6.4): this shape is designed for composition with a discrete delivery-acknowledgment event (proposed integration semantics; A2CN v0.2 does not currently define such an event), linking back to the agreement attestation via `references[]` with `relationship: "fulfills"`. Introduced in v0.5 per A2A Discussion #1737. See docs/A2CN_FULFILLMENT.md for the integrator walkthrough and SPEC.md §9.6.4 for the relationship with the in-line fulfillment block.',
   type: 'object',
   required: [
     'attestation_type',

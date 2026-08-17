@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:concordia:schema:fulfillment_attestation:v0.5",
   "title": "Concordia Fulfillment Attestation",
-  "description": "A standalone signed artifact emitted after settlement, recording whether an agreement was honored. Distinct from the in-line `fulfillment` block on a reputation attestation (SPEC.md §9.6.4) — this is the A2CN-aligned shape emitted on a discrete DELIVERY_ACKNOWLEDGED boundary, linking back to the agreement attestation via `references[]` with `relationship: \"fulfills\"`. Introduced in v0.5 per A2A Discussion #1737. See docs/A2CN_FULFILLMENT.md for the integrator walkthrough and SPEC.md §9.6.4 for the relationship with the in-line fulfillment block.",
+  "description": "A standalone signed artifact emitted after settlement, recording whether an agreement was honored. Distinct from the in-line `fulfillment` block on a reputation attestation (SPEC.md §9.6.4): this shape is designed for composition with a discrete delivery-acknowledgment event (proposed integration semantics; A2CN v0.2 does not currently define such an event), linking back to the agreement attestation via `references[]` with `relationship: \"fulfills\"`. Introduced in v0.5 per A2A Discussion #1737. See docs/A2CN_FULFILLMENT.md for the integrator walkthrough and SPEC.md §9.6.4 for the relationship with the in-line fulfillment block.",
 
   "type": "object",
   "required": [
