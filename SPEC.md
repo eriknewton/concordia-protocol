@@ -912,10 +912,11 @@ coexist; the canonical mapping between their status enums is in
 #### 9.6.4a Standalone Fulfillment Attestation (v0.5)
 
 A separate signed artifact emitted on a discrete delivery boundary.
-Designed for composition with A2CN's `DELIVERY_ACKNOWLEDGED` event
-and for settlement flows where delivery is signed by a party other
-than the original negotiation counterparties (delivery agent,
-mediator, etc.).
+Designed for composition with a proposed A2CN delivery-acknowledgment
+event (proposed integration semantics; not a mechanism defined in
+current A2CN v0.2) and for settlement flows where delivery is
+signed by a party other than the original negotiation
+counterparties (delivery agent, mediator, etc.).
 
 Schema: `schemas/fulfillment_attestation.schema.json`
 (`$id` `urn:concordia:schema:fulfillment_attestation:v0.5`).
@@ -957,7 +958,9 @@ Full integrator walkthrough with worked JSON examples:
 
 Standalone signed artifact recording a human-in-the-loop (HITL)
 authority's decision on a negotiation event that crossed a policy
-threshold. Pairs with A2CN Section 14 HITL pause-resume composition.
+threshold. Pairs with a proposed A2CN HITL pause-resume composition
+(proposed integration semantics; not a mechanism defined in current
+A2CN v0.2).
 
 Schema: `schemas/approval_receipt.schema.json`
 (`$id` `urn:concordia:schema:approval_receipt:v0.5`).

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:concordia:schema:approval_receipt:v0.5",
   "title": "Concordia Approval Receipt",
-  "description": "Standalone signed artifact emitted when a human-in-the-loop authority approves (or denies) a negotiation event that crossed an approval threshold. Pairs with A2CN Section 14 HITL pause-resume composition (A2A Discussion #1737, Draft A). The receipt is bounded in time (`expires_at`) and links back to the negotiation session and any mandate it discharges via `references[]`. v0.5 ratifies the worked example published in Draft A.",
+  "description": "Standalone signed artifact emitted when a human-in-the-loop authority approves (or denies) a negotiation event that crossed an approval threshold. Designed for composition with a proposed A2CN HITL pause-resume mechanism (A2A Discussion #1737, Draft A; not a mechanism defined in current A2CN v0.2). The receipt is bounded in time (`expires_at`) and links back to the negotiation session and any mandate it discharges via `references[]`. v0.5 ratifies the worked example published in Draft A.",
 
   "type": "object",
   "required": [
