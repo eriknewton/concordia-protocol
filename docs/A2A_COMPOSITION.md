@@ -120,28 +120,47 @@ A2A multi-agent coordination group
   → Winning agreement committed, losers notified via A2A status
 ```
 
-### Pattern 4: "Concordia Preferred" in A2A Agent Cards
+### Pattern 4: declaring Concordia in an A2A Agent Card
 
-A2A Agent Cards advertise agent capabilities. Adding a `concordia` field to the Agent Card signals negotiation capability:
+A2A has a first-class extension mechanism, so Concordia declares itself through that rather than
+inventing a field. An earlier version of this document showed a `protocols` object and a
+`capabilities` array of strings. Neither exists in A2A, and a card shaped that way parses as having
+no capabilities at all.
+
+An agent advertises Concordia with an `AgentExtension` entry inside the `extensions` array of its
+`capabilities` **object**:
 
 ```json
 {
-  "agent_card": {
-    "name": "procurement-agent-alpha",
-    "capabilities": ["research", "comparison", "negotiation"],
-    "protocols": {
-      "concordia": {
-        "version": "0.1.0",
-        "supported_offer_types": ["basic", "conditional", "bundle"],
-        "reputation_attestations": true,
-        "want_registry": true
+  "name": "procurement-agent-alpha",
+  "capabilities": {
+    "extensions": [
+      {
+        "uri": "https://concordiaprotocol.dev/a2a-ext/negotiation/v1",
+        "description": "Structured multi-attribute negotiation to agreement",
+        "required": false,
+        "params": {
+          "roles": ["buyer"],
+          "categories": ["electronics"],
+          "resolution_mechanisms": ["split", "foa", "tradeoff"]
+        }
       }
-    }
+    ]
   }
 }
 ```
 
-Agents filtering for negotiation-capable peers can discover Concordia-speaking counterparts through standard A2A discovery. This is how network effects build without requiring A2A to change.
+`RegisteredAgent.to_agent_card()` emits exactly this shape; the URI is `A2A_EXTENSION_URI` in
+`concordia/registry.py` and matches SPEC.md section 10.1.
+
+Extensions are inactive by default. A client activates Concordia by naming the URI in the
+`A2A-Extensions` request header, and the agent echoes the URIs it activated in the response header.
+**An absent echo means not activated**, and must be treated that way rather than assumed.
+
+Agents filtering for negotiation-capable peers discover Concordia through ordinary A2A extension
+discovery, which is a mechanism A2A already provides. No change to A2A is required, and none is
+requested: no Concordia extension has been filed with or sponsored into `a2aproject`, and the URI
+above is under Concordia's own domain for that reason.
 
 ## Why This Matters Now
 
