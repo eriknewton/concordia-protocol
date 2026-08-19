@@ -1361,22 +1361,77 @@ This organization exists to support a filing's Security Considerations section; 
 
 ### 10.1 A2A (Agent-to-Agent)
 
-Concordia messages can be transported within A2A task messages. A Concordia negotiation maps to an A2A task with `type: "concordia.negotiation"`. The A2A Agent Card can advertise Concordia support:
+A2A carries Concordia through its extension mechanism. This section states that mechanism as A2A
+defines it today, and marks separately what Concordia proposes on top of it.
+
+**Status, so this is not read as more than it is.** No Concordia extension has been filed with or
+sponsored into `a2aproject`. The URI below is under Concordia's own domain, which is the correct
+place for it: the `https://a2a-protocol.org/extensions/` prefix is reserved for artifacts that have
+graduated to official status, and using it before that would be a false claim of standing.
+
+**Declaration.** An agent advertises Concordia by adding an `AgentExtension` entry to the
+`extensions` array inside its Agent Card's `capabilities` object. `capabilities` is an object, not
+an array, and the entry carries `uri`, `description`, `required` and `params`:
 
 ```json
 {
   "name": "Seller Agent",
-  "capabilities": [
-    {
-      "protocol": "concordia",
-      "version": "0.1.0",
-      "role": "seller",
-      "categories": ["electronics", "furniture"],
-      "resolution_mechanisms": ["split", "foa", "tradeoff"]
-    }
-  ]
+  "capabilities": {
+    "streaming": true,
+    "extensions": [
+      {
+        "uri": "https://concordiaprotocol.dev/a2a-ext/negotiation/v1",
+        "description": "Structured multi-attribute negotiation to agreement",
+        "required": false,
+        "params": {
+          "role": "seller",
+          "categories": ["electronics", "furniture"],
+          "resolution_mechanisms": ["split", "foa", "tradeoff"]
+        }
+      }
+    ]
+  }
 }
 ```
+
+The `params` carry the matching facets of section 7 so a counterparty can tell from the card alone
+whether a negotiation is worth opening.
+
+`required` stays `false`. A2A reserves `required: true` for extensions fundamental to an agent's
+core function or security, because it makes every client that does not understand the extension
+unable to talk to the agent at all. An agent that cannot negotiate should still be reachable.
+
+The URI versions independently of the spec edition and of the `concordia:0.1.0` wire identifier. It
+changes only on a breaking change to the declaration or activation contract, on the same discipline
+the wire identifier already follows.
+
+**Activation.** Extensions are inactive by default, so an extension-unaware client gets ordinary A2A
+behaviour. A client activates Concordia by listing the URI in the `A2A-Extensions` request header, a
+comma-separated list. The agent activates what it supports and SHOULD echo the activated URIs in the
+`A2A-Extensions` response header. **An absent echo means the extension was not activated**, and a
+Concordia implementation MUST treat it that way rather than assuming activation and proceeding.
+
+```http
+POST /agents/seller HTTP/1.1
+Host: example.com
+Content-Type: application/json
+A2A-Extensions: https://concordiaprotocol.dev/a2a-ext/negotiation/v1
+```
+
+**What Concordia proposes on top (proposed integration semantics, not yet a filed extension).**
+
+- One Concordia envelope per message part, carried as its own object rather than spread across
+  carrier fields. The envelope is the unit that signatures cover.
+- **Correlation is by Concordia's own session identifier inside the payload, never by A2A task or
+  context identifier.** Task lifecycle is a carrier concept: a failed or cancelled task retracts no
+  offer, and a completed task concludes no negotiation. Many tasks may serve one negotiation. Tying
+  negotiation state to task state would let network conditions withdraw commitments.
+- Carrier metadata stays outside the signed bytes. A signature that covers a task identifier makes
+  an agreement verifiable only alongside the carrier's own records, which is the dependency the
+  attestation design exists to remove.
+
+Per A2A's own requirement, an extension must not bypass an agent's authentication or authorization
+checks. Concordia adds negotiation semantics; it grants no access it did not already have.
 
 ### 10.2 MCP (Model Context Protocol)
 
