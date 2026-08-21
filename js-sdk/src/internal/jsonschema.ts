@@ -25,8 +25,8 @@
  *   `src/internal/py-repr.ts`), so the embedded-value text matches both layers.
  *
  * Supported applicators now include the §9.6 attestation schema's narrow
- * `$ref` / `$defs` / `oneOf` needs. Still unsupported: `anyOf`, `not`,
- * `propertyNames`, `dependentRequired`, `dependentSchemas`, `prefixItems`,
+ * `$ref` / `$defs` / `oneOf` / `propertyNames` needs. Still unsupported:
+ * `anyOf`, `not`, `dependentRequired`, `dependentSchemas`, `prefixItems`,
  * `uniqueItems`, `multipleOf`. If a schema carrying one of these reaches
  * {@link iterErrors}, the unknown keyword is IGNORED (jsonschema ignores unknown
  * keywords too), which would silently under-validate — so the consuming modules
@@ -168,6 +168,9 @@ function validateNode(
         break;
       case 'patternProperties':
         checkPatternProperties(value as Record<string, unknown>, instance, path, errors, ctx);
+        break;
+      case 'propertyNames':
+        checkPropertyNames(value, instance, path, errors, ctx);
         break;
       case 'items':
         checkItems(value, instance, path, errors, ctx);
@@ -423,6 +426,24 @@ function checkPatternProperties(
         validateNode(patternProps[pattern], instance[key], `${path}${childPath(key)}`, errors, ctx);
       }
     }
+  }
+}
+
+function checkPropertyNames(
+  propertyNameSchema: unknown,
+  instance: unknown,
+  path: string,
+  errors: SchemaError[],
+  ctx: ValidationContext,
+): void {
+  if (!isPlainObject(instance)) {
+    return;
+  }
+  // Draft 2020-12 validates every object key as a string instance. CPython
+  // keeps property-name failures at the containing object's json_path rather
+  // than appending the rejected key to the instance path.
+  for (const key of Object.keys(instance)) {
+    validateNode(propertyNameSchema, key, path, errors, ctx);
   }
 }
 
@@ -833,6 +854,7 @@ const SUPPORTED_KEYWORDS = new Set<string>([
   'properties',
   'additionalProperties',
   'patternProperties',
+  'propertyNames',
   'items',
   'contains',
   'allOf',
@@ -879,6 +901,7 @@ export function assertSupportedSchema(schema: unknown, name: string): void {
     'items',
     'contains',
     'additionalProperties',
+    'propertyNames',
     'if',
     'then',
     'else',

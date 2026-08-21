@@ -150,6 +150,11 @@ def _v05_shape_attestation() -> dict:
     att = _minimal_v04_attestation()
     att["concordia_attestation"] = "0.5.0"
     att["attestation_id"] = "att_v05_full"
+    att["validity_temporal"] = {
+        "mode": "absolute",
+        "from": "2026-04-20T12:00:00Z",
+        "until": "2026-07-19T12:00:00Z",
+    }
     att["references"] = [
         {
             "id": "urn:concordia:attestation:att_prior",
@@ -179,3 +184,14 @@ class TestForwardCompat:
         self, attestation_validator: Draft202012Validator
     ) -> None:
         attestation_validator.validate(_v05_shape_attestation())
+
+    def test_v05_shape_without_validity_temporal_is_rejected(
+        self, attestation_validator: Draft202012Validator
+    ) -> None:
+        attestation = _v05_shape_attestation()
+        del attestation["validity_temporal"]
+        errors = list(attestation_validator.iter_errors(attestation))
+        assert any(
+            "'validity_temporal' is a required property" in error.message
+            for error in errors
+        )

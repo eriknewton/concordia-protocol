@@ -15,7 +15,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNNER = REPO_ROOT / "conformance" / "reference-runner-js" / "runner.mjs"
 FULL_SUITE = REPO_ROOT / "conformance" / "vectors"
-EXPECTED_FULL_SUMMARY = "[SUMMARY] positive=52 mutation=1484 canary=5 ok=1541 fail=0"
+EXPECTED_FULL_SUMMARY = "[SUMMARY] positive=54 mutation=1484 canary=5 ok=1543 fail=0"
 CANARY_REGRESSIONS = {
     "canary-chain-splice": "skip-linkage-walk",
     "canary-preimage-includes-signature": "preimage-includes-signature",

@@ -4265,6 +4265,28 @@ def build_phase2_vectors(fixtures: SyntheticFixtures) -> list[Vector]:
     raw_term_attestation["parties"][0]["behavior"]["note"] = (
         "price: USD 250 for 10 units"
     )
+    v05_attestation = copy.deepcopy(attestation)
+    v05_attestation["concordia_attestation"] = "0.5.0"
+    v05_attestation["attestation_id"] = "att_conformance_p2a1_v05_0001"
+    v05_attestation["validity_temporal"] = {
+        "mode": "absolute",
+        "from": fixed_iso_now(),
+        "until": "2026-08-08T14:25:00Z",
+    }
+    v05_keys = {
+        "did:concordia:agent:synthetic-initiator": key_pair_from_seed(
+            SYNTHETIC_SEEDS["attestation_initiator"]
+        ),
+        "did:concordia:agent:synthetic-responder": key_pair_from_seed(
+            SYNTHETIC_SEEDS["attestation_responder"]
+        ),
+    }
+    v05_attestation["countersignatures"] = {
+        agent_id: countersign_attestation(v05_attestation, key_pair)
+        for agent_id, key_pair in sorted(v05_keys.items())
+    }
+    missing_validity_attestation = copy.deepcopy(v05_attestation)
+    del missing_validity_attestation["validity_temporal"]
 
     action = {"max_spend": 500, "category": "software"}
     mandate_issuer_key = fixtures.mandate_seed_manifest[
@@ -4324,6 +4346,42 @@ def build_phase2_vectors(fixtures: SyntheticFixtures) -> list[Vector]:
                 "expected_verified_parties": attestation_parties,
                 "public_keys_b64url": attestation_public_keys,
             },
+        ),
+        Vector(
+            vector_id="pos-synthetic-attestation-v05-required-validity",
+            title="v0.5 Attestation validates with required validity_temporal",
+            source_fixture=SYNTHETIC_SOURCE_ATTESTATION,
+            record_type="attestation",
+            verification_profile="attestation-v1",
+            input_data=v05_attestation,
+            context={
+                "forbid_raw_deal_terms": True,
+                "expected_verified_parties": attestation_parties,
+                "public_keys_b64url": attestation_public_keys,
+            },
+            notes=(
+                "v0.5 positive: the base attestation carries its required "
+                "validity_temporal window"
+            ),
+        ),
+        Vector(
+            vector_id="schema-synthetic-attestation-v05-missing-validity",
+            title="v0.5 Attestation rejects a missing validity_temporal window",
+            source_fixture=SYNTHETIC_SOURCE_ATTESTATION,
+            record_type="attestation",
+            verification_profile="attestation-v1",
+            input_data=missing_validity_attestation,
+            context={
+                "forbid_raw_deal_terms": True,
+                "expected_verified_parties": attestation_parties,
+                "public_keys_b64url": attestation_public_keys,
+            },
+            expected="reject",
+            expected_reason_class="schema",
+            notes=(
+                "schema-reject: Concordia Attestation v0.5 requires a "
+                "validity_temporal window"
+            ),
         ),
         Vector(
             vector_id="privacy-synthetic-attestation-behavior-note",

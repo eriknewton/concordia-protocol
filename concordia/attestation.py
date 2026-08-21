@@ -43,7 +43,11 @@ if TYPE_CHECKING:
 # included in the same countersigned issuance snapshot. Per-message signatures
 # authenticate links; these two fields make the closing receipt commit to the
 # transcript set.
-ATTESTATION_VERSION = "0.3.0"
+#
+# v0.5.0 makes ``validity_temporal`` mandatory on newly issued attestations.
+# Legacy 0.3.0 attestations remain readable under the existing version-gated
+# verifier rules; the producer never emits a fresh unbounded attestation.
+ATTESTATION_VERSION = "0.5.0"
 _SET_BINDING_MIN = (0, 3)
 _SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+\Z")
 _SHA256_HEX_RE = re.compile(r"^sha256:[a-f0-9]{64}\Z")
@@ -77,6 +81,12 @@ WEAK_RELATIONSHIP = "references"
 # the trust-evidence-format #1734 envelope shape. Unification across the two
 # is v0.5+ work. Build plan specifies these three modes explicitly.
 VALIDITY_TEMPORAL_MODES = ("absolute", "relative", "window")
+
+# Reference-issuer policy for SPEC §9.7.1. The default window matches the
+# specification's worked example. Callers may provide a narrower window, but
+# the reference issuer refuses to sign any window spanning more than 90 days.
+DEFAULT_ATTESTATION_VALIDITY_SECONDS = 90 * 24 * 60 * 60
+MAX_ATTESTATION_VALIDITY_SECONDS = DEFAULT_ATTESTATION_VALIDITY_SECONDS
 
 # L3 hardening (security audit 2026-06-09): attestation meta context is
 # constrained at issuance so a party cannot stuff its own raw deal terms
@@ -214,6 +224,11 @@ def _validate_validity_temporal(vt: Any) -> dict[str, Any]:
         until = _parse_iso8601(vt["until"], "validity_temporal.until")
         if until <= frm:
             raise ValueError("validity_temporal[absolute]: until must be after from")
+        if (until - frm).total_seconds() > MAX_ATTESTATION_VALIDITY_SECONDS:
+            raise ValueError(
+                "validity_temporal[absolute] exceeds the reference issuer "
+                "maximum lifetime of 7776000 seconds"
+            )
         return {"mode": "absolute", "from": vt["from"], "until": vt["until"]}
     if mode == "relative":
         required = ("from", "duration_seconds")
@@ -225,6 +240,11 @@ def _validate_validity_temporal(vt: Any) -> dict[str, Any]:
         if not isinstance(duration, int) or duration < 1:
             raise ValueError(
                 "validity_temporal[relative].duration_seconds must be a positive int"
+            )
+        if duration > MAX_ATTESTATION_VALIDITY_SECONDS:
+            raise ValueError(
+                "validity_temporal[relative] exceeds the reference issuer "
+                "maximum lifetime of 7776000 seconds"
             )
         return {"mode": "relative", "from": vt["from"], "duration_seconds": duration}
     # window
@@ -245,6 +265,11 @@ def _validate_validity_temporal(vt: Any) -> dict[str, Any]:
         raise ValueError(
             "validity_temporal[window].duration_seconds exceeds the window span"
         )
+    if (end - start).total_seconds() > MAX_ATTESTATION_VALIDITY_SECONDS:
+        raise ValueError(
+            "validity_temporal[window] exceeds the reference issuer "
+            "maximum lifetime of 7776000 seconds"
+        )
     return {
         "mode": "window",
         "start": vt["start"],
@@ -258,12 +283,17 @@ def is_valid_now(
 ) -> bool:
     """Return True if the attestation's validity_temporal contains ``now``.
 
-    If the attestation has no ``validity_temporal`` field, returns True
-    (no temporal constraint). Added in v0.4.0 (WP3).
+    A pre-0.5 legacy attestation without ``validity_temporal`` returns True so
+    callers can continue to inspect legacy signals. A 0.5+ artifact missing the
+    required field returns False even when this helper is called without first
+    running schema validation. Relying parties still apply their own age and
+    lifetime policy under SPEC §9.7.1.
     """
     vt = attestation.get("validity_temporal")
     if vt is None:
-        return True
+        return not _attestation_version_at_least(
+            attestation.get("concordia_attestation", ""), 0, 5
+        )
     if not isinstance(vt, dict) or "mode" not in vt:
         return False
     now_dt = now or datetime.now(timezone.utc)
@@ -749,15 +779,17 @@ def generate_attestation(
             §11.5.8 forward-compat. The layering boundary against
             envelope-level references is documented in §11.5.4. Added in
             v0.4.0 (WP2); ratified in v0.5 (SPEC §11.5).
-        validity_temporal: Optional temporal validity window. Tagged
+        validity_temporal: Temporal validity window. Tagged
             union with three modes:
             ``{mode: "absolute", from, until}`` for fixed clock bounds,
             ``{mode: "relative", from, duration_seconds}`` for "valid
             for N seconds from anchor," or
             ``{mode: "window", start, end, duration_seconds}`` for
             "valid during any N-second window in [start, end]."
-            When absent the attestation has no temporal constraint.
-            Added in v0.4.0 (WP3).
+            When absent, the reference issuer supplies an absolute 90-day
+            window anchored at the attestation timestamp. Supplied windows
+            may be narrower but may not exceed that declared reference-issuer
+            maximum. Added in v0.4.0 (WP3); required on new issuance in v0.5.0.
 
     Returns:
         A dict conforming to the attestation schema (§9.6.2).
@@ -840,16 +872,28 @@ def generate_attestation(
     else:
         normalized_refs = []
 
-    # WP3 v0.4.0: validate validity_temporal if supplied
-    normalized_vt: dict[str, Any] | None = None
-    if validity_temporal is not None:
-        normalized_vt = _validate_validity_temporal(validity_temporal)
+    issued_at = datetime.now(timezone.utc).replace(microsecond=0)
+    timestamp = issued_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # WP3/v0.5: every newly issued attestation is time-bounded. A caller may
+    # choose a narrower policy window; omitting it selects the documented
+    # reference-issuer default rather than emitting unbounded evidence.
+    if validity_temporal is None:
+        default_until = issued_at + timedelta(
+            seconds=DEFAULT_ATTESTATION_VALIDITY_SECONDS
+        )
+        validity_temporal = {
+            "mode": "absolute",
+            "from": timestamp,
+            "until": default_until.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+    normalized_vt = _validate_validity_temporal(validity_temporal)
 
     attestation: dict[str, Any] = {
         "concordia_attestation": ATTESTATION_VERSION,
         "attestation_id": f"att_{uuid.uuid4().hex[:8]}",
         "session_id": session.session_id,
-        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "timestamp": timestamp,
         "outcome": outcome,
         "parties": parties,
         "meta": meta,
@@ -858,9 +902,8 @@ def generate_attestation(
         "message_count": message_count,
         "fulfillment": None,
         "references": normalized_refs,
+        "validity_temporal": normalized_vt,
     }
-    if normalized_vt is not None:
-        attestation["validity_temporal"] = normalized_vt
 
     # Attach a plaintext 4-line summary for quick human/agent inspection.
     attestation["summary"] = generate_receipt_summary(attestation)

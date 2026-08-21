@@ -12,6 +12,8 @@ from .agent import Agent
 from .approval_receipt import ApprovalReceiptResult, verify_approval_receipt
 from .attestation import (
     ATTESTATION_VERSION,
+    DEFAULT_ATTESTATION_VALIDITY_SECONDS,
+    MAX_ATTESTATION_VALIDITY_SECONDS,
     AttestationVerifyResult,
     countersign_attestation,
     generate_attestation,
@@ -144,6 +146,8 @@ __all__ = [
     "verify_envelope_signature",
     # Attestation
     "ATTESTATION_VERSION",
+    "DEFAULT_ATTESTATION_VALIDITY_SECONDS",
+    "MAX_ATTESTATION_VALIDITY_SECONDS",
     "AttestationVerifyResult",
     "generate_attestation",
     "verify_attestation",

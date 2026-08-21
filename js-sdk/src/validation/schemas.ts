@@ -349,9 +349,37 @@ export const ATTESTATION_SCHEMA = {
     },
     validity_temporal: {
       $ref: '#/$defs/validity_temporal',
-      description: 'Optional temporal validity window for the attestation. Added in v0.4.0 (WP3).',
+      description:
+        'Temporal validity window for the attestation. Required for concordia_attestation 0.5.0 and later; legacy artifacts remain readable under version-gated verifier rules. Added in v0.4.0 (WP3).',
+    },
+    countersignatures: {
+      type: 'object',
+      description:
+        'C-H2 outcome-binding (Option B): map of party agent_id -> base64url-padded Ed25519 signature over canonical_json(strip_signatures(attestation minus countersignatures)). Binds the issuance snapshot (outcome, meta, session_id, transcript_hash) so the outcome is not merely prover-asserted. One entry per party that had a signing key at issuance; parties without a key get no entry. Added in v0.2.0 (C-H2). Soundness (a >=0.2.0 attestation MUST carry a valid map) is enforced by the bundle verifier, not by this shape schema; <0.2.0 attestations validate without it.',
+      additionalProperties: {
+        type: 'string',
+        minLength: 1,
+      },
+      propertyNames: {
+        minLength: 1,
+      },
     },
   },
+  allOf: [
+    {
+      if: {
+        required: ['concordia_attestation'],
+        properties: {
+          concordia_attestation: {
+            pattern: '^(?:0\\.(?:[5-9]|[1-9][0-9]+)\\.[0-9]+|[1-9][0-9]*\\.[0-9]+\\.[0-9]+)$',
+          },
+        },
+      },
+      then: {
+        required: ['validity_temporal'],
+      },
+    },
+  ],
   additionalProperties: false,
   $defs: {
     fulfillment_attestation: {
@@ -929,7 +957,7 @@ export const APPROVAL_RECEIPT_SCHEMA = {
     signature: {
       type: 'object',
       required: ['alg', 'value'],
-      additionalProperties: true,
+      additionalProperties: false,
       properties: {
         alg: {
           type: 'string',
@@ -1129,7 +1157,7 @@ export const FULFILLMENT_ATTESTATION_SCHEMA = {
     signature: {
       type: 'object',
       required: ['alg', 'value'],
-      additionalProperties: true,
+      additionalProperties: false,
       properties: {
         alg: {
           type: 'string',

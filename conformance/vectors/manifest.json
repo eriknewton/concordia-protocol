@@ -5,7 +5,7 @@
     "diag_canonical_bytes": 1392,
     "fixtures": 61,
     "mutation": 1484,
-    "positive": 52,
+    "positive": 54,
     "schemas": 14
   },
   "files": {
@@ -2977,6 +2977,7 @@
       "conformance/vectors/positive/pos-1920-fulfillment-attestation.json",
       "conformance/vectors/positive/pos-synthetic-agent-profile.json",
       "conformance/vectors/positive/pos-synthetic-attestation-countersign.json",
+      "conformance/vectors/positive/pos-synthetic-attestation-v05-required-validity.json",
       "conformance/vectors/positive/pos-synthetic-attestation.json",
       "conformance/vectors/positive/pos-synthetic-cmpc-atomic-activation-proof.json",
       "conformance/vectors/positive/pos-synthetic-cmpc-chain-session.json",
@@ -3002,6 +3003,7 @@
       "conformance/vectors/positive/pos-synthetic-receipt-bundle.json",
       "conformance/vectors/positive/pos-synthetic-receipt-set-binding.json",
       "conformance/vectors/positive/privacy-synthetic-attestation-behavior-note.json",
+      "conformance/vectors/positive/schema-synthetic-attestation-v05-missing-validity.json",
       "conformance/vectors/positive/transition-synthetic-cmpc-illegal-activated-to-anything.json",
       "conformance/vectors/positive/transition-synthetic-cmpc-illegal-dissolved-to-anything.json",
       "conformance/vectors/positive/transition-synthetic-cmpc-illegal-open-to-proposed.json",
