@@ -155,11 +155,11 @@ class RegisteredAgent:
         §10.1 still described the pre-extension shape, so the code was faithful
         to a stale spec rather than to A2A.
 
-        `required` is False deliberately. A2A reserves `required: True` for
-        extensions fundamental to an agent's core function or security, because
-        a client that does not understand a required extension cannot talk to
-        the agent at all. An agent that cannot negotiate should still be
-        reachable.
+        `required` is False deliberately. A2A's flag means that a client must
+        understand and comply with an extension marked True; a request that
+        does not activate a required extension must be rejected. Concordia
+        negotiation is optional, so an agent that cannot negotiate should
+        still be reachable.
 
         Must match §10.1 of SPEC.md; the URI there and here are one contract.
         """
