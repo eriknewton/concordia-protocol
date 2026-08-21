@@ -21,6 +21,19 @@
  */
 
 export {
+  A2A_EXTENSION_URI,
+  A2A_CARRIER_TYPE,
+  A2A_CARRIER_VERSION,
+  A2A_CARRIER_SCHEMA_URI,
+  A2A_CARRIER_MEDIA_TYPE,
+  A2ACarrierError,
+  buildA2ADataPart,
+  parseA2ADataPart,
+  type A2ADataPart,
+  type ConcordiaEnvelope,
+} from './a2a/carrier.js';
+
+export {
   canonicalizeJcs,
   canonicalizePredicate,
   stripSignatures,
