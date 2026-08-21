@@ -1370,8 +1370,10 @@ place for it: the `https://a2a-protocol.org/extensions/` prefix is reserved for 
 graduated to official status, and using it before that would be a false claim of standing.
 
 **Declaration.** An agent advertises Concordia by adding an `AgentExtension` entry to the
-`extensions` array inside its Agent Card's `capabilities` object. `capabilities` is an object, not
-an array, and the entry carries `uri`, `description`, `required` and `params`:
+`extensions` array inside its Agent Card's `AgentCapabilities` object. `capabilities` is the object
+that carries A2A's own capability flags (such as `streaming`) and the `extensions` array; it is not
+an array of Concordia capability records. Each `AgentExtension` entry carries `uri`, `description`,
+`required` and optional `params`:
 
 ```json
 {
@@ -1397,9 +1399,12 @@ an array, and the entry carries `uri`, `description`, `required` and `params`:
 The `params` carry the matching facets of section 7 so a counterparty can tell from the card alone
 whether a negotiation is worth opening.
 
-`required` stays `false`. A2A reserves `required: true` for extensions fundamental to an agent's
-core function or security, because it makes every client that does not understand the extension
-unable to talk to the agent at all. An agent that cannot negotiate should still be reachable.
+`required` stays `false`. A2A gives this flag protocol-level meaning: when it is `true`, a client
+must understand and comply with the extension, and an agent that receives a request without the
+required extension activated must reject that request with the binding's extension-support error.
+A2A names this error `ExtensionSupportRequiredError`.
+A2A advises against marking data-only extensions required. Concordia negotiation is optional, so a
+client that does not support it should remain able to use the agent's ordinary A2A surface.
 
 The URI versions independently of the spec edition and of the `concordia:0.1.0` wire identifier. It
 changes only on a breaking change to the declaration or activation contract, on the same discipline

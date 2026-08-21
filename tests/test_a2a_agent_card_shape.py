@@ -61,10 +61,9 @@ def test_extension_entry_carries_the_agent_extension_fields() -> None:
 
 
 def test_the_extension_is_not_marked_required() -> None:
-    """A2A reserves `required: true` for extensions fundamental to the agent's
-    core function or security, because a client that does not understand a
-    required extension cannot talk to the agent at all. An agent that cannot
-    negotiate should still be reachable."""
+    """A2A's `required` flag makes extension support a request precondition.
+    Concordia negotiation is optional, so an agent that cannot negotiate
+    should still be reachable by ordinary A2A clients."""
     assert _card()["capabilities"]["extensions"][0]["required"] is False
 
 
