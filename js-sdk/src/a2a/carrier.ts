@@ -8,6 +8,10 @@ export const A2A_CARRIER_MEDIA_TYPE = 'application/vnd.concordia.negotiation+jso
 
 const DATA_KEYS = new Set(['type', 'version', 'envelope']);
 const A2A_CONTENT_KEYS = ['text', 'raw', 'url'];
+// A2A's JSON spelling is camelCase; the snake_case aliases cover SDKs that
+// expose the same identifiers through Python-style serialization. These are
+// carrier/task identifiers, not Concordia envelope fields, and must never
+// enter the signed envelope.
 const A2A_ID_KEYS = ['taskId', 'contextId', 'task_id', 'context_id'];
 
 export type ConcordiaEnvelope = Record<string, unknown>;
@@ -18,7 +22,7 @@ export interface A2ADataPart {
     version: string;
     envelope: ConcordiaEnvelope;
   };
-  metadata: Record<string, { schema: string } | unknown>;
+  metadata: Record<string, unknown>;
   mediaType: string;
   [key: string]: unknown;
 }
@@ -46,7 +50,10 @@ function validateEnvelope(envelope: unknown): ConcordiaEnvelope {
   if (A2A_ID_KEYS.some((key) => Object.hasOwn(envelope, key))) {
     throw new A2ACarrierError('invalid envelope: A2A identifiers belong outside signed bytes');
   }
-  if (validateMessage(envelope).length > 0) {
+  // The general message schema still accepts legacy envelopes without the
+  // chain pointer. A carrier is a signed transcript message, so this seam
+  // requires the pointer explicitly rather than weakening the shared schema.
+  if (!Object.hasOwn(envelope, 'prev_hash') || validateMessage(envelope).length > 0) {
     throw new A2ACarrierError('invalid envelope: Concordia message validation failed');
   }
   return envelope;

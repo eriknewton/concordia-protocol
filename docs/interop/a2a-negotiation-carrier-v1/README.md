@@ -12,3 +12,5 @@ authorization verification before acting on the envelope.
 
 The fixture and schema remain private prototype inputs. They are not evidence
 that the extension has been filed, registered, or accepted by the A2A project.
+The schema URI is an identifier for this prototype; this repository does not
+claim that the URI is a served or publicly resolvable endpoint.

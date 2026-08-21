@@ -12,9 +12,10 @@ from collections.abc import Collection
 from copy import deepcopy
 from typing import Any
 
-from .registry import A2A_EXTENSION_URI
+from .registry import A2A_EXTENSION_URI as _A2A_EXTENSION_URI
 from .schema_validator import validate_message
 
+A2A_EXTENSION_URI: str = _A2A_EXTENSION_URI
 A2A_CARRIER_TYPE = f"{A2A_EXTENSION_URI}#envelope"
 A2A_CARRIER_VERSION = "1"
 A2A_CARRIER_SCHEMA_URI = f"{A2A_EXTENSION_URI}/schema/data-part.json"
@@ -22,6 +23,10 @@ A2A_CARRIER_MEDIA_TYPE = "application/vnd.concordia.negotiation+json"
 
 _DATA_KEYS = frozenset({"type", "version", "envelope"})
 _A2A_CONTENT_KEYS = frozenset({"text", "raw", "url"})
+# A2A's JSON spelling is camelCase; the snake_case aliases cover SDKs that
+# expose the same identifiers through Python-style serialization.  These are
+# carrier/task identifiers, not Concordia envelope fields, and must never enter
+# the signed envelope.
 _A2A_ID_KEYS = frozenset({"taskId", "contextId", "task_id", "context_id"})
 
 
@@ -34,7 +39,10 @@ def _validate_envelope(envelope: object) -> dict[str, Any]:
         raise A2ACarrierError("invalid envelope: expected an object")
     if _A2A_ID_KEYS.intersection(envelope):
         raise A2ACarrierError("invalid envelope: A2A identifiers belong outside signed bytes")
-    if validate_message(envelope):
+    # The general message schema still accepts legacy envelopes without the
+    # chain pointer.  A carrier is a signed transcript message, so this seam
+    # requires the pointer explicitly rather than weakening the shared schema.
+    if "prev_hash" not in envelope or validate_message(envelope):
         # Do not forward jsonschema diagnostics here: even though the shared
         # validator is no-echo, this trust boundary promises a fixed, bounded
         # carrier diagnostic independent of rejected values.

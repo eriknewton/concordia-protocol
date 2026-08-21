@@ -50,6 +50,18 @@ def test_shared_fixture_conforms_to_published_candidate_schema() -> None:
     assert list(Draft202012Validator(schema).iter_errors(load_fixture())) == []
 
 
+def test_carrier_requires_hash_chain_pointer() -> None:
+    part = load_fixture()
+    part["data"]["envelope"].pop("prev_hash")
+
+    with pytest.raises(A2ACarrierError, match="invalid envelope"):
+        parse_a2a_data_part(part, active_extensions=[A2A_EXTENSION_URI])
+
+    schema_path = Path(__file__).resolve().parents[1] / "schemas" / "a2a_negotiation_part.schema.json"
+    schema = json.loads(schema_path.read_text())
+    assert list(Draft202012Validator(schema).iter_errors(part))
+
+
 def test_builder_and_parser_do_not_alias_untrusted_objects() -> None:
     envelope = load_fixture()["data"]["envelope"]
     part = build_a2a_data_part(envelope)

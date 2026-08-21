@@ -57,6 +57,12 @@ describe('A2A negotiation carrier v1', () => {
     }
   });
 
+  it('requires the hash-chain pointer', () => {
+    const part = fixture();
+    delete part.data.envelope.prev_hash;
+    expect(() => parseA2ADataPart(part, [A2A_EXTENSION_URI])).toThrow(/invalid envelope/);
+  });
+
   it.each([
     [
       'conflicting content',

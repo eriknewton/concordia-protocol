@@ -28,6 +28,7 @@
             "session_id",
             "timestamp",
             "from",
+            "prev_hash",
             "body",
             "signature"
           ]
