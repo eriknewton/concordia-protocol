@@ -4,8 +4,8 @@
     "canary": 5,
     "diag_canonical_bytes": 1392,
     "fixtures": 61,
-    "mutation": 1484,
-    "positive": 54,
+    "mutation": 1488,
+    "positive": 53,
     "schemas": 14
   },
   "files": {
@@ -2018,6 +2018,10 @@
       "conformance/vectors/mutation/mut-synthetic-attestation-countersign-0109.json",
       "conformance/vectors/mutation/mut-synthetic-attestation-countersign-0110.json",
       "conformance/vectors/mutation/mut-synthetic-attestation-countersign-0111.json",
+      "conformance/vectors/mutation/mut-synthetic-attestation-v05-validity-0001.json",
+      "conformance/vectors/mutation/mut-synthetic-attestation-v05-validity-0002.json",
+      "conformance/vectors/mutation/mut-synthetic-attestation-v05-validity-0003.json",
+      "conformance/vectors/mutation/mut-synthetic-attestation-v05-validity-0004.json",
       "conformance/vectors/mutation/mut-synthetic-cmpc-atomic-activation-proof-0001.json",
       "conformance/vectors/mutation/mut-synthetic-cmpc-atomic-activation-proof-0002.json",
       "conformance/vectors/mutation/mut-synthetic-cmpc-atomic-activation-proof-0003.json",
@@ -3003,7 +3007,6 @@
       "conformance/vectors/positive/pos-synthetic-receipt-bundle.json",
       "conformance/vectors/positive/pos-synthetic-receipt-set-binding.json",
       "conformance/vectors/positive/privacy-synthetic-attestation-behavior-note.json",
-      "conformance/vectors/positive/schema-synthetic-attestation-v05-missing-validity.json",
       "conformance/vectors/positive/transition-synthetic-cmpc-illegal-activated-to-anything.json",
       "conformance/vectors/positive/transition-synthetic-cmpc-illegal-dissolved-to-anything.json",
       "conformance/vectors/positive/transition-synthetic-cmpc-illegal-open-to-proposed.json",
@@ -3103,6 +3106,17 @@
       "source_fixture": "synthetic/attestation",
       "total": 111,
       "verification_profile": "attestation-countersign-v1"
+    },
+    {
+      "accept": 0,
+      "battery_name": "synthetic/attestation/attestation.json::attestation-v05-validity",
+      "object_name": "attestation_v05_validity",
+      "record_type": "attestation",
+      "reject": 4,
+      "selection_note": "explicit mutations of a valid v0.5 validity_temporal union: missing, malformed, and below-minimum duration",
+      "source_fixture": "synthetic/attestation",
+      "total": 4,
+      "verification_profile": "attestation-v1"
     },
     {
       "accept": 33,

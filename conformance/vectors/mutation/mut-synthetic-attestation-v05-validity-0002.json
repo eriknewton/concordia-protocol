@@ -12,7 +12,7 @@
   },
   "expected": "reject",
   "expected_reason_class": "schema",
-  "id": "schema-synthetic-attestation-v05-missing-validity",
+  "id": "mut-synthetic-attestation-v05-validity-0002",
   "input": {
     "attestation_id": "att_conformance_p2a1_v05_0001",
     "chain_head": "sha256:b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
@@ -81,12 +81,17 @@
     "session_id": "sess_conformance_p2a1_0001",
     "summary": "Agreement completed with four rounds, two active parties, and no mediation.",
     "timestamp": "2026-05-10T14:25:00Z",
-    "transcript_hash": "sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+    "transcript_hash": "sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "validity_temporal": {
+      "from": "2026-05-10T14:25:00Z",
+      "mode": "bogus",
+      "until": "2026-08-08T14:25:00Z"
+    }
   },
-  "notes": "schema-reject: Concordia Attestation v0.5 requires a validity_temporal window",
+  "notes": "schema-reject: v0.5 validity_temporal is required and must be a well-formed tagged union",
   "record_type": "attestation",
   "schema_version": "concordia-conformance-vector/v1-draft",
   "source_fixture": "synthetic/attestation",
-  "title": "v0.5 Attestation rejects a missing validity_temporal window",
+  "title": "v0.5 attestation with an unknown validity_temporal mode",
   "verification_profile": "attestation-v1"
 }

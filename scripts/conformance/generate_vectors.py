@@ -16,7 +16,7 @@ import tempfile
 import warnings
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal, TypeAlias
 
@@ -44,6 +44,7 @@ from concordia.agent_profile import (  # noqa: E402
     TrustSignals,
 )
 from concordia.attestation import (  # noqa: E402
+    DEFAULT_ATTESTATION_VALIDITY_SECONDS,
     countersign_attestation,
     verify_attestation,
     verify_attestation_countersignature,
@@ -1719,8 +1720,8 @@ RECEIPT_BUNDLE_VERSION_TOLERANCE_NOTE = (
 CHAIN_POSITION_RESIGNED_SPLICE_TOLERANCE_NOTE = (
     "tolerated-accept: per-message signatures authenticate links, not the complete message set"
 )
-EXPECTED_MUTATION_TOTAL = 1484
-EXPECTED_MUTATION_REJECTS = 1439
+EXPECTED_MUTATION_TOTAL = 1488
+EXPECTED_MUTATION_REJECTS = 1443
 EXPECTED_MUTATION_ACCEPTS = 45
 EXPECTED_CANARY_TOTAL = 5
 EXPECTED_RAW_TYPED_DIVERGENCES = (
@@ -1746,6 +1747,7 @@ EXPECTED_MUTATION_BATTERY_COUNTS: dict[str, tuple[int, int, int]] = {
         3,
     ),
     "synthetic/attestation/attestation.json::attestation-v1": (111, 78, 33),
+    "synthetic/attestation/attestation.json::attestation-v05-validity": (4, 4, 0),
     "synthetic/cosign/cosigned_receipt.json": (42, 42, 0),
     "synthetic/cmpc_bilateral/primitives/atomic_activation_proof.json": (30, 30, 0),
     "synthetic/cmpc_bilateral/primitives/chain_session.json": (25, 25, 0),
@@ -2710,6 +2712,119 @@ def build_receipt_set_binding_mutation_vectors(
     return vectors, summary
 
 
+def build_attestation_v05_validity_mutation_vectors(
+    synthetic: SyntheticFixtures,
+) -> tuple[list[Vector], dict[str, Any]]:
+    """Exercise schema rejection of mutations to a valid v0.5 validity union."""
+    base = build_v05_attestation(synthetic)
+    parties = [party["agent_id"] for party in base["parties"]]
+    public_keys = synthetic.attestation_seed_manifest["agent_public_keys_b64url"]
+    context = {
+        "forbid_raw_deal_terms": True,
+        "expected_verified_parties": parties,
+        "public_keys_b64url": public_keys,
+    }
+
+    mutations: list[tuple[str, str, dict[str, Any]]] = []
+    missing = copy.deepcopy(base)
+    del missing["validity_temporal"]
+    mutations.append(
+        (
+            "missing-validity",
+            "v0.5 attestation missing required validity_temporal",
+            missing,
+        )
+    )
+
+    malformed_mode = copy.deepcopy(base)
+    malformed_mode["validity_temporal"]["mode"] = "bogus"
+    mutations.append(
+        (
+            "malformed-mode",
+            "v0.5 attestation with an unknown validity_temporal mode",
+            malformed_mode,
+        )
+    )
+
+    malformed_timestamp = copy.deepcopy(base)
+    malformed_timestamp["validity_temporal"]["from"] = "not-a-date"
+    mutations.append(
+        (
+            "malformed-timestamp",
+            "v0.5 attestation with a malformed validity_temporal timestamp",
+            malformed_timestamp,
+        )
+    )
+
+    out_of_bounds_duration = copy.deepcopy(base)
+    out_of_bounds_duration["validity_temporal"] = {
+        "mode": "relative",
+        "from": fixed_iso_now(),
+        "duration_seconds": 0,
+    }
+    mutations.append(
+        (
+            "duration-below-minimum",
+            "v0.5 attestation with validity duration below the schema minimum",
+            out_of_bounds_duration,
+        )
+    )
+
+    vectors: list[Vector] = []
+    for index, (_label, title, input_data) in enumerate(mutations, start=1):
+        vector_id = f"mut-synthetic-attestation-v05-validity-{index:04d}"
+        probe = Vector(
+            vector_id=vector_id,
+            title=title,
+            source_fixture=SYNTHETIC_SOURCE_ATTESTATION,
+            record_type="attestation",
+            verification_profile="attestation-v1",
+            input_data=input_data,
+            context=copy.deepcopy(context),
+        )
+        evaluation = evaluate_vector(probe)
+        if evaluation.accepted or evaluation.reason_class != "schema":
+            raise GenerationError(
+                f"{vector_id}: validity mutation must be rejected by schema, "
+                f"got {evaluation}"
+            )
+        vectors.append(
+            Vector(
+                vector_id=vector_id,
+                title=title,
+                source_fixture=probe.source_fixture,
+                record_type=probe.record_type,
+                verification_profile=probe.verification_profile,
+                input_data=input_data,
+                context=probe.context,
+                expected="reject",
+                expected_reason_class="schema",
+                notes=(
+                    "schema-reject: v0.5 validity_temporal is required and "
+                    "must be a well-formed tagged union"
+                ),
+            )
+        )
+
+    return vectors, {
+        "battery_name": (
+            "synthetic/attestation/attestation.json::"
+            "attestation-v05-validity"
+        ),
+        "source_fixture": SYNTHETIC_SOURCE_ATTESTATION,
+        "object_name": "attestation_v05_validity",
+        "record_type": "attestation",
+        "verification_profile": "attestation-v1",
+        "total": len(vectors),
+        "reject": len(vectors),
+        "accept": 0,
+        "selection_note": (
+            "explicit mutations of a valid v0.5 validity_temporal union: "
+            "missing, malformed, and below-minimum duration"
+        ),
+    }
+
+
 def build_mutation_battery(
     synthetic: SyntheticFixtures | None = None,
 ) -> tuple[list[Vector], list[dict[str, Any]]]:
@@ -2838,6 +2953,12 @@ def build_mutation_battery(
     )
     vectors.extend(receipt_vectors)
     battery_summaries.append(receipt_summary)
+
+    validity_vectors, validity_summary = (
+        build_attestation_v05_validity_mutation_vectors(synthetic)
+    )
+    vectors.extend(validity_vectors)
+    battery_summaries.append(validity_summary)
 
     vectors = sorted(vectors, key=lambda vector: vector.vector_id)
     battery_summaries = sorted(
@@ -3169,6 +3290,40 @@ def build_canary_vectors(synthetic: SyntheticFixtures | None = None) -> list[Vec
 
 def fixed_iso_now() -> str:
     return FIXED_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def fixed_iso_now_dt() -> datetime:
+    """Return the canonical fixture clock as an aware datetime."""
+    return FIXED_NOW
+
+
+def build_v05_attestation(fixtures: SyntheticFixtures) -> dict[str, Any]:
+    """Build the signed v0.5 attestation used by positive and mutation vectors."""
+    attestation = copy.deepcopy(fixtures.attestation)
+    attestation["concordia_attestation"] = "0.5.0"
+    attestation["attestation_id"] = "att_conformance_p2a1_v05_0001"
+    validity_from = fixed_iso_now_dt()
+    validity_until = validity_from + timedelta(
+        seconds=DEFAULT_ATTESTATION_VALIDITY_SECONDS
+    )
+    attestation["validity_temporal"] = {
+        "mode": "absolute",
+        "from": validity_from.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "until": validity_until.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    key_by_agent = {
+        "did:concordia:agent:synthetic-initiator": key_pair_from_seed(
+            SYNTHETIC_SEEDS["attestation_initiator"]
+        ),
+        "did:concordia:agent:synthetic-responder": key_pair_from_seed(
+            SYNTHETIC_SEEDS["attestation_responder"]
+        ),
+    }
+    attestation["countersignatures"] = {
+        agent_id: countersign_attestation(attestation, key_pair)
+        for agent_id, key_pair in sorted(key_by_agent.items())
+    }
+    return attestation
 
 
 def seed_manifest_for(roles: Mapping[str, KeyPair]) -> dict[str, Any]:
@@ -4265,28 +4420,7 @@ def build_phase2_vectors(fixtures: SyntheticFixtures) -> list[Vector]:
     raw_term_attestation["parties"][0]["behavior"]["note"] = (
         "price: USD 250 for 10 units"
     )
-    v05_attestation = copy.deepcopy(attestation)
-    v05_attestation["concordia_attestation"] = "0.5.0"
-    v05_attestation["attestation_id"] = "att_conformance_p2a1_v05_0001"
-    v05_attestation["validity_temporal"] = {
-        "mode": "absolute",
-        "from": fixed_iso_now(),
-        "until": "2026-08-08T14:25:00Z",
-    }
-    v05_keys = {
-        "did:concordia:agent:synthetic-initiator": key_pair_from_seed(
-            SYNTHETIC_SEEDS["attestation_initiator"]
-        ),
-        "did:concordia:agent:synthetic-responder": key_pair_from_seed(
-            SYNTHETIC_SEEDS["attestation_responder"]
-        ),
-    }
-    v05_attestation["countersignatures"] = {
-        agent_id: countersign_attestation(v05_attestation, key_pair)
-        for agent_id, key_pair in sorted(v05_keys.items())
-    }
-    missing_validity_attestation = copy.deepcopy(v05_attestation)
-    del missing_validity_attestation["validity_temporal"]
+    v05_attestation = build_v05_attestation(fixtures)
 
     action = {"max_spend": 500, "category": "software"}
     mandate_issuer_key = fixtures.mandate_seed_manifest[
@@ -4361,25 +4495,6 @@ def build_phase2_vectors(fixtures: SyntheticFixtures) -> list[Vector]:
             },
             notes=(
                 "v0.5 positive: the base attestation carries its required "
-                "validity_temporal window"
-            ),
-        ),
-        Vector(
-            vector_id="schema-synthetic-attestation-v05-missing-validity",
-            title="v0.5 Attestation rejects a missing validity_temporal window",
-            source_fixture=SYNTHETIC_SOURCE_ATTESTATION,
-            record_type="attestation",
-            verification_profile="attestation-v1",
-            input_data=missing_validity_attestation,
-            context={
-                "forbid_raw_deal_terms": True,
-                "expected_verified_parties": attestation_parties,
-                "public_keys_b64url": attestation_public_keys,
-            },
-            expected="reject",
-            expected_reason_class="schema",
-            notes=(
-                "schema-reject: Concordia Attestation v0.5 requires a "
                 "validity_temporal window"
             ),
         ),
