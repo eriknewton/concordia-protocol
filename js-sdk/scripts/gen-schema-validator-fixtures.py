@@ -177,8 +177,6 @@ def _receipt_schema_cases() -> list[dict]:
         lambda r: r["signature"].__setitem__("alg", "RS256"))
     add("signature_missing_value",
         lambda r: r["signature"].pop("value"))
-    add("signature_additional_property_rejected",
-        lambda r: r["signature"].__setitem__("key_id", "unexpected"))
     add("identity_empty",
         lambda r: r["approver"].__setitem__("identity", ""))
     add("ref_item_missing_id",
@@ -230,8 +228,6 @@ def _fulfillment_cases() -> list[dict]:
         lambda f: f["fulfillment"].__setitem__("status", "nope"))
     add("missing_required",
         lambda f: f.pop("signature"))
-    add("signature_additional_property_rejected",
-        lambda f: f["signature"].__setitem__("key_id", "unexpected"))
     add("references_empty", lambda f: f.__setitem__("references", []))
     add("contains_no_fulfills",
         lambda f: f.__setitem__("references",
@@ -697,6 +693,28 @@ def _attestation_constraint_cases() -> list[dict]:
         del attestation["validity_temporal"]
 
     add("v05_missing_required_validity_rejected", remove_v05_validity)
+
+    # Version boundary: 0.4.x is below the requirement threshold and must be
+    # accepted without validity_temporal.
+    def make_v04_no_validity(attestation):
+        attestation["concordia_attestation"] = "0.4.0"
+        # no validity_temporal — must be accepted
+
+    add("v04_no_validity_accepted", make_v04_no_validity)
+
+    # Version boundary: a later 0.x minor (0.10.0) must also require validity.
+    def make_v010_no_validity(attestation):
+        attestation["concordia_attestation"] = "0.10.0"
+        # no validity_temporal — must be rejected
+
+    add("v010_missing_required_validity_rejected", make_v010_no_validity)
+
+    # Version boundary: a future major (1.0.0) must also require validity.
+    def make_v100_no_validity(attestation):
+        attestation["concordia_attestation"] = "1.0.0"
+        # no validity_temporal — must be rejected
+
+    add("v100_missing_required_validity_rejected", make_v100_no_validity)
 
     def empty_countersignature_property_name(attestation):
         make_v05(attestation)

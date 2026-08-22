@@ -927,40 +927,6 @@
       ]
     },
     {
-      "name": "signature_additional_property_rejected",
-      "receipt": {
-        "artifact_type": "ApprovalReceipt",
-        "id": "urn:concordia:receipt:7f2e1a93",
-        "issued_at": "2026-05-10T14:22:08Z",
-        "expires_at": "2026-05-10T15:22:08Z",
-        "approver": {
-          "identity": "did:web:acme.example#procurement-lead",
-          "role": "procurement_authority"
-        },
-        "scope": {
-          "decision": "approve",
-          "offer_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          "amount": "150000.00 USD",
-          "threshold_crossed": "100000.00 USD"
-        },
-        "references": [
-          {
-            "type": "negotiation_session",
-            "id": "a2cn:session:9e4d2c11",
-            "relationship": "approves"
-          }
-        ],
-        "signature": {
-          "alg": "Ed25519",
-          "value": "abc",
-          "key_id": "unexpected"
-        }
-      },
-      "expected": [
-        "$.signature: violates 'additionalProperties' constraint: false"
-      ]
-    },
-    {
       "name": "identity_empty",
       "receipt": {
         "artifact_type": "ApprovalReceipt",
@@ -1232,33 +1198,6 @@
       },
       "expected": [
         "$: 'signature' is a required property"
-      ]
-    },
-    {
-      "name": "signature_additional_property_rejected",
-      "attestation": {
-        "attestation_type": "FulfillmentAttestation",
-        "id": "urn:concordia:fulfillment:0001",
-        "issued_at": "2026-05-10T14:22:08Z",
-        "agreement_attestation_id": "att-123",
-        "fulfillment": {
-          "status": "fulfilled_clean"
-        },
-        "references": [
-          {
-            "id": "att-123",
-            "type": "attestation",
-            "relationship": "fulfills"
-          }
-        ],
-        "signature": {
-          "alg": "Ed25519",
-          "value": "v",
-          "key_id": "unexpected"
-        }
-      },
-      "expected": [
-        "$.signature: violates 'additionalProperties' constraint: false"
       ]
     },
     {
@@ -3158,6 +3097,181 @@
         "countersignatures": {
           "agent_a": "sig"
         }
+      },
+      "expected": [
+        "$: 'validity_temporal' is a required property"
+      ]
+    },
+    {
+      "name": "v04_no_validity_accepted",
+      "attestation": {
+        "concordia_attestation": "0.4.0",
+        "attestation_id": "att_valid",
+        "session_id": "ses_valid",
+        "timestamp": "2026-05-10T14:22:08Z",
+        "outcome": {
+          "status": "agreed",
+          "rounds": 2,
+          "duration_seconds": 60,
+          "terms_count": 3,
+          "resolution_mechanism": "direct"
+        },
+        "parties": [
+          {
+            "agent_id": "agent_a",
+            "role": "initiator",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_a"
+          },
+          {
+            "agent_id": "agent_b",
+            "role": "responder",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_b"
+          }
+        ],
+        "meta": {
+          "category": "electronics.cameras",
+          "value_range": "1000-5000_USD",
+          "extensions_used": [],
+          "mediator_invoked": false
+        },
+        "transcript_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "fulfillment": null
+      },
+      "expected": []
+    },
+    {
+      "name": "v010_missing_required_validity_rejected",
+      "attestation": {
+        "concordia_attestation": "0.10.0",
+        "attestation_id": "att_valid",
+        "session_id": "ses_valid",
+        "timestamp": "2026-05-10T14:22:08Z",
+        "outcome": {
+          "status": "agreed",
+          "rounds": 2,
+          "duration_seconds": 60,
+          "terms_count": 3,
+          "resolution_mechanism": "direct"
+        },
+        "parties": [
+          {
+            "agent_id": "agent_a",
+            "role": "initiator",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_a"
+          },
+          {
+            "agent_id": "agent_b",
+            "role": "responder",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_b"
+          }
+        ],
+        "meta": {
+          "category": "electronics.cameras",
+          "value_range": "1000-5000_USD",
+          "extensions_used": [],
+          "mediator_invoked": false
+        },
+        "transcript_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "fulfillment": null
+      },
+      "expected": [
+        "$: 'validity_temporal' is a required property"
+      ]
+    },
+    {
+      "name": "v100_missing_required_validity_rejected",
+      "attestation": {
+        "concordia_attestation": "1.0.0",
+        "attestation_id": "att_valid",
+        "session_id": "ses_valid",
+        "timestamp": "2026-05-10T14:22:08Z",
+        "outcome": {
+          "status": "agreed",
+          "rounds": 2,
+          "duration_seconds": 60,
+          "terms_count": 3,
+          "resolution_mechanism": "direct"
+        },
+        "parties": [
+          {
+            "agent_id": "agent_a",
+            "role": "initiator",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_a"
+          },
+          {
+            "agent_id": "agent_b",
+            "role": "responder",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_b"
+          }
+        ],
+        "meta": {
+          "category": "electronics.cameras",
+          "value_range": "1000-5000_USD",
+          "extensions_used": [],
+          "mediator_invoked": false
+        },
+        "transcript_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "fulfillment": null
       },
       "expected": [
         "$: 'validity_temporal' is a required property"

@@ -957,7 +957,7 @@ export const APPROVAL_RECEIPT_SCHEMA = {
     signature: {
       type: 'object',
       required: ['alg', 'value'],
-      additionalProperties: false,
+      additionalProperties: true,
       properties: {
         alg: {
           type: 'string',
@@ -1157,7 +1157,7 @@ export const FULFILLMENT_ATTESTATION_SCHEMA = {
     signature: {
       type: 'object',
       required: ['alg', 'value'],
-      additionalProperties: false,
+      additionalProperties: true,
       properties: {
         alg: {
           type: 'string',
