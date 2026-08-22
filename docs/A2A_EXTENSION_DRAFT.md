@@ -146,8 +146,8 @@ Carrier-shaped bytes do not activate themselves. The signed envelope's
 `session_id` is authoritative; A2A `taskId`, `contextId`, Message metadata, and
 Artifact metadata remain outside the envelope and MUST NOT be copied into it.
 
-The shared fixture is
-`docs/interop/a2a-negotiation-carrier-v1/part.json`; the candidate schema is
+The shared carrier-shape fixture is
+`tests/fixtures/a2a-negotiation-carrier-v1/part.json`; the candidate schema is
 `schemas/a2a_negotiation_part.schema.json`. Python and TypeScript reference
 helpers build and parse the same JSON value without requiring either A2A SDK. The
 parser validates the Concordia envelope's schema shape but does not substitute

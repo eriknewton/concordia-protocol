@@ -8,6 +8,7 @@ export const A2A_CARRIER_MEDIA_TYPE = 'application/vnd.concordia.negotiation+jso
 
 const DATA_KEYS = new Set(['type', 'version', 'envelope']);
 const A2A_CONTENT_KEYS = ['text', 'raw', 'url'];
+const PREV_HASH_RE = /^sha256:[0-9a-f]{64}$/;
 // A2A's JSON spelling is camelCase; the snake_case aliases cover SDKs that
 // expose the same identifiers through Python-style serialization. These are
 // carrier/task identifiers, not Concordia envelope fields, and must never
@@ -53,7 +54,17 @@ function validateEnvelope(envelope: unknown): ConcordiaEnvelope {
   // The general message schema still accepts legacy envelopes without the
   // chain pointer. A carrier is a signed transcript message, so this seam
   // requires the pointer explicitly rather than weakening the shared schema.
-  if (!Object.hasOwn(envelope, 'prev_hash') || validateMessage(envelope).length > 0) {
+  // The prev_hash must match sha256: followed by exactly 64 lowercase hex
+  // characters; any other shape is rejected without echoing the value.
+  const prevHash = envelope['prev_hash'];
+  if (
+    !Object.hasOwn(envelope, 'prev_hash') ||
+    typeof prevHash !== 'string' ||
+    !PREV_HASH_RE.test(prevHash)
+  ) {
+    throw new A2ACarrierError('invalid envelope: prev_hash must be sha256: + 64 lowercase hex');
+  }
+  if (validateMessage(envelope).length > 0) {
     throw new A2ACarrierError('invalid envelope: Concordia message validation failed');
   }
   return envelope;
@@ -80,6 +91,16 @@ export function parseA2ADataPart(
   part: unknown,
   activeExtensions: readonly string[],
 ): ConcordiaEnvelope {
+  // Validate collection shape before membership: a bare string passed from
+  // untyped JS would otherwise match via substring search in .includes().
+  if (!Array.isArray(activeExtensions)) {
+    throw new A2ACarrierError('Concordia A2A extension is not active');
+  }
+  for (const entry of activeExtensions) {
+    if (typeof entry !== 'string') {
+      throw new A2ACarrierError('Concordia A2A extension is not active');
+    }
+  }
   if (!activeExtensions.includes(A2A_EXTENSION_URI)) {
     throw new A2ACarrierError('Concordia A2A extension is not active');
   }

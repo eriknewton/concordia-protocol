@@ -15,7 +15,7 @@ import {
 } from '../src/a2a/carrier.js';
 
 const fixturePath = fileURLToPath(
-  new URL('../../docs/interop/a2a-negotiation-carrier-v1/part.json', import.meta.url),
+  new URL('../../tests/fixtures/a2a-negotiation-carrier-v1/part.json', import.meta.url),
 );
 
 function fixture(): A2ADataPart {
@@ -121,5 +121,48 @@ describe('A2A negotiation carrier v1', () => {
       expect(error).toBeInstanceOf(A2ACarrierError);
       expect(String(error)).not.toContain(sentinel);
     }
+  });
+
+  // Activation type parity: TypeScript must reject non-array and non-string-member inputs.
+
+  it.each([
+    ['bare URI string', A2A_EXTENSION_URI],
+    ['other bare string', 'some-other-string'],
+    ['null', null],
+    ['undefined', undefined],
+    ['plain object', { 0: A2A_EXTENSION_URI }],
+  ])('rejects %s as activeExtensions', (_name, badActive) => {
+    expect(() =>
+      parseA2ADataPart(fixture(), badActive as unknown as readonly string[]),
+    ).toThrow(/extension is not active/);
+  });
+
+  it('rejects array with non-string member', () => {
+    expect(() =>
+      parseA2ADataPart(fixture(), [A2A_EXTENSION_URI, 42] as unknown as readonly string[]),
+    ).toThrow(/extension is not active/);
+  });
+
+  it('accepts a readonly string array with the extension URI', () => {
+    const result = parseA2ADataPart(fixture(), [A2A_EXTENSION_URI] as const);
+    expect(result).toBeDefined();
+  });
+
+  // prev_hash chain-pointer shape validation.
+
+  it.each([
+    ['missing', undefined],
+    ['no prefix', 'notahash'],
+    ['too short', 'sha256:abc'],
+    ['63 hex chars', 'sha256:' + 'a'.repeat(63)],
+    ['65 hex chars', 'sha256:' + 'a'.repeat(65)],
+    ['uppercase prefix', 'SHA256:' + 'a'.repeat(64)],
+    ['uppercase hex', 'sha256:' + 'A'.repeat(64)],
+    ['non-hex char', 'sha256:' + 'g'.repeat(64)],
+    ['wrong algorithm', 'md5:' + 'a'.repeat(32)],
+  ])('rejects prev_hash: %s', (_name, badHash) => {
+    const part = fixture();
+    part.data.envelope['prev_hash'] = badHash;
+    expect(() => parseA2ADataPart(part, [A2A_EXTENSION_URI])).toThrow(/prev_hash/);
   });
 });

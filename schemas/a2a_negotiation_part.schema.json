@@ -31,7 +31,13 @@
             "prev_hash",
             "body",
             "signature"
-          ]
+          ],
+          "properties": {
+            "prev_hash": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          }
         }
       }
     },

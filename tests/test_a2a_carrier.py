@@ -19,9 +19,8 @@ from concordia.a2a_carrier import (
 )
 
 FIXTURE = (
-    Path(__file__).resolve().parents[1]
-    / "docs"
-    / "interop"
+    Path(__file__).resolve().parent
+    / "fixtures"
     / "a2a-negotiation-carrier-v1"
     / "part.json"
 )
@@ -127,3 +126,74 @@ def test_errors_do_not_echo_untrusted_payload_values() -> None:
     with pytest.raises(A2ACarrierError) as caught:
         parse_a2a_data_part(part, active_extensions=[A2A_EXTENSION_URI])
     assert sentinel not in str(caught.value)
+
+
+# Activation type parity: Python must reject non-collection and non-string-member inputs.
+
+
+@pytest.mark.parametrize(
+    "bad_active",
+    [
+        A2A_EXTENSION_URI,  # bare string (URI itself) — must not activate via __contains__
+        "other-string",  # bare string, not the URI
+        None,  # None is not iterable as a Collection[str]
+        {"key": "value"},  # non-iterable-of-strings object (dict iterates keys only)
+    ],
+)
+def test_activation_rejects_non_collection_shapes(bad_active: object) -> None:
+    part = load_fixture()
+    with pytest.raises(A2ACarrierError, match="extension is not active"):
+        parse_a2a_data_part(part, active_extensions=bad_active)  # type: ignore[arg-type]
+
+
+def test_activation_rejects_collection_with_non_string_member() -> None:
+    part = load_fixture()
+    with pytest.raises(A2ACarrierError, match="extension is not active"):
+        parse_a2a_data_part(part, active_extensions=[A2A_EXTENSION_URI, 42])  # type: ignore[list-item]
+
+
+def test_activation_accepts_set_and_list() -> None:
+    part = load_fixture()
+    # Both list and set are valid Collection[str] shapes.
+    assert parse_a2a_data_part(part, active_extensions=[A2A_EXTENSION_URI]) is not None
+    assert parse_a2a_data_part(part, active_extensions={A2A_EXTENSION_URI}) is not None
+
+
+# prev_hash chain-pointer shape validation.
+
+
+@pytest.mark.parametrize(
+    "bad_hash",
+    [
+        None,  # missing (replaced with None)
+        "notahash",  # no prefix
+        "sha256:abc",  # too short
+        "sha256:" + "a" * 63,  # 63 hex chars (one short)
+        "sha256:" + "a" * 65,  # 65 hex chars (one long)
+        "SHA256:" + "a" * 64,  # uppercase prefix
+        "sha256:" + "A" * 64,  # uppercase hex
+        "sha256:" + "g" * 64,  # non-hex character
+        "md5:" + "a" * 32,  # wrong algorithm prefix
+    ],
+)
+def test_carrier_rejects_malformed_prev_hash(bad_hash: object) -> None:
+    part = load_fixture()
+    part["data"]["envelope"]["prev_hash"] = bad_hash
+    with pytest.raises(A2ACarrierError, match="prev_hash"):
+        parse_a2a_data_part(part, active_extensions=[A2A_EXTENSION_URI])
+
+
+def test_carrier_schema_rejects_malformed_prev_hash() -> None:
+    from jsonschema import Draft202012Validator
+
+    schema_path = Path(__file__).resolve().parents[1] / "schemas" / "a2a_negotiation_part.schema.json"
+    schema = json.loads(schema_path.read_text())
+    for bad_hash in [
+        "notahash",
+        "sha256:abc",
+        "sha256:" + "A" * 64,
+        "SHA256:" + "a" * 64,
+    ]:
+        part = load_fixture()
+        part["data"]["envelope"]["prev_hash"] = bad_hash
+        assert list(Draft202012Validator(schema).iter_errors(part)), f"schema should reject {bad_hash!r}"

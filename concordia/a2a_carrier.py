@@ -8,6 +8,7 @@ authority for its signed envelope.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Collection
 from copy import deepcopy
 from typing import Any
@@ -22,6 +23,7 @@ A2A_CARRIER_SCHEMA_URI = f"{A2A_EXTENSION_URI}/schema/data-part.json"
 A2A_CARRIER_MEDIA_TYPE = "application/vnd.concordia.negotiation+json"
 
 _DATA_KEYS = frozenset({"type", "version", "envelope"})
+_PREV_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _A2A_CONTENT_KEYS = frozenset({"text", "raw", "url"})
 # A2A's JSON spelling is camelCase; the snake_case aliases cover SDKs that
 # expose the same identifiers through Python-style serialization.  These are
@@ -42,7 +44,12 @@ def _validate_envelope(envelope: object) -> dict[str, Any]:
     # The general message schema still accepts legacy envelopes without the
     # chain pointer.  A carrier is a signed transcript message, so this seam
     # requires the pointer explicitly rather than weakening the shared schema.
-    if "prev_hash" not in envelope or validate_message(envelope):
+    # prev_hash must be sha256: followed by exactly 64 lowercase hex characters;
+    # any other shape is rejected without echoing the value.
+    prev_hash = envelope.get("prev_hash")
+    if not isinstance(prev_hash, str) or not _PREV_HASH_RE.fullmatch(prev_hash):
+        raise A2ACarrierError("invalid envelope: prev_hash must be sha256: + 64 lowercase hex")
+    if validate_message(envelope):
         # Do not forward jsonschema diagnostics here: even though the shared
         # validator is no-echo, this trust boundary promises a fixed, bounded
         # carrier diagnostic independent of rejected values.
@@ -87,7 +94,18 @@ def parse_a2a_data_part(
     bytes does not activate extension semantics.
     """
 
-    if isinstance(active_extensions, str) or A2A_EXTENSION_URI not in active_extensions:
+    # Validate the collection shape before membership: reject bare strings,
+    # non-collections, and collections containing non-string members so that
+    # a caller mistake cannot accidentally activate extension semantics.
+    if isinstance(active_extensions, str):
+        raise A2ACarrierError("Concordia A2A extension is not active")
+    try:
+        for entry in active_extensions:
+            if not isinstance(entry, str):
+                raise A2ACarrierError("Concordia A2A extension is not active")
+    except TypeError:
+        raise A2ACarrierError("Concordia A2A extension is not active")
+    if A2A_EXTENSION_URI not in active_extensions:
         raise A2ACarrierError("Concordia A2A extension is not active")
     if not isinstance(part, dict):
         raise A2ACarrierError("invalid A2A part: expected an object")
