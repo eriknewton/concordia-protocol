@@ -101,7 +101,7 @@ export function parseA2ADataPart(
       throw new A2ACarrierError('Concordia A2A extension is not active');
     }
   }
-  if (!activeExtensions.includes(A2A_EXTENSION_URI)) {
+  if (!activeExtensions.some((entry) => entry === A2A_EXTENSION_URI)) {
     throw new A2ACarrierError('Concordia A2A extension is not active');
   }
   if (!isRecord(part)) {
