@@ -36,7 +36,11 @@
             "prev_hash": {
               "type": "string",
               "pattern": "^sha256:[0-9a-f]{64}$"
-            }
+            },
+            "taskId": false,
+            "contextId": false,
+            "task_id": false,
+            "context_id": false
           }
         }
       }

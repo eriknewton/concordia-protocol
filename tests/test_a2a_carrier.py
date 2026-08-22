@@ -138,6 +138,7 @@ def test_errors_do_not_echo_untrusted_payload_values() -> None:
         "other-string",  # bare string, not the URI
         None,  # None is not iterable as a Collection[str]
         {"key": "value"},  # non-iterable-of-strings object (dict iterates keys only)
+        {A2A_EXTENSION_URI: "anything"},  # dict whose key IS the URI — must not activate via key membership
     ],
 )
 def test_activation_rejects_non_collection_shapes(bad_active: object) -> None:
@@ -181,6 +182,17 @@ def test_carrier_rejects_malformed_prev_hash(bad_hash: object) -> None:
     part["data"]["envelope"]["prev_hash"] = bad_hash
     with pytest.raises(A2ACarrierError, match="prev_hash"):
         parse_a2a_data_part(part, active_extensions=[A2A_EXTENSION_URI])
+
+
+@pytest.mark.parametrize("a2a_id", ["taskId", "contextId", "task_id", "context_id"])
+def test_candidate_schema_rejects_a2a_identifiers_inside_envelope(a2a_id: str) -> None:
+    schema_path = Path(__file__).resolve().parents[1] / "schemas" / "a2a_negotiation_part.schema.json"
+    schema = json.loads(schema_path.read_text())
+    part = load_fixture()
+    part["data"]["envelope"][a2a_id] = "carrier-owned"
+    assert list(Draft202012Validator(schema).iter_errors(part)), (
+        f"schema should reject envelope with {a2a_id!r}"
+    )
 
 
 def test_carrier_schema_rejects_malformed_prev_hash() -> None:

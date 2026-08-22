@@ -9,7 +9,7 @@ authority for its signed envelope.
 from __future__ import annotations
 
 import re
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from copy import deepcopy
 from typing import Any
 
@@ -95,9 +95,10 @@ def parse_a2a_data_part(
     """
 
     # Validate the collection shape before membership: reject bare strings,
+    # mappings/dicts (whose membership test operates on keys, not values),
     # non-collections, and collections containing non-string members so that
     # a caller mistake cannot accidentally activate extension semantics.
-    if isinstance(active_extensions, str):
+    if isinstance(active_extensions, (str, Mapping)):
         raise A2ACarrierError("Concordia A2A extension is not active")
     try:
         for entry in active_extensions:
