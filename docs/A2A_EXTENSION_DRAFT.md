@@ -101,8 +101,9 @@ subject to those checks.
 
 The bounded working proposal is:
 
-1. Carry one Concordia envelope as a dedicated A2A `DataPart` in an A2A
-   message.
+1. Carry one Concordia envelope as an A2A `Part` whose one content member is
+   structured `data`. Earlier A2A SDKs called this shape `DataPart`; the current
+   A2A protocol uses one `Part` type with a `data` member.
 2. Keep the Concordia envelope's signature and canonicalization rules exactly
    as specified by `SPEC.md` §§4.1 and 9.2.
 3. Correlate negotiation messages using Concordia's session identifier inside
@@ -116,10 +117,45 @@ This preserves the distinction between A2A task lifecycle and Concordia
 negotiation lifecycle. Multiple A2A tasks may carry messages for one Concordia
 session, subject to the parties' authorization and implementation policy.
 
-The exact `DataPart.data` discriminator/member name, schema URL, and fixture
-bundle are intentionally not frozen by this draft. They are owner decisions
-for a later review; inventing them here would turn a transport proposal into an
-unreviewed wire contract.
+The private v1 prototype freezes this candidate wire shape for testing only:
+
+```json
+{
+  "data": {
+    "type": "https://concordiaprotocol.dev/a2a-ext/negotiation/v1#envelope",
+    "version": "1",
+    "envelope": { "concordia": "0.1.0", "type": "negotiate.offer" }
+  },
+  "metadata": {
+    "https://concordiaprotocol.dev/a2a-ext/negotiation/v1": {
+      "schema": "https://concordiaprotocol.dev/a2a-ext/negotiation/v1/schema/data-part.json"
+    }
+  },
+  "mediaType": "application/vnd.concordia.negotiation+json"
+}
+```
+
+The abbreviated `envelope` above is illustrative; a real carrier contains one
+complete schema-valid signed Concordia envelope. `data` has exactly the three
+members shown. `text`, `raw`, or `url` content members on the same Part are a
+hard refusal. Other extension metadata may coexist outside the namespaced
+Concordia metadata entry.
+
+The carrier is interpreted only when the extension is active for the request.
+Carrier-shaped bytes do not activate themselves. The signed envelope's
+`session_id` is authoritative; A2A `taskId`, `contextId`, Message metadata, and
+Artifact metadata remain outside the envelope and MUST NOT be copied into it.
+
+The shared carrier-shape fixture is
+`tests/fixtures/a2a-negotiation-carrier-v1/part.json`; the candidate schema is
+`schemas/a2a_negotiation_part.schema.json`. Python and TypeScript reference
+helpers build and parse the same JSON value without requiring either A2A SDK. The
+parser validates the Concordia envelope's schema shape but does not substitute
+for Concordia signature, transcript, lifecycle, or authorization verification.
+
+This remains a private prototype, not a published wire commitment. External
+review can still replace the candidate shape before any filing; after a public
+v1 is published, a breaking carrier change requires a new extension URI.
 
 ## 6. Non-goals and claims boundary
 
@@ -141,8 +177,10 @@ confidentiality mechanism is used.
 
 The following are deliberately unresolved:
 
-1. The final `DataPart.data` member name and machine-readable schema location.
-2. A minimal set of interoperable fixtures and a conformance test harness.
+1. Whether the candidate carrier shape and schema location become the public
+   v1 contract after external review.
+2. The final external conformance fixture bundle beyond the private positive
+   fixture and fail-closed SDK regressions.
 3. Whether the profile should carry all Concordia envelopes or only a bounded
    receipt/artifact subset in its first public revision.
 4. The review and co-ownership path for any A2A-facing submission after the
