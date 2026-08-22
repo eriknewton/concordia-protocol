@@ -132,9 +132,9 @@ describe('A2A negotiation carrier v1', () => {
     ['undefined', undefined],
     ['plain object', { 0: A2A_EXTENSION_URI }],
   ])('rejects %s as activeExtensions', (_name, badActive) => {
-    expect(() =>
-      parseA2ADataPart(fixture(), badActive as unknown as readonly string[]),
-    ).toThrow(/extension is not active/);
+    expect(() => parseA2ADataPart(fixture(), badActive as unknown as readonly string[])).toThrow(
+      /extension is not active/,
+    );
   });
 
   it('rejects array with non-string member', () => {
