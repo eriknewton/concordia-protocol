@@ -316,7 +316,7 @@ class TestOutcomeBindingCountersignature:
         countersignature. This is the exact pre-C-H2 exploit: the party sigs
         still verify, but the OUTCOME is no longer bound."""
         att, key_pairs = _agreed_attestation()
-        assert att["concordia_attestation"] == "0.3.0"
+        assert att["concordia_attestation"] == "0.5.0"
         cs = att["countersignatures"]
         assert isinstance(cs, dict) and cs
 

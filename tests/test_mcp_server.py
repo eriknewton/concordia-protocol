@@ -670,7 +670,7 @@ class TestSessionReceipt:
         ))
         assert "receipt" in result
         receipt = result["receipt"]
-        assert receipt["concordia_attestation"] == "0.3.0"
+        assert receipt["concordia_attestation"] == "0.5.0"
         assert receipt["outcome"]["status"] == "agreed"
         assert len(receipt["parties"]) == 2
         assert isinstance(receipt.get("chain_head"), str)

@@ -16,9 +16,9 @@ EXPECTED_REASON_CLASSES = {
     "privacy",
     "transition",
 }
-EXPECTED_MUTATION_REJECTS = 1439
+EXPECTED_MUTATION_REJECTS = 1443
 EXPECTED_MUTATION_ACCEPTS = 45
-EXPECTED_MUTATION_TOTAL = 1484
+EXPECTED_MUTATION_TOTAL = 1488
 EXPECTED_BATTERY_COUNTS = {
     "1404/approval_receipt.json": (63, 63, 0),
     "1404/cascade_decision_deny.json": (35, 35, 0),
@@ -32,6 +32,7 @@ EXPECTED_BATTERY_COUNTS = {
         3,
     ),
     "synthetic/attestation/attestation.json::attestation-v1": (111, 78, 33),
+    "synthetic/attestation/attestation.json::attestation-v05-validity": (4, 4, 0),
     "synthetic/cosign/cosigned_receipt.json": (42, 42, 0),
     "synthetic/cmpc_bilateral/primitives/atomic_activation_proof.json": (30, 30, 0),
     "synthetic/cmpc_bilateral/primitives/chain_session.json": (25, 25, 0),
