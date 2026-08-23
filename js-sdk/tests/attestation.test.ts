@@ -18,6 +18,8 @@ import {
   isValidNow,
   AttestationError,
   ATTESTATION_VERSION,
+  DEFAULT_ATTESTATION_VALIDITY_SECONDS,
+  MAX_ATTESTATION_VALIDITY_SECONDS,
   type GenerateAttestationOptions,
 } from '../src/attestation/index.js';
 import { PartyRole, ResolutionMechanism, SessionState } from '../src/types/index.js';
@@ -870,6 +872,53 @@ describe('attestation constants parity', () => {
   });
 });
 
+describe('v0.5 required attestation validity policy', () => {
+  it('issues a default 90-day absolute window anchored at timestamp', () => {
+    const c = fixtures.cases[0]!;
+    const timestamp = '2026-08-21T12:00:00Z';
+    const attestation = generateAttestation(rebuildSession(c.session), keyPairsFromCase(c), {
+      attestationId: 'att_validity_default',
+      timestamp,
+    });
+
+    expect(ATTESTATION_VERSION).toBe('0.5.0');
+    expect(DEFAULT_ATTESTATION_VALIDITY_SECONDS).toBe(7_776_000);
+    expect(MAX_ATTESTATION_VALIDITY_SECONDS).toBe(7_776_000);
+    expect(attestation.validity_temporal).toEqual({
+      mode: 'absolute',
+      from: timestamp,
+      until: '2026-11-19T12:00:00Z',
+    });
+  });
+
+  const overMaximum = [
+    {
+      mode: 'absolute',
+      from: '2026-01-01T00:00:00Z',
+      until: '2026-04-02T00:00:01Z',
+    },
+    {
+      mode: 'relative',
+      from: '2026-01-01T00:00:00Z',
+      duration_seconds: 7_776_001,
+    },
+    {
+      mode: 'window',
+      start: '2026-01-01T00:00:00Z',
+      end: '2026-04-02T00:00:01Z',
+      duration_seconds: 1,
+    },
+  ];
+
+  for (const validityTemporal of overMaximum) {
+    it(`refuses a ${String(validityTemporal.mode)} window over 90 days`, () => {
+      expect(() => validateValidityTemporal(validityTemporal)).toThrow(
+        /maximum lifetime of 7776000 seconds/,
+      );
+    });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // FAIL-OPEN FIX (2026-06-01): attestation timestamp parse must be fail-CLOSED,
 // matching Python `datetime.fromisoformat`, NOT lenient `Date.parse`.
@@ -1080,15 +1129,16 @@ describe('validity_temporal[window] span is microsecond-precise (Python parity)'
     );
   });
 
-  // ...and must NOT over-reject a huge valid window: the same ~10000-year span
-  // trivially contains a 1-second duration.
-  it('accepts a near-full-range span with a small duration (no over-rejection)', () => {
+  // The exact-span guard remains important, but v0.5's reference issuer also
+  // refuses any signed window whose overall span exceeds its declared 90-day
+  // maximum, even when duration_seconds itself is small.
+  it('rejects a near-full-range span under the issuer maximum-lifetime policy', () => {
     const vt = {
       mode: 'window',
       start: '0001-01-01T00:00:00.000000Z',
       end: '9999-12-31T23:59:59.999968Z',
       duration_seconds: 1,
     };
-    expect(validateValidityTemporal(vt)).toEqual(vt);
+    expect(() => validateValidityTemporal(vt)).toThrow(/maximum lifetime of 7776000 seconds/);
   });
 });

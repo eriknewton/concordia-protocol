@@ -880,7 +880,7 @@ class TestOutcomeBindingBundle:
         this passed as summary-accurate because both sides derived from the
         forged outcome.)"""
         att, seller_id, _ = _mint_bound_attestation("seller_bind1", "buyer_bind1")
-        assert att["concordia_attestation"] == "0.3.0"
+        assert att["concordia_attestation"] == "0.5.0"
         kp = _KEY_REGISTRY[seller_id]
         bundle = ReceiptBundle.create(seller_id, [att], kp)
         bd = bundle.to_dict()
@@ -1050,7 +1050,7 @@ class TestOutcomeBindingBundle:
         """The reverse of finding 1: a bundle of ONLY bound (>=0.2.0)
         attestations must NOT emit the unbound-outcome warning."""
         att, seller_id, _ = _mint_bound_attestation("warn_bound_s", "warn_bound_b")
-        assert att["concordia_attestation"] == "0.3.0"
+        assert att["concordia_attestation"] == "0.5.0"
         kp = _KEY_REGISTRY[seller_id]
         bundle = ReceiptBundle.create(seller_id, [att], kp)
         result = verify_bundle(bundle.to_dict(), _test_resolver)

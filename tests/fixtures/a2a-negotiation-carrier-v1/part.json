@@ -1,0 +1,37 @@
+{
+  "data": {
+    "type": "https://concordiaprotocol.dev/a2a-ext/negotiation/v1#envelope",
+    "version": "1",
+    "envelope": {
+      "concordia": "0.1.0",
+      "type": "negotiate.offer",
+      "id": "msg_a2a_carrier_0001",
+      "session_id": "ses_a2a_carrier_0001",
+      "timestamp": "2026-08-21T15:00:00Z",
+      "from": {
+        "agent_id": "agent_buyer_01"
+      },
+      "to": [
+        {
+          "agent_id": "agent_seller_01"
+        }
+      ],
+      "prev_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "body": {
+        "terms": {
+          "delivery_days": {
+            "type": "numeric",
+            "value": 7
+          }
+        }
+      },
+      "signature": "fixture_ed25519_signature"
+    }
+  },
+  "metadata": {
+    "https://concordiaprotocol.dev/a2a-ext/negotiation/v1": {
+      "schema": "https://concordiaprotocol.dev/a2a-ext/negotiation/v1/schema/data-part.json"
+    }
+  },
+  "mediaType": "application/vnd.concordia.negotiation+json"
+}

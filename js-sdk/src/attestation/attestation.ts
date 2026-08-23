@@ -72,7 +72,10 @@ import { validateReference } from '../predicate/references.js';
 import { computeHash, type Session } from '../session/index.js';
 
 /** Attestation schema version, byte-identical to Python `ATTESTATION_VERSION`. */
-export const ATTESTATION_VERSION = '0.3.0';
+export const ATTESTATION_VERSION = '0.5.0';
+/** Reference issuer's default and maximum attestation lifetime: 90 days. */
+export const DEFAULT_ATTESTATION_VALIDITY_SECONDS = 90 * 24 * 60 * 60;
+export const MAX_ATTESTATION_VALIDITY_SECONDS = DEFAULT_ATTESTATION_VALIDITY_SECONDS;
 const SET_BINDING_MIN = { major: 0, minor: 3 } as const;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+$/;
 const SHA256_HEX_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -697,6 +700,12 @@ export function validateValidityTemporal(vt: unknown): ValidityTemporal {
     if (until <= frm) {
       throw new AttestationError('validity_temporal[absolute]: until must be after from');
     }
+    if (until - frm > MAX_ATTESTATION_VALIDITY_SECONDS * 1_000) {
+      throw new AttestationError(
+        'validity_temporal[absolute] exceeds the reference issuer ' +
+          'maximum lifetime of 7776000 seconds',
+      );
+    }
     return { mode: 'absolute', from: vt.from as string, until: vt.until as string };
   }
 
@@ -710,6 +719,12 @@ export function validateValidityTemporal(vt: unknown): ValidityTemporal {
     if (duration === null || duration < 1) {
       throw new AttestationError(
         'validity_temporal[relative].duration_seconds must be a positive int',
+      );
+    }
+    if (duration > MAX_ATTESTATION_VALIDITY_SECONDS) {
+      throw new AttestationError(
+        'validity_temporal[relative] exceeds the reference issuer ' +
+          'maximum lifetime of 7776000 seconds',
       );
     }
     return {
@@ -772,6 +787,12 @@ export function validateValidityTemporal(vt: unknown): ValidityTemporal {
       'validity_temporal[window].duration_seconds exceeds the window span',
     );
   }
+  if (endMicros - startMicros > BigInt(MAX_ATTESTATION_VALIDITY_SECONDS) * 1_000_000n) {
+    throw new AttestationError(
+      'validity_temporal[window] exceeds the reference issuer ' +
+        'maximum lifetime of 7776000 seconds',
+    );
+  }
   return {
     mode: 'window',
     start: vt.start as string,
@@ -784,7 +805,9 @@ export function validateValidityTemporal(vt: unknown): ValidityTemporal {
  * Return `true` if the attestation's `validity_temporal` contains `now`,
  * mirroring Python `is_valid_now`.
  *
- * - No `validity_temporal` field -> `true` (no temporal constraint).
+ * - A pre-0.5 legacy artifact with no `validity_temporal` field -> `true` so
+ *   callers may inspect legacy signals. A 0.5+ artifact missing the required
+ *   field -> `false`, even if this helper is called before schema validation.
  * - A `validity_temporal` that is not a dict, or a dict missing `mode` -> `false`.
  * - `absolute`: `from <= now < until`.
  * - `relative`: `from <= now < from + duration_seconds`.
@@ -799,7 +822,7 @@ export function validateValidityTemporal(vt: unknown): ValidityTemporal {
 export function isValidNow(attestation: Record<string, unknown>, now?: number): boolean {
   const vt = attestation.validity_temporal;
   if (vt === undefined || vt === null) {
-    return true;
+    return !attestationVersionAtLeast(attestation.concordia_attestation, 0, 5);
   }
   if (!isPlainObject(vt) || !('mode' in vt)) {
     return false;
@@ -857,7 +880,7 @@ export interface GenerateAttestationOptions {
   resolutionMechanism?: ResolutionMechanism;
   /** Optional attestation-level references per SPEC §11.5. */
   references?: Array<Record<string, unknown>> | null;
-  /** Optional temporal validity window (three-mode tagged union). */
+  /** Temporal validity window (three-mode tagged union); defaults to 90 days. */
   validityTemporal?: Record<string, unknown> | null;
   /**
    * Override for the random `attestation_id` suffix. Defaults to a fresh random
@@ -986,17 +1009,26 @@ export function generateAttestation(
   // where the prior `references && references.length > 0` silently yielded [].
   const normalizedRefs = normalizeReferences(references);
 
-  // Validate validity_temporal if supplied.
-  let normalizedVt: ValidityTemporal | null = null;
-  if (validityTemporal !== null && validityTemporal !== undefined) {
-    normalizedVt = validateValidityTemporal(validityTemporal);
-  }
+  const timestamp = options.timestamp ?? nowIso8601();
+
+  // Every newly issued attestation is time-bounded. Omitting the option
+  // selects the declared reference-issuer policy rather than emitting
+  // unbounded evidence. Callers may provide a narrower window.
+  const effectiveValidityTemporal =
+    validityTemporal === null || validityTemporal === undefined
+      ? {
+          mode: 'absolute',
+          from: timestamp,
+          until: addSecondsIso8601(timestamp, DEFAULT_ATTESTATION_VALIDITY_SECONDS),
+        }
+      : validityTemporal;
+  const normalizedVt = validateValidityTemporal(effectiveValidityTemporal);
 
   const attestation: Record<string, unknown> = {
     concordia_attestation: ATTESTATION_VERSION,
     attestation_id: options.attestationId ?? `att_${randomHex8()}`,
     session_id: session.sessionId,
-    timestamp: options.timestamp ?? nowIso8601(),
+    timestamp,
     outcome,
     parties,
     meta,
@@ -1005,10 +1037,8 @@ export function generateAttestation(
     message_count: messageCount,
     fulfillment: null,
     references: normalizedRefs,
+    validity_temporal: normalizedVt,
   };
-  if (normalizedVt !== null) {
-    attestation.validity_temporal = normalizedVt;
-  }
 
   // Attach a plaintext 4-line summary for quick human/agent inspection.
   attestation.summary = generateReceiptSummary(attestation);
@@ -1164,6 +1194,12 @@ function pyListRepr(keys: string[]): string {
  */
 function randomHex8(): string {
   return crypto.randomUUID().slice(0, 8);
+}
+
+/** Add whole seconds to an ISO timestamp and emit second-precision UTC. */
+function addSecondsIso8601(timestamp: string, seconds: number): string {
+  const epochMs = parseIso8601(timestamp, 'attestation.timestamp');
+  return new Date(epochMs + seconds * 1_000).toISOString().replace('.000Z', 'Z');
 }
 
 /**

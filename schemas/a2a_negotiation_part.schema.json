@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://concordiaprotocol.dev/a2a-ext/negotiation/v1/schema/data-part.json",
+  "title": "Concordia A2A Negotiation Envelope Part v1",
+  "type": "object",
+  "required": ["data", "metadata", "mediaType"],
+  "properties": {
+    "text": false,
+    "raw": false,
+    "url": false,
+    "data": {
+      "type": "object",
+      "required": ["type", "version", "envelope"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "https://concordiaprotocol.dev/a2a-ext/negotiation/v1#envelope"
+        },
+        "version": {
+          "const": "1"
+        },
+        "envelope": {
+          "type": "object",
+          "required": [
+            "concordia",
+            "type",
+            "id",
+            "session_id",
+            "timestamp",
+            "from",
+            "prev_hash",
+            "body",
+            "signature"
+          ],
+          "properties": {
+            "prev_hash": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            "taskId": false,
+            "contextId": false,
+            "task_id": false,
+            "context_id": false
+          }
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["https://concordiaprotocol.dev/a2a-ext/negotiation/v1"],
+      "properties": {
+        "https://concordiaprotocol.dev/a2a-ext/negotiation/v1": {
+          "type": "object",
+          "required": ["schema"],
+          "additionalProperties": false,
+          "properties": {
+            "schema": {
+              "const": "https://concordiaprotocol.dev/a2a-ext/negotiation/v1/schema/data-part.json"
+            }
+          }
+        }
+      }
+    },
+    "mediaType": {
+      "const": "application/vnd.concordia.negotiation+json"
+    }
+  }
+}
