@@ -33,7 +33,6 @@ from concordia.schema_validator import (
     validate_message,
 )
 
-
 # Deterministic Ed25519 key for the signed-receipt cases.
 SEED = bytes(range(32))
 OTHER_SEED = bytes(range(100, 132))
@@ -677,6 +676,54 @@ def _attestation_constraint_cases() -> list[dict]:
     add("transcript_hash_pattern_violation_not_echoed",
         lambda a: a.__setitem__(
             "transcript_hash", "SECRET_TERMS price=4350"))
+
+    def make_v05(attestation):
+        attestation["concordia_attestation"] = "0.5.0"
+        attestation["validity_temporal"] = {
+            "mode": "absolute",
+            "from": "2026-05-10T14:22:08Z",
+            "until": "2026-08-08T14:22:08Z",
+        }
+        attestation["countersignatures"] = {"agent_a": "sig"}
+
+    add("v05_required_validity_accepts", make_v05)
+
+    def remove_v05_validity(attestation):
+        make_v05(attestation)
+        del attestation["validity_temporal"]
+
+    add("v05_missing_required_validity_rejected", remove_v05_validity)
+
+    # Version boundary: 0.4.x is below the requirement threshold and must be
+    # accepted without validity_temporal.
+    def make_v04_no_validity(attestation):
+        attestation["concordia_attestation"] = "0.4.0"
+        # no validity_temporal — must be accepted
+
+    add("v04_no_validity_accepted", make_v04_no_validity)
+
+    # Version boundary: a later 0.x minor (0.10.0) must also require validity.
+    def make_v010_no_validity(attestation):
+        attestation["concordia_attestation"] = "0.10.0"
+        # no validity_temporal — must be rejected
+
+    add("v010_missing_required_validity_rejected", make_v010_no_validity)
+
+    # Version boundary: a future major (1.0.0) must also require validity.
+    def make_v100_no_validity(attestation):
+        attestation["concordia_attestation"] = "1.0.0"
+        # no validity_temporal — must be rejected
+
+    add("v100_missing_required_validity_rejected", make_v100_no_validity)
+
+    def empty_countersignature_property_name(attestation):
+        make_v05(attestation)
+        attestation["countersignatures"] = {"": "sig"}
+
+    add(
+        "countersignature_empty_property_name_rejected",
+        empty_countersignature_property_name,
+    )
     return cases
 
 

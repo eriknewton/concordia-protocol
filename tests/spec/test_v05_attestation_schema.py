@@ -150,6 +150,11 @@ def _v05_shape_attestation() -> dict:
     att = _minimal_v04_attestation()
     att["concordia_attestation"] = "0.5.0"
     att["attestation_id"] = "att_v05_full"
+    att["validity_temporal"] = {
+        "mode": "absolute",
+        "from": "2026-04-20T12:00:00Z",
+        "until": "2026-07-19T12:00:00Z",
+    }
     att["references"] = [
         {
             "id": "urn:concordia:attestation:att_prior",
@@ -179,3 +184,43 @@ class TestForwardCompat:
         self, attestation_validator: Draft202012Validator
     ) -> None:
         attestation_validator.validate(_v05_shape_attestation())
+
+    def test_v05_shape_without_validity_temporal_is_rejected(
+        self, attestation_validator: Draft202012Validator
+    ) -> None:
+        attestation = _v05_shape_attestation()
+        del attestation["validity_temporal"]
+        errors = list(attestation_validator.iter_errors(attestation))
+        assert any(
+            "'validity_temporal' is a required property" in error.message
+            for error in errors
+        )
+
+    @pytest.mark.parametrize(
+        "version,should_require_validity",
+        [
+            ("0.4.0", False),   # legacy: below the 0.5 boundary, no requirement
+            ("0.5.0", True),    # exact boundary: required
+            ("0.10.0", True),   # later minor: required
+            ("1.0.0", True),    # future major: required
+        ],
+    )
+    def test_validity_temporal_required_at_version_boundary(
+        self,
+        attestation_validator: Draft202012Validator,
+        version: str,
+        should_require_validity: bool,
+    ) -> None:
+        """Pin the schema regex boundary: validity_temporal is required for
+        concordia_attestation >= 0.5.0 and accepted-absent for < 0.5.0."""
+        att = _minimal_v04_attestation()
+        att["concordia_attestation"] = version
+        errors = list(attestation_validator.iter_errors(att))
+        has_validity_error = any(
+            "'validity_temporal' is a required property" in e.message
+            for e in errors
+        )
+        assert has_validity_error == should_require_validity, (
+            f"Version {version}: expected validity_temporal required="
+            f"{should_require_validity}, got {has_validity_error}"
+        )

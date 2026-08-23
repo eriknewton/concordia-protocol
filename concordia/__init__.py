@@ -8,10 +8,22 @@ from typing import Any
 
 __version__ = "0.10.0"
 
+from .a2a_carrier import (
+    A2A_CARRIER_MEDIA_TYPE,
+    A2A_CARRIER_SCHEMA_URI,
+    A2A_CARRIER_TYPE,
+    A2A_CARRIER_VERSION,
+    A2A_EXTENSION_URI,
+    A2ACarrierError,
+    build_a2a_data_part,
+    parse_a2a_data_part,
+)
 from .agent import Agent
 from .approval_receipt import ApprovalReceiptResult, verify_approval_receipt
 from .attestation import (
     ATTESTATION_VERSION,
+    DEFAULT_ATTESTATION_VALIDITY_SECONDS,
+    MAX_ATTESTATION_VALIDITY_SECONDS,
     AttestationVerifyResult,
     countersign_attestation,
     generate_attestation,
@@ -110,6 +122,15 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
+    # A2A carrier
+    "A2A_CARRIER_MEDIA_TYPE",
+    "A2A_CARRIER_SCHEMA_URI",
+    "A2A_CARRIER_TYPE",
+    "A2A_CARRIER_VERSION",
+    "A2A_EXTENSION_URI",
+    "A2ACarrierError",
+    "build_a2a_data_part",
+    "parse_a2a_data_part",
     # Agent
     "Agent",
     # Session
@@ -144,6 +165,8 @@ __all__ = [
     "verify_envelope_signature",
     # Attestation
     "ATTESTATION_VERSION",
+    "DEFAULT_ATTESTATION_VALIDITY_SECONDS",
+    "MAX_ATTESTATION_VALIDITY_SECONDS",
     "AttestationVerifyResult",
     "generate_attestation",
     "verify_attestation",

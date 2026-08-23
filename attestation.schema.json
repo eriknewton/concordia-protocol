@@ -222,7 +222,7 @@
 
     "validity_temporal": {
       "$ref": "#/$defs/validity_temporal",
-      "description": "Optional temporal validity window for the attestation. Added in v0.4.0 (WP3)."
+      "description": "Temporal validity window for the attestation. Required for concordia_attestation 0.5.0 and later; legacy artifacts remain readable under version-gated verifier rules. Added in v0.4.0 (WP3)."
     },
 
     "countersignatures": {
@@ -232,6 +232,22 @@
       "propertyNames": { "minLength": 1 }
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "required": ["concordia_attestation"],
+        "properties": {
+          "concordia_attestation": {
+            "pattern": "^(?:0\\.(?:[5-9]|[1-9][0-9]+)\\.[0-9]+|[1-9][0-9]*\\.[0-9]+\\.[0-9]+)$"
+          }
+        }
+      },
+      "then": {
+        "required": ["validity_temporal"]
+      }
+    }
+  ],
+
   "additionalProperties": false,
 
   "$defs": {

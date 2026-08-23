@@ -31,6 +31,20 @@ PROTOCOL_VERSION = "0.1.0"
 logger = logging.getLogger(__name__)
 
 
+#: The A2A extension URI Concordia declares itself under.
+#:
+#: Under Concordia's own domain deliberately. The
+#: ``https://a2a-protocol.org/extensions/`` prefix is reserved for artifacts
+#: that have graduated to official status in ``a2aproject``; using it before
+#: that would assert standing Concordia does not have. No Concordia extension
+#: has been filed or sponsored.
+#:
+#: Versioned independently of both the spec edition and the ``concordia:0.1.0``
+#: wire identifier: it changes only on a breaking change to the declaration or
+#: activation contract. Must match §10.1 of SPEC.md.
+A2A_EXTENSION_URI = "https://concordiaprotocol.dev/a2a-ext/negotiation/v1"
+
+
 @dataclass
 class AgentCapabilities:
     """What a registered agent supports within the Concordia protocol."""
@@ -129,11 +143,41 @@ class RegisteredAgent:
         return d
 
     def to_agent_card(self) -> dict[str, Any]:
-        """Produce an A2A-compatible Agent Card fragment (§10.1)."""
+        """Produce an A2A-compatible Agent Card fragment (§10.1).
+
+        SHAPE PINNED TO THE A2A EXTENSION MECHANISM, and it is not free choice.
+        `capabilities` is an OBJECT carrying an `extensions` array of
+        `AgentExtension` entries (`uri`, `description`, `required`, `params`).
+        This previously emitted `capabilities` as an ARRAY of Concordia's own
+        capability dict, which no A2A client can read as capabilities: the card
+        parsed as having none, and Concordia was undiscoverable through the
+        mechanism this method exists to use. The docstring cited §10.1 while
+        §10.1 still described the pre-extension shape, so the code was faithful
+        to a stale spec rather than to A2A.
+
+        `required` is False deliberately. A2A's flag means that a client must
+        understand and comply with an extension marked True; a request that
+        does not activate a required extension must be rejected. Concordia
+        negotiation is optional, so an agent that cannot negotiate should
+        still be reachable.
+
+        Must match §10.1 of SPEC.md; the URI there and here are one contract.
+        """
         return {
             "name": self.agent_id,
             "description": self.description or f"Concordia agent: {self.agent_id}",
-            "capabilities": [self.capabilities.to_dict()],
+            "capabilities": {
+                "extensions": [
+                    {
+                        "uri": A2A_EXTENSION_URI,
+                        "description": (
+                            "Structured multi-attribute negotiation to agreement"
+                        ),
+                        "required": False,
+                        "params": self.capabilities.to_dict(),
+                    }
+                ]
+            },
             "concordia_preferred": True,
         }
 

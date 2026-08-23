@@ -1323,7 +1323,7 @@ The base Reputation Attestation (§9.6.2) carries a `validity_temporal` field (a
 
 `validity_temporal` is REQUIRED on every base attestation: an attestation issued without a `validity_temporal` value carries no signer-asserted bound on its own currency, leaving every consuming relying party to either invent its own convention or skip the §9.7.1 freshness check entirely for that artifact. Making the field required does not by itself satisfy §9.7.1's relying-side obligation, since the relying party's own bound is still required regardless; it removes the ambiguity of an attestation that carries no signer-asserted window to bound against in the first place. The §9.6.2 worked example carries a `validity_temporal` value to match this requirement.
 
-*Editor's note (ruling: REQUIRED, Erik, 2026-08-16; implementation status, tracked follow-up).* This revision's spec-prose work on `validity_temporal` is complete, including the §9.6.2 worked example, which now carries a `validity_temporal` value. What remains open is promotion of the requirement into `schemas/attestation.schema.json`, both reference SDKs, and the conformance suite's attestation vectors: all three still model the field as optional today, and the conformance vectors still include attestations with `validity_temporal: null` (valid to read for legacy signals under the version-gated rules in §9.6.5, but not yet enforced as required by the schema). That promotion, not the field's normative status, is the open item; this document does not change the schema, the SDKs, or the conformance vectors.
+*Implementation note (ruling: REQUIRED, Erik, 2026-08-16; executable 2026-08-21).* The v0.5 schema, Python reference SDK, JavaScript reference SDK, and conformance suite now enforce this requirement for newly issued v0.5 attestations. Both reference issuers default to an absolute 90-day window anchored at the attestation timestamp and refuse a caller-supplied window whose overall lifetime exceeds that declared issuer maximum. Pre-v0.5 artifacts remain readable as legacy signals, but they are not evidence that satisfies the v0.5 freshness requirement.
 
 ### 9.8 Security Considerations by Threat Actor
 
@@ -1361,22 +1361,82 @@ This organization exists to support a filing's Security Considerations section; 
 
 ### 10.1 A2A (Agent-to-Agent)
 
-Concordia messages can be transported within A2A task messages. A Concordia negotiation maps to an A2A task with `type: "concordia.negotiation"`. The A2A Agent Card can advertise Concordia support:
+A2A carries Concordia through its extension mechanism. This section states that mechanism as A2A
+defines it today, and marks separately what Concordia proposes on top of it.
+
+**Status, so this is not read as more than it is.** No Concordia extension has been filed with or
+sponsored into `a2aproject`. The URI below is under Concordia's own domain, which is the correct
+place for it: the `https://a2a-protocol.org/extensions/` prefix is reserved for artifacts that have
+graduated to official status, and using it before that would be a false claim of standing.
+
+**Declaration.** An agent advertises Concordia by adding an `AgentExtension` entry to the
+`extensions` array inside its Agent Card's `AgentCapabilities` object. `capabilities` is the object
+that carries A2A's own capability flags (such as `streaming`) and the `extensions` array; it is not
+an array of Concordia capability records. Each `AgentExtension` entry carries `uri`, `description`,
+`required` and optional `params`:
 
 ```json
 {
   "name": "Seller Agent",
-  "capabilities": [
-    {
-      "protocol": "concordia",
-      "version": "0.1.0",
-      "role": "seller",
-      "categories": ["electronics", "furniture"],
-      "resolution_mechanisms": ["split", "foa", "tradeoff"]
-    }
-  ]
+  "capabilities": {
+    "streaming": true,
+    "extensions": [
+      {
+        "uri": "https://concordiaprotocol.dev/a2a-ext/negotiation/v1",
+        "description": "Structured multi-attribute negotiation to agreement",
+        "required": false,
+        "params": {
+          "role": "seller",
+          "categories": ["electronics", "furniture"],
+          "resolution_mechanisms": ["split", "foa", "tradeoff"]
+        }
+      }
+    ]
+  }
 }
 ```
+
+The `params` carry the matching facets of section 7 so a counterparty can tell from the card alone
+whether a negotiation is worth opening.
+
+`required` stays `false`. A2A gives this flag protocol-level meaning: when it is `true`, a client
+must understand and comply with the extension, and an agent that receives a request without the
+required extension activated must reject that request with the binding's extension-support error.
+A2A names this error `ExtensionSupportRequiredError`.
+A2A advises against marking data-only extensions required. Concordia negotiation is optional, so a
+client that does not support it should remain able to use the agent's ordinary A2A surface.
+
+The URI versions independently of the spec edition and of the `concordia:0.1.0` wire identifier. It
+changes only on a breaking change to the declaration or activation contract, on the same discipline
+the wire identifier already follows.
+
+**Activation.** Extensions are inactive by default, so an extension-unaware client gets ordinary A2A
+behaviour. A client activates Concordia by listing the URI in the `A2A-Extensions` request header, a
+comma-separated list. The agent activates what it supports and SHOULD echo the activated URIs in the
+`A2A-Extensions` response header. **An absent echo means the extension was not activated**, and a
+Concordia implementation MUST treat it that way rather than assuming activation and proceeding.
+
+```http
+POST /agents/seller HTTP/1.1
+Host: example.com
+Content-Type: application/json
+A2A-Extensions: https://concordiaprotocol.dev/a2a-ext/negotiation/v1
+```
+
+**What Concordia proposes on top (proposed integration semantics, not yet a filed extension).**
+
+- One Concordia envelope per message part, carried as its own object rather than spread across
+  carrier fields. The envelope is the unit that signatures cover.
+- **Correlation is by Concordia's own session identifier inside the payload, never by A2A task or
+  context identifier.** Task lifecycle is a carrier concept: a failed or cancelled task retracts no
+  offer, and a completed task concludes no negotiation. Many tasks may serve one negotiation. Tying
+  negotiation state to task state would let network conditions withdraw commitments.
+- Carrier metadata stays outside the signed bytes. A signature that covers a task identifier makes
+  an agreement verifiable only alongside the carrier's own records, which is the dependency the
+  attestation design exists to remove.
+
+Per A2A's own requirement, an extension must not bypass an agent's authentication or authorization
+checks. Concordia adds negotiation semantics; it grants no access it did not already have.
 
 ### 10.2 MCP (Model Context Protocol)
 

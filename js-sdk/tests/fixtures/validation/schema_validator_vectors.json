@@ -2974,6 +2974,375 @@
       "expected": [
         "$.transcript_hash: violates 'pattern' constraint: \"^sha256:[a-f0-9]{64}$\""
       ]
+    },
+    {
+      "name": "v05_required_validity_accepts",
+      "attestation": {
+        "concordia_attestation": "0.5.0",
+        "attestation_id": "att_valid",
+        "session_id": "ses_valid",
+        "timestamp": "2026-05-10T14:22:08Z",
+        "outcome": {
+          "status": "agreed",
+          "rounds": 2,
+          "duration_seconds": 60,
+          "terms_count": 3,
+          "resolution_mechanism": "direct"
+        },
+        "parties": [
+          {
+            "agent_id": "agent_a",
+            "role": "initiator",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_a"
+          },
+          {
+            "agent_id": "agent_b",
+            "role": "responder",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_b"
+          }
+        ],
+        "meta": {
+          "category": "electronics.cameras",
+          "value_range": "1000-5000_USD",
+          "extensions_used": [],
+          "mediator_invoked": false
+        },
+        "transcript_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "fulfillment": null,
+        "validity_temporal": {
+          "mode": "absolute",
+          "from": "2026-05-10T14:22:08Z",
+          "until": "2026-08-08T14:22:08Z"
+        },
+        "countersignatures": {
+          "agent_a": "sig"
+        }
+      },
+      "expected": []
+    },
+    {
+      "name": "v05_missing_required_validity_rejected",
+      "attestation": {
+        "concordia_attestation": "0.5.0",
+        "attestation_id": "att_valid",
+        "session_id": "ses_valid",
+        "timestamp": "2026-05-10T14:22:08Z",
+        "outcome": {
+          "status": "agreed",
+          "rounds": 2,
+          "duration_seconds": 60,
+          "terms_count": 3,
+          "resolution_mechanism": "direct"
+        },
+        "parties": [
+          {
+            "agent_id": "agent_a",
+            "role": "initiator",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_a"
+          },
+          {
+            "agent_id": "agent_b",
+            "role": "responder",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_b"
+          }
+        ],
+        "meta": {
+          "category": "electronics.cameras",
+          "value_range": "1000-5000_USD",
+          "extensions_used": [],
+          "mediator_invoked": false
+        },
+        "transcript_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "fulfillment": null,
+        "countersignatures": {
+          "agent_a": "sig"
+        }
+      },
+      "expected": [
+        "$: 'validity_temporal' is a required property"
+      ]
+    },
+    {
+      "name": "v04_no_validity_accepted",
+      "attestation": {
+        "concordia_attestation": "0.4.0",
+        "attestation_id": "att_valid",
+        "session_id": "ses_valid",
+        "timestamp": "2026-05-10T14:22:08Z",
+        "outcome": {
+          "status": "agreed",
+          "rounds": 2,
+          "duration_seconds": 60,
+          "terms_count": 3,
+          "resolution_mechanism": "direct"
+        },
+        "parties": [
+          {
+            "agent_id": "agent_a",
+            "role": "initiator",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_a"
+          },
+          {
+            "agent_id": "agent_b",
+            "role": "responder",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_b"
+          }
+        ],
+        "meta": {
+          "category": "electronics.cameras",
+          "value_range": "1000-5000_USD",
+          "extensions_used": [],
+          "mediator_invoked": false
+        },
+        "transcript_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "fulfillment": null
+      },
+      "expected": []
+    },
+    {
+      "name": "v010_missing_required_validity_rejected",
+      "attestation": {
+        "concordia_attestation": "0.10.0",
+        "attestation_id": "att_valid",
+        "session_id": "ses_valid",
+        "timestamp": "2026-05-10T14:22:08Z",
+        "outcome": {
+          "status": "agreed",
+          "rounds": 2,
+          "duration_seconds": 60,
+          "terms_count": 3,
+          "resolution_mechanism": "direct"
+        },
+        "parties": [
+          {
+            "agent_id": "agent_a",
+            "role": "initiator",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_a"
+          },
+          {
+            "agent_id": "agent_b",
+            "role": "responder",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_b"
+          }
+        ],
+        "meta": {
+          "category": "electronics.cameras",
+          "value_range": "1000-5000_USD",
+          "extensions_used": [],
+          "mediator_invoked": false
+        },
+        "transcript_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "fulfillment": null
+      },
+      "expected": [
+        "$: 'validity_temporal' is a required property"
+      ]
+    },
+    {
+      "name": "v100_missing_required_validity_rejected",
+      "attestation": {
+        "concordia_attestation": "1.0.0",
+        "attestation_id": "att_valid",
+        "session_id": "ses_valid",
+        "timestamp": "2026-05-10T14:22:08Z",
+        "outcome": {
+          "status": "agreed",
+          "rounds": 2,
+          "duration_seconds": 60,
+          "terms_count": 3,
+          "resolution_mechanism": "direct"
+        },
+        "parties": [
+          {
+            "agent_id": "agent_a",
+            "role": "initiator",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_a"
+          },
+          {
+            "agent_id": "agent_b",
+            "role": "responder",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_b"
+          }
+        ],
+        "meta": {
+          "category": "electronics.cameras",
+          "value_range": "1000-5000_USD",
+          "extensions_used": [],
+          "mediator_invoked": false
+        },
+        "transcript_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "fulfillment": null
+      },
+      "expected": [
+        "$: 'validity_temporal' is a required property"
+      ]
+    },
+    {
+      "name": "countersignature_empty_property_name_rejected",
+      "attestation": {
+        "concordia_attestation": "0.5.0",
+        "attestation_id": "att_valid",
+        "session_id": "ses_valid",
+        "timestamp": "2026-05-10T14:22:08Z",
+        "outcome": {
+          "status": "agreed",
+          "rounds": 2,
+          "duration_seconds": 60,
+          "terms_count": 3,
+          "resolution_mechanism": "direct"
+        },
+        "parties": [
+          {
+            "agent_id": "agent_a",
+            "role": "initiator",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_a"
+          },
+          {
+            "agent_id": "agent_b",
+            "role": "responder",
+            "behavior": {
+              "offers_made": 1,
+              "concessions": 0,
+              "concession_magnitude": 0,
+              "signals_shared": 0,
+              "constraints_declared": 0,
+              "constraints_violated": 0,
+              "reasoning_provided": true,
+              "withdrawal": false
+            },
+            "signature": "sig_b"
+          }
+        ],
+        "meta": {
+          "category": "electronics.cameras",
+          "value_range": "1000-5000_USD",
+          "extensions_used": [],
+          "mediator_invoked": false
+        },
+        "transcript_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "fulfillment": null,
+        "validity_temporal": {
+          "mode": "absolute",
+          "from": "2026-05-10T14:22:08Z",
+          "until": "2026-08-08T14:22:08Z"
+        },
+        "countersignatures": {
+          "": "sig"
+        }
+      },
+      "expected": [
+        "$.countersignatures: violates 'minLength' constraint: 1"
+      ]
     }
   ]
 }

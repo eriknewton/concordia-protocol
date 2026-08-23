@@ -54,7 +54,7 @@ class TestAttestationGeneration:
             category="electronics.cameras",
             value_range="100-500_USD",
         )
-        assert att["concordia_attestation"] == "0.3.0"
+        assert att["concordia_attestation"] == "0.5.0"
         assert att["outcome"]["status"] == "agreed"
         assert att["outcome"]["rounds"] >= 1
         assert att["outcome"]["resolution_mechanism"] == "direct"
