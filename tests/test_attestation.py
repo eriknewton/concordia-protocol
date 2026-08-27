@@ -4,6 +4,7 @@ from copy import deepcopy
 
 import pytest
 
+import concordia.receipt_bundle as receipt_bundle
 from concordia import (
     Agent,
     BasicOffer,
@@ -187,6 +188,27 @@ class TestAttestationVerification:
 
         assert result.valid is False
         assert any("countersignature" in error for error in result.signature_errors)
+
+    def test_verify_attestation_fails_closed_on_undiagnosed_binding_error(
+        self, agreed_session, monkeypatch
+    ):
+        session, seller, buyer = agreed_session
+        key_pairs = {"seller_01": seller.key_pair, "buyer_42": buyer.key_pair}
+        att = generate_attestation(session, key_pairs)
+        public_keys = {
+            agent_id: key_pair.public_key
+            for agent_id, key_pair in key_pairs.items()
+        }
+        monkeypatch.setattr(
+            receipt_bundle,
+            "evaluate_outcome_binding",
+            lambda *_: ("error", None),
+        )
+
+        result = verify_attestation(att, public_keys)
+
+        assert result.valid is False
+        assert "attestation outcome binding failed" in result.signature_errors
 
     def test_verify_attestation_fails_closed_on_malformed_input(self):
         result = verify_attestation({"parties": "not-a-list"}, {})

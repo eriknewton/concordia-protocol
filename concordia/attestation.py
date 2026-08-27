@@ -717,8 +717,10 @@ def verify_attestation(
             attestation,
             lambda agent_id: public_keys.get(agent_id),
         )
-        if outcome_binding_state == "error" and outcome_binding_error is not None:
-            signature_errors.append(outcome_binding_error)
+        if outcome_binding_state == "error":
+            signature_errors.append(
+                outcome_binding_error or "attestation outcome binding failed"
+            )
         elif outcome_binding_state == "unbound":
             warnings.append(
                 "attestation is legacy outcome-unbound (<0.2.0); outcome is "
