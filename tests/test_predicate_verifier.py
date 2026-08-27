@@ -72,6 +72,8 @@ def test_wrong_subject() -> None:
     signed = _signed(metadata={"expected_subject": "did:web:other.example#agent"})
     result = verify_predicate(signed)
     assert result.failure_reason == "wrong_subject"
+    assert result.checks["signature"] is True
+    _assert_identity_authenticated(result)
 
 
 def test_resolver_miss() -> None:
@@ -125,6 +127,8 @@ def test_missing_signature_is_bad_signature() -> None:
 def test_suspended_maps_to_revoked_failure() -> None:
     result = verify_predicate(_signed(status="suspended"))
     assert result.failure_reason == "revoked"
+    assert result.checks["signature"] is True
+    _assert_identity_authenticated(result)
 
 
 def test_invalid_public_key_metadata_is_unknown_authority() -> None:

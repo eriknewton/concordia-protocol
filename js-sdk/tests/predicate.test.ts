@@ -329,6 +329,12 @@ describe('Predicate - verified identity is signature-authenticated', () => {
   it.each([
     ['expired', { expires_at: '2000-01-01T00:00:00Z' }, 'expired'],
     ['revoked', { status: 'revoked' }, 'revoked'],
+    ['suspended', { status: 'suspended' }, 'revoked'],
+    [
+      'wrong_subject',
+      { metadata: { expected_subject: 'did:web:other.example#agent' } },
+      'wrong_subject',
+    ],
   ])('retains identity for an authenticated %s predicate', (_name, overrides, reason) => {
     const signed = signPredicate(baseSigningInput(overrides), KeyPair.generate());
     const result = verifyPredicate(signed);
