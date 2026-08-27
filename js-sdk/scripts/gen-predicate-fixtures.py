@@ -29,14 +29,12 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from concordia import signing
 from concordia.attestation import _validate_reference
 from concordia.predicate import (
-    Predicate,
     serialize_predicate_canonical,
     sign_predicate,
     validate_predicate_for_write,
     verify_predicate,
 )
 from concordia.predicate_type_profiles import (
-    get_predicate_type_profile,
     validate_condition_for_profile,
 )
 
@@ -302,14 +300,12 @@ def main() -> None:
     ).to_dict()
     verify_fail_cases.append(_verify_case("expired_by_timestamp", expired))
 
-    # Status revoked -> REVOKED.
-    revoked = sign_predicate(_base_predicate(), kp).to_dict()
-    revoked["status"] = "revoked"
+    # Authenticated status revoked -> REVOKED while retaining verified identity.
+    revoked = sign_predicate(_base_predicate(status="revoked"), kp).to_dict()
     verify_fail_cases.append(_verify_case("status_revoked", revoked))
 
-    # Status suspended -> REVOKED reason.
-    suspended = sign_predicate(_base_predicate(), kp).to_dict()
-    suspended["status"] = "suspended"
+    # Authenticated status suspended -> REVOKED while retaining verified identity.
+    suspended = sign_predicate(_base_predicate(status="suspended"), kp).to_dict()
     verify_fail_cases.append(_verify_case("status_suspended", suspended))
 
     # expected_subject mismatch in metadata -> WRONG_SUBJECT.
