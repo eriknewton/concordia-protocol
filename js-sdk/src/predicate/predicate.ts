@@ -340,13 +340,14 @@ function failResult(
   checks: Record<string, boolean> = {},
   warnings: string[] = [],
 ): PredicateVerificationResult {
+  const identityAuthenticated = checks.signature === true;
   return {
     valid: false,
     failure_reason: reason,
     predicate_id: predicate ? predicate.predicate_id : null,
     issuer: predicate ? predicate.issuer : null,
-    verified_subject: predicate ? predicate.subject : null,
-    verified_authority: predicate ? predicate.authority : null,
+    verified_subject: predicate && identityAuthenticated ? predicate.subject : null,
+    verified_authority: predicate && identityAuthenticated ? predicate.authority : null,
     checks,
     errors: [error],
     warnings,

@@ -283,6 +283,64 @@ describe('Predicate - sign/verify round-trip with a fresh key', () => {
   });
 });
 
+describe('Predicate - verified identity is signature-authenticated', () => {
+  it('withholds identity on schema, resolver, authority, and signature failures', () => {
+    const kp = KeyPair.generate();
+    const signed = signPredicate(baseSigningInput(), kp);
+
+    const schemaFailure = verifyPredicate({ predicate_id: 'not-enough' });
+
+    const resolverInput = signPredicate(
+      baseSigningInput({
+        references: [
+          {
+            type: 'predicate',
+            id: 'urn:concordia:predicate:missing-parent',
+            relationship: 'references',
+          },
+        ],
+      }),
+      kp,
+    );
+    const resolverFailure = verifyPredicate(resolverInput, { resolver: () => null });
+
+    const unknownAuthority = signed.toDict();
+    delete unknownAuthority.metadata;
+    const authorityFailure = verifyPredicate(unknownAuthority);
+
+    const tampered = signed.toDict();
+    tampered.subject = 'did:web:attacker.example#agent';
+    tampered.authority = 'urn:concordia:authority:attacker';
+    const signatureFailure = verifyPredicate(tampered);
+
+    for (const [result, reason] of [
+      [schemaFailure, 'schema_invalid'],
+      [resolverFailure, 'resolver_miss'],
+      [authorityFailure, 'unknown_authority'],
+      [signatureFailure, 'bad_signature'],
+    ] as const) {
+      expect(result.failure_reason).toBe(reason);
+      expect(result.verified_subject).toBeNull();
+      expect(result.verified_authority).toBeNull();
+    }
+    expect(signatureFailure.checks.signature).toBe(false);
+  });
+
+  it.each([
+    ['expired', { expires_at: '2000-01-01T00:00:00Z' }, 'expired'],
+    ['revoked', { status: 'revoked' }, 'revoked'],
+  ])('retains identity for an authenticated %s predicate', (_name, overrides, reason) => {
+    const signed = signPredicate(baseSigningInput(overrides), KeyPair.generate());
+    const result = verifyPredicate(signed);
+
+    expect(result.valid).toBe(false);
+    expect(result.failure_reason).toBe(reason);
+    expect(result.checks.signature).toBe(true);
+    expect(result.verified_subject).toBe('did:web:buyer.example#agent');
+    expect(result.verified_authority).toBe('urn:concordia:authority:procurement');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // FINDING #3 (fail-OPEN, fixed): year-9999 expiry overflow in the predicate
 // verifier. A year-9999 (or year-0001) expires_at/issued_at with a tz offset

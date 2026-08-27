@@ -1,9 +1,19 @@
 from __future__ import annotations
 
-from dataclasses import replace
-
 from concordia.predicate import Predicate, sign_predicate, verify_predicate
 from concordia.signing import KeyPair
+
+
+def _assert_identity_unauthenticated(result) -> None:
+    assert result.valid is False
+    assert result.verified_subject is None
+    assert result.verified_authority is None
+
+
+def _assert_identity_authenticated(result) -> None:
+    assert result.valid is False
+    assert result.verified_subject == "did:web:subject.example#agent"
+    assert result.verified_authority == "urn:concordia:authority:policy"
 
 
 def _signed(**overrides) -> Predicate:
@@ -32,16 +42,21 @@ def test_happy_path() -> None:
 def test_schema_invalid() -> None:
     result = verify_predicate({"predicate_id": "not-enough"})
     assert result.failure_reason == "schema_invalid"
+    _assert_identity_unauthenticated(result)
 
 
 def test_expired() -> None:
     result = verify_predicate(_signed(expires_at="2026-01-01T00:00:00Z"))
     assert result.failure_reason == "expired"
+    assert result.checks["signature"] is True
+    _assert_identity_authenticated(result)
 
 
 def test_revoked() -> None:
     result = verify_predicate(_signed(status="revoked"))
     assert result.failure_reason == "revoked"
+    assert result.checks["signature"] is True
+    _assert_identity_authenticated(result)
 
 
 def test_unknown_authority() -> None:
@@ -49,6 +64,8 @@ def test_unknown_authority() -> None:
     signed.pop("metadata")
     result = verify_predicate(signed)
     assert result.failure_reason == "unknown_authority"
+    assert "signature" not in result.checks
+    _assert_identity_unauthenticated(result)
 
 
 def test_wrong_subject() -> None:
@@ -69,6 +86,8 @@ def test_resolver_miss() -> None:
     )
     result = verify_predicate(signed, resolver=lambda _predicate_id: None)
     assert result.failure_reason == "resolver_miss"
+    assert "signature" not in result.checks
+    _assert_identity_unauthenticated(result)
 
 
 def test_ref_mismatch() -> None:
@@ -84,11 +103,14 @@ def test_ref_mismatch() -> None:
     other = _signed(predicate_id="urn:concordia:predicate:other")
     result = verify_predicate(signed, resolver=lambda _predicate_id: other)
     assert result.failure_reason == "ref_mismatch"
+    assert "signature" not in result.checks
+    _assert_identity_unauthenticated(result)
 
 
 def test_verify_predicate_id_without_resolver_is_resolver_miss() -> None:
     result = verify_predicate("urn:concordia:predicate:missing")
     assert result.failure_reason == "resolver_miss"
+    _assert_identity_unauthenticated(result)
 
 
 def test_missing_signature_is_bad_signature() -> None:
@@ -96,6 +118,8 @@ def test_missing_signature_is_bad_signature() -> None:
     signed["signature"] = ""
     result = verify_predicate(signed)
     assert result.failure_reason == "bad_signature"
+    assert "signature" not in result.checks
+    _assert_identity_unauthenticated(result)
 
 
 def test_suspended_maps_to_revoked_failure() -> None:
@@ -108,6 +132,8 @@ def test_invalid_public_key_metadata_is_unknown_authority() -> None:
     signed["metadata"]["issuer_public_key_b64"] = "not-valid"
     result = verify_predicate(signed)
     assert result.failure_reason == "unknown_authority"
+    assert "signature" not in result.checks
+    _assert_identity_unauthenticated(result)
 
 
 def test_schema_edges_report_schema_invalid() -> None:
@@ -121,3 +147,14 @@ def test_schema_edges_report_schema_invalid() -> None:
     base["expires_at"] = 1
     result = verify_predicate(base)
     assert result.failure_reason == "schema_invalid"
+    _assert_identity_unauthenticated(result)
+
+
+def test_tampered_identity_is_not_reported_as_verified() -> None:
+    signed = _signed().to_dict()
+    signed["subject"] = "did:web:attacker.example#agent"
+    signed["authority"] = "urn:concordia:authority:attacker"
+    result = verify_predicate(signed)
+    assert result.failure_reason == "bad_signature"
+    assert result.checks["signature"] is False
+    _assert_identity_unauthenticated(result)

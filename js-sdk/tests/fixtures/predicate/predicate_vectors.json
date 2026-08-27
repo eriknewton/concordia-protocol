@@ -415,8 +415,8 @@
       "expected_verify": {
         "valid": false,
         "failure_reason": "bad_signature",
-        "verified_subject": "did:web:attacker.example#agent",
-        "verified_authority": "urn:concordia:authority:procurement",
+        "verified_subject": null,
+        "verified_authority": null,
         "predicate_id": "urn:concordia:predicate:pred_min_001",
         "issuer": "did:web:issuer.example#key-1",
         "checks": {
@@ -456,8 +456,8 @@
       "expected_verify": {
         "valid": false,
         "failure_reason": "bad_signature",
-        "verified_subject": "did:web:buyer.example#agent",
-        "verified_authority": "urn:concordia:authority:procurement",
+        "verified_subject": null,
+        "verified_authority": null,
         "predicate_id": "urn:concordia:predicate:pred_min_001",
         "issuer": "did:web:issuer.example#key-1",
         "checks": {
@@ -497,8 +497,8 @@
       "expected_verify": {
         "valid": false,
         "failure_reason": "bad_signature",
-        "verified_subject": "did:web:buyer.example#agent",
-        "verified_authority": "urn:concordia:authority:procurement",
+        "verified_subject": null,
+        "verified_authority": null,
         "predicate_id": "urn:concordia:predicate:pred_min_001",
         "issuer": "did:web:issuer.example#key-1",
         "checks": {
@@ -534,8 +534,8 @@
       "expected_verify": {
         "valid": false,
         "failure_reason": "unknown_authority",
-        "verified_subject": "did:web:buyer.example#agent",
-        "verified_authority": "urn:concordia:authority:procurement",
+        "verified_subject": null,
+        "verified_authority": null,
         "predicate_id": "urn:concordia:predicate:pred_min_001",
         "issuer": "did:web:issuer.example#key-1",
         "checks": {
@@ -608,14 +608,14 @@
         "references": [],
         "algorithm": "EdDSA",
         "status": "revoked",
-        "signature": "I0p-RetUr_FByQPGIOnhifIw3Z8oPUfeL1rZKm1XQndVfXUO-Qdh--x73ozjSjOvyGcQ-tWGSbh-8QEmi3fWAQ==",
+        "signature": "9LSOpF3ZHeJY9JTS_cn_ai0iOWuIIeOv8PyWidL5nmjUUDz6uEgxDsdh6nRa92gFAu2GY0ufLZbKknpkuGKBCg==",
         "metadata": {
           "issuer_public_key_b64": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg="
         }
       },
       "expected_verify": {
         "valid": false,
-        "failure_reason": "bad_signature",
+        "failure_reason": "revoked",
         "verified_subject": "did:web:buyer.example#agent",
         "verified_authority": "urn:concordia:authority:procurement",
         "predicate_id": "urn:concordia:predicate:pred_min_001",
@@ -623,10 +623,11 @@
         "checks": {
           "schema": true,
           "profile_condition": true,
-          "signature": false
+          "signature": true,
+          "lifecycle": false
         },
         "errors": [
-          "invalid predicate signature"
+          "predicate revoked"
         ],
         "warnings": [],
         "revoked_at": null,
@@ -649,14 +650,14 @@
         "references": [],
         "algorithm": "EdDSA",
         "status": "suspended",
-        "signature": "I0p-RetUr_FByQPGIOnhifIw3Z8oPUfeL1rZKm1XQndVfXUO-Qdh--x73ozjSjOvyGcQ-tWGSbh-8QEmi3fWAQ==",
+        "signature": "I3k9aEHtgdk4V5OB50cYxplTjm9KSvxRxrvC6kKE1nsMkHDFkzK_Oadav4ITxfCfZUWNgvETs18tZqFrKvdPCw==",
         "metadata": {
           "issuer_public_key_b64": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg="
         }
       },
       "expected_verify": {
         "valid": false,
-        "failure_reason": "bad_signature",
+        "failure_reason": "revoked",
         "verified_subject": "did:web:buyer.example#agent",
         "verified_authority": "urn:concordia:authority:procurement",
         "predicate_id": "urn:concordia:predicate:pred_min_001",
@@ -664,10 +665,11 @@
         "checks": {
           "schema": true,
           "profile_condition": true,
-          "signature": false
+          "signature": true,
+          "lifecycle": false
         },
         "errors": [
-          "invalid predicate signature"
+          "predicate suspended"
         ],
         "warnings": [],
         "revoked_at": null,

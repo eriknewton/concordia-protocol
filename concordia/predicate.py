@@ -165,13 +165,18 @@ def _fail(
     checks: dict[str, bool] | None = None,
     warnings: list[str] | None = None,
 ) -> PredicateVerificationResult:
+    identity_authenticated = checks is not None and checks.get("signature") is True
     return PredicateVerificationResult(
         valid=False,
         failure_reason=reason.value,
         predicate_id=predicate.predicate_id if predicate else None,
         issuer=predicate.issuer if predicate else None,
-        verified_subject=predicate.subject if predicate else None,
-        verified_authority=predicate.authority if predicate else None,
+        verified_subject=(
+            predicate.subject if predicate and identity_authenticated else None
+        ),
+        verified_authority=(
+            predicate.authority if predicate and identity_authenticated else None
+        ),
         checks=checks or {},
         errors=[error],
         warnings=warnings or [],
