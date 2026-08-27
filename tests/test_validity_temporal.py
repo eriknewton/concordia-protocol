@@ -15,8 +15,12 @@ from concordia import (
     BasicOffer,
     SessionState,
     generate_attestation,
-    is_valid_now,
     is_valid_attestation,
+    is_valid_now,
+)
+from concordia.attestation import (
+    ATTESTATION_VERSION,
+    DEFAULT_ATTESTATION_VALIDITY_SECONDS,
 )
 
 
@@ -167,12 +171,53 @@ class TestValidityTemporalWindow:
             generate_attestation(session, kps, validity_temporal=vt)
 
 
-class TestValidityTemporalAbsent:
-    def test_default_has_no_field(self, session_pair):
+class TestValidityTemporalDefault:
+    def test_default_is_a_required_90_day_absolute_window(self, session_pair):
         session, kps = session_pair
         att = generate_attestation(session, kps)
-        assert "validity_temporal" not in att
+        assert att["concordia_attestation"] == ATTESTATION_VERSION == "0.5.0"
+        validity = att["validity_temporal"]
+        assert validity["mode"] == "absolute"
+        assert validity["from"] == att["timestamp"]
+        assert (
+            datetime.fromisoformat(validity["until"].replace("Z", "+00:00"))
+            - datetime.fromisoformat(validity["from"].replace("Z", "+00:00"))
+        ).total_seconds() == DEFAULT_ATTESTATION_VALIDITY_SECONDS
         assert is_valid_now(att)
+
+    def test_v05_missing_required_window_fails_closed(self):
+        assert not is_valid_now({"concordia_attestation": "0.5.0"})
+
+    def test_pre_v05_missing_window_remains_legacy_readable(self):
+        assert is_valid_now({"concordia_attestation": "0.4.0"})
+
+    @pytest.mark.parametrize(
+        "validity",
+        [
+            {
+                "mode": "absolute",
+                "from": "2026-01-01T00:00:00Z",
+                "until": "2026-04-02T00:00:01Z",
+            },
+            {
+                "mode": "relative",
+                "from": "2026-01-01T00:00:00Z",
+                "duration_seconds": DEFAULT_ATTESTATION_VALIDITY_SECONDS + 1,
+            },
+            {
+                "mode": "window",
+                "start": "2026-01-01T00:00:00Z",
+                "end": "2026-04-02T00:00:01Z",
+                "duration_seconds": 1,
+            },
+        ],
+    )
+    def test_reference_issuer_refuses_windows_over_90_days(
+        self, session_pair, validity
+    ):
+        session, kps = session_pair
+        with pytest.raises(ValueError, match="maximum lifetime of 7776000 seconds"):
+            generate_attestation(session, kps, validity_temporal=validity)
 
 
 class TestValidityTemporalInvalidMode:

@@ -1017,7 +1017,7 @@ def _mint_bound_attestation(
 
     key_pairs = {seller_id: seller.key_pair, buyer_id: buyer.key_pair}
     att = generate_attestation(session, key_pairs, category=category)
-    assert att["concordia_attestation"] == "0.3.0"
+    assert att["concordia_attestation"] == "0.5.0"
     assert isinstance(att.get("countersignatures"), dict) and att["countersignatures"]
     return att
 

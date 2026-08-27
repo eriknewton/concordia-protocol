@@ -49,7 +49,6 @@ from concordia.types import (
     ResolutionMechanism,
 )
 
-
 # Deterministic seeds so the fixtures are reproducible across runs and machines.
 SEED_A = bytes(range(32))
 SEED_B = bytes(range(100, 132))
@@ -784,6 +783,31 @@ def main() -> None:
             "duration_seconds": 60,
         },
     )
+    _vt_err(
+        "absolute_over_reference_maximum",
+        {
+            "mode": "absolute",
+            "from": "2026-01-01T00:00:00Z",
+            "until": "2026-04-02T00:00:01Z",
+        },
+    )
+    _vt_err(
+        "relative_over_reference_maximum",
+        {
+            "mode": "relative",
+            "from": "2026-01-01T00:00:00Z",
+            "duration_seconds": 7_776_001,
+        },
+    )
+    _vt_err(
+        "window_over_reference_maximum",
+        {
+            "mode": "window",
+            "start": "2026-01-01T00:00:00Z",
+            "end": "2026-04-02T00:00:01Z",
+            "duration_seconds": 1,
+        },
+    )
 
     # ------------------------------------------------------------------
     # is_valid_now: temporal containment.
@@ -838,6 +862,11 @@ def main() -> None:
     _valid_now("window_before", WIN, "2025-12-31T00:00:00Z")
 
     _valid_now("no_constraint", {}, "2026-01-01T00:00:00Z")
+    _valid_now(
+        "v05_missing_required_constraint",
+        {"concordia_attestation": "0.5.0"},
+        "2026-01-01T00:00:00Z",
+    )
     _valid_now("vt_not_dict", {"validity_temporal": "nope"}, "2026-01-01T00:00:00Z")
     _valid_now("vt_no_mode", {"validity_temporal": {}}, "2026-01-01T00:00:00Z")
     _valid_now(

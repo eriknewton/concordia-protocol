@@ -36,6 +36,8 @@ The name is from the Latin *concordia*: harmony, agreement, literally, "hearts t
 9. [Security and Trust Model](#9-security-and-trust-model)
    - 9.1-9.5: Identity, Integrity, Confidentiality, Anti-Abuse
    - 9.6: [Reputation Attestations](#96-reputation-attestations) *(core feature)*
+   - 9.7: Relying-Side Verification Obligations (freshness and replay)
+   - 9.8: Security Considerations by Threat Actor
 10. [Integration with Existing Protocols](#10-integration-with-existing-protocols)
 11. [Extension Points](#11-extension-points)
 12. [Conformance Requirements](#12-conformance-requirements)
@@ -206,6 +208,8 @@ An agreement contains:
 - A timestamp
 - An expiration (after which the agreement is void if not settled)
 - References to settlement protocols (how payment will occur)
+
+**The agreement's schema-citable signed form.** The list above describes an agreement conceptually. Two different signed artifacts carry it on the wire, for two different audiences, and this specification does not define a third, standalone "agreement record" schema distinct from either. The parties themselves hold the actual term values in the final `negotiate.commit` messages (§4.1, §4.2), Ed25519-signed and hash-chained into the transcript (§9.2, §9.3, §9.2.1); this is where the real price, delivery date, and other term values live. A third party verifying that an agreement was reached, without needing or wanting to see those term values, uses the Reputation Attestation instead (§9.6.2, schema `$id` `urn:concordia:schema:attestation:v0.5`, `schemas/attestation.schema.json`): its `outcome`, `parties[*]`, `transcript_hash`, `chain_head`, and `message_count` fields, bound by the outcome-binding countersignature (§9.6.5a) and the receipt set-binding (§9.6.5b), are the standalone, schema-defined proof that a specific set of parties reached a specific outcome over a specific transcript, deliberately without exposing what was agreed (§9.6.6). Where a citable, third-party-verifiable evidence object for an agreement is needed and the audience is not a negotiating party, the attestation is that object.
 
 ---
 
@@ -380,6 +384,12 @@ The protocol tracks the **concession trajectory**: how each party's offers have 
 2. **Mediator input**: if a mediator is invoked, the concession trajectory is the primary input for proposing a resolution (§8).
 
 Concession is measured per-term as the distance between successive offers, normalized by the term's range. The protocol does not *enforce* concession, but it makes non-concession visible.
+
+### 5.5 Relationship to External Evidence-Request Challenges (Informative)
+
+This subsection is informative and additive. It names a compatible pattern with an external evidence-request challenge format; it does not define a new Concordia primitive, add a message type, add a session state, or add a required field, and Concordia does not depend on any such external format existing or continuing to exist.
+
+A relying party outside this specification may refuse an interaction with a structured challenge: which evidence it found insufficient, how fresh a replacement must be, what presentation it will accept, and whether the caller may retry. An agent that receives such a challenge and wants to reopen a Concordia negotiation with the missing evidence in hand has two existing message types available, unchanged: `negotiate.decline_session` (§4.2), available to the Responder while the session is still PROPOSED (§5.2), to end the current session with a stated reason, and, once a session is REJECTED or EXPIRED and flagged `reactivatable: true`, a DORMANT-state reactivation via a fresh `negotiate.offer` (§5.1, §5.2) once the requested evidence is assembled. Today `negotiate.decline_session`'s reason is free text (§4.2); this specification does not define a machine-readable outstanding-evidence vocabulary for it, so the correspondence above is a pattern match at the message-type level, not a structured field mapping. Defining such a vocabulary, if warranted, is future work for a later revision and is not part of this change.
 
 ---
 
@@ -741,7 +751,7 @@ Every completed negotiation session (regardless of outcome) MUST produce an atte
 
 ```json
 {
-  "concordia_attestation": "0.3.0",
+  "concordia_attestation": "0.5.0",
   "attestation_id": "att_a1b2c3d4",
   "session_id": "ses_9d4e8f01",
   "timestamp": "2026-03-21T14:04:00Z",
@@ -799,6 +809,12 @@ Every completed negotiation session (regardless of outcome) MUST produce an atte
   "message_count": 8,
 
   "fulfillment": null,
+
+  "validity_temporal": {
+    "mode": "absolute",
+    "from": "2026-03-21T14:04:00Z",
+    "until": "2026-06-19T14:04:00Z"
+  },
 
   "countersignatures": {
     "agent_seller_sf_01": "base64_ed25519_countersignature",
@@ -896,10 +912,11 @@ coexist; the canonical mapping between their status enums is in
 #### 9.6.4a Standalone Fulfillment Attestation (v0.5)
 
 A separate signed artifact emitted on a discrete delivery boundary.
-Designed for composition with A2CN's `DELIVERY_ACKNOWLEDGED` event
-and for settlement flows where delivery is signed by a party other
-than the original negotiation counterparties (delivery agent,
-mediator, etc.).
+Designed for composition with a proposed A2CN delivery-acknowledgment
+event (proposed integration semantics; not a mechanism defined in
+current A2CN v0.2) and for settlement flows where delivery is
+signed by a party other than the original negotiation
+counterparties (delivery agent, mediator, etc.).
 
 Schema: `schemas/fulfillment_attestation.schema.json`
 (`$id` `urn:concordia:schema:fulfillment_attestation:v0.5`).
@@ -941,7 +958,9 @@ Full integrator walkthrough with worked JSON examples:
 
 Standalone signed artifact recording a human-in-the-loop (HITL)
 authority's decision on a negotiation event that crossed a policy
-threshold. Pairs with A2CN Section 14 HITL pause-resume composition.
+threshold. Pairs with a proposed A2CN HITL pause-resume composition
+(proposed integration semantics; not a mechanism defined in current
+A2CN v0.2).
 
 Schema: `schemas/approval_receipt.schema.json`
 (`$id` `urn:concordia:schema:approval_receipt:v0.5`).
@@ -1158,13 +1177,18 @@ Version-gated verification is dual-accept. For `concordia_attestation` >= `0.3.0
 
 #### 9.6.6 Attestation Privacy
 
-Attestations are designed to reveal behavioral patterns without exposing deal specifics:
+Attestations are designed to reveal behavioral patterns without exposing deal specifics. **Included (informative):** outcome, timing, round count, concession patterns, behavioral signals. The enumerated list below is this section's normative restatement of the same privacy invariant, for direct citation; it changes presentation, not substance.
 
-- **Included:** Outcome, timing, round count, concession patterns, behavioral signals
-- **Excluded:** Specific term values, actual prices, item descriptions, agent reasoning text, principal identities
-- The `value_range` field uses logarithmic buckets rather than exact amounts. The bucket vocabulary is normative and enumerated: `0-100`, `100-500`, `500-1000`, `1000-5000`, `5000-10000`, `10000-50000`, `50000-100000`, `100000-500000`, `500000-1000000`, `1000000+`, each suffixed with `_` and a 3-letter uppercase currency code (e.g., "100-500_USD", "1000-5000_USD"). Issuers MUST reject any other value rather than coerce it; an enumerated vocabulary (not a free range grammar) is required so an exact price cannot be encoded as a degenerate range such as "4350-4351_USD"
-- Category is included at a coarse level as a dotted lowercase taxonomy path of at most 64 chars (e.g., "electronics.cameras"); issuers MUST reject free text. Agents MAY omit it for additional privacy
-- Reference strings are length-capped and whitespace-free at issuance (see 11.5.6) so the references surface cannot carry free-text deal terms either
+1. An attestation issuer MUST NOT populate any field with a specific negotiated term value (an exact price, quantity, date, or other negotiated figure).
+2. An attestation issuer MUST NOT populate any field with an item or service description beyond the bucketed `category` and `value_range` fields defined below.
+3. An attestation issuer MUST NOT populate any field with the free-text `reasoning` content from any negotiation message.
+4. An attestation issuer MUST NOT populate any field with a principal identity (the human or organization an agent represents); only the agent_id is carried.
+5. The `value_range` field, when present, MUST be drawn from the fixed bucket vocabulary: `0-100`, `100-500`, `500-1000`, `1000-5000`, `5000-10000`, `10000-50000`, `50000-100000`, `100000-500000`, `500000-1000000`, `1000000+`, each suffixed with `_` and a 3-letter uppercase currency code (for example `100-500_USD`, `1000-5000_USD`).
+6. Issuers MUST reject any `value_range` value outside that vocabulary rather than coerce it. An enumerated vocabulary, not a free-range grammar, is required so an exact price cannot be encoded as a degenerate range such as `4350-4351_USD`.
+7. The `category` field, when present, MUST be a dotted lowercase taxonomy path of at most 64 characters (for example `electronics.cameras`).
+8. Issuers MUST reject free text in `category`.
+9. Agents MAY omit `category` entirely for additional privacy.
+10. Reference strings MUST be length-capped and whitespace-free at issuance (§11.5.6), so the `references[]` surface cannot carry free-text deal terms either.
 
 **Known residual channel (bounded, accepted):** the `category` taxonomy grammar constrains shape, not meaning, so an issuer can still encode its own terms inside conforming segments (for example, `price_4350_usd` is a valid taxonomy path). This is a self-doxxing channel, not a counterparty privacy leak: each party signs only its own behavior record, so an issuer can leak only its OWN deal terms, never the counterparty's, and a counterparty's signature never endorses the issuer's `meta` content. Digit bans or segment allowlists are deliberately not applied because they would falsely reject legitimate taxonomies (e.g., "gpu.h100", "iso.9001"). A registered-taxonomy scheme, where conforming categories must come from a published vocabulary, is a possible future mitigation and is out of scope for this version.
 
@@ -1269,28 +1293,150 @@ The protocol's relationship to reputation scoring services mirrors the relations
 
 Multiple reputation services can coexist, each with different scoring models optimized for different contexts. A service optimized for high-value B2B procurement will weight different signals than one optimized for casual P2P goods transactions. This diversity is deliberate; it mirrors how the real world keeps multiple trust signals (credit scores, Yelp reviews, LinkedIn endorsements, personal references) for different contexts.
 
+### 9.7 Relying-Side Verification Obligations (Freshness and Replay)
+
+#### 9.7.1 General Principle
+
+A signature over a deterministic artifact proves who signed it and exactly which bytes were signed. It does not, by itself, prove that the signed claim is still true at the moment a relying party acts on it: if the bytes a signer produces are fully determined by inputs that do not change, a valid signature captured once remains valid to present again later, after the state it described has moved on.
+
+- A relying party MUST enforce its own bound on how old accepted evidence may be, independent of whatever validity window the signer chose to assert.
+- A relying party MUST NOT treat a currently-valid signature as proof that the signed claim remains true.
+- Where this specification defines a signer-asserted validity window (§9.7.3), that window is the signer's own ceiling on the claim, not a floor the relying party is obligated to accept in full; a relying party MAY apply a tighter bound of its own.
+
+The relying side additionally carries a bounded clock-skew obligation. When a signer-asserted anchor timestamp, a `from`, `start`, `timestamp`, or `issued_at` value, is future-dated beyond a bounded clock-skew allowance, the relying party MUST reject the artifact outright rather than accept it with a warning. The allowance's exact size is an implementation parameter; exceeding it MUST fail closed, since an unbounded allowance for clock disagreement lets a signer manufacture apparent freshness by asserting a timestamp that has not yet arrived.
+
+The generating side carries a matching obligation, distinct from the relying-side bounds above. A signer MUST NOT sign a validity window whose lifetime (the span the window covers regardless of mode: `until` minus `from` for `absolute`, `duration_seconds` for `relative`, `end` minus `start` for `window`) exceeds a maximum lifetime the signer's own policy states in advance. A relying party likewise MUST reject a window whose lifetime exceeds the maximum lifetime the relying party's own policy states, whatever the signer's policy declares. The relying-side bullets above govern what a relying party will accept; this clamp governs what a signer may assert in the first place, so a window's trust duration is bounded on both sides of the exchange rather than selected by the signer alone.
+
+This is a general discipline, not a single mechanism. §9.7.2 names where it is already enforced structurally; §9.7.3 resolves the one place in this specification where enforcement is currently uneven.
+
+#### 9.7.2 Existing Worked Instances
+
+Several artifacts already enforce §9.7.1 structurally:
+
+- **ApprovalReceipt (§9.6.4b).** `expires_at`, when present, MUST be honored, and verifiers MUST reject an expired receipt at verification time regardless of what the receipt itself claims.
+- **RevocationRecord (§9.6.4c).** Verifiers MUST NOT consider an artifact revoked before the record's own `effective_at` timestamp: a future-dated revocation does not take effect early. §9.6.4c states this one direction only; it does not itself state a rule for how long a past revocation remains presentable.
+- **Receipt set-binding (§9.6.5b).** `chain_head` and `message_count` close the neighboring failure mode: a splice that keeps every individual link's signature valid while silently dropping messages from the middle of the transcript. Set-binding applies the same discipline to transcript completeness rather than to clock time: a relying party cannot infer, from per-link validity alone, that it is holding the set the issuer actually countersigned.
+
+#### 9.7.3 `validity_temporal` Is REQUIRED on the Base Attestation
+
+The base Reputation Attestation (§9.6.2) carries a `validity_temporal` field (added v0.4.0, WP3): a tagged union over three modes, `absolute` (`from`/`until`), `relative` (`from`/`duration_seconds`), and `window` (`start`/`end`/`duration_seconds`, bounded within the `[start, end]` span). Before this revision, `validity_temporal` was the one artifact family in §9.6 where freshness coverage was uneven: ApprovalReceipt's `expires_at` is present-when-supplied and MUST be honored; the base attestation's equivalent field was optional, leaving a verifier that only checked signature validity nothing forcing it to also check currency.
+
+`validity_temporal` is REQUIRED on every base attestation: an attestation issued without a `validity_temporal` value carries no signer-asserted bound on its own currency, leaving every consuming relying party to either invent its own convention or skip the §9.7.1 freshness check entirely for that artifact. Making the field required does not by itself satisfy §9.7.1's relying-side obligation, since the relying party's own bound is still required regardless; it removes the ambiguity of an attestation that carries no signer-asserted window to bound against in the first place. The §9.6.2 worked example carries a `validity_temporal` value to match this requirement.
+
+*Implementation note (ruling: REQUIRED, Erik, 2026-08-16; executable 2026-08-21).* The v0.5 schema, Python reference SDK, JavaScript reference SDK, and conformance suite now enforce this requirement for newly issued v0.5 attestations. Both reference issuers default to an absolute 90-day window anchored at the attestation timestamp and refuse a caller-supplied window whose overall lifetime exceeds that declared issuer maximum. Pre-v0.5 artifacts remain readable as legacy signals, but they are not evidence that satisfies the v0.5 freshness requirement.
+
+### 9.8 Security Considerations by Threat Actor
+
+This section restates the security content of §9.1 through §9.7 by what an attacker can attempt, rather than by protocol feature, for direct citation as a filing's Security Considerations section. It states no new normative rule; every obligation named here is defined normatively at the cross-referenced section.
+
+**A malicious or dishonest counterparty (a party to the negotiation) can attempt to:**
+
+- Send a false or exaggerated behavioral record. Countered by outcome-binding countersignature (§9.6.5a): a bundle is credited as outcome-bound only when every listed party's countersignature verifies, so a single dishonest holder cannot rewrite `outcome.status` and re-sign alone.
+- Present a spliced or truncated transcript that keeps every individual message signature valid. Countered by receipt set-binding (§9.6.5b): the countersigned `chain_head` and `message_count` must match the presented transcript.
+- Retry an already-declined offer after crossing an approval threshold. Countered by ApprovalReceipt's binding `deny` decision (§9.6.4b): a deny is cryptographically binding the same way an approve is.
+- Present a revoked artifact as though it were still valid, either before or after the revocation's stated effective time. Countered by RevocationRecord's `effective_at` bound and bounded cascade traversal (§9.6.4c), and by the relying-side freshness obligation in §9.7.1.
+- Replay a stale, currently-valid signature as though the state it described were still current. Countered by §9.7 in general and by the specific mechanisms in §9.7.2.
+- Fabricate deal terms inside an attestation. Constrained: attestation issuance rejects free-text `category` and non-enumerated `value_range` values, and the schema carries no field for raw term values at all (§9.6.6 rules 1-9). A documented residual channel remains open (§9.6.6, "Known residual channel"): a conforming `category` segment can still encode an issuer's own terms, for example `price_4350_usd`, though only the issuer's own, never a counterparty's, since each party signs only its own behavior record.
+
+**A malicious or compromised transport intermediary (a relay, mailbox service, or any other delivery-path system) can attempt to:**
+
+- Read message content, including offer terms and the `reasoning` field. Concordia messages are signed but unencrypted (§9.4), a stated, permanent scope limit recorded there; deployments MUST NOT be described as end-to-end encrypted until payload encryption is specified and implemented.
+- Tamper with a message in transit. Countered by Ed25519 signing over canonical JSON (§9.2, §9.2.1): any modification invalidates the signature.
+- Deny or delay message delivery. Not fully countered: session and offer TTLs (§5.3) bound how long a party will wait, but availability against a hostile intermediary is outside this specification's scope.
+
+**An agent attempting to extract information without negotiating in good faith can attempt to:**
+
+- Open sessions, extract preference signals, and withdraw repeatedly. Addressed at the service level, not the protocol level (§9.5): a hosted service can flag and block this pattern, but the base protocol does not itself rate-limit or detect it beyond `max_rounds` (§5.3).
+- Hold a negotiation open indefinitely to deny the counterparty other opportunities. Countered by session TTL (§5.3, §9.5).
+
+**An agent attempting to evade identity-based limits or accumulate reputation across manufactured identities (Sybil behavior) can attempt to:**
+
+- Create multiple agent identities to spread activity across identities that each look new, evading rate limits, reputation history, or a block placed on a prior identity. Addressed at the service level (§9.5): a hosted service can require a verifiable identity or a staked deposit before allowing negotiation. Concordia's identity-agnostic posture (§9.1) means the base protocol itself does not verify real-world identity uniqueness; Sybil resistance is a deployment choice, not a protocol-level guarantee.
+
+This organization exists to support a filing's Security Considerations section; it is descriptive, not an additional normative layer over §9.1 through §9.7.
+
 ---
 
 ## 10. Integration with Existing Protocols
 
 ### 10.1 A2A (Agent-to-Agent)
 
-Concordia messages can be transported within A2A task messages. A Concordia negotiation maps to an A2A task with `type: "concordia.negotiation"`. The A2A Agent Card can advertise Concordia support:
+A2A carries Concordia through its extension mechanism. This section states that mechanism as A2A
+defines it today, and marks separately what Concordia proposes on top of it.
+
+**Status, so this is not read as more than it is.** No Concordia extension has been filed with or
+sponsored into `a2aproject`. The URI below is under Concordia's own domain, which is the correct
+place for it: the `https://a2a-protocol.org/extensions/` prefix is reserved for artifacts that have
+graduated to official status, and using it before that would be a false claim of standing.
+
+**Declaration.** An agent advertises Concordia by adding an `AgentExtension` entry to the
+`extensions` array inside its Agent Card's `AgentCapabilities` object. `capabilities` is the object
+that carries A2A's own capability flags (such as `streaming`) and the `extensions` array; it is not
+an array of Concordia capability records. Each `AgentExtension` entry carries `uri`, `description`,
+`required` and optional `params`:
 
 ```json
 {
   "name": "Seller Agent",
-  "capabilities": [
-    {
-      "protocol": "concordia",
-      "version": "0.1.0",
-      "role": "seller",
-      "categories": ["electronics", "furniture"],
-      "resolution_mechanisms": ["split", "foa", "tradeoff"]
-    }
-  ]
+  "capabilities": {
+    "streaming": true,
+    "extensions": [
+      {
+        "uri": "https://concordiaprotocol.dev/a2a-ext/negotiation/v1",
+        "description": "Structured multi-attribute negotiation to agreement",
+        "required": false,
+        "params": {
+          "role": "seller",
+          "categories": ["electronics", "furniture"],
+          "resolution_mechanisms": ["split", "foa", "tradeoff"]
+        }
+      }
+    ]
+  }
 }
 ```
+
+The `params` carry the matching facets of section 7 so a counterparty can tell from the card alone
+whether a negotiation is worth opening.
+
+`required` stays `false`. A2A gives this flag protocol-level meaning: when it is `true`, a client
+must understand and comply with the extension, and an agent that receives a request without the
+required extension activated must reject that request with the binding's extension-support error.
+A2A names this error `ExtensionSupportRequiredError`.
+A2A advises against marking data-only extensions required. Concordia negotiation is optional, so a
+client that does not support it should remain able to use the agent's ordinary A2A surface.
+
+The URI versions independently of the spec edition and of the `concordia:0.1.0` wire identifier. It
+changes only on a breaking change to the declaration or activation contract, on the same discipline
+the wire identifier already follows.
+
+**Activation.** Extensions are inactive by default, so an extension-unaware client gets ordinary A2A
+behaviour. A client activates Concordia by listing the URI in the `A2A-Extensions` request header, a
+comma-separated list. The agent activates what it supports and SHOULD echo the activated URIs in the
+`A2A-Extensions` response header. **An absent echo means the extension was not activated**, and a
+Concordia implementation MUST treat it that way rather than assuming activation and proceeding.
+
+```http
+POST /agents/seller HTTP/1.1
+Host: example.com
+Content-Type: application/json
+A2A-Extensions: https://concordiaprotocol.dev/a2a-ext/negotiation/v1
+```
+
+**What Concordia proposes on top (proposed integration semantics, not yet a filed extension).**
+
+- One Concordia envelope per message part, carried as its own object rather than spread across
+  carrier fields. The envelope is the unit that signatures cover.
+- **Correlation is by Concordia's own session identifier inside the payload, never by A2A task or
+  context identifier.** Task lifecycle is a carrier concept: a failed or cancelled task retracts no
+  offer, and a completed task concludes no negotiation. Many tasks may serve one negotiation. Tying
+  negotiation state to task state would let network conditions withdraw commitments.
+- Carrier metadata stays outside the signed bytes. A signature that covers a task identifier makes
+  an agreement verifiable only alongside the carrier's own records, which is the dependency the
+  attestation design exists to remove.
+
+Per A2A's own requirement, an extension must not bypass an agent's authentication or authorization
+checks. Concordia adds negotiation semantics; it grants no access it did not already have.
 
 ### 10.2 MCP (Model Context Protocol)
 

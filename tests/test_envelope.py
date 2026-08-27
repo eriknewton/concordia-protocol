@@ -213,6 +213,88 @@ class TestSignatureVerification:
 
         assert verify_envelope_signature(envelope, kp.public_key, "EdDSA") is False
 
+    @pytest.mark.parametrize(
+        ("key_factory", "selected_alg", "carried_alg"),
+        [
+            pytest.param(KeyPair.generate, "EdDSA", "ES256", id="eddsa"),
+            pytest.param(ES256KeyPair.generate, "ES256", "EdDSA", id="es256"),
+        ],
+    )
+    def test_signature_algorithm_label_must_match_verifier_selection(
+        self, key_factory, selected_alg, carried_alg
+    ):
+        _, attestation, _ = _make_agreed_session()
+        kp = key_factory()
+        envelope = build_trust_evidence_envelope(
+            attestation, kp, "did:web:test.ai", "key-1", "did:test:seller"
+        )
+        envelope["signature"]["alg"] = carried_alg
+
+        assert not verify_envelope_signature(envelope, kp.public_key, selected_alg)
+
+    @pytest.mark.parametrize(
+        ("key_factory", "alg"),
+        [
+            pytest.param(KeyPair.generate, "EdDSA", id="eddsa"),
+            pytest.param(ES256KeyPair.generate, "ES256", id="es256"),
+        ],
+    )
+    def test_signature_kid_must_match_signed_provider_kid(self, key_factory, alg):
+        _, attestation, _ = _make_agreed_session()
+        kp = key_factory()
+        envelope = build_trust_evidence_envelope(
+            attestation, kp, "did:web:test.ai", "key-1", "did:test:seller"
+        )
+        envelope["signature"]["kid"] = "different-key"
+
+        assert not verify_envelope_signature(envelope, kp.public_key, alg)
+
+    def test_unsupported_verifier_algorithm_fails_closed(self):
+        _, attestation, _ = _make_agreed_session()
+        kp = KeyPair.generate()
+        envelope = build_trust_evidence_envelope(
+            attestation, kp, "did:web:test.ai", "key-1", "did:test:seller"
+        )
+
+        assert not verify_envelope_signature(envelope, kp.public_key, "Ed25519")
+
+    @pytest.mark.parametrize(
+        ("case", "replacement"),
+        [
+            pytest.param("signature", [], id="signature-not-object"),
+            pytest.param("alg", 1, id="alg-not-string"),
+            pytest.param("kid", 1, id="kid-not-string"),
+            pytest.param("value", 1, id="value-not-string"),
+            pytest.param("provider", [], id="provider-not-object"),
+            pytest.param("provider_kid", 1, id="provider-kid-not-string"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("key_factory", "alg"),
+        [
+            pytest.param(KeyPair.generate, "EdDSA", id="eddsa"),
+            pytest.param(ES256KeyPair.generate, "ES256", id="es256"),
+        ],
+    )
+    def test_signature_label_shapes_fail_closed(
+        self, key_factory, alg, case, replacement
+    ):
+        _, attestation, _ = _make_agreed_session()
+        kp = key_factory()
+        envelope = build_trust_evidence_envelope(
+            attestation, kp, "did:web:test.ai", "key-1", "did:test:seller"
+        )
+        if case == "signature":
+            envelope["signature"] = replacement
+        elif case == "provider":
+            envelope["provider"] = replacement
+        elif case == "provider_kid":
+            envelope["provider"]["kid"] = replacement
+        else:
+            envelope["signature"][case] = replacement
+
+        assert not verify_envelope_signature(envelope, kp.public_key, alg)
+
 
 # ---------------------------------------------------------------------------
 # Field mapping accuracy

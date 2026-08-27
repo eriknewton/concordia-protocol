@@ -16,7 +16,7 @@ import tempfile
 import warnings
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal, TypeAlias
 
@@ -44,6 +44,7 @@ from concordia.agent_profile import (  # noqa: E402
     TrustSignals,
 )
 from concordia.attestation import (  # noqa: E402
+    DEFAULT_ATTESTATION_VALIDITY_SECONDS,
     countersign_attestation,
     verify_attestation,
     verify_attestation_countersignature,
@@ -150,6 +151,7 @@ GENERATED_CHECK_EXCLUDED_FILES = {
 
 INTEROP_1404 = REPO_ROOT / "docs" / "interop" / "a2a-1404-receipt-revocation-vector"
 INTEROP_1920 = REPO_ROOT / "docs" / "interop" / "a2a-1920-fulfillment-sample"
+INTEROP_1734 = REPO_ROOT / "docs" / "interop" / "a2a-1734-context-digest-receipt"
 CMPC_PRIMITIVES = REPO_ROOT / "tests" / "fixtures" / "cmpc_bilateral" / "primitives"
 CMPC_STATE_MACHINE = (
     REPO_ROOT / "tests" / "fixtures" / "cmpc_bilateral" / "state_machine"
@@ -168,7 +170,7 @@ SCHEMA_COPIES = {
     "reference.schema.json": REPO_ROOT / "schemas" / "reference.schema.json",
 }
 
-FIXTURE_DIRS = (INTEROP_1404, INTEROP_1920)
+FIXTURE_DIRS = (INTEROP_1404, INTEROP_1920, INTEROP_1734)
 PROFILES = (
     "decision-object-v1",
     "offer-binding-v1",
@@ -1442,6 +1444,22 @@ def evaluate_vector(vector: Vector) -> Evaluation:
                 source = resolve_object(check["source"], input_data, context)
                 if sha256_jcs(source) != check["expected"]:
                     return Evaluation(False, "digest")
+            elif kind == "jcs-sha256-pointer":
+                # Recompute a digest and compare it against a value carried
+                # inside the artifact, rather than against a literal in the
+                # vector. A literal-only check passes even when the artifact's
+                # own field has drifted, which is the failure this kind closes.
+                # Must match the `jcs-sha256-pointer` arm of
+                # verify_offer_binding in conformance/reference-runner/runner.py
+                # and verifyOfferBinding in
+                # conformance/reference-runner-js/runner.mjs.
+                try:
+                    source = resolve_object(check["source"], input_data, context)
+                    target = resolve_side(check["target"], input_data, context)
+                except (GenerationError, KeyError, TypeError, ValueError, IndexError):
+                    return Evaluation(False, "binding")
+                if sha256_jcs(source) != target:
+                    return Evaluation(False, "binding")
             elif kind == "json-pointer-equal":
                 try:
                     left = resolve_side(check["left"], input_data, context)
@@ -1650,6 +1668,18 @@ def fixture_1404() -> dict[str, dict[str, Any]]:
     return {name: load_json(INTEROP_1404 / f"{name}.json") for name in names}
 
 
+def fixture_1734() -> dict[str, dict[str, Any]]:
+    names = (
+        "approval_receipt",
+        "assembled_context",
+        "assembled_context_dropped_artifact",
+        "decision_binding_preimage",
+        "offer",
+        "vector",
+    )
+    return {name: load_json(INTEROP_1734 / f"{name}.json") for name in names}
+
+
 def fixture_1920() -> dict[str, dict[str, Any]]:
     return {
         "fulfillment_attestation": load_json(INTEROP_1920 / "fulfillment_attestation.json"),
@@ -1690,8 +1720,8 @@ RECEIPT_BUNDLE_VERSION_TOLERANCE_NOTE = (
 CHAIN_POSITION_RESIGNED_SPLICE_TOLERANCE_NOTE = (
     "tolerated-accept: per-message signatures authenticate links, not the complete message set"
 )
-EXPECTED_MUTATION_TOTAL = 1484
-EXPECTED_MUTATION_REJECTS = 1439
+EXPECTED_MUTATION_TOTAL = 1488
+EXPECTED_MUTATION_REJECTS = 1443
 EXPECTED_MUTATION_ACCEPTS = 45
 EXPECTED_CANARY_TOTAL = 5
 EXPECTED_RAW_TYPED_DIVERGENCES = (
@@ -1717,6 +1747,7 @@ EXPECTED_MUTATION_BATTERY_COUNTS: dict[str, tuple[int, int, int]] = {
         3,
     ),
     "synthetic/attestation/attestation.json::attestation-v1": (111, 78, 33),
+    "synthetic/attestation/attestation.json::attestation-v05-validity": (4, 4, 0),
     "synthetic/cosign/cosigned_receipt.json": (42, 42, 0),
     "synthetic/cmpc_bilateral/primitives/atomic_activation_proof.json": (30, 30, 0),
     "synthetic/cmpc_bilateral/primitives/chain_session.json": (25, 25, 0),
@@ -2681,6 +2712,119 @@ def build_receipt_set_binding_mutation_vectors(
     return vectors, summary
 
 
+def build_attestation_v05_validity_mutation_vectors(
+    synthetic: SyntheticFixtures,
+) -> tuple[list[Vector], dict[str, Any]]:
+    """Exercise schema rejection of mutations to a valid v0.5 validity union."""
+    base = build_v05_attestation(synthetic)
+    parties = [party["agent_id"] for party in base["parties"]]
+    public_keys = synthetic.attestation_seed_manifest["agent_public_keys_b64url"]
+    context = {
+        "forbid_raw_deal_terms": True,
+        "expected_verified_parties": parties,
+        "public_keys_b64url": public_keys,
+    }
+
+    mutations: list[tuple[str, str, dict[str, Any]]] = []
+    missing = copy.deepcopy(base)
+    del missing["validity_temporal"]
+    mutations.append(
+        (
+            "missing-validity",
+            "v0.5 attestation missing required validity_temporal",
+            missing,
+        )
+    )
+
+    malformed_mode = copy.deepcopy(base)
+    malformed_mode["validity_temporal"]["mode"] = "bogus"
+    mutations.append(
+        (
+            "malformed-mode",
+            "v0.5 attestation with an unknown validity_temporal mode",
+            malformed_mode,
+        )
+    )
+
+    malformed_timestamp = copy.deepcopy(base)
+    malformed_timestamp["validity_temporal"]["from"] = "not-a-date"
+    mutations.append(
+        (
+            "malformed-timestamp",
+            "v0.5 attestation with a malformed validity_temporal timestamp",
+            malformed_timestamp,
+        )
+    )
+
+    out_of_bounds_duration = copy.deepcopy(base)
+    out_of_bounds_duration["validity_temporal"] = {
+        "mode": "relative",
+        "from": fixed_iso_now(),
+        "duration_seconds": 0,
+    }
+    mutations.append(
+        (
+            "duration-below-minimum",
+            "v0.5 attestation with validity duration below the schema minimum",
+            out_of_bounds_duration,
+        )
+    )
+
+    vectors: list[Vector] = []
+    for index, (_label, title, input_data) in enumerate(mutations, start=1):
+        vector_id = f"mut-synthetic-attestation-v05-validity-{index:04d}"
+        probe = Vector(
+            vector_id=vector_id,
+            title=title,
+            source_fixture=SYNTHETIC_SOURCE_ATTESTATION,
+            record_type="attestation",
+            verification_profile="attestation-v1",
+            input_data=input_data,
+            context=copy.deepcopy(context),
+        )
+        evaluation = evaluate_vector(probe)
+        if evaluation.accepted or evaluation.reason_class != "schema":
+            raise GenerationError(
+                f"{vector_id}: validity mutation must be rejected by schema, "
+                f"got {evaluation}"
+            )
+        vectors.append(
+            Vector(
+                vector_id=vector_id,
+                title=title,
+                source_fixture=probe.source_fixture,
+                record_type=probe.record_type,
+                verification_profile=probe.verification_profile,
+                input_data=input_data,
+                context=probe.context,
+                expected="reject",
+                expected_reason_class="schema",
+                notes=(
+                    "schema-reject: v0.5 validity_temporal is required and "
+                    "must be a well-formed tagged union"
+                ),
+            )
+        )
+
+    return vectors, {
+        "battery_name": (
+            "synthetic/attestation/attestation.json::"
+            "attestation-v05-validity"
+        ),
+        "source_fixture": SYNTHETIC_SOURCE_ATTESTATION,
+        "object_name": "attestation_v05_validity",
+        "record_type": "attestation",
+        "verification_profile": "attestation-v1",
+        "total": len(vectors),
+        "reject": len(vectors),
+        "accept": 0,
+        "selection_note": (
+            "explicit mutations of a valid v0.5 validity_temporal union: "
+            "missing, malformed, and below-minimum duration"
+        ),
+    }
+
+
 def build_mutation_battery(
     synthetic: SyntheticFixtures | None = None,
 ) -> tuple[list[Vector], list[dict[str, Any]]]:
@@ -2809,6 +2953,12 @@ def build_mutation_battery(
     )
     vectors.extend(receipt_vectors)
     battery_summaries.append(receipt_summary)
+
+    validity_vectors, validity_summary = (
+        build_attestation_v05_validity_mutation_vectors(synthetic)
+    )
+    vectors.extend(validity_vectors)
+    battery_summaries.append(validity_summary)
 
     vectors = sorted(vectors, key=lambda vector: vector.vector_id)
     battery_summaries = sorted(
@@ -3140,6 +3290,40 @@ def build_canary_vectors(synthetic: SyntheticFixtures | None = None) -> list[Vec
 
 def fixed_iso_now() -> str:
     return FIXED_NOW.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def fixed_iso_now_dt() -> datetime:
+    """Return the canonical fixture clock as an aware datetime."""
+    return FIXED_NOW
+
+
+def build_v05_attestation(fixtures: SyntheticFixtures) -> dict[str, Any]:
+    """Build the signed v0.5 attestation used by positive and mutation vectors."""
+    attestation = copy.deepcopy(fixtures.attestation)
+    attestation["concordia_attestation"] = "0.5.0"
+    attestation["attestation_id"] = "att_conformance_p2a1_v05_0001"
+    validity_from = fixed_iso_now_dt()
+    validity_until = validity_from + timedelta(
+        seconds=DEFAULT_ATTESTATION_VALIDITY_SECONDS
+    )
+    attestation["validity_temporal"] = {
+        "mode": "absolute",
+        "from": validity_from.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "until": validity_until.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    key_by_agent = {
+        "did:concordia:agent:synthetic-initiator": key_pair_from_seed(
+            SYNTHETIC_SEEDS["attestation_initiator"]
+        ),
+        "did:concordia:agent:synthetic-responder": key_pair_from_seed(
+            SYNTHETIC_SEEDS["attestation_responder"]
+        ),
+    }
+    attestation["countersignatures"] = {
+        agent_id: countersign_attestation(attestation, key_pair)
+        for agent_id, key_pair in sorted(key_by_agent.items())
+    }
+    return attestation
 
 
 def seed_manifest_for(roles: Mapping[str, KeyPair]) -> dict[str, Any]:
@@ -4236,6 +4420,7 @@ def build_phase2_vectors(fixtures: SyntheticFixtures) -> list[Vector]:
     raw_term_attestation["parties"][0]["behavior"]["note"] = (
         "price: USD 250 for 10 units"
     )
+    v05_attestation = build_v05_attestation(fixtures)
 
     action = {"max_spend": 500, "category": "software"}
     mandate_issuer_key = fixtures.mandate_seed_manifest[
@@ -4295,6 +4480,23 @@ def build_phase2_vectors(fixtures: SyntheticFixtures) -> list[Vector]:
                 "expected_verified_parties": attestation_parties,
                 "public_keys_b64url": attestation_public_keys,
             },
+        ),
+        Vector(
+            vector_id="pos-synthetic-attestation-v05-required-validity",
+            title="v0.5 Attestation validates with required validity_temporal",
+            source_fixture=SYNTHETIC_SOURCE_ATTESTATION,
+            record_type="attestation",
+            verification_profile="attestation-v1",
+            input_data=v05_attestation,
+            context={
+                "forbid_raw_deal_terms": True,
+                "expected_verified_parties": attestation_parties,
+                "public_keys_b64url": attestation_public_keys,
+            },
+            notes=(
+                "v0.5 positive: the base attestation carries its required "
+                "validity_temporal window"
+            ),
         ),
         Vector(
             vector_id="privacy-synthetic-attestation-behavior-note",
@@ -4624,6 +4826,7 @@ def build_phase2_vectors(fixtures: SyntheticFixtures) -> list[Vector]:
 def build_vectors() -> list[Vector]:
     f1404 = fixture_1404()
     f1920 = fixture_1920()
+    f1734 = fixture_1734()
     synthetic = build_synthetic_fixtures()
     hashes = f1404["vector"]["hashes"]
     public_keys_1404 = f1404["vector"]["public_keys_b64url"]
@@ -4834,6 +5037,142 @@ def build_vectors() -> list[Vector]:
                 "signature_b64url": sample["signature_b64url"],
             },
             canonical_preimage=canonical_json(signable_fulfillment),
+        ),
+        Vector(
+            vector_id="pos-1734-receipt-signed-binding",
+            title="A2A 1734 context_digest receipt validates and verifies under the approver key",
+            source_fixture=INTEROP_1734.name,
+            record_type="approval_receipt",
+            verification_profile="receipt-v1",
+            input_data=f1734["approval_receipt"],
+            context={
+                "now": "2026-08-04T10:05:00Z",
+                "offer": f1734["offer"],
+                "public_keys_b64url": {
+                    "issuer": f1734["vector"]["public_keys_b64url"]["approver"]
+                },
+            },
+            canonical_preimage=canonical_json(
+                without_signature(f1734["approval_receipt"])
+            ),
+        ),
+        Vector(
+            vector_id="pos-1734-context-digest-recomputes",
+            title="A2A 1734 context_digest recomputes from the presented context set",
+            source_fixture=INTEROP_1734.name,
+            record_type="approval_receipt",
+            verification_profile="offer-binding-v1",
+            input_data=f1734["approval_receipt"],
+            context={
+                "assembled_context": f1734["assembled_context"],
+                "checks": [
+                    {
+                        "kind": "jcs-sha256-pointer",
+                        "source": "context.assembled_context",
+                        "target": {
+                            "object": "input",
+                            "pointer": (
+                                "/references/0/extensions"
+                                "/a2a_1734_decision_binding_preimage/context_digest"
+                            ),
+                        },
+                    }
+                ],
+            },
+        ),
+        Vector(
+            vector_id="pos-1734-decision-binding-ref-recomputes",
+            title="A2A 1734 decision_binding_ref recomputes from the embedded preimage",
+            source_fixture=INTEROP_1734.name,
+            record_type="approval_receipt",
+            verification_profile="offer-binding-v1",
+            input_data=f1734["approval_receipt"],
+            context={
+                "external": {
+                    # giskard09's published digest for the same context set.
+                    # Pinned here so this vector fails if either side's
+                    # canonicalization drifts, rather than only if ours does.
+                    "context_digest": f1734["vector"]["cross_check"][
+                        "context_digest"
+                    ]
+                },
+                "checks": [
+                    {
+                        "kind": "jcs-sha256-pointer",
+                        "source": "context.preimage",
+                        "target": {
+                            "object": "input",
+                            "pointer": (
+                                "/references/0/extensions"
+                                "/a2a_1734_decision_binding_ref"
+                            ),
+                        },
+                    },
+                    {
+                        "kind": "json-pointer-equal",
+                        "left": {
+                            "object": "input",
+                            "pointer": (
+                                "/references/0/extensions"
+                                "/a2a_1734_decision_binding_preimage"
+                                "/context_digest"
+                            ),
+                        },
+                        "right": {
+                            "object": "context.external",
+                            "pointer": "/context_digest",
+                        },
+                    },
+                    {
+                        # action_ref and the native offer_hash are the same
+                        # digest by construction; checking it keeps the wrapped
+                        # preimage tied to a Concordia field a verifier already
+                        # recomputes.
+                        "kind": "json-pointer-equal",
+                        "left": {
+                            "object": "input",
+                            "pointer": (
+                                "/references/0/extensions"
+                                "/a2a_1734_decision_binding_preimage/action_ref"
+                            ),
+                        },
+                        "right": {"object": "input", "pointer": "/scope/offer_hash"},
+                    },
+                ],
+                "preimage": f1734["decision_binding_preimage"],
+            },
+        ),
+        Vector(
+            vector_id="binding-1734-context-set-mismatch",
+            title="A2A 1734 dropped context artifact fails the context_digest recompute",
+            source_fixture=INTEROP_1734.name,
+            record_type="approval_receipt",
+            verification_profile="offer-binding-v1",
+            input_data=f1734["approval_receipt"],
+            context={
+                "assembled_context": f1734["assembled_context_dropped_artifact"],
+                "checks": [
+                    {
+                        "kind": "jcs-sha256-pointer",
+                        "source": "context.assembled_context",
+                        "target": {
+                            "object": "input",
+                            "pointer": (
+                                "/references/0/extensions"
+                                "/a2a_1734_decision_binding_preimage/context_digest"
+                            ),
+                        },
+                    }
+                ],
+            },
+            expected="reject",
+            expected_reason_class="binding",
+            notes=(
+                "CONTEXT_SET_MISMATCH: the presented context set is missing one "
+                "artifact, so its recomputed digest diverges from the one the "
+                "receipt signed. A verifier rejects rather than accepting a "
+                "partial set as the one that fed the decision."
+            ),
         ),
     ]
 

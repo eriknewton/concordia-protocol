@@ -250,8 +250,26 @@ def verify_envelope_signature(
     Returns:
         True if the signature is valid.
     """
+    if not isinstance(envelope, dict) or alg not in ("EdDSA", "ES256"):
+        return False
+
     sig_block = envelope.get("signature")
-    if not sig_block or "value" not in sig_block:
+    provider = envelope.get("provider")
+    if not isinstance(sig_block, dict) or not isinstance(provider, dict):
+        return False
+
+    sig_alg = sig_block.get("alg")
+    sig_kid = sig_block.get("kid")
+    sig_value = sig_block.get("value")
+    provider_kid = provider.get("kid")
+    if not (
+        isinstance(sig_alg, str)
+        and isinstance(sig_kid, str)
+        and isinstance(sig_value, str)
+        and isinstance(provider_kid, str)
+    ):
+        return False
+    if sig_alg != alg or sig_kid != provider_kid:
         return False
 
     # Reconstruct the signed payload (envelope without signature)
@@ -259,7 +277,7 @@ def verify_envelope_signature(
 
     try:
         payload = canonical_json(signable)
-        raw_sig = base64.urlsafe_b64decode(sig_block["value"])
+        raw_sig = base64.urlsafe_b64decode(sig_value)
         if alg == "ES256":
             from cryptography.hazmat.primitives.asymmetric.ec import ECDSA
             from cryptography.hazmat.primitives.hashes import SHA256

@@ -1,10 +1,17 @@
 # A2CN Fulfillment-Attestation Integration
 
+> **Status note:** `DELIVERY_ACKNOWLEDGED` and the Section 14 HITL
+> pause-resume flow described in this document are proposed
+> integration semantics for a possible future A2CN alignment, not
+> mechanisms defined in current A2CN v0.2. This document describes
+> how Concordia artifacts would compose with them if A2CN adopts
+> them.
+
 Integrator-facing walkthrough for emitting a Concordia-shaped
-**Fulfillment Attestation** when an A2CN session reaches
-`DELIVERY_ACKNOWLEDGED`. Pairs with `schemas/fulfillment_attestation.schema.json`
+**Fulfillment Attestation** at a proposed A2CN delivery-acknowledgment
+boundary. Pairs with `schemas/fulfillment_attestation.schema.json`
 and SPEC.md §9.6.4. Adds the v0.5 `ApprovalReceipt` artifact type for
-HITL pause-resume composition with A2CN Section 14 (per A2A
+a proposed HITL pause-resume composition with A2CN (per A2A
 Discussion #1737).
 
 A2CN cross-protocol references use the SPEC.md §11.5.7 URN forms
@@ -33,8 +40,9 @@ Use this when:
 ### 2. Standalone Fulfillment Attestation (v0.5, this doc)
 
 A separate signed artifact. Emitted on a discrete delivery boundary
-(e.g., A2CN's `DELIVERY_ACKNOWLEDGED`). Links back to the agreement
-attestation via `references[]` with `relationship: "fulfills"`.
+(proposed composition with an A2CN delivery-acknowledgment event;
+see status note above). Links back to the agreement attestation via
+`references[]` with `relationship: "fulfills"`.
 Status enum: `fulfilled_clean | fulfilled_with_mediation | failed | disputed_unresolved`.
 
 Use this when:
@@ -63,7 +71,10 @@ with `meta.resolution_outcome` carrying a short label (e.g.,
 `partial_refund`). v0.6 may add a `fulfilled_partial` status if
 operator demand warrants.
 
-## DELIVERY_ACKNOWLEDGED → Fulfillment Attestation flow
+## Proposed DELIVERY_ACKNOWLEDGED → Fulfillment Attestation flow
+
+The following illustrates the proposed composition described in the
+status note above; it is not current A2CN v0.2 behavior.
 
 ```
 A2CN session                          Concordia
@@ -231,11 +242,12 @@ The full schema is `schemas/fulfillment_attestation.schema.json` (`$id`
 }
 ```
 
-## ApprovalReceipt: HITL pause-resume composition
+## ApprovalReceipt: proposed HITL pause-resume composition
 
-For A2CN Section 14 HITL flows (operator pauses negotiation when an
+For a proposed A2CN HITL flow (operator pauses negotiation when an
 amount crosses a policy threshold; operator approves or denies; A2CN
-resumes), Concordia v0.5 ships a separate artifact: **ApprovalReceipt**.
+resumes; not a mechanism defined in current A2CN v0.2), Concordia
+v0.5 ships a separate artifact: **ApprovalReceipt**.
 Schema: `schemas/approval_receipt.schema.json` (`$id`
 `urn:concordia:schema:approval_receipt:v0.5`). Spec section: SPEC.md
 §9.6.4b.

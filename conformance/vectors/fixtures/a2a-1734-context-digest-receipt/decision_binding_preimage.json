@@ -1,0 +1,6 @@
+{
+  "action_ref": "sha256:94135ca09abf07605a70faa78f5755e2d1c2e12fe8a3e7d82de419c708ec67ce",
+  "context_digest": "sha256:c2bf3a88a2e5d8d63b95b22eab6b31bf2b7ab6108002b37a9b0945b722d4b9bb",
+  "decision_at_ms": 1754301600000,
+  "decision_id": "approval:a2a-1734-context-digest-worked-example"
+}

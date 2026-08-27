@@ -4,6 +4,7 @@ from copy import deepcopy
 
 import pytest
 
+import concordia.receipt_bundle as receipt_bundle
 from concordia import (
     Agent,
     BasicOffer,
@@ -12,6 +13,7 @@ from concordia import (
     verify_attestation,
     verify_signature,
 )
+from concordia.attestation import countersign_attestation
 from concordia.message import compute_hash, validate_chain
 from concordia.signing import sign_message
 
@@ -54,7 +56,7 @@ class TestAttestationGeneration:
             category="electronics.cameras",
             value_range="100-500_USD",
         )
-        assert att["concordia_attestation"] == "0.3.0"
+        assert att["concordia_attestation"] == "0.5.0"
         assert att["outcome"]["status"] == "agreed"
         assert att["outcome"]["rounds"] >= 1
         assert att["outcome"]["resolution_mechanism"] == "direct"
@@ -171,6 +173,43 @@ class TestAttestationVerification:
         assert result.valid is False
         assert any("invalid signature" in e for e in result.signature_errors)
 
+    def test_verify_attestation_rejects_outcome_status_tamper(self, agreed_session):
+        session, seller, buyer = agreed_session
+        key_pairs = {"seller_01": seller.key_pair, "buyer_42": buyer.key_pair}
+        att = generate_attestation(session, key_pairs)
+        public_keys = {
+            agent_id: key_pair.public_key
+            for agent_id, key_pair in key_pairs.items()
+        }
+
+        assert verify_attestation(att, public_keys).valid is True
+        att["outcome"]["status"] = "rejected"
+        result = verify_attestation(att, public_keys)
+
+        assert result.valid is False
+        assert any("countersignature" in error for error in result.signature_errors)
+
+    def test_verify_attestation_fails_closed_on_undiagnosed_binding_error(
+        self, agreed_session, monkeypatch
+    ):
+        session, seller, buyer = agreed_session
+        key_pairs = {"seller_01": seller.key_pair, "buyer_42": buyer.key_pair}
+        att = generate_attestation(session, key_pairs)
+        public_keys = {
+            agent_id: key_pair.public_key
+            for agent_id, key_pair in key_pairs.items()
+        }
+        monkeypatch.setattr(
+            receipt_bundle,
+            "evaluate_outcome_binding",
+            lambda *_: ("error", None),
+        )
+
+        result = verify_attestation(att, public_keys)
+
+        assert result.valid is False
+        assert "attestation outcome binding failed" in result.signature_errors
+
     def test_verify_attestation_fails_closed_on_malformed_input(self):
         result = verify_attestation({"parties": "not-a-list"}, {})
 
@@ -241,6 +280,10 @@ class TestAttestationVerification:
         att["concordia_attestation"] = "0.2.0"
         del att["chain_head"]
         del att["message_count"]
+        att["countersignatures"] = {
+            agent_id: countersign_attestation(att, key_pair)
+            for agent_id, key_pair in key_pairs.items()
+        }
 
         result = verify_attestation(att, public_keys, transcript=session.transcript)
 

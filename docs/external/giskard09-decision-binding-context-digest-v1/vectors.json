@@ -1,0 +1,114 @@
+{
+  "fixture_id": "decision-binding-context-digest-v1",
+  "version": "v1",
+  "spec": "docs/spec/decision-binding-ref-v1.0.md#context_digest",
+  "hash_algo": "sha256",
+  "preimage_format": "jcs-rfc8785-v1",
+  "generated_at": "2026-08-04",
+  "purpose": "Conformance vectors for the optional context_digest field in the decision_binding_ref preimage. context_digest = SHA-256(JCS(assembled_context)) binds the set of memories/documents/artifacts that fed a decision, without resolving attribution or steering -- only presence. Proposed by eriknewton (co-founder, trust-evidence-format) in A2A discussion#1734 (https://github.com/a2aproject/A2A/discussions/1734#discussioncomment-17896415).",
+  "reproduce_in_python": "import hashlib, json\ndef jcs(obj): return json.dumps(dict(sorted(obj.items())), separators=(',',':'), ensure_ascii=False)\ncontext_digest = 'sha256:' + hashlib.sha256(jcs(assembled_context).encode()).hexdigest()\ndecision_binding_ref = 'sha256:' + hashlib.sha256(jcs(preimage).encode()).hexdigest()",
+  "context_sets": {
+    "context_full": {
+      "assembled_context": {
+        "artifacts": [
+          "sha256:memory:project_fundraising.md@2026-08-01",
+          "sha256:doc:A2A-discussion-1734#17896415",
+          "sha256:memory:strategy_actor_ranking.md@2026-07-30"
+        ],
+        "assembled_at_ms": 1754301600000
+      },
+      "jcs": "{\"artifacts\":[\"sha256:memory:project_fundraising.md@2026-08-01\",\"sha256:doc:A2A-discussion-1734#17896415\",\"sha256:memory:strategy_actor_ranking.md@2026-07-30\"],\"assembled_at_ms\":1754301600000}",
+      "sha256": "c2bf3a88a2e5d8d63b95b22eab6b31bf2b7ab6108002b37a9b0945b722d4b9bb",
+      "context_digest": "sha256:c2bf3a88a2e5d8d63b95b22eab6b31bf2b7ab6108002b37a9b0945b722d4b9bb"
+    },
+    "context_dropped_artifact": {
+      "assembled_context": {
+        "artifacts": [
+          "sha256:memory:project_fundraising.md@2026-08-01",
+          "sha256:doc:A2A-discussion-1734#17896415"
+        ],
+        "assembled_at_ms": 1754301600000
+      },
+      "jcs": "{\"artifacts\":[\"sha256:memory:project_fundraising.md@2026-08-01\",\"sha256:doc:A2A-discussion-1734#17896415\"],\"assembled_at_ms\":1754301600000}",
+      "sha256": "ae75912aae50b1e461fcc02d716a2fedc5f6b5c9fdc478a1581150cb733b4bf4",
+      "context_digest": "sha256:ae75912aae50b1e461fcc02d716a2fedc5f6b5c9fdc478a1581150cb733b4bf4",
+      "note": "context_full with strategy_actor_ranking.md silently dropped -- a memory that fed the real decision is missing from the presented set."
+    }
+  },
+  "vectors": [
+    {
+      "id": "cd-001",
+      "name": "context_digest_present_recomputable",
+      "description": "decision_binding_ref preimage carries context_digest (no policy_ref). Verifier holds context_full, recomputes SHA-256(JCS(context_full)) and finds it matches the embedded context_digest. Result: PASS.",
+      "preimage": {
+        "action_ref": "sha256:9752a870dac7100010453be9494ec631c78fd55bb7cb41355cf03592da3862ce",
+        "context_digest": "sha256:c2bf3a88a2e5d8d63b95b22eab6b31bf2b7ab6108002b37a9b0945b722d4b9bb",
+        "decision_at_ms": 1748736000000,
+        "decision_id": "approval:7f3a9c21-4e5b-4d8f-b3c2-1a9e8f7d6c5b"
+      },
+      "canonical": "{\"action_ref\":\"sha256:9752a870dac7100010453be9494ec631c78fd55bb7cb41355cf03592da3862ce\",\"context_digest\":\"sha256:c2bf3a88a2e5d8d63b95b22eab6b31bf2b7ab6108002b37a9b0945b722d4b9bb\",\"decision_at_ms\":1748736000000,\"decision_id\":\"approval:7f3a9c21-4e5b-4d8f-b3c2-1a9e8f7d6c5b\"}",
+      "decision_binding_ref": "sha256:5caf1298c5c8ea661effc266d8e0179505a84fc63507533ac97d3b38ea4eccdf",
+      "context_set_used": "context_full",
+      "expected_result": "PASS",
+      "rationale": "context_digest in the preimage equals SHA-256(JCS(context_full)). The verifier recomputes over the presented context set and arrives at the same value -- confirming context_full was present in the input of this decision, without claiming it explains the outcome."
+    },
+    {
+      "id": "cd-002",
+      "name": "context_digest_and_policy_ref_combined",
+      "description": "decision_binding_ref preimage carries both policy_ref and context_digest -- the four optional-field combinations (neither/policy_ref-only/context_digest-only/both) must all canonicalize deterministically. Result: PASS.",
+      "preimage": {
+        "action_ref": "sha256:9752a870dac7100010453be9494ec631c78fd55bb7cb41355cf03592da3862ce",
+        "context_digest": "sha256:c2bf3a88a2e5d8d63b95b22eab6b31bf2b7ab6108002b37a9b0945b722d4b9bb",
+        "decision_at_ms": 1748736000000,
+        "decision_id": "approval:7f3a9c21-4e5b-4d8f-b3c2-1a9e8f7d6c5b",
+        "policy_ref": "sha256:b94f6f125c79e3a5ffaa826f584c10d52ada669e6762051b826b55776d05a6c7"
+      },
+      "canonical": "{\"action_ref\":\"sha256:9752a870dac7100010453be9494ec631c78fd55bb7cb41355cf03592da3862ce\",\"context_digest\":\"sha256:c2bf3a88a2e5d8d63b95b22eab6b31bf2b7ab6108002b37a9b0945b722d4b9bb\",\"decision_at_ms\":1748736000000,\"decision_id\":\"approval:7f3a9c21-4e5b-4d8f-b3c2-1a9e8f7d6c5b\",\"policy_ref\":\"sha256:b94f6f125c79e3a5ffaa826f584c10d52ada669e6762051b826b55776d05a6c7\"}",
+      "decision_binding_ref": "sha256:4b0220dcd431f313f0c06510c163d561e787a32567cb55fa42bb906df9ac60cd",
+      "context_set_used": "context_full",
+      "expected_result": "PASS",
+      "rationale": "Both optional fields present, JCS lexicographic key order places context_digest before decision_at_ms/decision_id and policy_ref last -- deterministic regardless of insertion order in either implementation."
+    },
+    {
+      "id": "cd-003",
+      "name": "context_digest_backward_compat_absent",
+      "description": "decision_binding_ref preimage with neither context_digest nor policy_ref -- identical to v1.0 Fixture B, unaffected by the extension. A verifier that does not know about context_digest still computes the same ref. Result: PASS.",
+      "preimage": {
+        "action_ref": "sha256:9752a870dac7100010453be9494ec631c78fd55bb7cb41355cf03592da3862ce",
+        "decision_at_ms": 1748736000000,
+        "decision_id": "approval:7f3a9c21-4e5b-4d8f-b3c2-1a9e8f7d6c5b"
+      },
+      "canonical": "{\"action_ref\":\"sha256:9752a870dac7100010453be9494ec631c78fd55bb7cb41355cf03592da3862ce\",\"decision_at_ms\":1748736000000,\"decision_id\":\"approval:7f3a9c21-4e5b-4d8f-b3c2-1a9e8f7d6c5b\"}",
+      "decision_binding_ref": "sha256:a114ce067cf804a3cd4c3b06edc91d4e9f0746bfc4700329f43974df77e70634",
+      "context_set_used": null,
+      "expected_result": "PASS",
+      "rationale": "Backward compatibility check: the extension is purely additive. This vector is byte-identical to v1.0's Fixture B and MUST produce the same decision_binding_ref."
+    },
+    {
+      "id": "cd-004",
+      "name": "context_set_mismatch_dropped_artifact",
+      "description": "The preimage embeds context_digest computed over context_full. A verifier is presented context_dropped_artifact (the same set minus strategy_actor_ranking.md, silently omitted). The verifier recomputes SHA-256(JCS(presented_context)) and gets a different digest than the embedded context_digest. Result: FAIL (CONTEXT_SET_MISMATCH).",
+      "embedded_preimage": {
+        "action_ref": "sha256:9752a870dac7100010453be9494ec631c78fd55bb7cb41355cf03592da3862ce",
+        "context_digest": "sha256:c2bf3a88a2e5d8d63b95b22eab6b31bf2b7ab6108002b37a9b0945b722d4b9bb",
+        "decision_at_ms": 1748736000000,
+        "decision_id": "approval:7f3a9c21-4e5b-4d8f-b3c2-1a9e8f7d6c5b"
+      },
+      "embedded_decision_binding_ref": "sha256:5caf1298c5c8ea661effc266d8e0179505a84fc63507533ac97d3b38ea4eccdf",
+      "presented_context_set": "context_dropped_artifact",
+      "recomputed_context_digest": "sha256:ae75912aae50b1e461fcc02d716a2fedc5f6b5c9fdc478a1581150cb733b4bf4",
+      "verification_steps": {
+        "step_1": "Recompute SHA-256(JCS(context_dropped_artifact)) = sha256:ae75912aae50b1e461fcc02d716a2fedc5f6b5c9fdc478a1581150cb733b4bf4",
+        "step_2": "Compare with embedded context_digest: sha256:c2bf3a88a2e5d8d63b95b22eab6b31bf2b7ab6108002b37a9b0945b722d4b9bb",
+        "step_3": "recomputed_context_digest != embedded context_digest -- REJECT"
+      },
+      "expected_result": "FAIL",
+      "expected_error_code": "CONTEXT_SET_MISMATCH",
+      "rationale": "A dropped or substituted artifact from the context set changes SHA-256(JCS(assembled_context)). The verifier MUST reject rather than silently accept a partial or altered context set as if it were the one that actually fed the decision -- same fail-closed pattern as POLICY_SNAPSHOT_MISMATCH in policy-change-v1."
+    }
+  ],
+  "independent_verification": {
+    "status": "pending",
+    "note": "eriknewton offered a worked example from the receipt side (trust-evidence-format). Notify when this fixture is published; cross-check pending his fixture, same pattern as composed-decision-chain-recompute's cross-check against babyblueviper1."
+  }
+}

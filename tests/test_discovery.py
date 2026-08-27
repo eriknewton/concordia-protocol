@@ -194,13 +194,20 @@ class TestAgentRegistry:
         assert reg.is_concordia_preferred("unregistered") is False
 
     def test_agent_card(self):
+        # SHAPE CORRECTED. This asserted `card["capabilities"][0]`, which pinned
+        # a `capabilities` ARRAY. A2A's `capabilities` is an OBJECT holding an
+        # `extensions` array, so the old assertion held the card in a shape no
+        # A2A client can read as capabilities. The test agreed with the code and
+        # both were wrong; full shape coverage is in
+        # tests/test_a2a_agent_card_shape.py.
         reg = AgentRegistry()
         reg.register("agent_1", description="My agent", categories=["electronics"])
         card = reg.get_agent_card("agent_1")
         assert card is not None
         assert card["concordia_preferred"] is True
-        assert "capabilities" in card
-        assert card["capabilities"][0]["protocol"] == "concordia"
+        assert isinstance(card["capabilities"], dict)
+        extension = card["capabilities"]["extensions"][0]
+        assert extension["params"]["protocol"] == "concordia"
 
     def test_agent_card_missing(self):
         reg = AgentRegistry()

@@ -1,0 +1,91 @@
+{
+  "context": {
+    "checks": [
+      {
+        "kind": "jcs-sha256-pointer",
+        "source": "context.preimage",
+        "target": {
+          "object": "input",
+          "pointer": "/references/0/extensions/a2a_1734_decision_binding_ref"
+        }
+      },
+      {
+        "kind": "json-pointer-equal",
+        "left": {
+          "object": "input",
+          "pointer": "/references/0/extensions/a2a_1734_decision_binding_preimage/context_digest"
+        },
+        "right": {
+          "object": "context.external",
+          "pointer": "/context_digest"
+        }
+      },
+      {
+        "kind": "json-pointer-equal",
+        "left": {
+          "object": "input",
+          "pointer": "/references/0/extensions/a2a_1734_decision_binding_preimage/action_ref"
+        },
+        "right": {
+          "object": "input",
+          "pointer": "/scope/offer_hash"
+        }
+      }
+    ],
+    "external": {
+      "context_digest": "sha256:c2bf3a88a2e5d8d63b95b22eab6b31bf2b7ab6108002b37a9b0945b722d4b9bb"
+    },
+    "preimage": {
+      "action_ref": "sha256:94135ca09abf07605a70faa78f5755e2d1c2e12fe8a3e7d82de419c708ec67ce",
+      "context_digest": "sha256:c2bf3a88a2e5d8d63b95b22eab6b31bf2b7ab6108002b37a9b0945b722d4b9bb",
+      "decision_at_ms": 1754301600000,
+      "decision_id": "approval:a2a-1734-context-digest-worked-example"
+    }
+  },
+  "expected": "accept",
+  "expected_reason_class": null,
+  "id": "pos-1734-decision-binding-ref-recomputes",
+  "input": {
+    "approver": {
+      "identity": "did:web:newton.example#governance-lead",
+      "role": "governance_authority"
+    },
+    "artifact_type": "ApprovalReceipt",
+    "expires_at": "2126-08-04T10:00:00Z",
+    "id": "urn:concordia:receipt:a2a-1734-context-digest",
+    "issued_at": "2026-08-04T10:00:00Z",
+    "references": [
+      {
+        "extensions": {
+          "a2a_1734_decision_binding_preimage": {
+            "action_ref": "sha256:94135ca09abf07605a70faa78f5755e2d1c2e12fe8a3e7d82de419c708ec67ce",
+            "context_digest": "sha256:c2bf3a88a2e5d8d63b95b22eab6b31bf2b7ab6108002b37a9b0945b722d4b9bb",
+            "decision_at_ms": 1754301600000,
+            "decision_id": "approval:a2a-1734-context-digest-worked-example"
+          },
+          "a2a_1734_decision_binding_ref": "sha256:8e9457e814877fa7fca5f58c51c0e3596fd2f0568835c8be0aa049eac6442a55",
+          "a2a_1734_decision_binding_spec": "https://github.com/giskard09/argentum-core/blob/e04fc4b699dddd4e50074ab4b1639043723975ae/docs/spec/decision-binding-ref-v1.0.md"
+        },
+        "id": "urn:a2a:session:1734-context-digest",
+        "relationship": "approves",
+        "type": "negotiation_session"
+      }
+    ],
+    "scope": {
+      "amount": "0.00 USD",
+      "decision": "approve",
+      "offer_hash": "sha256:94135ca09abf07605a70faa78f5755e2d1c2e12fe8a3e7d82de419c708ec67ce",
+      "threshold_crossed": "external_publication"
+    },
+    "signature": {
+      "alg": "Ed25519",
+      "value": "xr6VCpxpRe4oIzygGYhBckygp5VTEqQP7pd5ig_2BBiXdHp7z_98p0S2tDAyOR0l1-HJGnLcuADrK3tiJf9BDQ=="
+    }
+  },
+  "notes": "",
+  "record_type": "approval_receipt",
+  "schema_version": "concordia-conformance-vector/v1-draft",
+  "source_fixture": "a2a-1734-context-digest-receipt",
+  "title": "A2A 1734 decision_binding_ref recomputes from the embedded preimage",
+  "verification_profile": "offer-binding-v1"
+}

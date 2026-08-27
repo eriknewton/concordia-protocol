@@ -349,9 +349,37 @@ export const ATTESTATION_SCHEMA = {
     },
     validity_temporal: {
       $ref: '#/$defs/validity_temporal',
-      description: 'Optional temporal validity window for the attestation. Added in v0.4.0 (WP3).',
+      description:
+        'Temporal validity window for the attestation. Required for concordia_attestation 0.5.0 and later; legacy artifacts remain readable under version-gated verifier rules. Added in v0.4.0 (WP3).',
+    },
+    countersignatures: {
+      type: 'object',
+      description:
+        'C-H2 outcome-binding (Option B): map of party agent_id -> base64url-padded Ed25519 signature over canonical_json(strip_signatures(attestation minus countersignatures)). Binds the issuance snapshot (outcome, meta, session_id, transcript_hash) so the outcome is not merely prover-asserted. One entry per party that had a signing key at issuance; parties without a key get no entry. Added in v0.2.0 (C-H2). Soundness (a >=0.2.0 attestation MUST carry a valid map) is enforced by the bundle verifier, not by this shape schema; <0.2.0 attestations validate without it.',
+      additionalProperties: {
+        type: 'string',
+        minLength: 1,
+      },
+      propertyNames: {
+        minLength: 1,
+      },
     },
   },
+  allOf: [
+    {
+      if: {
+        required: ['concordia_attestation'],
+        properties: {
+          concordia_attestation: {
+            pattern: '^(?:0\\.(?:[5-9]|[1-9][0-9]+)\\.[0-9]+|[1-9][0-9]*\\.[0-9]+\\.[0-9]+)$',
+          },
+        },
+      },
+      then: {
+        required: ['validity_temporal'],
+      },
+    },
+  ],
   additionalProperties: false,
   $defs: {
     fulfillment_attestation: {
@@ -792,7 +820,7 @@ export const APPROVAL_RECEIPT_SCHEMA = {
   $id: 'urn:concordia:schema:approval_receipt:v0.5',
   title: 'Concordia Approval Receipt',
   description:
-    'Standalone signed artifact emitted when a human-in-the-loop authority approves (or denies) a negotiation event that crossed an approval threshold. Pairs with A2CN Section 14 HITL pause-resume composition (A2A Discussion #1737, Draft A). The receipt is bounded in time (`expires_at`) and links back to the negotiation session and any mandate it discharges via `references[]`. v0.5 ratifies the worked example published in Draft A.',
+    'Standalone signed artifact emitted when a human-in-the-loop authority approves (or denies) a negotiation event that crossed an approval threshold. Designed for composition with a proposed A2CN HITL pause-resume mechanism (A2A Discussion #1737, Draft A; not a mechanism defined in current A2CN v0.2). The receipt is bounded in time (`expires_at`) and links back to the negotiation session and any mandate it discharges via `references[]`. v0.5 ratifies the worked example published in Draft A.',
   type: 'object',
   required: [
     'artifact_type',
@@ -987,7 +1015,7 @@ export const FULFILLMENT_ATTESTATION_SCHEMA = {
   $id: 'urn:concordia:schema:fulfillment_attestation:v0.5',
   title: 'Concordia Fulfillment Attestation',
   description:
-    'A standalone signed artifact emitted after settlement, recording whether an agreement was honored. Distinct from the in-line `fulfillment` block on a reputation attestation (SPEC.md §9.6.4) — this is the A2CN-aligned shape emitted on a discrete DELIVERY_ACKNOWLEDGED boundary, linking back to the agreement attestation via `references[]` with `relationship: "fulfills"`. Introduced in v0.5 per A2A Discussion #1737. See docs/A2CN_FULFILLMENT.md for the integrator walkthrough and SPEC.md §9.6.4 for the relationship with the in-line fulfillment block.',
+    'A standalone signed artifact emitted after settlement, recording whether an agreement was honored. Distinct from the in-line `fulfillment` block on a reputation attestation (SPEC.md §9.6.4): this shape is designed for composition with a discrete delivery-acknowledgment event (proposed integration semantics; A2CN v0.2 does not currently define such an event), linking back to the agreement attestation via `references[]` with `relationship: "fulfills"`. Introduced in v0.5 per A2A Discussion #1737. See docs/A2CN_FULFILLMENT.md for the integrator walkthrough and SPEC.md §9.6.4 for the relationship with the in-line fulfillment block.',
   type: 'object',
   required: [
     'attestation_type',

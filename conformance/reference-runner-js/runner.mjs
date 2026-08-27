@@ -742,6 +742,19 @@ function verifyOfferBinding(inputData, context) {
       if (sha256Jcs(resolveObject(check.source, inputData, context)) !== check.expected) {
         reject("digest check failed");
       }
+    } else if (check.kind === "jcs-sha256-pointer") {
+      // Recompute a digest and compare it against a value carried inside the
+      // artifact, rather than against a literal in the vector: a literal-only
+      // check still passes when the artifact's own field has drifted away from
+      // the data it claims to commit to.
+      // Must match the `jcs-sha256-pointer` arm of verify_offer_binding in
+      // conformance/reference-runner/runner.py and of the offer-binding
+      // evaluator in scripts/conformance/generate_vectors.py.
+      const source = resolveObject(check.source, inputData, context);
+      const target = resolveSide(check.target, inputData, context);
+      if (sha256Jcs(source) !== target) {
+        reject("committed digest mismatch");
+      }
     } else if (check.kind === "json-pointer-equal") {
       const left = resolveSide(check.left, inputData, context);
       const right = resolveSide(check.right, inputData, context);

@@ -7,6 +7,68 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Documentation
+
+- **Spec-prose additions in support of a possible IETF filing
+  (agreement-evidence layer, Option A posture).** SPEC.md gains: §3.6
+  clarifies which signed artifact is the citable evidence object for a
+  completed agreement (the attestation, distinct from the term-bearing
+  `negotiate.commit` messages); §5.5 (informative) maps
+  `negotiate.decline_session` and DORMANT reactivation onto an external
+  evidence-request challenge pattern, with no new message type or field;
+  §9.6.6 is restated as an enumerated normative MUST/MUST NOT
+  privacy-invariant list (presentation only, no substance change); §9.7 adds
+  a general freshness and replay obligation (relying-side age and lifetime
+  bounds, a bounded clock-skew hard-fail, and a generating-side
+  maximum-lifetime clamp) and names the artifacts that already enforce it;
+  `validity_temporal` is REQUIRED on the base attestation (Erik ruling,
+  2026-08-16), and the §9.6.2 worked example now carries a
+  `validity_temporal` value to match (an editor's note in §9.7.3 records
+  that the JSON Schema, both reference SDKs, and the conformance vectors
+  still model the field as optional; promoting them is tracked follow-up
+  work, and this change does not touch the schema, the SDKs, or the
+  conformance vectors); §9.8 (informative) reorganizes existing §9.1-9.7
+  security content by threat actor for direct citation, including the
+  Sybil/identity threat actor. None of this changes wire behavior, SDK code,
+  the assurance registry (`docs/assurance.json`, `ASSURANCE_MATRIX.md`), or
+  any conformance-pinned status cell.
+
+### Security
+
+- Pinned `cryptography` to 50.0.0 in `requirements.lock`, clearing
+  PYSEC-2026-3552 (CVE-2026-69247, PKCS#7 decryption Bleichenbacher oracle),
+  PYSEC-2026-3553 (CVE-2026-69249, x509 chain-building resource exhaustion),
+  and PYSEC-2026-3554 (CVE-2026-69248, x509 name-constraint wildcard escape).
+  All three sit in PKCS#7 and x509 path validation, which Concordia does not
+  call: the SDK uses only Ed25519, ECDSA P-256, SHA-256, and raw or PKCS8 key
+  serialization. The pin matters for adopters who install the pinned closure.
+  The `cryptography>=42.0` floor in `pyproject.toml` is unchanged, because
+  cryptography 49.0.0 dropped x86_64 macOS wheels and raising the floor would
+  force Intel Mac adopters to a source build for a surface Concordia never
+  reaches.
+
+### Added
+
+- **A2A #1734 interop fixture: a signed receipt that binds its decision
+  context.** `docs/interop/a2a-1734-context-digest-receipt/` carries a
+  `decision_binding_ref` preimage, `context_digest` included, inside a shipped
+  ApprovalReceipt, so a verifier holding the presented context set confirms
+  which artifacts were in a decision's input. A dropped context artifact fails
+  closed (`CONTEXT_SET_MISMATCH`), and substituting the smaller set's digest
+  breaks the receipt signature. Four conformance vectors (three accept, one
+  reject) run under both reference runners.
+- **Cross-check of giskard09's `decision-binding-ref-v1.0` vectors.**
+  `tests/test_a2a_1734_context_digest_interop.py` recomputes their four
+  published conformance vectors, both published context sets, and the four
+  inline spec fixtures under Concordia's RFC 8785 canonicalizer and under the
+  independent `rfc8785` library, comparing canonical bytes as well as digests.
+  The retained third-party bytes live in `docs/external/`, pinned by SHA-256.
+- **`jcs-sha256-pointer` check kind in `offer-binding-v1`.** Compares a
+  recomputed digest against a value carried inside the artifact instead of
+  against a literal in the vector, so drift on either side fails. Already in
+  use by `closure-predicate-v1`; now documented and available to the
+  offer-binding profile.
+
 ## [0.10.0] - 2026-08-02
 
 ### Added
@@ -291,28 +353,31 @@ are marked BREAKING in the entries below.
   module surfaces a `warnings` entry rather than a hard failure,
   preserving the non-dependency principle between primitives.
 - **Standalone Fulfillment Attestation artifact (SPEC §9.6.4a).** New
-  v0.5 artifact type emitted on a discrete delivery boundary (e.g.,
-  A2CN `DELIVERY_ACKNOWLEDGED`). Distinct from the in-line
-  `fulfillment` block on a reputation attestation (§9.6.4): the
-  standalone shape links back to the agreement attestation via
+  v0.5 artifact type emitted on a discrete delivery boundary
+  (designed for composition with a proposed A2CN
+  delivery-acknowledgment event; not a mechanism defined in current
+  A2CN v0.2). Distinct from the in-line `fulfillment` block on a
+  reputation attestation (§9.6.4): the standalone shape links back
+  to the agreement attestation via
   `references[]` with `relationship: "fulfills"` and uses the
   A2CN-aligned status enum (`fulfilled_clean`,
   `fulfilled_with_mediation`, `failed`, `disputed_unresolved`).
   Schema at `schemas/fulfillment_attestation.schema.json` (`$id`
   `urn:concordia:schema:fulfillment_attestation:v0.5`).
-- **Adds ApprovalReceipt artifact type and example for HITL
-  pause-resume composition with A2CN Section 14 (per A2A Discussion
-  #1737).** Schema at `schemas/approval_receipt.schema.json` (`$id`
+- **Adds ApprovalReceipt artifact type and example for a proposed
+  HITL pause-resume composition with A2CN (per A2A Discussion
+  #1737; not a mechanism defined in current A2CN v0.2).** Schema at
+  `schemas/approval_receipt.schema.json` (`$id`
   `urn:concordia:schema:approval_receipt:v0.5`). Spec coverage at
   SPEC §9.6.4b with the Draft A worked example reproduced verbatim
   so public-draft readers and the in-tree spec line up. Extends the
   §11.5.5 relationship vocabulary with `approves` (artifact-specific;
   preserved by the §11.5.3 forward-compat rule).
 - **`docs/A2CN_FULFILLMENT.md`.** Integrator walkthrough for emitting
-  a Fulfillment Attestation on `DELIVERY_ACKNOWLEDGED`, the canonical
-  mapping between the standalone shape and the §9.6.4 in-line block,
-  and the v0.5 ApprovalReceipt shape with worked JSON examples for
-  each status enum value.
+  a Fulfillment Attestation at a proposed A2CN delivery-acknowledgment
+  boundary, the canonical mapping between the standalone shape and
+  the §9.6.4 in-line block, and the v0.5 ApprovalReceipt shape with
+  worked JSON examples for each status enum value.
 
 ### Changed
 
