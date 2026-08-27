@@ -636,14 +636,15 @@ def verify_attestation(
     public_keys: Mapping[str, Ed25519PublicKey],
     transcript: list[dict[str, Any]] | None = None,
 ) -> AttestationVerifyResult:
-    """Validate an attestation and verify every party signature.
+    """Validate an attestation and verify its party and outcome signatures.
 
     This is the end-to-end verifier for session receipts. It first runs
     ``validate_attestation`` schema validation, then checks each
     ``parties[*].signature`` against ``public_keys[agent_id]``. Each party's
     signature covers that party's own sub-object minus its top-level
     ``signature`` field, the same scope used by ``sign_message`` and
-    ``verify_signature``.
+    ``verify_signature``. For version 0.2.0 and later, it also verifies every
+    party's SPEC §9.6.5a countersignature over the issuance snapshot.
 
     Fail closed: malformed inputs, missing keys, invalid key types, bad
     signatures, and schema failures return ``valid=False`` instead of raising.
@@ -706,6 +707,25 @@ def verify_attestation(
                     signature_errors.append(
                         f"parties[{index}] ('{agent_id}') invalid signature"
                     )
+
+        # Import lazily because receipt_bundle uses the countersignature
+        # primitive defined in this module. The shared evaluator keeps this
+        # standalone path aligned with bundle and competence-proof verification.
+        from .receipt_bundle import evaluate_outcome_binding
+
+        outcome_binding_state, outcome_binding_error = evaluate_outcome_binding(
+            attestation,
+            lambda agent_id: public_keys.get(agent_id),
+        )
+        if outcome_binding_state == "error":
+            signature_errors.append(
+                outcome_binding_error or "attestation outcome binding failed"
+            )
+        elif outcome_binding_state == "unbound":
+            warnings.append(
+                "attestation is legacy outcome-unbound (<0.2.0); outcome is "
+                "not authenticated"
+            )
 
         set_binding_state, set_binding_errors = evaluate_receipt_set_binding(
             attestation,
