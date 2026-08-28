@@ -50,7 +50,7 @@
   "devDependencies": {
     "@eslint/js": "^9.39.4",
     "@types/node": "^26",
-    "eslint": "^9.39.4",
+    "eslint": "^10.9.1",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.8.4",
     "tsup": "^8.5.1",
