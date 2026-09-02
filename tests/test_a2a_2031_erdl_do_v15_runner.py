@@ -1,8 +1,9 @@
-"""A2A #2031: the independent ERDL Decision Object v1.5 conformance runner.
+"""A2A #2031: the independent ERDL Decision Object v1.5 hash-layer runner.
 
-Covers `docs/interop/a2a-2031-erdl-v15/runner.py`, an independently authored
-implementation of the ERDL RUNNER_CONTRACT R1-R6 built from the contract text
-and the published vector set alone.
+Covers `conformance/erdl-do-v1.5/runner.py`, an independently authored
+implementation of the ERDL RUNNER_CONTRACT hash, field and chain layer, built
+from the contract text and the published vector set alone. It is a submission
+candidate, not a conforming runner: only upstream can run Check 2.
 
 The suite is in two halves:
 
@@ -10,8 +11,9 @@ The suite is in two halves:
   hand-built decision object, and each one is checked twice: it fires on the
   mutated object and stays silent on the clean one. A rule that cannot be shown
   to fail on a planted divergence is not evidence of anything, and several of
-  these rules (the `gloss` exclusion, the JCS domain guards) are not exercised
-  by the v1.5 corpus at all.
+  these rules (the `gloss` exclusion, the JCS domain guards, the cross-object
+  breach ranking, the chain semantic merge) are not exercised by the v1.5
+  corpus at all.
 * **Corpus tests, skipped when the upstream vector file is absent.** The
   vectors are OpenOBA's, not this repository's, so they are referenced by
   digest rather than vendored. Point `ERDL_V15_VECTORS` at a local copy to run
@@ -19,7 +21,10 @@ The suite is in two halves:
 
 The canonical bytes are additionally cross-checked against the INDEPENDENT
 `rfc8785` reference canonicalizer, so agreement is between two separately
-authored implementations rather than a restatement of one.
+authored implementations rather than a restatement of one. `rfc8785` is a
+declared dev dependency in `pyproject.toml` (`[project.optional-dependencies]
+dev`), which is what the `test` CI job installs, so the module-level import
+below cannot turn into a collection error on CI.
 """
 
 from __future__ import annotations
@@ -38,14 +43,9 @@ import pytest
 import rfc8785
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-RUNNER_PATH = REPO_ROOT / "docs" / "interop" / "a2a-2031-erdl-v15" / "runner.py"
-COMMITTED_CANONICAL_HEX = (
-    REPO_ROOT
-    / "docs"
-    / "interop"
-    / "a2a-2031-erdl-v15"
-    / "concordia-python-erdl-do-v15-output.json.txt"
-)
+ARTIFACT_DIR = REPO_ROOT / "conformance" / "erdl-do-v1.5"
+RUNNER_PATH = ARTIFACT_DIR / "runner.py"
+COMMITTED_CANONICAL_HEX = ARTIFACT_DIR / "concordia-python-erdl-do-v15-output.json"
 
 #: SHA-256 of the exact upstream vector file this artifact was measured against.
 VECTORS_SHA256 = "d8adf32b7c691bdb3d805fdb0b3f7ac327dc16388cd59a4dfe757d9555e1778c"
@@ -278,13 +278,23 @@ def test_profile_hash_excludes_itself_only() -> None:
     assert runner.recompute_profile_hash({**profile, "risk_level": "low"}) != bare
 
 
-def test_intra_field_hash_divergence_is_surfaced_as_a_note() -> None:
-    """A stale `profile_hash` must never pass silently."""
+def test_intra_field_hash_divergence_survives_a_matching_flat_hash() -> None:
+    """A stale `profile_hash` does NOT necessarily break the flat hash.
+
+    This is the refutation of the justification the earlier revision of the
+    README gave for demoting intra-field divergence to a suppressible note.
+    `profile_hash` is an ordinary field inside the decision object, so it
+    participates in the R1 preimage as itself: once the emitter recomputes
+    `audit.hash` afterwards, Check 1 passes with the divergence still inside.
+    The note is therefore the ONLY surface for it, which is why the note is a
+    finding rather than a diagnostic that a vector kind can suppress.
+    """
     decision_object = _base_decision_object()
     decision_object["compliance_profile"]["profile_hash"] = "sha256:" + "e" * 64
     result = _verify(_seal(decision_object))
     assert result.check1 == "MATCH"
-    assert any("profile_hash does not recompute" in note for note in result.notes)
+    assert "hash_mismatch" not in result.codes
+    assert any("does not recompute" in str(note) for note in result.notes)
 
 
 # ---------------------------------------------------------------------------
@@ -444,12 +454,28 @@ def test_priority_ladder_is_the_contract_order() -> None:
     )
 
 
+def _ranked_codes(decision_object: dict[str, Any]) -> list[str]:
+    """Report order for one decision object, through the production path.
+
+    Ranking is done by `verify_vector`, so asserting it here exercises the code
+    a run actually takes rather than a helper kept alive only by its tests.
+    """
+    result = runner.verify_vector(
+        {
+            "id": "V-RANK",
+            "category": "synthetic",
+            "decision_object": decision_object,
+            "expected": {"type": "MATCH"},
+        }
+    )
+    return ([result.reported] if result.reported else []) + result.also_present
+
+
 def test_p1_outranks_p2_and_p2_is_reported_as_also_present() -> None:
     decision_object = _base_decision_object()
     decision_object["compliance_profile"]["jurisdictions"] = ["XX"]
     del decision_object["autonomy_level"]
-    result = _verify(_seal(decision_object))
-    ordered = [b.code for b in runner._ordered_single(result)]
+    ordered = _ranked_codes(_seal(decision_object))
     assert ordered[0] == "jurisdiction_mismatch"
     assert "compliance_field_missing" in ordered[1:]
 
@@ -459,8 +485,32 @@ def test_a_warning_never_masks_a_breach() -> None:
     decision_object = _base_decision_object()
     decision_object["evaluation"]["matched_rules"][0]["canonical_tree"] = {"eq": []}
     decision_object["evaluation"]["knowledge_references"] = [{"entry_id": "kb-gone"}]
-    ordered = [b.code for b in runner._ordered_single(_verify(_seal(decision_object)))]
+    ordered = _ranked_codes(_seal(decision_object))
     assert ordered == ["tree_snapshot_divergence", "content_unresolvable"]
+
+
+def test_chain_priority_is_extended_by_the_semantic_ladder_not_replaced() -> None:
+    assert runner.CHAIN_FULL_PRIORITY == runner.CHAIN_PRIORITY + runner.SINGLE_DO_PRIORITY
+    assert runner.CHAIN_FULL_PRIORITY[-1] == "content_unresolvable"
+
+
+def test_time_anchoring_codes_are_declared_unimplemented() -> None:
+    """R3's third group is named as absent rather than left to inference.
+
+    The contract binds `clock_drift_detected` / `timestamp_anchor_missing` to
+    the signature layer and states no detection rule for either inside the
+    permitted input set, so implementing them would be a guess. The gap is
+    declared instead, and nothing in the artifact may claim full R3.
+    """
+    assert runner.UNIMPLEMENTED_R3_CODES == (
+        "clock_drift_detected",
+        "timestamp_anchor_missing",
+    )
+    source = RUNNER_PATH.read_text(encoding="utf-8")
+    for code in runner.UNIMPLEMENTED_R3_CODES:
+        # Named in the declaration, and nowhere used as a detection result.
+        assert f'"{code}"' in source
+        assert f'Breach("{code}"' not in source
 
 
 def test_hash_mismatch_outranks_the_semantic_ladder() -> None:
@@ -468,8 +518,7 @@ def test_hash_mismatch_outranks_the_semantic_ladder() -> None:
     decision_object["compliance_profile"]["jurisdictions"] = ["XX"]
     sealed = _seal(decision_object)
     sealed["audit"]["hash"] = "sha256:" + "1" * 64
-    ordered = [b.code for b in runner._ordered_single(_verify(sealed))]
-    assert ordered[0] == "hash_mismatch"
+    assert _ranked_codes(sealed)[0] == "hash_mismatch"
 
 
 # ---------------------------------------------------------------------------
@@ -594,6 +643,157 @@ def test_also_present_is_checked_in_both_directions() -> None:
     assert any("do not hold" in f for f in overdeclared.findings)
 
 
+def _pair_vector(base: dict[str, Any], tampered: dict[str, Any], **expected: Any) -> dict[str, Any]:
+    return {
+        "id": "V-PAIR",
+        "category": "synthetic",
+        "base_do": base,
+        "tampered_do": tampered,
+        "expected": {"type": "BREACH", "breach": "hash_mismatch", **expected},
+    }
+
+
+def _chain_vector(members: list[dict[str, Any]], **expected: Any) -> dict[str, Any]:
+    return {
+        "id": "V-CHAIN",
+        "category": "synthetic",
+        "chain": members,
+        "expected": {"type": "MATCH", **expected},
+    }
+
+
+def test_a_base_side_warning_never_outranks_a_tampered_side_breach() -> None:
+    """Priority is a property of the vector, not of decision-object order.
+
+    Ranking within each object and then concatenating let a P6 warning on the
+    object that happens to come first be reported as the vector's primary
+    breach, demoting a real `hash_mismatch` on the second object to
+    `also_present`. All breaches are collected across the vector and ranked
+    once, so the base side cannot mask the tampered side.
+    """
+    base = _base_decision_object()
+    base["evaluation"]["knowledge_references"] = [{"entry_id": "kb-gone"}]
+    tampered = _base_decision_object()
+    tampered["audit"]["hash"] = "sha256:" + "1" * 64
+
+    result = runner.verify_vector(
+        _pair_vector(_seal(base), tampered, also_present=["content_unresolvable"])
+    )
+    assert result.reported == "hash_mismatch"
+    assert result.also_present == ["content_unresolvable"]
+    assert result.outcome_ok and result.findings == []
+
+
+def test_a_chain_members_semantic_breach_is_merged_not_discarded() -> None:
+    """R3 forbids silent passes, and a chain member is still a decision object.
+
+    The chain detectors lift only `hash_mismatch` and `version_unsupported`
+    from the members. Computing a member's P1-P6 breaches and then dropping
+    them would report a defective chain as a clean MATCH with zero findings.
+    """
+    for planted, code in (
+        (lambda m: m["evaluation"].update(knowledge_references=[{"entry_id": "kb-gone"}]),
+         "content_unresolvable"),
+        (lambda m: m["evaluation"]["matched_rules"][0].update(canonical_tree={"eq": []}),
+         "tree_snapshot_divergence"),
+        (lambda m: m["compliance_profile"].update(jurisdictions=["XX"]),
+         "jurisdiction_mismatch"),
+    ):
+        members = [_base_decision_object() for _ in range(3)]
+        planted(members[1])
+        previous: str | None = None
+        for index, member in enumerate(members):
+            member["decision_id"] = f"019b5c5a-0000-7000-8000-0000000000{index:02d}"
+            member["audit"]["chain_seq"] = index
+            member["audit"]["previous_hash"] = previous
+            member["audit"]["hash"] = runner.recompute_audit_hash(member)[0]
+            previous = member["audit"]["hash"]
+
+        result = runner.verify_vector(_chain_vector(members))
+        assert result.reported == code, code
+        assert not result.outcome_ok
+        assert result.findings
+
+
+def test_a_chain_level_breach_still_outranks_a_members_semantic_breach() -> None:
+    """Merging must not reorder: every chain code outranks every P1-P6 code."""
+    members = _chain(2)
+    members[1]["audit"]["chain_seq"] = 5
+    members[1]["compliance_profile"]["jurisdictions"] = ["XX"]
+    members[1] = _seal(members[1])
+    result = runner.verify_vector(_chain_vector(members))
+    assert result.reported == "chain_seq_gap"
+    assert "jurisdiction_mismatch" in result.also_present
+
+
+def test_an_intra_field_divergence_on_a_pair_is_a_finding() -> None:
+    """The recorded exception is keyed to one object and one field, not to a kind.
+
+    Suppressing every note on every pair vector made an identical defect a
+    finding on a single-DO vector and silent on a pair. Only the exact
+    `V-COMP-F02-tampered` profile-hash case is excused, and it is printed.
+    """
+    base = _base_decision_object()
+    base["compliance_profile"]["profile_hash"] = "sha256:" + "a" * 64
+    result = runner.verify_vector(
+        _pair_vector(_seal(base), _seal(_base_decision_object()), type="MATCH", breach=None)
+    )
+    assert any("profile_hash" in finding for finding in result.findings)
+    assert result.excused_notes == []
+
+
+def test_the_recorded_note_exception_is_excused_and_still_reported() -> None:
+    key, subject = next(iter(runner.KNOWN_INTRA_FIELD_EXCEPTIONS))
+    assert key == "V-COMP-F02-tampered"
+    assert subject == "compliance_profile.profile_hash"
+    # The exception is scoped to that one key: the same subject elsewhere is a
+    # finding, which the previous test asserts on a pair.
+    assert len(runner.KNOWN_INTRA_FIELD_EXCEPTIONS) == 1
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(lambda do: do.pop("compliance_profile"), id="profile-removed"),
+        pytest.param(lambda do: do.pop("evaluation"), id="evaluation-removed"),
+        pytest.param(lambda do: do["agent"].pop("id"), id="agent-id-removed"),
+        pytest.param(
+            lambda do: do["compliance_profile"].update(jurisdictions="XX"),
+            id="jurisdictions-bare-string",
+        ),
+        pytest.param(
+            lambda do: do["evaluation"]["matched_rules"][0].pop("canonical_tree"),
+            id="canonical-tree-removed",
+        ),
+        pytest.param(lambda do: do["policies"][0].pop("when"), id="policy-when-removed"),
+        pytest.param(lambda do: do["human_oversight"].update(required="yes"), id="oversight-str"),
+        pytest.param(lambda do: do.update(policies={}), id="policies-not-a-list"),
+    ],
+)
+def test_a_malformed_decision_object_fails_closed(mutate: Any) -> None:
+    """Every P1-P6 detector returns None on a container it cannot read.
+
+    That is right for a detector, which must not invent a breach code the
+    contract does not define, and wrong for the runner: without a shape guard a
+    structurally broken object walks the whole ladder in silence. The bare
+    string `jurisdictions` is the sharpest case, because `str` is a `Sequence`.
+    """
+    decision_object = _base_decision_object()
+    mutate(decision_object)
+    decision_object["audit"]["hash"] = runner.recompute_audit_hash(decision_object)[0]
+    vector = {
+        "id": "V-SHAPE",
+        "category": "synthetic",
+        "decision_object": decision_object,
+        "expected": {"type": "MATCH"},
+    }
+    assert runner.verify_vector(vector).findings
+
+
+def test_a_well_formed_object_trips_no_shape_finding() -> None:
+    assert runner._shape_problems(_seal(_base_decision_object())) == []
+
+
 def test_declared_resolvable_set_disagreement_is_reported() -> None:
     vector = {
         "id": "V-SYNTH-R",
@@ -602,6 +802,55 @@ def test_declared_resolvable_set_disagreement_is_reported() -> None:
         "expected": {"type": "MATCH", "resolvable_entry_ids": ["kb-elsewhere"]},
     }
     assert any("resolvable_entry_ids" in f for f in runner.verify_vector(vector).findings)
+
+
+# ---------------------------------------------------------------------------
+# Pinned-input binding
+# ---------------------------------------------------------------------------
+
+
+def test_the_runner_pins_the_corpus_digest_the_suite_measured() -> None:
+    assert runner.PINNED_VECTORS_SHA256 == VECTORS_SHA256
+
+
+def test_a_substituted_same_version_corpus_is_refused(tmp_path: Path) -> None:
+    """Version agreement is not evidence that a number describes the pinned input.
+
+    A substituted file still declares `erdl-do-v1.5-hash-flat`, still parses,
+    and still produces plausible counts. The read is therefore bound to the
+    digest, with no override flag.
+    """
+    substituted = tmp_path / "decision-object-vectors-v1.5.json"
+    substituted.write_text(
+        json.dumps({"preimage_version": runner.PREIMAGE_VERSION, "vectors": []}),
+        encoding="utf-8",
+    )
+    with pytest.raises(runner.PinnedInputError, match="pinned upstream corpus"):
+        runner.load_pinned_vectors(substituted)
+
+
+def test_the_cli_writes_no_output_for_a_substituted_corpus(tmp_path: Path) -> None:
+    substituted = tmp_path / "vectors.json"
+    substituted.write_text(
+        json.dumps({"preimage_version": runner.PREIMAGE_VERSION, "vectors": []}),
+        encoding="utf-8",
+    )
+    out = tmp_path / "submission.json"
+    assert runner.main([str(substituted), "--submission-out", str(out)]) == 2
+    assert not out.exists()
+
+
+def test_the_runner_has_no_digest_opt_out() -> None:
+    """A named escape hatch would make every published number conditional."""
+    source = RUNNER_PATH.read_text(encoding="utf-8")
+    assert "load_pinned_vectors(args.vectors)" in source
+    for flag in ("--unsafe", "--no-verify-digest", "--skip-digest", "--force"):
+        assert flag not in source
+
+
+def test_the_submitted_envelope_names_the_corpus_it_describes() -> None:
+    envelope = json.loads(COMMITTED_CANONICAL_HEX.read_text(encoding="utf-8"))
+    assert VECTORS_SHA256 in envelope["method"]
 
 
 # ---------------------------------------------------------------------------
@@ -674,6 +923,25 @@ def test_corpus_produces_no_findings(corpus: Any) -> None:
 
 
 @requires_vectors
+def test_the_only_excused_diagnostic_is_the_recorded_one(corpus: Any) -> None:
+    """A suppression is only legitimate if it is scoped, reasoned and visible."""
+    assert len(corpus.excused_notes) == 1
+    assert "V-COMP-F02-tampered" in corpus.excused_notes[0]
+    assert "profile_hash" in corpus.excused_notes[0]
+
+
+@requires_vectors
+def test_no_corpus_object_trips_the_shape_guard(corpus: Any) -> None:
+    """The guard's requirements are measured properties of all 108 objects."""
+    assert [
+        str(note)
+        for obj in corpus.objects
+        for note in obj.notes
+        if note.subject == "shape"
+    ] == []
+
+
+@requires_vectors
 def test_planted_corpus_defects_are_all_caught() -> None:
     """78/78 is only evidence if the runner can fail. Prove it can.
 
@@ -742,6 +1010,103 @@ def test_planted_corpus_defects_are_all_caught() -> None:
 
 
 @requires_vectors
+def test_planted_r3_path_defects_on_real_vectors_are_all_caught() -> None:
+    """The exact adversarial cases the corpus itself cannot reach.
+
+    Each of these was absorbed silently or mis-ranked by an earlier revision.
+    They are planted on real corpus vectors rather than synthetic ones so the
+    regression is anchored to the same objects the published numbers describe.
+    """
+    path = _vectors_path()
+    assert path is not None
+    document = json.loads(path.read_text(encoding="utf-8"))
+
+    def vector(doc: dict[str, Any], vector_id: str) -> dict[str, Any]:
+        return next(v for v in doc["vectors"] if v["id"] == vector_id)
+
+    def seal(decision_object: dict[str, Any]) -> None:
+        decision_object["audit"]["hash"] = runner.recompute_audit_hash(decision_object)[0]
+
+    def reanchor(chain: list[dict[str, Any]]) -> None:
+        previous: str | None = None
+        for member in chain:
+            member["audit"]["previous_hash"] = previous
+            seal(member)
+            previous = member["audit"]["hash"]
+
+    def chain_member_p6(doc: dict[str, Any]) -> None:
+        chain = vector(doc, "V-DO-v15-C01")["chain"]
+        chain[1]["evaluation"]["knowledge_references"] = [{"entry_id": "kb-planted-missing"}]
+        reanchor(chain)
+
+    def chain_member_p5(doc: dict[str, Any]) -> None:
+        chain = vector(doc, "V-DO-v15-C01")["chain"]
+        chain[1]["evaluation"]["matched_rules"][0]["canonical_tree"] = {"eq": []}
+        reanchor(chain)
+
+    def pair_base_warning(doc: dict[str, Any]) -> None:
+        pair = vector(doc, "V-DO-v15-A01")
+        pair["base_do"]["evaluation"]["knowledge_references"] = [
+            {"entry_id": "kb-planted-missing"}
+        ]
+        seal(pair["base_do"])
+
+    def pair_base_profile_hash(doc: dict[str, Any]) -> None:
+        pair = vector(doc, "V-DO-v15-A01")
+        pair["base_do"]["compliance_profile"]["profile_hash"] = "sha256:" + "a" * 64
+        seal(pair["base_do"])
+
+    def pair_base_policy_hash(doc: dict[str, Any]) -> None:
+        pair = vector(doc, "V-DO-v15-A01")
+        pair["base_do"]["policies"][0]["hash"] = "sha256:" + "b" * 64
+        seal(pair["base_do"])
+
+    def single_stale_profile_hash(doc: dict[str, Any]) -> None:
+        decision_object = vector(doc, "V-DO-v15-D01")["decision_object"]
+        decision_object["compliance_profile"]["profile_hash"] = "sha256:" + "c" * 64
+        seal(decision_object)
+
+    def malformed_jurisdictions(doc: dict[str, Any]) -> None:
+        decision_object = vector(doc, "V-DO-v15-D01")["decision_object"]
+        decision_object["compliance_profile"]["jurisdictions"] = "XX"
+        seal(decision_object)
+
+    mutations: dict[str, Any] = {
+        "P6 planted in a chain member": chain_member_p6,
+        "P5 planted in a chain member": chain_member_p5,
+        "P6 planted on a tamper pair's base side": pair_base_warning,
+        "stale profile_hash on a tamper pair's base side": pair_base_profile_hash,
+        "stale policy hash on a tamper pair's base side": pair_base_policy_hash,
+        "stale profile_hash re-sealed so Check 1 still passes": single_stale_profile_hash,
+        "jurisdictions replaced by a bare string sentinel": malformed_jurisdictions,
+    }
+
+    absorbed: list[str] = []
+    for label, mutate in mutations.items():
+        mutated = copy.deepcopy(document)
+        mutate(mutated)
+        report = runner.run(mutated)
+        if report.vector_outcome_ok == report.vector_total and not report.findings:
+            absorbed.append(label)
+    assert absorbed == []
+
+
+@requires_vectors
+def test_a_base_side_warning_does_not_mask_the_tampered_hash_mismatch() -> None:
+    """The mis-ranking case, asserted on its outcome rather than only on failure."""
+    path = _vectors_path()
+    assert path is not None
+    document = json.loads(path.read_text(encoding="utf-8"))
+    pair = next(v for v in document["vectors"] if v["id"] == "V-DO-v15-A01")
+    pair["base_do"]["evaluation"]["knowledge_references"] = [{"entry_id": "kb-planted-missing"}]
+    pair["base_do"]["audit"]["hash"] = runner.recompute_audit_hash(pair["base_do"])[0]
+
+    result = runner.verify_vector(pair)
+    assert result.reported == "hash_mismatch"
+    assert result.also_present == ["content_unresolvable"]
+
+
+@requires_vectors
 def test_committed_output_matches_a_fresh_run(corpus: Any) -> None:
     """Byte drift in the published artifact is a hard failure."""
     published = json.loads(COMMITTED_CANONICAL_HEX.read_text(encoding="utf-8"))
@@ -750,29 +1115,68 @@ def test_committed_output_matches_a_fresh_run(corpus: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
-# The shipped answer-key verifier (runs without the upstream vectors)
+# The shipped envelope self-check (runs without the upstream vectors)
 # ---------------------------------------------------------------------------
 
 
-def test_shipped_verifier_passes() -> None:
-    """`verify.py` re-derives every published byte string and exits 0.
+def test_shipped_envelope_check_passes() -> None:
+    """`verify_envelope.py` re-derives every published byte string and exits 0.
 
     It uses the independent `rfc8785` package rather than Concordia's own
     canonicalizer, so this is a cross-check between two separately authored
-    implementations, not a restatement of one.
+    implementations, not a restatement of one. It is not an answer-key
+    verifier: it holds no oracle and cannot establish Check 2 or R5.
     """
-    verify = _load_named(RUNNER_PATH.parent / "verify.py", "erdl_do_v15_verify")
-    assert verify.main() == 0
+    verify = _load_named(ARTIFACT_DIR / "verify_envelope.py", "erdl_do_v15_verify")
+    assert verify.main([]) == 0
 
 
-def test_shipped_verifier_catches_a_planted_divergence(tmp_path: Path) -> None:
+def test_shipped_envelope_check_takes_the_path_as_an_argument(tmp_path: Path) -> None:
+    """The submission rename must not strand the shipped check."""
+    verify = _load_named(ARTIFACT_DIR / "verify_envelope.py", "erdl_do_v15_verify_argv")
+    renamed = tmp_path / "concordia-python-output.json"
+    renamed.write_text(COMMITTED_CANONICAL_HEX.read_text(encoding="utf-8"), encoding="utf-8")
+    assert verify.main([str(renamed)]) == 0
+
+
+def test_shipped_envelope_key_grammar_discriminates() -> None:
+    """A character-class check that accepts everything is not a grammar check."""
+    verify = _load_named(ARTIFACT_DIR / "verify_envelope.py", "erdl_do_v15_verify_keys")
+    for accepted in ("V-DO-v15-D01", "V-COMP-F02-tampered", "V-DO-v15-C01[0]"):
+        verify.split_key(accepted)
+    for rejected in (
+        "V-X-base-base",
+        "V-X-tampered-base",
+        "totally-bogus-key",
+        "V-DO-v15-C01[01]",
+        "V-DO-v15-C01[-1]",
+    ):
+        with pytest.raises(verify.VerificationError):
+            verify.split_key(rejected)
+    with pytest.raises(verify.VerificationError, match="both sides"):
+        verify.verify_key_grammar({"V-Y-base": "00"})
+    with pytest.raises(verify.VerificationError, match="gap"):
+        verify.verify_key_grammar({"V-Z[0]": "00", "V-Z[2]": "00"})
+    # The one hole the contract requires is permitted by name, not by class.
+    verify.verify_key_grammar({"V-DO-v15-C07[0]": "00", "V-DO-v15-C07[2]": "00"})
+
+
+def test_shipped_envelope_check_requires_the_corpus_pin() -> None:
+    verify = _load_named(ARTIFACT_DIR / "verify_envelope.py", "erdl_do_v15_verify_pin")
+    envelope = json.loads(COMMITTED_CANONICAL_HEX.read_text(encoding="utf-8"))
+    envelope["method"] = "Python, contract-only"
+    with pytest.raises(verify.VerificationError, match="pinned corpus digest"):
+        verify.verify_envelope(envelope)
+
+
+def test_shipped_envelope_check_catches_a_planted_divergence(tmp_path: Path) -> None:
     """An unproven guard is not evidence, so the guard is made to fail.
 
-    Each planted defect is one the verifier exists to catch: bytes that parse
+    Each planted defect is one the check exists to catch: bytes that parse
     but are not canonical form, a preimage that kept `audit.hash`, a canary
     reported as MATCH, and a broken chain anchor.
     """
-    verify = _load_named(RUNNER_PATH.parent / "verify.py", "erdl_do_v15_verify_neg")
+    verify = _load_named(ARTIFACT_DIR / "verify_envelope.py", "erdl_do_v15_verify_neg")
     envelope = json.loads(COMMITTED_CANONICAL_HEX.read_text(encoding="utf-8"))
 
     canary_match = copy.deepcopy(envelope)

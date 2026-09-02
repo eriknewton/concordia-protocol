@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
-"""Independent Python conformance runner for ERDL Decision Object v1.5.
+"""Independent Python runner for the ERDL Decision Object v1.5 hash layer.
 
-Implements the RUNNER_CONTRACT requirements R1-R6 from the contract text
-alone. The only ERDL material consulted while writing this file was
-`RUNNER_CONTRACT.en.md` and `decision-object-vectors-v1.5.json`; the
-reference verifier, the answers file, the verifier guide, the generated
-conformance report, and every other implementation were not read. See the
-README in this directory for the recorded independence boundary.
+This is an independent submission candidate, not a conforming runner. Only
+upstream can run Check 2 (R4) against the answers file, and only upstream can
+register an implementation, so nothing here declares conformance. What this
+file does claim is stated at the granularity it was measured, and the parts of
+the contract it does not implement are named rather than left to inference.
+
+Implemented from the contract text alone. The only ERDL material consulted
+while writing this file was `RUNNER_CONTRACT.en.md` and
+`decision-object-vectors-v1.5.json`; the reference verifier, the answers file,
+the verifier guide, the generated conformance report, and every other
+implementation were not read. See the README in this directory for the
+recorded independence boundary.
 
 What the contract states directly, and what this file therefore implements
 without inference:
@@ -17,15 +23,23 @@ without inference:
       Intra-field hashes (`policies[].hash`, `compliance_profile.profile_hash`)
       exclude the field being computed; `policies[].hash` also excludes
       `gloss`.
-  R3  Breach codes are exposed, never silently passed, in the stated
-      priority, and each vector's `expected.also_present` is checked in both
-      directions.
+  R3  PARTIAL. The single-decision-object P1-P6 ladder and the chain priority
+      order are implemented and exposed, and each vector's
+      `expected.also_present` is checked in both directions. The third group
+      R3 names, time anchoring (`clock_drift_detected` /
+      `timestamp_anchor_missing`), is NOT implemented: the contract binds it
+      to the signature layer, defines no detection rule for it inside the
+      permitted input set, and the v1.5 corpus is a hash-mode corpus that
+      cannot exercise it. Guessing a rule would be worse than declaring the
+      gap, so it is declared. See `UNIMPLEMENTED_R3_CODES`.
   R4  Check 1 (recomputed hash vs the artifact's self-reported `audit.hash`)
       is performed here. Check 2 (recomputed canonical bytes vs the
       independent answers file) is performed by whoever holds the oracle;
       this runner emits the `canonical_hex` map that Check 2 consumes and
-      makes no claim about its outcome.
-  R5  `V-DO-v15-K01` must come out Check 1 = MISMATCH.
+      makes no claim about its outcome. The contract is explicit that passing
+      only one of the two gates does not constitute conformance.
+  R5  `V-DO-v15-K01` must come out Check 1 = MISMATCH. That half is checked
+      here; the Check 2 = MATCH half is upstream's to run.
   R6  JCS is implemented in-repo (`concordia.canonicalization`, an
       independently authored RFC 8785 canonicalizer written for Concordia's
       own signing surface). No ERDL SDK and no third-party JCS package is
@@ -36,6 +50,11 @@ Detection rules the contract names but defines elsewhere (in
 derived from the vector corpus and are documented, rule by rule, in the
 README. Each derived rule was checked to fire on exactly the vectors that
 declare it and on no others.
+
+The CLI reads only the pinned upstream vector file: a corpus whose SHA-256 is
+not `PINNED_VECTORS_SHA256` is refused before any measurement is taken, so a
+substituted same-version file cannot silently produce a published number.
+There is no opt-out flag.
 """
 
 from __future__ import annotations
@@ -51,7 +70,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -66,6 +85,27 @@ from concordia.canonicalization import canonicalize_jcs  # noqa: E402
 #: `version_unsupported` and, per contract section 4, emits no canonical bytes
 #: for it.
 PREIMAGE_VERSION = "erdl-do-v1.5-hash-flat"
+
+#: SHA-256 of the exact upstream `decision-object-vectors-v1.5.json` every
+#: published number in this directory was measured against. The CLI refuses any
+#: other corpus. A same-version substituted file is the failure mode this
+#: guards: it would still declare `preimage_version: erdl-do-v1.5-hash-flat`,
+#: still parse, and still produce plausible counts, so version agreement is not
+#: sufficient evidence that a published number describes the pinned input.
+PINNED_VECTORS_SHA256 = "d8adf32b7c691bdb3d805fdb0b3f7ac327dc16388cd59a4dfe757d9555e1778c"
+
+#: RUNNER_CONTRACT R3 names three groups of code. This runner implements the
+#: single-decision-object ladder and the chain order; it does NOT implement the
+#: time-anchoring group, which R3 introduces as "(with the signature layer)".
+#: The contract states no detection rule for either code, the rule it defers to
+#: (`docs/VERIFIER-GUIDE.md` section 4.1) is outside the permitted input set,
+#: and the v1.5 corpus is hash-mode, so nothing in the permitted inputs could
+#: even falsify a guess. Named here so that "R3 implemented" is never read as
+#: covering them.
+UNIMPLEMENTED_R3_CODES: tuple[str, ...] = (
+    "clock_drift_detected",
+    "timestamp_anchor_missing",
+)
 
 #: RUNNER_CONTRACT R3 narrows `jurisdiction_mismatch` to "the jurisdiction code
 #: is not in the authoritative six-jurisdiction set" but does not enumerate the
@@ -123,6 +163,33 @@ SINGLE_DO_FULL_PRIORITY: tuple[str, ...] = (
     "hash_mismatch",
 ) + SINGLE_DO_PRIORITY
 
+#: Ranking for a chain vector once the members' own P1-P6 findings are merged
+#: into the chain-level ones. The contract states two orders and this is their
+#: concatenation, which preserves both: every chain code outranks every
+#: semantic code, the chain codes keep their stated order, the P1-P6 ladder
+#: keeps its stated order, and `content_unresolvable` stays last overall so a
+#: warning still cannot mask a breach.
+CHAIN_FULL_PRIORITY: tuple[str, ...] = CHAIN_PRIORITY + SINGLE_DO_PRIORITY
+
+#: Chain-level codes that `detect_chain_breaches` already lifts from the
+#: members with chain-scoped detail. Merging the per-member copy would only
+#: duplicate them.
+CHAIN_LIFTED_CODES = frozenset({"hash_mismatch", "version_unsupported"})
+
+#: The one intra-field-hash divergence in the pinned corpus that is the vector's
+#: own content rather than a defect: `V-COMP-F02` is the swapped-profile tamper,
+#: so its tampered side carries a `compliance_profile` that no longer matches
+#: its stale `profile_hash`. Keyed to the exact oracle key and the exact field,
+#: with the reason recorded, so that every other intra-field divergence
+#: anywhere in the corpus still becomes a finding. This is an exception, not a
+#: class: it is counted and printed, never dropped silently.
+KNOWN_INTRA_FIELD_EXCEPTIONS: dict[tuple[str, str], str] = {
+    ("V-COMP-F02-tampered", "compliance_profile.profile_hash"): (
+        "V-COMP-F02 is the swapped-profile tamper; the stale profile_hash is "
+        "the tamper this vector encodes, not a runner defect"
+    ),
+}
+
 #: `V-DO-v15-K01` declares this label rather than one of the R3 breach codes.
 #: R5 defines its acceptance directly: Check 1 MISMATCH (and Check 2 MATCH,
 #: which only the oracle holder can evaluate).
@@ -134,16 +201,43 @@ CANARY_VECTOR_ID = "V-DO-v15-K01"
 SUBMISSION_RUNNER_NAME = "concordia-python"
 SUBMISSION_METHOD = (
     "Python, contract-only, self-built JCS (RFC 8785) + hashlib SHA-256; "
-    "no ERDL SDK, no third-party canonicalizer, answers file never opened"
+    "no ERDL SDK, no third-party canonicalizer, answers file never opened; "
+    "hash/field/chain layer only, time-anchoring codes not implemented; "
+    f"measured against decision-object-vectors-v1.5.json sha256:{PINNED_VECTORS_SHA256}"
 )
 SUBMISSION_ARTIFACT = (
     "https://github.com/eriknewton/concordia-protocol/tree/main/"
-    "docs/interop/a2a-2031-erdl-v15"
+    "conformance/erdl-do-v1.5"
 )
 
 
 class DomainError(ValueError):
     """A value cannot be canonicalized reproducibly under JCS."""
+
+
+class PinnedInputError(ValueError):
+    """The supplied vector file is not the pinned upstream corpus."""
+
+
+def load_pinned_vectors(path: Path) -> dict[str, Any]:
+    """Read the vector document, refusing anything but the pinned corpus.
+
+    Fail-closed by construction and with no override: every number this
+    directory publishes is a statement about one specific file, and a
+    substituted file that still declares `erdl-do-v1.5-hash-flat` would parse
+    and produce counts that look exactly as legitimate. Binding the read to the
+    digest is what makes "measured against the upstream corpus" checkable
+    rather than asserted.
+    """
+    raw = path.read_bytes()
+    digest = hashlib.sha256(raw).hexdigest()
+    if digest != PINNED_VECTORS_SHA256:
+        raise PinnedInputError(
+            f"{path}: SHA-256 {digest} is not the pinned upstream corpus "
+            f"{PINNED_VECTORS_SHA256}; refusing to measure a substituted vector "
+            "file. Re-pin deliberately if upstream reissued the vectors."
+        )
+    return json.loads(raw.decode("utf-8"))
 
 
 # --------------------------------------------------------------------------
@@ -300,6 +394,22 @@ class Breach:
         return f"{self.code}: {self.detail}"
 
 
+@dataclass(frozen=True)
+class Note:
+    """A diagnostic the contract names no breach code for.
+
+    ``subject`` is the thing that diverged, stable enough to key a recorded
+    exception against. Notes are findings by default; see
+    ``KNOWN_INTRA_FIELD_EXCEPTIONS`` for the single recorded exception.
+    """
+
+    subject: str
+    detail: str
+
+    def __str__(self) -> str:
+        return f"{self.subject}: {self.detail}"
+
+
 @dataclass
 class DecisionObjectResult:
     """Per-decision-object outcome. ``key`` is the oracle key from section 4."""
@@ -312,7 +422,7 @@ class DecisionObjectResult:
     recomputed_hash: str | None
     canonical_hex: str | None
     breaches: list[Breach] = field(default_factory=list)
-    notes: list[str] = field(default_factory=list)
+    notes: list[Note] = field(default_factory=list)
 
     @property
     def codes(self) -> list[str]:
@@ -332,6 +442,159 @@ class VectorResult:
     expected_also_present: list[str]
     outcome_ok: bool
     findings: list[str] = field(default_factory=list)
+    #: Notes matched by a recorded exception rather than raised as findings.
+    #: Kept and counted so a suppression is always visible in the run output.
+    excused_notes: list[str] = field(default_factory=list)
+
+
+# --------------------------------------------------------------------------
+# Structural shape guard
+# --------------------------------------------------------------------------
+
+#: Containers every decision object in the pinned corpus carries, with the type
+#: each detector below assumes. The P1-P6 detectors return None when a
+#: container is absent or the wrong type, which is the right behaviour for a
+#: detector (it must not invent a breach code the contract does not define) but
+#: the wrong behaviour for the runner as a whole: a structurally broken object
+#: would then walk the whole semantic ladder in silence. The shape guard is
+#: what stops that, and it fails closed as a finding rather than as an invented
+#: breach code.
+#:
+#: Every requirement here is a measured property of all 108 decision objects in
+#: the pinned corpus, not a guess about the schema. Optional members
+#: (`knowledge_references`, `profile_hash`, `policies[].hash`) are type-checked
+#: only when present, because the corpus does not carry them everywhere.
+_REQUIRED_MAPPINGS = ("audit", "agent", "compliance_profile", "evaluation", "human_oversight")
+
+
+def _shape_problems(decision_object: Mapping[str, Any]) -> list[str]:
+    """Return one message per structural assumption the object breaks."""
+    problems: list[str] = []
+
+    def require(condition: bool, message: str) -> bool:
+        if not condition:
+            problems.append(message)
+        return condition
+
+    if not isinstance(decision_object, Mapping):
+        return [f"decision object is {type(decision_object).__name__}, not an object"]
+
+    for name in _REQUIRED_MAPPINGS:
+        node = decision_object.get(name)
+        require(
+            isinstance(node, Mapping),
+            f"{name} is {type(node).__name__}, expected an object",
+        )
+
+    audit = decision_object.get("audit")
+    if isinstance(audit, Mapping):
+        require(
+            isinstance(audit.get("preimage_version"), str),
+            "audit.preimage_version is not a string; the version gate cannot be applied",
+        )
+        require(isinstance(audit.get("mode"), str), "audit.mode is not a string")
+
+    agent = decision_object.get("agent")
+    if isinstance(agent, Mapping):
+        require(isinstance(agent.get("id"), str), "agent.id is not a string")
+
+    profile = decision_object.get("compliance_profile")
+    if isinstance(profile, Mapping):
+        # `str` is a Sequence, so a bare "XX" would otherwise be read as a
+        # jurisdiction list and silently accepted by P1.
+        require(
+            isinstance(profile.get("jurisdictions"), list),
+            f"compliance_profile.jurisdictions is "
+            f"{type(profile.get('jurisdictions')).__name__}, expected a list",
+        )
+        require(
+            isinstance(profile.get("activated_fields"), list),
+            f"compliance_profile.activated_fields is "
+            f"{type(profile.get('activated_fields')).__name__}, expected a list",
+        )
+        require(
+            isinstance(profile.get("risk_level"), str),
+            "compliance_profile.risk_level is not a string; P2 and P3 both read it",
+        )
+        if "profile_hash" in profile:
+            require(
+                isinstance(profile.get("profile_hash"), str),
+                "compliance_profile.profile_hash is present but not a string",
+            )
+
+    oversight = decision_object.get("human_oversight")
+    if isinstance(oversight, Mapping):
+        require(
+            isinstance(oversight.get("required"), bool),
+            "human_oversight.required is not a boolean",
+        )
+
+    policies = decision_object.get("policies")
+    if require(
+        isinstance(policies, list),
+        f"policies is {type(policies).__name__}, expected a list",
+    ):
+        assert isinstance(policies, list)
+        for index, policy in enumerate(policies):
+            if not require(
+                isinstance(policy, Mapping), f"policies[{index}] is not an object"
+            ):
+                continue
+            for member, kind in (("id", str), ("author_id", str), ("when", Mapping)):
+                require(
+                    isinstance(policy.get(member), kind),
+                    f"policies[{index}].{member} is "
+                    f"{type(policy.get(member)).__name__}, expected {kind.__name__}",
+                )
+            if "hash" in policy:
+                require(
+                    isinstance(policy.get("hash"), str),
+                    f"policies[{index}].hash is present but not a string",
+                )
+
+    evaluation = decision_object.get("evaluation")
+    if isinstance(evaluation, Mapping):
+        matched = evaluation.get("matched_rules")
+        if require(
+            isinstance(matched, list),
+            f"evaluation.matched_rules is {type(matched).__name__}, expected a list",
+        ):
+            assert isinstance(matched, list)
+            for index, entry in enumerate(matched):
+                if not require(
+                    isinstance(entry, Mapping),
+                    f"evaluation.matched_rules[{index}] is not an object",
+                ):
+                    continue
+                require(
+                    isinstance(entry.get("rule_id"), str),
+                    f"evaluation.matched_rules[{index}].rule_id is not a string",
+                )
+                require(
+                    isinstance(entry.get("canonical_tree"), Mapping),
+                    f"evaluation.matched_rules[{index}].canonical_tree is "
+                    f"{type(entry.get('canonical_tree')).__name__}, expected an object",
+                )
+        references = evaluation.get("knowledge_references")
+        if references is not None:
+            if require(
+                isinstance(references, list),
+                f"evaluation.knowledge_references is "
+                f"{type(references).__name__}, expected a list",
+            ):
+                assert isinstance(references, list)
+                for index, reference in enumerate(references):
+                    if not require(
+                        isinstance(reference, Mapping),
+                        f"evaluation.knowledge_references[{index}] is not an object",
+                    ):
+                        continue
+                    require(
+                        isinstance(reference.get("entry_id"), str),
+                        f"evaluation.knowledge_references[{index}].entry_id is not a string",
+                    )
+
+    return problems
 
 
 # --------------------------------------------------------------------------
@@ -517,9 +780,12 @@ def verify_decision_object(
     decision_object: Mapping[str, Any],
     resolvable_entry_ids: Iterable[str] = DEFAULT_RESOLVABLE_ENTRY_IDS,
 ) -> DecisionObjectResult:
-    """Run the version gate, R1/R4 Check 1, R2 intra-field hashes and R3."""
+    """Run the shape guard, the version gate, Check 1, R2 intra-field and R3."""
     audit = decision_object.get("audit")
     stored = audit.get("hash") if isinstance(audit, Mapping) else None
+    shape = [
+        Note("shape", problem) for problem in _shape_problems(decision_object)
+    ]
 
     if not version_supported(decision_object):
         declared = audit.get("preimage_version") if isinstance(audit, Mapping) else None
@@ -538,6 +804,7 @@ def verify_decision_object(
                     "the runner terminates before producing canonical bytes",
                 )
             ],
+            notes=shape,
         )
 
     recomputed, payload = recompute_audit_hash(decision_object)
@@ -550,6 +817,7 @@ def verify_decision_object(
         stored_hash=stored if isinstance(stored, str) else None,
         recomputed_hash=recomputed,
         canonical_hex=payload.hex(),
+        notes=shape,
     )
     if not matched:
         result.breaches.append(
@@ -559,16 +827,26 @@ def verify_decision_object(
             )
         )
 
-    # R2 intra-field hashes. These are diagnostics rather than breach codes:
-    # the contract names no code for them, and a divergence necessarily also
-    # breaks the whole-DO flat hash, which is reported as `hash_mismatch`.
+    # R2 intra-field hashes. These are diagnostics rather than breach codes
+    # because the contract names no code for an intra-field divergence, and
+    # inventing one would be a guess. They are NOT harmless: a stale
+    # `profile_hash` or `policies[].hash` participates in the flat preimage as
+    # an ordinary field, so once the emitter recomputes `audit.hash` afterwards
+    # the whole-object hash matches and Check 1 passes with the divergence
+    # still inside. The repository's own
+    # `test_intra_field_hash_divergence_survives_a_matching_flat_hash` asserts
+    # exactly that. So every note is a finding unless it is one of the
+    # recorded, key-scoped exceptions in `KNOWN_INTRA_FIELD_EXCEPTIONS`.
     profile = decision_object.get("compliance_profile")
     if isinstance(profile, Mapping) and isinstance(profile.get("profile_hash"), str):
         recomputed_profile = recompute_profile_hash(profile)
         if recomputed_profile != profile["profile_hash"]:
             result.notes.append(
-                "compliance_profile.profile_hash does not recompute "
-                f"(stored {profile['profile_hash']}, recomputed {recomputed_profile})"
+                Note(
+                    "compliance_profile.profile_hash",
+                    "does not recompute (stored "
+                    f"{profile['profile_hash']}, recomputed {recomputed_profile})",
+                )
             )
     policies = decision_object.get("policies")
     if isinstance(policies, list):
@@ -578,8 +856,11 @@ def verify_decision_object(
             recomputed_policy = recompute_policy_hash(policy)
             if recomputed_policy != policy["hash"]:
                 result.notes.append(
-                    f"policies[{policy.get('id')!r}].hash does not recompute "
-                    f"(stored {policy['hash']}, recomputed {recomputed_policy})"
+                    Note(
+                        f"policies[{policy.get('id')!r}].hash",
+                        "does not recompute (stored "
+                        f"{policy['hash']}, recomputed {recomputed_policy})",
+                    )
                 )
 
     result.breaches.extend(detect_semantic_breaches(decision_object, resolvable_entry_ids))
@@ -727,16 +1008,42 @@ def verify_vector(
         for key, do in enumerate_objects(vector)
     ]
 
+    # Breaches are collected across every decision object of the vector into a
+    # single dict keyed by code, then ranked ONCE. Ranking inside each object
+    # and concatenating (the earlier shape of this code) let a low-priority
+    # code on the first object outrank a high-priority code on the second, so a
+    # base-side P6 warning could be reported as a pair's primary breach while
+    # the tampered side's `hash_mismatch` was demoted to `also_present`. Global
+    # ranking is what makes "first hit by priority" a property of the vector
+    # rather than of object order.
+    holding_map: dict[str, Breach] = {}
+
+    def collect(breach: Breach, source_key: str) -> None:
+        if breach.code in holding_map:
+            return
+        detail = breach.detail if source_key == vector_id else f"{source_key}: {breach.detail}"
+        holding_map[breach.code] = Breach(breach.code, detail)
+
     if kind == "chain":
-        holding = detect_chain_breaches([do for _, do in enumerate_objects(vector)], objects)
-    else:
-        holding = []
-        seen: set[str] = set()
+        for breach in detect_chain_breaches(
+            [do for _, do in enumerate_objects(vector)], objects
+        ):
+            collect(breach, vector_id)
+        # A chain member's own P1-P6 findings are part of the vector's R3
+        # surface. Computing them and then dropping them is the silent pass R3
+        # opens by forbidding, so they are merged here and ranked by
+        # CHAIN_FULL_PRIORITY, which keeps both stated orders intact.
         for result in objects:
-            for breach in _ordered_single(result):
-                if breach.code not in seen:
-                    seen.add(breach.code)
-                    holding.append(breach)
+            for breach in result.breaches:
+                if breach.code in CHAIN_LIFTED_CODES:
+                    continue
+                collect(breach, result.key)
+        holding = [holding_map[code] for code in CHAIN_FULL_PRIORITY if code in holding_map]
+    else:
+        for result in objects:
+            for breach in result.breaches:
+                collect(breach, result.key)
+        holding = [holding_map[code] for code in SINGLE_DO_FULL_PRIORITY if code in holding_map]
 
     reported = holding[0].code if holding else None
     also_present = [b.code for b in holding[1:]]
@@ -759,8 +1066,18 @@ def verify_vector(
             + f", runner reported {reported or 'MATCH'}"
         )
 
+    # Notes are findings by default, on every vector kind. The single recorded
+    # exception is scoped to one oracle key and one field, so an identical
+    # divergence anywhere else is still reported.
+    excused: list[str] = []
     for result in objects:
-        findings.extend(f"{result.key}: {note}" for note in result.notes if kind != "pair")
+        for note in result.notes:
+            reason = KNOWN_INTRA_FIELD_EXCEPTIONS.get((result.key, note.subject))
+            text = str(note) if result.key == vector_id else f"{result.key}: {note}"
+            if reason is None:
+                findings.append(text)
+            else:
+                excused.append(f"{text} [recorded exception: {reason}]")
 
     return VectorResult(
         vector_id=vector_id,
@@ -774,12 +1091,8 @@ def verify_vector(
         expected_also_present=expected_also,
         outcome_ok=outcome_ok,
         findings=findings,
+        excused_notes=excused,
     )
-
-
-def _ordered_single(result: DecisionObjectResult) -> list[Breach]:
-    by_code = {b.code: b for b in result.breaches}
-    return [by_code[code] for code in SINGLE_DO_FULL_PRIORITY if code in by_code]
 
 
 def _outcome_matches(
@@ -848,6 +1161,11 @@ class RunReport:
     @property
     def findings(self) -> list[str]:
         return [f"{v.vector_id}: {f}" for v in self.vectors for f in v.findings]
+
+    @property
+    def excused_notes(self) -> list[str]:
+        """Diagnostics matched by a recorded exception, printed rather than dropped."""
+        return [f"{v.vector_id}: {n}" for v in self.vectors for n in v.excused_notes]
 
     def canonical_hex(self) -> dict[str, str]:
         """The Check 2 submission map: one key per applicable decision object.
@@ -931,6 +1249,12 @@ def _summary_lines(report: RunReport) -> list[str]:
         "Check 2                     : NOT RUN - the answers file is out of scope "
         "for this runner (R6); the emitted canonical_hex is its input",
         f"findings                    : {len(report.findings)}",
+        f"excused diagnostics         : {len(report.excused_notes)} "
+        "(recorded exceptions, listed below)",
+        "R3 not implemented          : " + ", ".join(UNIMPLEMENTED_R3_CODES)
+        + " (time anchoring, signature layer)",
+        "status                      : independent submission candidate; "
+        "Check 2 / oracle agreement and registration pending upstream verification",
     ]
 
 
@@ -954,12 +1278,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
-    document = json.loads(args.vectors.read_text(encoding="utf-8"))
+    # Fail closed on a substituted corpus before anything is measured or
+    # written. No override flag exists: an escape hatch here would make every
+    # published number conditional on a promise that it was not used.
+    try:
+        document = load_pinned_vectors(args.vectors)
+    except PinnedInputError as exc:
+        print(f"[FAIL] {exc}", file=sys.stderr)
+        return 2
     known = [s for s in args.resolvable_entry_ids.split(",") if s]
     report = run(document, known)
 
     for line in _summary_lines(report):
         print(line)
+    if report.excused_notes:
+        print("\nexcused diagnostics:")
+        for note in report.excused_notes:
+            print(f"  - {note}")
     if report.findings:
         print("\nfindings:")
         for finding in report.findings:
@@ -985,6 +1320,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.report_out.write_text(
             json.dumps(
                 {
+                    "vectors_sha256": PINNED_VECTORS_SHA256,
+                    "r3_codes_not_implemented": list(UNIMPLEMENTED_R3_CODES),
+                    "check2": "NOT_RUN",
                     "vector_total": report.vector_total,
                     "vector_outcome_ok": report.vector_outcome_ok,
                     "object_total": report.object_total,
@@ -994,6 +1332,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "check1_not_applicable": report.check1_not_applicable,
                     "canonical_hex_keys": len(report.canonical_hex()),
                     "findings": report.findings,
+                    "excused_notes": report.excused_notes,
                     "vectors": [
                         {
                             "id": v.vector_id,
