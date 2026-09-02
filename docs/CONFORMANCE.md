@@ -225,7 +225,7 @@ python scripts/claims/adapter_not_exercised.py
 
 Claim:
 
-> The runner's CLI refuses any vector file whose SHA-256 is not the pinned upstream digest, and writes no submission output when it refuses, so a substituted same-version corpus fails closed before any number is produced.
+> The runner's CLI refuses any vector file whose SHA-256 is not the pinned upstream digest, and writes no submission envelope for either a refused input or a completed run with failed outcome/accounting invariants. A substituted same-version corpus and a red run therefore fail closed before a publishable artifact is produced.
 
 Stated in: `conformance/erdl-do-v1.5/README.md`
 

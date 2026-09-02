@@ -322,6 +322,41 @@ def test_intra_field_hash_divergence_survives_a_matching_flat_hash() -> None:
     assert any("does not recompute" in str(note) for note in result.notes)
 
 
+def test_intra_field_hash_coverage_is_measured_at_the_applicable_object_layer() -> None:
+    decision_object = _base_decision_object()
+    profile = decision_object["compliance_profile"]
+    profile["profile_hash"] = runner.recompute_profile_hash(profile)
+    policy = decision_object["policies"][0]
+    policy["hash"] = runner.recompute_policy_hash(policy)
+    vector = {
+        "id": "V-HASH-COVERAGE",
+        "category": "synthetic",
+        "decision_object": _seal(decision_object),
+        "expected": {"type": "MATCH"},
+    }
+
+    report = runner.RunReport([runner.verify_vector(vector)])
+    assert report.profile_hash_checked == 1
+    assert report.profile_hash_match == 1
+    assert report.profile_hash_mismatch == 0
+    assert report.policy_hash_checked == 1
+    assert report.policy_hash_match == 1
+    assert report.policy_hash_mismatch == 0
+
+    vector["decision_object"]["compliance_profile"]["profile_hash"] = "sha256:" + "e" * 64
+    vector["decision_object"]["audit"]["hash"] = runner.recompute_audit_hash(
+        vector["decision_object"]
+    )[0]
+    divergent = runner.RunReport([runner.verify_vector(vector)])
+    assert divergent.profile_hash_checked == 1
+    assert divergent.profile_hash_mismatch == 1
+    assert divergent.findings
+
+
+def test_pair_aggregation_is_explicitly_runner_policy() -> None:
+    assert runner.PAIR_FULL_PRIORITY == runner.SINGLE_DO_FULL_PRIORITY
+
+
 # ---------------------------------------------------------------------------
 # Version gate
 # ---------------------------------------------------------------------------
@@ -976,6 +1011,44 @@ def test_the_cli_writes_no_output_for_a_substituted_corpus(tmp_path: Path) -> No
     assert not out.exists()
 
 
+def test_failed_run_cannot_build_or_write_a_submission_envelope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    decision_object = _seal(_base_decision_object())
+    vector = {
+        "id": runner.CANARY_VECTOR_ID,
+        "category": "synthetic",
+        "decision_object": decision_object,
+        "expected": {"type": "BREACH", "breach": runner.CANARY_EXPECTATION},
+    }
+    document = {"preimage_version": runner.PREIMAGE_VERSION, "vectors": [vector]}
+    report = runner.run(document)
+    assert not report.successful
+    with pytest.raises(ValueError, match="failed run"):
+        runner.submission_envelope(report)
+
+    monkeypatch.setattr(runner, "load_pinned_vectors", lambda _path: document)
+    out = tmp_path / "must-not-exist.json"
+    assert runner.main([str(tmp_path / "ignored-pinned-path.json"), "--submission-out", str(out)]) == 1
+    assert not out.exists()
+
+
+def test_run_always_enforces_canonical_key_accounting() -> None:
+    decision_object = _seal(_base_decision_object())
+    duplicate = {
+        "id": "V-DUPLICATE",
+        "category": "synthetic",
+        "decision_object": decision_object,
+        "expected": {"type": "MATCH"},
+    }
+    document = {
+        "preimage_version": runner.PREIMAGE_VERSION,
+        "vectors": [copy.deepcopy(duplicate), copy.deepcopy(duplicate)],
+    }
+    with pytest.raises(ValueError, match="canonical_hex count 1 != applicable object count 2"):
+        runner.run(document)
+
+
 def test_the_runner_has_no_digest_opt_out() -> None:
     """A named escape hatch would make every published number conditional."""
     source = RUNNER_PATH.read_text(encoding="utf-8")
@@ -1286,6 +1359,8 @@ def test_shipped_envelope_key_grammar_discriminates() -> None:
         "totally-bogus-key",
         "V-DO-v15-C01[01]",
         "V-DO-v15-C01[-1]",
+        "V-X\n",
+        "V-DO-v15-C01[0]\n",
     ):
         with pytest.raises(verify.VerificationError):
             verify.split_key(rejected)
@@ -1352,6 +1427,32 @@ def test_shipped_envelope_rejects_malformed_provenance(
     envelope[field] = value
     with pytest.raises(verify.VerificationError, match=message):
         verify.verify_envelope(envelope)
+
+
+@pytest.mark.parametrize("value", ["safe\u0085text", "safe\u202etext", "safe\u2066text"])
+def test_shipped_envelope_rejects_unicode_control_and_bidi_provenance(value: str) -> None:
+    verify = _load_named(ARTIFACT_DIR / "verify_envelope.py", "erdl_do_v15_verify_unicode")
+    envelope = json.loads(COMMITTED_CANONICAL_HEX.read_text(encoding="utf-8"))
+    envelope["method"] = value
+    with pytest.raises(verify.VerificationError, match="control or format character"):
+        verify.verify_envelope(envelope)
+
+
+@pytest.mark.parametrize("value", ["2026-08-21", "9999-12-31"])
+def test_shipped_envelope_rejects_dates_outside_the_credible_range(value: str) -> None:
+    verify = _load_named(ARTIFACT_DIR / "verify_envelope.py", "erdl_do_v15_verify_date")
+    envelope = json.loads(COMMITTED_CANONICAL_HEX.read_text(encoding="utf-8"))
+    envelope["date"] = value
+    with pytest.raises(verify.VerificationError, match="credible range"):
+        verify.verify_envelope(envelope)
+
+
+@pytest.mark.parametrize("payload", [None, [], "text", 1, True])
+def test_shipped_envelope_rejects_non_object_canonical_payloads(payload: Any) -> None:
+    verify = _load_named(ARTIFACT_DIR / "verify_envelope.py", "erdl_do_v15_verify_root")
+    canonical = rfc8785.dumps(payload).hex()
+    with pytest.raises(verify.VerificationError, match="canonical payload is not an object"):
+        verify.verify_canonical_bytes({"V-X": canonical})
 
 
 def test_shipped_envelope_rejects_oversized_file_before_allocation(tmp_path: Path) -> None:

@@ -172,6 +172,13 @@ SINGLE_DO_FULL_PRIORITY: tuple[str, ...] = (
     "hash_mismatch",
 ) + SINGLE_DO_PRIORITY
 
+#: The permitted contract text defines the P1-P6 order for one decision object,
+#: but does not define how a tamper pair's two independently ranked outcomes are
+#: aggregated. This runner applies the same global ladder once across both sides
+#: so a base-side warning cannot mask a tampered-side breach. It is a disclosed
+#: runner policy, not a claim that the contract specifies pair aggregation.
+PAIR_FULL_PRIORITY: tuple[str, ...] = SINGLE_DO_FULL_PRIORITY
+
 #: Ranking for a chain vector once the members' own P1-P6 findings are merged
 #: into the chain-level ones. The contract states two orders and this is their
 #: concatenation, which preserves both: every chain code outranks every
@@ -467,6 +474,8 @@ class DecisionObjectResult:
     canonical_hex: str | None
     breaches: list[Breach] = field(default_factory=list)
     notes: list[Note] = field(default_factory=list)
+    profile_hash_check: str = "NOT_CHECKED"
+    policy_hash_checks: list[str] = field(default_factory=list)
 
     @property
     def codes(self) -> list[str]:
@@ -899,6 +908,9 @@ def verify_decision_object(
     profile = decision_object.get("compliance_profile")
     if isinstance(profile, Mapping) and isinstance(profile.get("profile_hash"), str):
         recomputed_profile = recompute_profile_hash(profile)
+        result.profile_hash_check = (
+            "MATCH" if recomputed_profile == profile["profile_hash"] else "MISMATCH"
+        )
         if recomputed_profile != profile["profile_hash"]:
             result.notes.append(
                 Note(
@@ -913,6 +925,9 @@ def verify_decision_object(
             if not isinstance(policy, Mapping) or not isinstance(policy.get("hash"), str):
                 continue
             recomputed_policy = recompute_policy_hash(policy)
+            result.policy_hash_checks.append(
+                "MATCH" if recomputed_policy == policy["hash"] else "MISMATCH"
+            )
             if recomputed_policy != policy["hash"]:
                 result.notes.append(
                     Note(
@@ -1102,10 +1117,14 @@ def verify_vector(
                     continue
                 collect(breach, result.key)
         holding = [holding_map[code] for code in CHAIN_FULL_PRIORITY if code in holding_map]
-    else:
+    elif kind == "pair":
         for result in objects:
             for breach in result.breaches:
                 collect(breach, result.key)
+        holding = [holding_map[code] for code in PAIR_FULL_PRIORITY if code in holding_map]
+    else:
+        for breach in objects[0].breaches:
+            collect(breach, objects[0].key)
         holding = [holding_map[code] for code in SINGLE_DO_FULL_PRIORITY if code in holding_map]
 
     reported = holding[0].code if holding else None
@@ -1232,6 +1251,30 @@ class RunReport:
         return sum(1 for o in self.objects if o.check1 == "NOT_APPLICABLE")
 
     @property
+    def profile_hash_checked(self) -> int:
+        return sum(1 for o in self.objects if o.profile_hash_check in {"MATCH", "MISMATCH"})
+
+    @property
+    def profile_hash_match(self) -> int:
+        return sum(1 for o in self.objects if o.profile_hash_check == "MATCH")
+
+    @property
+    def profile_hash_mismatch(self) -> int:
+        return sum(1 for o in self.objects if o.profile_hash_check == "MISMATCH")
+
+    @property
+    def policy_hash_checked(self) -> int:
+        return sum(len(o.policy_hash_checks) for o in self.objects)
+
+    @property
+    def policy_hash_match(self) -> int:
+        return sum(check == "MATCH" for o in self.objects for check in o.policy_hash_checks)
+
+    @property
+    def policy_hash_mismatch(self) -> int:
+        return sum(check == "MISMATCH" for o in self.objects for check in o.policy_hash_checks)
+
+    @property
     def findings(self) -> list[str]:
         return [f"{v.vector_id}: {f}" for v in self.vectors for f in v.findings]
 
@@ -1260,6 +1303,63 @@ class RunReport:
                 return obj
         return None
 
+    def invariant_problems(self) -> list[str]:
+        """Return internal accounting failures that make output unsafe to publish."""
+        problems: list[str] = []
+        canonical = self.canonical_hex()
+        if len(canonical) != self.object_applicable:
+            problems.append(
+                f"canonical_hex count {len(canonical)} != applicable object count "
+                f"{self.object_applicable}"
+            )
+        if self.check1_match + self.check1_mismatch != self.object_applicable:
+            problems.append(
+                "Check 1 MATCH + MISMATCH does not equal applicable object count"
+            )
+        if self.object_applicable + self.check1_not_applicable != self.object_total:
+            problems.append(
+                "applicable + NOT_APPLICABLE does not equal enumerated object count"
+            )
+        keys = [obj.key for obj in self.objects]
+        if len(set(keys)) != len(keys):
+            problems.append("decision-object oracle keys are not unique")
+        for obj in self.objects:
+            if obj.applicable != (obj.check1 in {"MATCH", "MISMATCH"}):
+                problems.append(f"{obj.key}: applicability and Check 1 status disagree")
+            if obj.applicable != (obj.canonical_hex is not None):
+                problems.append(f"{obj.key}: applicability and canonical-byte presence disagree")
+        return problems
+
+    def assert_internal_invariants(self) -> None:
+        problems = self.invariant_problems()
+        if problems:
+            raise ValueError("run accounting invariant failed: " + "; ".join(problems))
+
+    @property
+    def successful(self) -> bool:
+        return (
+            not self.invariant_problems()
+            and self.vector_outcome_ok == self.vector_total
+            and not self.findings
+        )
+
+    def submission_readiness_problems(self) -> list[str]:
+        problems = self.invariant_problems()
+        if self.vector_outcome_ok != self.vector_total:
+            problems.append(
+                f"only {self.vector_outcome_ok}/{self.vector_total} vector outcomes reproduced"
+            )
+        if self.findings:
+            problems.append(f"run has {len(self.findings)} finding(s)")
+        canary = self.canary()
+        if canary is None:
+            problems.append(f"required canary {CANARY_VECTOR_ID} is absent")
+        elif canary.check1 != "MISMATCH":
+            problems.append(
+                f"required canary {CANARY_VECTOR_ID} Check 1 is {canary.check1}, not MISMATCH"
+            )
+        return problems
+
 
 def submission_envelope(
     report: "RunReport",
@@ -1273,13 +1373,17 @@ def submission_envelope(
     standalone DO, `<id>-base` / `<id>-tampered` for a tamper pair, `<id>[i]`
     for a chain member, and no key at all for a version-gated DO.
     """
+    problems = report.submission_readiness_problems()
+    if problems:
+        raise ValueError("refusing submission envelope for failed run: " + "; ".join(problems))
     canary = report.canary()
+    assert canary is not None
     return {
         "runner": runner_name,
         "method": SUBMISSION_METHOD,
         "date": date or dt.date.today().isoformat(),
         "artifact": artifact,
-        "k01_check1": canary.check1 if canary else "ABSENT",
+        "k01_check1": canary.check1,
         "canonical_hex": report.canonical_hex(),
     }
 
@@ -1296,7 +1400,9 @@ def run(
             f"this runner implements {PREIMAGE_VERSION!r}"
         )
     known = list(resolvable_entry_ids)
-    return RunReport([verify_vector(v, known) for v in vector_document["vectors"]])
+    report = RunReport([verify_vector(v, known) for v in vector_document["vectors"]])
+    report.assert_internal_invariants()
+    return report
 
 
 # --------------------------------------------------------------------------
@@ -1318,6 +1424,10 @@ def _summary_lines(report: RunReport) -> list[str]:
         f"Check 1 raw MATCH           : {report.check1_match}/{report.object_applicable}",
         f"Check 1 raw MISMATCH        : {report.check1_mismatch}/{report.object_applicable}",
         f"canonical_hex keys emitted  : {len(report.canonical_hex())}",
+        f"profile hashes checked      : {report.profile_hash_checked} "
+        f"({report.profile_hash_match} MATCH, {report.profile_hash_mismatch} MISMATCH)",
+        f"policy hashes checked       : {report.policy_hash_checked} "
+        f"({report.policy_hash_match} MATCH, {report.policy_hash_mismatch} MISMATCH)",
         f"K01 Check 1                 : {canary.check1 if canary else 'ABSENT'} "
         "(R5 requires MISMATCH)",
         "Check 2                     : NOT RUN - the answers file is out of scope "
@@ -1362,6 +1472,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     known = [s for s in args.resolvable_entry_ids.split(",") if s]
     report = run(document, known)
+    ok = report.successful
 
     for line in _summary_lines(report):
         print(line)
@@ -1374,19 +1485,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         for finding in report.findings:
             print(f"  - {finding}")
 
+    submission_payload: dict[str, Any] | None = None
     if args.submission_out:
+        try:
+            submission_payload = submission_envelope(
+                report,
+                runner_name=args.runner_name,
+                artifact=args.artifact_url,
+                date=args.date or dt.date.today().isoformat(),
+            )
+        except ValueError as exc:
+            print(f"[FAIL] submission envelope not written: {exc}", file=sys.stderr)
+            ok = False
+
+    if args.submission_out and submission_payload is not None:
         args.submission_out.parent.mkdir(parents=True, exist_ok=True)
         args.submission_out.write_text(
-            json.dumps(
-                submission_envelope(
-                    report,
-                    runner_name=args.runner_name,
-                    artifact=args.artifact_url,
-                    date=args.date or dt.date.today().isoformat(),
-                ),
-                indent=2,
-            )
-            + "\n",
+            json.dumps(submission_payload, indent=2) + "\n",
             encoding="utf-8",
         )
     if args.report_out:
@@ -1405,6 +1520,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "check1_mismatch": report.check1_mismatch,
                     "check1_not_applicable": report.check1_not_applicable,
                     "canonical_hex_keys": len(report.canonical_hex()),
+                    "profile_hash_checked": report.profile_hash_checked,
+                    "profile_hash_match": report.profile_hash_match,
+                    "profile_hash_mismatch": report.profile_hash_mismatch,
+                    "policy_hash_checked": report.policy_hash_checked,
+                    "policy_hash_match": report.policy_hash_match,
+                    "policy_hash_mismatch": report.policy_hash_mismatch,
+                    "run_successful": ok,
+                    "run_invariant_problems": report.invariant_problems(),
                     "findings": report.findings,
                     "excused_notes": report.excused_notes,
                     "vectors": [
@@ -1430,7 +1553,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             encoding="utf-8",
         )
 
-    ok = report.vector_outcome_ok == report.vector_total and not report.findings
     return 0 if ok else 1
 
 

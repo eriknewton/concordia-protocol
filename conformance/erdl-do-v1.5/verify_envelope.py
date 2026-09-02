@@ -66,6 +66,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -86,6 +87,7 @@ ENVELOPE_FIELDS = ("runner", "method", "date", "artifact", "k01_check1", "canoni
 #: must name it, so the submitted artifact carries the identity of the corpus
 #: it describes rather than leaving it to a README.
 PINNED_VECTORS_SHA256 = "d8adf32b7c691bdb3d805fdb0b3f7ac327dc16388cd59a4dfe757d9555e1778c"
+PINNED_CORPUS_CREATED = dt.date(2026, 8, 22)
 
 #: Allocation ceilings derived from the pinned legitimate artifact. The current
 #: envelope is 538,226 bytes, its largest canonical value is 6,352 hex
@@ -107,8 +109,8 @@ LOWER_HEX = re.compile(r"^(?:[0-9a-f]{2})+$")
 #: deliberately excluding `[`, `]` and the two role suffixes so that the suffix
 #: grammar below carries real discrimination instead of being absorbed by a
 #: permissive character class.
-VECTOR_ID = re.compile(r"^V-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$")
-CHAIN_SUFFIX = re.compile(r"^\[(0|[1-9][0-9]*)\]$")
+VECTOR_ID = re.compile(r"V-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*\Z")
+CHAIN_SUFFIX = re.compile(r"\[(0|[1-9][0-9]*)\]\Z")
 ROLE_SUFFIXES = ("-base", "-tampered")
 
 
@@ -170,13 +172,13 @@ def _text_field(envelope: dict[str, Any], field: str, max_chars: int) -> str:
     _check(bool(value) and value == value.strip(), f"submission envelope {field!r} is empty or padded")
     _check(len(value) <= max_chars, f"submission envelope {field!r} exceeds {max_chars} characters")
     _check(
-        all(ord(char) >= 0x20 and ord(char) != 0x7F for char in value),
-        f"submission envelope {field!r} contains a control character",
+        all(unicodedata.category(char) not in {"Cc", "Cf"} for char in value),
+        f"submission envelope {field!r} contains a control or format character",
     )
     return value
 
 
-def _decode(key: str, hex_value: str) -> tuple[bytes, Any]:
+def _decode(key: str, hex_value: str) -> tuple[bytes, dict[str, Any]]:
     _check(isinstance(hex_value, str), f"{key}: canonical_hex value is not a string")
     _check(
         len(hex_value) <= MAX_CANONICAL_HEX_CHARS,
@@ -192,9 +194,12 @@ def _decode(key: str, hex_value: str) -> tuple[bytes, Any]:
     except UnicodeDecodeError as exc:
         raise VerificationError(f"{key}: canonical bytes are not valid UTF-8: {exc}") from exc
     try:
-        return raw, json.loads(text)
+        parsed = json.loads(text)
     except json.JSONDecodeError as exc:
         raise VerificationError(f"{key}: canonical bytes are not valid JSON: {exc}") from exc
+    _check(isinstance(parsed, dict), f"{key}: canonical payload is not an object")
+    assert isinstance(parsed, dict)
+    return raw, parsed
 
 
 def split_key(key: str) -> tuple[str, str, int | None]:
@@ -206,7 +211,7 @@ def split_key(key: str) -> tuple[str, str, int | None]:
     head, role, index = key, "single", None
     if key.endswith("]"):
         head, _, suffix = key.partition("[")
-        match = CHAIN_SUFFIX.match(f"[{suffix}")
+        match = CHAIN_SUFFIX.fullmatch(f"[{suffix}")
         _check(bool(match), f"{key}: chain index is not a non-negative decimal")
         assert match is not None
         index_text = match.group(1)
@@ -226,7 +231,7 @@ def split_key(key: str) -> tuple[str, str, int | None]:
             if key.endswith(suffix):
                 head, role = key[: -len(suffix)], suffix[1:]
                 break
-    _check(bool(VECTOR_ID.match(head)), f"{key}: {head!r} is not a vector id")
+    _check(bool(VECTOR_ID.fullmatch(head)), f"{key}: {head!r} is not a vector id")
     _check(
         not head.endswith(ROLE_SUFFIXES),
         f"{key}: vector id {head!r} ends in a role suffix, so the key is ambiguous",
@@ -301,6 +306,11 @@ def verify_envelope(envelope: dict[str, Any]) -> dict[str, str]:
     except ValueError as exc:
         raise VerificationError(f"submission envelope date is not ISO YYYY-MM-DD: {date!r}") from exc
     _check(parsed_date.isoformat() == date, f"submission envelope date is not canonical ISO: {date!r}")
+    _check(
+        PINNED_CORPUS_CREATED <= parsed_date <= dt.date.today(),
+        f"submission envelope date {date!r} is outside the credible range "
+        f"{PINNED_CORPUS_CREATED.isoformat()}..{dt.date.today().isoformat()}",
+    )
     artifact = _text_field(envelope, "artifact", 2_048)
     try:
         parsed_artifact = urlsplit(artifact)
@@ -368,7 +378,8 @@ def verify_canonical_bytes(canonical_hex: dict[str, str]) -> int:
         )
 
         audit = parsed.get("audit")
-        _check(isinstance(audit, dict), f"{key}: preimage has no audit object")
+        if not isinstance(audit, dict):
+            raise VerificationError(f"{key}: preimage has no audit object")
         _check("hash" not in audit, f"{key}: preimage still contains audit.hash (R2)")
         _check("signature" not in parsed, f"{key}: preimage still contains signature (R2)")
         _check(

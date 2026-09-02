@@ -30,8 +30,10 @@ The vectors are OpenOBA's artifact, not this repository's, so they are pinned
 by digest rather than vendored.
 
 <!-- claim:erdl-v15-runner-pins-its-corpus -->The runner's CLI refuses any vector file whose SHA-256 is not the pinned
-upstream digest, and writes no submission output when it refuses, so a
-substituted same-version corpus fails closed before any number is produced.<!-- /claim -->
+upstream digest, and writes no submission envelope for either a refused input
+or a completed run with failed outcome/accounting invariants. A substituted
+same-version corpus and a red run therefore fail closed before a publishable
+artifact is produced.<!-- /claim -->
 There is no override flag: a named escape hatch would make every number below
 conditional on a promise that it was not used. The failure mode this guards
 against is specific. A substituted file still declares
@@ -96,6 +98,8 @@ Produced by the command in the next section, against the pinned input.
 | Check 1 raw MATCH | **90 / 107** |
 | Check 1 raw MISMATCH | **17 / 107** |
 | `canonical_hex` keys emitted | 107 |
+| `compliance_profile.profile_hash` checks | 106 MATCH / 1 MISMATCH / 107 applicable objects |
+| `policies[].hash` checks | 107 MATCH / 0 MISMATCH / 107 applicable objects |
 | `V-DO-v15-K01` Check 1 | **MISMATCH** (R5 requires exactly this) |
 | Findings | 0 |
 | Excused diagnostics (recorded, printed) | 1 |
@@ -210,8 +214,10 @@ python conformance/erdl-do-v1.5/runner.py \
 ```
 
 Exit 0 means every vector reproduced its compared expectations with no
-findings. Exit 2 means the supplied vector file is not the pinned corpus and
-nothing was measured or written. The narrow test suite:
+findings and all internal object/canonical-byte counts agree. Exit 1 is a red
+run; a requested diagnostic report may be written, but a requested submission
+envelope is not. Exit 2 means the supplied vector file is not the pinned corpus
+and nothing was measured or written. The narrow test suite:
 
 ```bash
 # synthetic half only (what CI runs)
@@ -373,16 +379,17 @@ Chain, in the contract's stated order: `hash_mismatch`, `version_unsupported`,
 Not implemented: `clock_drift_detected` and `timestamp_anchor_missing`. See
 "What this artifact does not claim" above.
 
-#### Priority is a property of the vector, not of object order
+#### Pair aggregation is an explicit runner policy
 
-A vector can hold more than one decision object, and its breaches are collected
-across all of them into one set and ranked once. Ranking within each object and
-concatenating the results, which an earlier revision did, let a low-priority
-code on whichever object came first outrank a high-priority code on the second:
-a P6 warning on a tamper pair's base side would be reported as the vector's
-primary breach while the tampered side's `hash_mismatch` was demoted to
-`also_present`. The corpus does not contain such a vector, so this was reachable
-only by planting one, which the suite now does.
+The permitted contract text states the P1-P6 order for one decision object and
+a separate order for chains; it does not state how to aggregate the two sides
+of a tamper pair. This runner therefore classifies pair aggregation as a local,
+disclosed policy rather than as contract-mandated behavior: it collects both
+sides into one set and applies the single-object ladder once. Ranking each side
+and concatenating would let a low-priority P6 warning on the base side mask a
+tampered-side `hash_mismatch`. The corpus does not discriminate between these
+choices, so an always-run synthetic regression, not the 78-vector score, is the
+evidence for the chosen fail-closed behavior.
 
 #### A chain member's semantic breaches are merged, not dropped
 
@@ -442,8 +449,11 @@ ambiguity that blocks implementation.
 
 ### R2's intra-field hashes
 
-`policies[].hash` recomputes for all 108 decision objects.
-`compliance_profile.profile_hash` recomputes for 107; the exception is
+The version gate terminates before intra-field checks, so coverage is stated
+over the 107 applicable decision objects, not all 108 enumerated objects.
+`policies[].hash` is present once per applicable object and recomputes for
+107/107. `compliance_profile.profile_hash` is present once per applicable
+object and recomputes for 106/107; the exception is
 `V-COMP-F02-tampered`, the swapped-profile tamper, whose stale profile hash is
 the tamper that vector encodes.
 
@@ -474,7 +484,7 @@ single-object vector and silent on a pair.
 | File | What it is |
 |---|---|
 | `runner.py` | The runner: pinned-input binding, JCS domain guards, R1/R2 preimages, the shape guard, R3 detection and priority, chain handling, vector enumeration, CLI. |
-| `verify_envelope.py` | A self-consistency check for the generated envelope, not an answer-key verifier. It holds no oracle and reads no vectors. It imports no Concordia code: it validates all six envelope fields and their provenance formats, enforces one single/pair/chain shape per vector id, applies file and hex allocation ceilings derived from the pinned artifact, re-derives every published byte string with the `rfc8785` reference package, checks the R2 exclusions and the version gate held in those bytes, and reproduces the `V-DO-v15-C01` chain anchors end to end. Its `k01_check1` assertion is a check on a self-reported envelope field, not a re-derivation of R5. |
+| `verify_envelope.py` | A self-consistency check for the generated envelope, not an answer-key verifier. It holds no oracle and reads no vectors. It imports no Concordia code: it validates all six envelope fields and their provenance formats (including Unicode control/format rejection and a corpus-created-through-current-date bound), enforces one single/pair/chain shape per vector id, requires every canonical payload to be an object, applies file and hex allocation ceilings derived from the pinned artifact, re-derives every published byte string with the `rfc8785` reference package, checks the R2 exclusions and the version gate held in those bytes, and reproduces the `V-DO-v15-C01` chain anchors end to end. Its `k01_check1` assertion is a check on a self-reported envelope field, not a re-derivation of R5. |
 | `concordia-python-erdl-do-v15-output.json` | Generated submission envelope, 107 `canonical_hex` keys. |
 | `../../tests/test_a2a_2031_erdl_do_v15_runner.py` | The focused suite: synthetic rule-by-rule negative controls plus the corpus assertions. |
 
