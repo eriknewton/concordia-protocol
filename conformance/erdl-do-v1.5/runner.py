@@ -920,9 +920,10 @@ def detect_chain_breaches(
             f"{member_unsupported}",
         )
 
-    audits: list[Mapping[str, Any]] = [
-        m.get("audit") if isinstance(m.get("audit"), Mapping) else {} for m in members
-    ]
+    audits: list[Mapping[str, Any]] = []
+    for member in members:
+        audit = member.get("audit")
+        audits.append(audit if isinstance(audit, Mapping) else {})
 
     if audits and audits[0].get("chain_seq") == 0 and audits[0].get("previous_hash") is not None:
         found["chain_genesis_mismatch"] = Breach(
