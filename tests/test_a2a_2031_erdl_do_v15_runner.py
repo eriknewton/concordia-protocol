@@ -253,6 +253,31 @@ def test_deleting_the_whole_audit_is_the_defect_the_canary_catches() -> None:
     assert _verify(decision_object).check1 == "MISMATCH"
 
 
+def test_k01_counter_requires_its_declared_breach_type() -> None:
+    """K01's special Check 1 rule must not bypass expected.type."""
+    decision_object = _seal(_base_decision_object())
+    decision_object["audit"]["hash"] = "sha256:" + "1" * 64
+    vector = {
+        "id": runner.CANARY_VECTOR_ID,
+        "category": "synthetic",
+        "decision_object": decision_object,
+        "expected": {
+            "type": "BREACH",
+            "breach": runner.CANARY_EXPECTATION,
+        },
+    }
+    baseline = runner.verify_vector(vector)
+    assert baseline.outcome_ok
+    assert runner.RunReport([baseline]).vector_outcome_ok == 1
+
+    for incorrect_type in ("MATCH", "nonsense"):
+        mutated = copy.deepcopy(vector)
+        mutated["expected"]["type"] = incorrect_type
+        result = runner.verify_vector(mutated)
+        assert not result.outcome_ok, incorrect_type
+        assert runner.RunReport([result]).vector_outcome_ok == 0, incorrect_type
+
+
 def test_policy_hash_excludes_itself_and_gloss() -> None:
     """R2: `gloss` is a render product, so it never enters the policy preimage.
 
@@ -606,6 +631,10 @@ def _remove_genesis_chain_seq(members: list[dict[str, Any]]) -> None:
     members[0]["audit"].pop("chain_seq")
 
 
+def _remove_genesis_timestamp(members: list[dict[str, Any]]) -> None:
+    members[0].pop("timestamp")
+
+
 @pytest.mark.parametrize(
     ("mutate", "finding_fragment"),
     [
@@ -623,6 +652,11 @@ def _remove_genesis_chain_seq(members: list[dict[str, Any]]) -> None:
             _remove_genesis_chain_seq,
             "audit.chain_seq is NoneType",
             id="missing-genesis-chain-seq",
+        ),
+        pytest.param(
+            _remove_genesis_timestamp,
+            "timestamp is NoneType",
+            id="missing-genesis-timestamp",
         ),
     ],
 )

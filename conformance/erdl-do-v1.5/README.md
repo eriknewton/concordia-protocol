@@ -338,13 +338,16 @@ an invented breach code. Every requirement in the guard is a measured property
 of all 108 objects in the pinned corpus rather than a guess at the schema:
 `audit`, `agent`, `compliance_profile`, `evaluation` and `human_oversight` are
 objects, `policies` and `matched_rules` and `jurisdictions` and
-`activated_fields` are lists, `agent.id` and `risk_level` are strings,
-`human_oversight.required` is a boolean, each policy carries a string `id` and
-`author_id` and an object `when`, and each matched rule carries a string
-`rule_id` and an object `canonical_tree`. Members the corpus does not carry
-everywhere (`knowledge_references`, `profile_hash`, `policies[].hash`) are type
-checked only when present. All 108 objects pass, so the guard adds no finding
-to the measurement above.
+`activated_fields` are lists, `timestamp`, `audit.preimage_version`,
+`audit.mode`, `agent.id` and `risk_level` are strings, `audit.chain_seq` is an
+integer, `human_oversight.required` is a boolean, each policy carries a string
+`id` and `author_id` and an object `when`, and each matched rule carries a
+string `rule_id` and an object `canonical_tree`. The timestamp and chain
+sequence requirements are what keep the chain order detectors from silently
+skipping malformed inputs. Members the corpus does not carry everywhere
+(`knowledge_references`, `profile_hash`, `policies[].hash`) are type checked
+only when present. All 108 objects pass, so the guard adds no finding to the
+measurement above.
 
 ### R3, the breach codes
 

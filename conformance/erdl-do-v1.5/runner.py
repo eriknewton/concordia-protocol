@@ -1127,8 +1127,13 @@ def _outcome_matches(
 ) -> bool:
     if expected_breach == CANARY_EXPECTATION:
         # R5: the canary's acceptance criterion is stated directly in the
-        # contract, not as one of the R3 codes.
-        return vector_id == CANARY_VECTOR_ID and all(o.check1 == "MISMATCH" for o in objects)
+        # contract, not as one of the R3 codes. It remains the breach named by
+        # the vector, so changing expected.type must not leave the vector green.
+        return (
+            vector_id == CANARY_VECTOR_ID
+            and expected_type == "BREACH"
+            and all(o.check1 == "MISMATCH" for o in objects)
+        )
     if expected_type == "MATCH":
         return reported is None
     if expected_type == "BREACH":
