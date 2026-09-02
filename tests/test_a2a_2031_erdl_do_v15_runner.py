@@ -1280,6 +1280,12 @@ def test_shipped_envelope_key_grammar_discriminates() -> None:
     # The one hole the contract requires is permitted by name, not by class.
     verify.verify_key_grammar({"V-DO-v15-C07[0]": "00", "V-DO-v15-C07[2]": "00"})
 
+    # An attacker-controlled decimal must be rejected from cardinality alone;
+    # it must never become the upper bound of an allocated range/set.
+    huge_index = "9" * 10_000
+    with pytest.raises(verify.VerificationError, match="cardinality"):
+        verify.verify_key_grammar({f"V-Z[{huge_index}]": "00"})
+
 
 def test_shipped_envelope_check_requires_the_corpus_pin() -> None:
     verify = _load_named(ARTIFACT_DIR / "verify_envelope.py", "erdl_do_v15_verify_pin")

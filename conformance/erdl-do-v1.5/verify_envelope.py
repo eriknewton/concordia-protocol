@@ -126,7 +126,18 @@ def split_key(key: str) -> tuple[str, str, int | None]:
         match = CHAIN_SUFFIX.match(f"[{suffix}")
         _check(bool(match), f"{key}: chain index is not a non-negative decimal")
         assert match is not None
-        role, index = "chain", int(match.group(1))
+        index_text = match.group(1)
+        cardinality_limit = str(EXPECTED_KEY_COUNT)
+        _check(
+            len(index_text) < len(cardinality_limit)
+            or (
+                len(index_text) == len(cardinality_limit)
+                and index_text <= cardinality_limit
+            ),
+            f"{key}: chain index exceeds canonical_hex cardinality limit "
+            f"{EXPECTED_KEY_COUNT}",
+        )
+        role, index = "chain", int(index_text)
     else:
         for suffix in ROLE_SUFFIXES:
             if key.endswith(suffix):
@@ -156,6 +167,11 @@ def verify_key_grammar(canonical_hex: dict[str, str]) -> None:
             pairs.setdefault(head, set()).add(role)
         elif role == "chain":
             assert index is not None
+            _check(
+                index <= len(canonical_hex),
+                f"{key}: chain index exceeds canonical_hex cardinality "
+                f"{len(canonical_hex)}",
+            )
             chains.setdefault(head, set()).add(index)
     for head, roles in sorted(pairs.items()):
         _check(
@@ -163,15 +179,16 @@ def verify_key_grammar(canonical_hex: dict[str, str]) -> None:
             f"{head}: tamper pair has only {sorted(roles)}; both sides must be submitted",
         )
     for head, indices in sorted(chains.items()):
-        missing = set(range(0, max(indices) + 1)) - indices
-        permitted = {
-            index for index in missing if f"{head}[{index}]" == VERSION_GATED_KEY
-        }
-        _check(
-            missing == permitted,
-            f"{head}: chain indices {sorted(indices)} have unexplained gap(s) "
-            f"{sorted(missing - permitted)}",
-        )
+        expected = 0
+        ordered = sorted(indices)
+        for actual in ordered:
+            if f"{head}[{expected}]" == VERSION_GATED_KEY:
+                expected += 1
+            _check(
+                actual == expected,
+                f"{head}: chain indices {ordered} have unexplained gap at {expected}",
+            )
+            expected += 1
 
 
 def verify_envelope(envelope: dict[str, Any]) -> dict[str, str]:
