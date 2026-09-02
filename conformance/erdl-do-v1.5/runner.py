@@ -440,6 +440,8 @@ class VectorResult:
     expected_type: str
     expected_breach: str | None
     expected_also_present: list[str]
+    #: True only when all four compared expected fields reproduce: type,
+    #: breach, also_present, and (when declared) resolvable_entry_ids.
     outcome_ok: bool
     findings: list[str] = field(default_factory=list)
     #: Notes matched by a recorded exception rather than raised as findings.
@@ -997,7 +999,10 @@ def verify_vector(
     expected_also = list(expected.get("also_present", []))
 
     declared_resolvable = expected.get("resolvable_entry_ids")
-    if declared_resolvable is not None and sorted(declared_resolvable) != sorted(known):
+    resolvable_entry_ids_ok = declared_resolvable is None or sorted(
+        declared_resolvable
+    ) == sorted(known)
+    if not resolvable_entry_ids_ok:
         findings.append(
             f"vector declares resolvable_entry_ids {sorted(declared_resolvable)} but the "
             f"runner is configured with {sorted(known)}"
@@ -1050,7 +1055,8 @@ def verify_vector(
 
     # R3: declared also_present items must actually hold, and anything holding
     # that is not declared is a defect. Checked in both directions.
-    if sorted(also_present) != sorted(expected_also):
+    also_present_ok = sorted(also_present) == sorted(expected_also)
+    if not also_present_ok:
         undeclared = sorted(set(also_present) - set(expected_also))
         unheld = sorted(set(expected_also) - set(also_present))
         if undeclared:
@@ -1058,13 +1064,17 @@ def verify_vector(
         if unheld:
             findings.append(f"also_present declares breach(es) that do not hold: {unheld}")
 
-    outcome_ok = _outcome_matches(vector_id, expected_type, expected_breach, reported, objects)
-    if not outcome_ok:
+    primary_outcome_ok = _outcome_matches(
+        vector_id, expected_type, expected_breach, reported, objects
+    )
+    if not primary_outcome_ok:
         findings.append(
             f"expected {expected_type}"
             + (f"/{expected_breach}" if expected_breach else "")
             + f", runner reported {reported or 'MATCH'}"
         )
+
+    outcome_ok = primary_outcome_ok and also_present_ok and resolvable_entry_ids_ok
 
     # Notes are findings by default, on every vector kind. The single recorded
     # exception is scoped to one oracle key and one field, so an identical
@@ -1123,9 +1133,9 @@ class RunReport:
     vectors: list[VectorResult]
 
     # Counts are reported at two distinct granularities on purpose. The
-    # per-vector expected-outcome count and the raw per-object Check 1 MATCH
-    # count are different measurements of different things, and conflating
-    # them is what makes "78/78 MATCH" ambiguous.
+    # per-vector compared-expected-fields count and the raw per-object Check 1
+    # MATCH count are different measurements of different things, and
+    # conflating them is what makes "78/78 MATCH" ambiguous.
     @property
     def vector_total(self) -> int:
         return len(self.vectors)

@@ -801,7 +801,36 @@ def test_declared_resolvable_set_disagreement_is_reported() -> None:
         "decision_object": _seal(_base_decision_object()),
         "expected": {"type": "MATCH", "resolvable_entry_ids": ["kb-elsewhere"]},
     }
-    assert any("resolvable_entry_ids" in f for f in runner.verify_vector(vector).findings)
+    result = runner.verify_vector(vector)
+    assert not result.outcome_ok
+    assert any("resolvable_entry_ids" in f for f in result.findings)
+
+
+def test_vector_counter_requires_both_auxiliary_expected_fields() -> None:
+    """The 78/78 counter covers also_present and resolvable_entry_ids too."""
+    vector = {
+        "id": "V-SYNTH-COUNT",
+        "category": "synthetic",
+        "decision_object": _seal(_base_decision_object()),
+        "expected": {
+            "type": "MATCH",
+            "also_present": [],
+            "resolvable_entry_ids": ["kb-001"],
+        },
+    }
+    baseline = runner.verify_vector(vector)
+    assert baseline.outcome_ok
+    assert runner.RunReport([baseline]).vector_outcome_ok == 1
+
+    for field, divergent_value in (
+        ("also_present", ["sod_violation"]),
+        ("resolvable_entry_ids", ["kb-elsewhere"]),
+    ):
+        mutated = copy.deepcopy(vector)
+        mutated["expected"][field] = divergent_value
+        result = runner.verify_vector(mutated)
+        assert not result.outcome_ok, field
+        assert runner.RunReport([result]).vector_outcome_ok == 0, field
 
 
 # ---------------------------------------------------------------------------
