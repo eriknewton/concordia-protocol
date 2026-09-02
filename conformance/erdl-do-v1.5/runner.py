@@ -1237,7 +1237,8 @@ def _summary_lines(report: RunReport) -> list[str]:
         "ERDL Decision Object v1.5 - independent Python runner",
         "",
         f"vectors                     : {report.vector_total}",
-        f"vectors matching expected   : {report.vector_outcome_ok}/{report.vector_total}",
+        f"vectors reproducing compared expected fields: "
+        f"{report.vector_outcome_ok}/{report.vector_total}",
         f"decision objects enumerated : {report.object_total}",
         f"  contractually applicable  : {report.object_applicable}",
         f"  excluded by version gate  : {report.check1_not_applicable}",
