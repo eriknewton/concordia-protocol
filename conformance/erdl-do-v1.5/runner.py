@@ -65,6 +65,7 @@ import datetime as dt
 import hashlib
 import json
 import math
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -93,6 +94,14 @@ PREIMAGE_VERSION = "erdl-do-v1.5-hash-flat"
 #: still parse, and still produce plausible counts, so version agreement is not
 #: sufficient evidence that a published number describes the pinned input.
 PINNED_VECTORS_SHA256 = "d8adf32b7c691bdb3d805fdb0b3f7ac327dc16388cd59a4dfe757d9555e1778c"
+
+#: Exact byte length of the pinned corpus above. The digest is the authority;
+#: the size is an allocation guard checked before the file is read. Because a
+#: byte-for-byte digest pin already rejects any re-encoding, accepting another
+#: size would add denial-of-service surface without accepting another valid
+#: corpus.
+PINNED_VECTORS_BYTES = 490_038
+READ_CHUNK_BYTES = 64 * 1024
 
 #: RUNNER_CONTRACT R3 names three groups of code. This runner implements the
 #: single-decision-object ladder and the chain order; it does NOT implement the
@@ -229,15 +238,50 @@ def load_pinned_vectors(path: Path) -> dict[str, Any]:
     digest is what makes "measured against the upstream corpus" checkable
     rather than asserted.
     """
-    raw = path.read_bytes()
-    digest = hashlib.sha256(raw).hexdigest()
+    try:
+        path_size = path.stat().st_size
+    except OSError as exc:
+        raise PinnedInputError(f"{path}: cannot stat vector file: {exc}") from exc
+    if path_size != PINNED_VECTORS_BYTES:
+        raise PinnedInputError(
+            f"{path}: byte length {path_size} is not the pinned upstream corpus length "
+            f"{PINNED_VECTORS_BYTES}; refusing before allocation"
+        )
+
+    digest_state = hashlib.sha256()
+    raw = bytearray()
+    try:
+        with path.open("rb") as source:
+            opened_size = os.fstat(source.fileno()).st_size
+            if opened_size != PINNED_VECTORS_BYTES:
+                raise PinnedInputError(
+                    f"{path}: opened byte length {opened_size} is not the pinned "
+                    f"upstream corpus length {PINNED_VECTORS_BYTES}"
+                )
+            while chunk := source.read(READ_CHUNK_BYTES):
+                if len(raw) + len(chunk) > PINNED_VECTORS_BYTES:
+                    raise PinnedInputError(
+                        f"{path}: vector file grew beyond the pinned corpus length "
+                        f"{PINNED_VECTORS_BYTES} while reading"
+                    )
+                digest_state.update(chunk)
+                raw.extend(chunk)
+    except OSError as exc:
+        raise PinnedInputError(f"{path}: cannot read vector file: {exc}") from exc
+
+    if len(raw) != PINNED_VECTORS_BYTES:
+        raise PinnedInputError(
+            f"{path}: read {len(raw)} bytes, expected {PINNED_VECTORS_BYTES}; "
+            "the vector file changed while reading"
+        )
+    digest = digest_state.hexdigest()
     if digest != PINNED_VECTORS_SHA256:
         raise PinnedInputError(
             f"{path}: SHA-256 {digest} is not the pinned upstream corpus "
             f"{PINNED_VECTORS_SHA256}; refusing to measure a substituted vector "
             "file. Re-pin deliberately if upstream reissued the vectors."
         )
-    return json.loads(raw.decode("utf-8"))
+    return json.loads(bytes(raw).decode("utf-8"))
 
 
 # --------------------------------------------------------------------------

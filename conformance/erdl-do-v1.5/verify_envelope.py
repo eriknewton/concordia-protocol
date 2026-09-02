@@ -34,9 +34,12 @@ a field check. The distinction is the point of this docstring:
    an input to this script. It covers the links inside that one chain, and
    nothing else.
 5. **The envelope is well formed and pinned**: the six keys the submission
-   guide fixes, a key grammar restricted to the three shapes it defines with
+   guide fixes with validated provenance types and formats, a key grammar
+   restricted to exactly one of the three shapes per vector id with
    base/tampered pairing and contiguous chain indices, and a `method` string
-   naming the SHA-256 of the corpus the run was bound to.
+   naming the SHA-256 of the corpus the run was bound to. File, per-value and
+   aggregate hex ceilings derived from the pinned artifact bound allocations
+   before canonicalization begins.
 
 `k01_check1` is checked to READ `"MISMATCH"`. That is a **self-reported field
 check, not a re-derivation of R5**: this script holds no stored `audit.hash` to
@@ -57,12 +60,15 @@ Exit code 0 means every check passed.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import hashlib
 import json
+import os
 import re
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import rfc8785
 
@@ -80,6 +86,22 @@ ENVELOPE_FIELDS = ("runner", "method", "date", "artifact", "k01_check1", "canoni
 #: must name it, so the submitted artifact carries the identity of the corpus
 #: it describes rather than leaving it to a README.
 PINNED_VECTORS_SHA256 = "d8adf32b7c691bdb3d805fdb0b3f7ac327dc16388cd59a4dfe757d9555e1778c"
+
+#: Allocation ceilings derived from the pinned legitimate artifact. The current
+#: envelope is 538,226 bytes, its largest canonical value is 6,352 hex
+#: characters, and all canonical values total 534,896 characters. Doubling
+#: each leaves room for submitter metadata without permitting an unbounded
+#: local verification job.
+PINNED_ENVELOPE_BYTES = 538_226
+PINNED_MAX_CANONICAL_HEX_CHARS = 6_352
+PINNED_CANONICAL_HEX_TOTAL_CHARS = 534_896
+MAX_ENVELOPE_BYTES = PINNED_ENVELOPE_BYTES * 2
+MAX_CANONICAL_HEX_CHARS = PINNED_MAX_CANONICAL_HEX_CHARS * 2
+MAX_CANONICAL_HEX_TOTAL_CHARS = PINNED_CANONICAL_HEX_TOTAL_CHARS * 2
+READ_CHUNK_BYTES = 64 * 1024
+
+RUNNER_NAME = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,127})$")
+LOWER_HEX = re.compile(r"^(?:[0-9a-f]{2})+$")
 
 #: A vector id: `V-` then hyphen-separated alphanumeric segments. Anchored, and
 #: deliberately excluding `[`, `]` and the two role suffixes so that the suffix
@@ -99,7 +121,68 @@ def _check(condition: bool, message: str) -> None:
         raise VerificationError(message)
 
 
+def _read_bounded(path: Path, limit: int) -> bytes:
+    """Read at most ``limit`` bytes, checking before and during allocation."""
+    try:
+        path_size = path.stat().st_size
+    except OSError as exc:
+        raise VerificationError(f"{path}: cannot stat envelope: {exc}") from exc
+    _check(path_size <= limit, f"{path}: envelope is {path_size} bytes; limit is {limit}")
+
+    raw = bytearray()
+    try:
+        with path.open("rb") as source:
+            opened_size = os.fstat(source.fileno()).st_size
+            _check(
+                opened_size <= limit,
+                f"{path}: opened envelope is {opened_size} bytes; limit is {limit}",
+            )
+            while chunk := source.read(READ_CHUNK_BYTES):
+                _check(
+                    len(raw) + len(chunk) <= limit,
+                    f"{path}: envelope grew beyond the {limit}-byte limit while reading",
+                )
+                raw.extend(chunk)
+    except OSError as exc:
+        raise VerificationError(f"{path}: cannot read envelope: {exc}") from exc
+    return bytes(raw)
+
+
+def load_envelope(path: Path) -> dict[str, Any]:
+    """Load one size-bounded UTF-8 JSON submission envelope."""
+    raw = _read_bounded(path, MAX_ENVELOPE_BYTES)
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise VerificationError(f"{path}: envelope is not valid UTF-8: {exc}") from exc
+    try:
+        envelope = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise VerificationError(f"{path}: envelope is not valid JSON: {exc}") from exc
+    _check(isinstance(envelope, dict), "submission envelope is not an object")
+    return envelope
+
+
+def _text_field(envelope: dict[str, Any], field: str, max_chars: int) -> str:
+    value = envelope[field]
+    _check(isinstance(value, str), f"submission envelope {field!r} is not a string")
+    assert isinstance(value, str)
+    _check(bool(value) and value == value.strip(), f"submission envelope {field!r} is empty or padded")
+    _check(len(value) <= max_chars, f"submission envelope {field!r} exceeds {max_chars} characters")
+    _check(
+        all(ord(char) >= 0x20 and ord(char) != 0x7F for char in value),
+        f"submission envelope {field!r} contains a control character",
+    )
+    return value
+
+
 def _decode(key: str, hex_value: str) -> tuple[bytes, Any]:
+    _check(isinstance(hex_value, str), f"{key}: canonical_hex value is not a string")
+    _check(
+        len(hex_value) <= MAX_CANONICAL_HEX_CHARS,
+        f"{key}: canonical_hex value exceeds {MAX_CANONICAL_HEX_CHARS} characters",
+    )
+    _check(bool(LOWER_HEX.fullmatch(hex_value)), f"{key}: canonical_hex is not lowercase byte hex")
     try:
         raw = bytes.fromhex(hex_value)
     except ValueError as exc:
@@ -161,11 +244,14 @@ def verify_key_grammar(canonical_hex: dict[str, str]) -> None:
     """
     pairs: dict[str, set[str]] = {}
     chains: dict[str, set[int]] = {}
+    shapes: dict[str, set[str]] = {}
     for key in canonical_hex:
         head, role, index = split_key(key)
         if role in ("base", "tampered"):
+            shapes.setdefault(head, set()).add("pair")
             pairs.setdefault(head, set()).add(role)
         elif role == "chain":
+            shapes.setdefault(head, set()).add("chain")
             assert index is not None
             _check(
                 index <= len(canonical_hex),
@@ -173,6 +259,13 @@ def verify_key_grammar(canonical_hex: dict[str, str]) -> None:
                 f"{len(canonical_hex)}",
             )
             chains.setdefault(head, set()).add(index)
+        else:
+            shapes.setdefault(head, set()).add("single")
+    for head, declared_shapes in sorted(shapes.items()):
+        _check(
+            len(declared_shapes) == 1,
+            f"{head}: vector id appears in multiple key shapes {sorted(declared_shapes)}",
+        )
     for head, roles in sorted(pairs.items()):
         _check(
             roles == {"base", "tampered"},
@@ -199,6 +292,32 @@ def verify_envelope(envelope: dict[str, Any]) -> dict[str, str]:
         f"submission envelope carries unexpected keys "
         f"{sorted(set(envelope) - set(ENVELOPE_FIELDS))}; the guide fixes six",
     )
+    runner = _text_field(envelope, "runner", 128)
+    _check(bool(RUNNER_NAME.fullmatch(runner)), f"invalid runner name {runner!r}")
+    method = _text_field(envelope, "method", 2_048)
+    date = _text_field(envelope, "date", 10)
+    try:
+        parsed_date = dt.date.fromisoformat(date)
+    except ValueError as exc:
+        raise VerificationError(f"submission envelope date is not ISO YYYY-MM-DD: {date!r}") from exc
+    _check(parsed_date.isoformat() == date, f"submission envelope date is not canonical ISO: {date!r}")
+    artifact = _text_field(envelope, "artifact", 2_048)
+    try:
+        parsed_artifact = urlsplit(artifact)
+        _ = parsed_artifact.port
+    except ValueError as exc:
+        raise VerificationError(f"submission envelope artifact is not a valid URL: {artifact!r}") from exc
+    _check(
+        parsed_artifact.scheme == "https"
+        and bool(parsed_artifact.hostname)
+        and parsed_artifact.username is None
+        and parsed_artifact.password is None,
+        "submission envelope artifact must be an HTTPS URL without embedded credentials",
+    )
+    _check(
+        not any(char.isspace() for char in artifact),
+        "submission envelope artifact URL contains whitespace",
+    )
     # A field check, not a re-derivation. See the module docstring.
     _check(
         envelope["k01_check1"] == "MISMATCH",
@@ -206,8 +325,7 @@ def verify_envelope(envelope: dict[str, Any]) -> dict[str, str]:
         f"found {envelope['k01_check1']!r}",
     )
     _check(
-        isinstance(envelope["method"], str)
-        and PINNED_VECTORS_SHA256 in envelope["method"],
+        f"sha256:{PINNED_VECTORS_SHA256}" in method,
         "the envelope's method string does not name the pinned corpus digest "
         f"{PINNED_VECTORS_SHA256}",
     )
@@ -222,6 +340,20 @@ def verify_envelope(envelope: dict[str, Any]) -> dict[str, str]:
         f"{VERSION_GATED_KEY} is version-gated and MUST NOT have a key",
     )
     _check(CANARY_KEY in canonical_hex, f"the canary {CANARY_KEY} has no key")
+    total_hex_chars = 0
+    for key, hex_value in canonical_hex.items():
+        _check(isinstance(hex_value, str), f"{key}: canonical_hex value is not a string")
+        assert isinstance(hex_value, str)
+        _check(
+            len(hex_value) <= MAX_CANONICAL_HEX_CHARS,
+            f"{key}: canonical_hex value exceeds {MAX_CANONICAL_HEX_CHARS} characters",
+        )
+        _check(bool(LOWER_HEX.fullmatch(hex_value)), f"{key}: canonical_hex is not lowercase byte hex")
+        total_hex_chars += len(hex_value)
+        _check(
+            total_hex_chars <= MAX_CANONICAL_HEX_TOTAL_CHARS,
+            f"canonical_hex values exceed {MAX_CANONICAL_HEX_TOTAL_CHARS} aggregate characters",
+        )
     verify_key_grammar(canonical_hex)
     return canonical_hex
 
@@ -290,7 +422,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[FAIL] missing published output: {args.envelope}", file=sys.stderr)
         return 1
     try:
-        envelope = json.loads(args.envelope.read_text(encoding="utf-8"))
+        envelope = load_envelope(args.envelope)
         canonical_hex = verify_envelope(envelope)
         recanonicalized = verify_canonical_bytes(canonical_hex)
         anchored = verify_chain_anchoring(canonical_hex)

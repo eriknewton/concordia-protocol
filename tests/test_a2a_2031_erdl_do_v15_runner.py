@@ -949,6 +949,22 @@ def test_a_substituted_same_version_corpus_is_refused(tmp_path: Path) -> None:
         runner.load_pinned_vectors(substituted)
 
 
+def test_oversized_corpus_is_refused_before_allocation(tmp_path: Path) -> None:
+    oversized = tmp_path / "oversized-vectors.json"
+    with oversized.open("wb") as target:
+        target.truncate(runner.PINNED_VECTORS_BYTES + 1)
+    with pytest.raises(runner.PinnedInputError, match="refusing before allocation"):
+        runner.load_pinned_vectors(oversized)
+
+
+def test_the_legitimate_pinned_corpus_passes_the_size_and_digest_gates() -> None:
+    path = _vectors_path()
+    if path is None:
+        pytest.skip("upstream decision-object-vectors-v1.5.json not available")
+    document = runner.load_pinned_vectors(path)
+    assert len(document["vectors"]) == 78
+
+
 def test_the_cli_writes_no_output_for_a_substituted_corpus(tmp_path: Path) -> None:
     substituted = tmp_path / "vectors.json"
     substituted.write_text(
@@ -1287,11 +1303,84 @@ def test_shipped_envelope_key_grammar_discriminates() -> None:
         verify.verify_key_grammar({f"V-Z[{huge_index}]": "00"})
 
 
+@pytest.mark.parametrize(
+    "keys",
+    [
+        {"V-X": "00", "V-X-base": "00", "V-X-tampered": "00"},
+        {"V-Y": "00", "V-Y[0]": "00"},
+        {"V-Z-base": "00", "V-Z-tampered": "00", "V-Z[0]": "00"},
+    ],
+)
+def test_shipped_envelope_key_grammar_rejects_cross_shape_collisions(
+    keys: dict[str, str],
+) -> None:
+    verify = _load_named(ARTIFACT_DIR / "verify_envelope.py", "erdl_do_v15_verify_shapes")
+    with pytest.raises(verify.VerificationError, match="multiple key shapes"):
+        verify.verify_key_grammar(keys)
+
+
 def test_shipped_envelope_check_requires_the_corpus_pin() -> None:
     verify = _load_named(ARTIFACT_DIR / "verify_envelope.py", "erdl_do_v15_verify_pin")
     envelope = json.loads(COMMITTED_CANONICAL_HEX.read_text(encoding="utf-8"))
     envelope["method"] = "Python, contract-only"
     with pytest.raises(verify.VerificationError, match="pinned corpus digest"):
+        verify.verify_envelope(envelope)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("runner", None, "runner.*not a string"),
+        ("runner", "bad runner", "invalid runner name"),
+        ("method", "", "method.*empty"),
+        ("date", ["2026-09-02"], "date.*not a string"),
+        ("date", "2026-9-2", "ISO YYYY-MM-DD"),
+        ("artifact", 42, "artifact.*not a string"),
+        ("artifact", "http://example.test/output", "HTTPS URL"),
+        ("artifact", "https://user:secret@example.test/output", "embedded credentials"),
+        ("artifact", "https://exa mple.test/output", "whitespace"),
+        ("artifact", "https://example.test:bad/output", "valid URL"),
+        ("k01_check1", "", "MISMATCH"),
+        ("canonical_hex", "", "not an object"),
+    ],
+)
+def test_shipped_envelope_rejects_malformed_provenance(
+    field: str, value: Any, message: str
+) -> None:
+    verify = _load_named(ARTIFACT_DIR / "verify_envelope.py", "erdl_do_v15_verify_provenance")
+    envelope = json.loads(COMMITTED_CANONICAL_HEX.read_text(encoding="utf-8"))
+    envelope[field] = value
+    with pytest.raises(verify.VerificationError, match=message):
+        verify.verify_envelope(envelope)
+
+
+def test_shipped_envelope_rejects_oversized_file_before_allocation(tmp_path: Path) -> None:
+    verify = _load_named(ARTIFACT_DIR / "verify_envelope.py", "erdl_do_v15_verify_file_bound")
+    oversized = tmp_path / "oversized-envelope.json"
+    with oversized.open("wb") as target:
+        target.truncate(verify.MAX_ENVELOPE_BYTES + 1)
+    with pytest.raises(verify.VerificationError, match="limit"):
+        verify.load_envelope(oversized)
+
+
+def test_shipped_envelope_rejects_oversized_hex_value() -> None:
+    verify = _load_named(ARTIFACT_DIR / "verify_envelope.py", "erdl_do_v15_verify_value_bound")
+    envelope = json.loads(COMMITTED_CANONICAL_HEX.read_text(encoding="utf-8"))
+    envelope["canonical_hex"]["V-DO-v15-D01"] = "00" * (
+        verify.MAX_CANONICAL_HEX_CHARS // 2 + 1
+    )
+    with pytest.raises(verify.VerificationError, match="value exceeds"):
+        verify.verify_envelope(envelope)
+
+
+def test_shipped_envelope_rejects_oversized_aggregate_hex() -> None:
+    verify = _load_named(ARTIFACT_DIR / "verify_envelope.py", "erdl_do_v15_verify_total_bound")
+    envelope = json.loads(COMMITTED_CANONICAL_HEX.read_text(encoding="utf-8"))
+    bounded_value = "00" * (verify.MAX_CANONICAL_HEX_CHARS // 2)
+    envelope["canonical_hex"] = {
+        key: bounded_value for key in envelope["canonical_hex"]
+    }
+    with pytest.raises(verify.VerificationError, match="aggregate"):
         verify.verify_envelope(envelope)
 
 

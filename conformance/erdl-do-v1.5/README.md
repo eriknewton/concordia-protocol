@@ -474,7 +474,7 @@ single-object vector and silent on a pair.
 | File | What it is |
 |---|---|
 | `runner.py` | The runner: pinned-input binding, JCS domain guards, R1/R2 preimages, the shape guard, R3 detection and priority, chain handling, vector enumeration, CLI. |
-| `verify_envelope.py` | A self-consistency check for the generated envelope, not an answer-key verifier. It holds no oracle and reads no vectors. It imports no Concordia code: it re-derives every published byte string with the `rfc8785` reference package, checks the R2 exclusions and the version gate held in those bytes, enforces the submission key grammar, and reproduces the `V-DO-v15-C01` chain anchors end to end. Its `k01_check1` assertion is a check on a self-reported envelope field, not a re-derivation of R5. |
+| `verify_envelope.py` | A self-consistency check for the generated envelope, not an answer-key verifier. It holds no oracle and reads no vectors. It imports no Concordia code: it validates all six envelope fields and their provenance formats, enforces one single/pair/chain shape per vector id, applies file and hex allocation ceilings derived from the pinned artifact, re-derives every published byte string with the `rfc8785` reference package, checks the R2 exclusions and the version gate held in those bytes, and reproduces the `V-DO-v15-C01` chain anchors end to end. Its `k01_check1` assertion is a check on a self-reported envelope field, not a re-derivation of R5. |
 | `concordia-python-erdl-do-v15-output.json` | Generated submission envelope, 107 `canonical_hex` keys. |
 | `../../tests/test_a2a_2031_erdl_do_v15_runner.py` | The focused suite: synthetic rule-by-rule negative controls plus the corpus assertions. |
 
@@ -502,7 +502,10 @@ recomputing Check 1 against the pinned corpus.
   and is not re-measured would go unnoticed until the corpus half runs.
 - `verify_envelope.py` takes the envelope path as an argument, so it survives
   the rename to `submissions/concordia-python-output.json`, but its
-  `EXPECTED_KEY_COUNT = 107` is specific to this corpus.
+  `EXPECTED_KEY_COUNT = 107` and allocation ceilings are specific to this
+  pinned corpus. The 538,226-byte legitimate envelope, 6,352-character largest
+  value and 534,896-character aggregate are each given 2x headroom; a future
+  corpus revision must deliberately re-measure them.
 
 ## Correction history
 
