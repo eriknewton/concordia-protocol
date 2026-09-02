@@ -541,6 +541,15 @@ def _chain(length: int = 3) -> list[dict[str, Any]]:
     return members
 
 
+def _reanchor_chain(members: list[dict[str, Any]]) -> None:
+    """Re-seal a synthetic chain so a planted shape defect is isolated."""
+    previous: str | None = None
+    for member in members:
+        member["audit"]["previous_hash"] = previous
+        member["audit"]["hash"] = runner.recompute_audit_hash(member)[0]
+        previous = member["audit"]["hash"]
+
+
 def _chain_codes(members: list[dict[str, Any]]) -> list[str]:
     results = [
         runner.verify_decision_object(f"unit[{i}]", "unit", m) for i, m in enumerate(members)
@@ -581,6 +590,54 @@ def test_backwards_timestamp_is_a_time_regression() -> None:
     members = _chain()
     members[2]["timestamp"] = "2026-08-21T00:00:00.000Z"
     assert "time_regression" in _chain_codes(members)
+
+
+def _plant_string_chain_seq_gap(members: list[dict[str, Any]]) -> None:
+    for member, chain_seq in zip(members, ("0", "2", "3"), strict=True):
+        member["audit"]["chain_seq"] = chain_seq
+
+
+def _plant_numeric_timestamps(members: list[dict[str, Any]]) -> None:
+    for member, timestamp in zip(members, (1, 3, 2), strict=True):
+        member["timestamp"] = timestamp
+
+
+def _remove_genesis_chain_seq(members: list[dict[str, Any]]) -> None:
+    members[0]["audit"].pop("chain_seq")
+
+
+@pytest.mark.parametrize(
+    ("mutate", "finding_fragment"),
+    [
+        pytest.param(
+            _plant_string_chain_seq_gap,
+            "audit.chain_seq is str",
+            id="sequence-gap-encoded-as-strings",
+        ),
+        pytest.param(
+            _plant_numeric_timestamps,
+            "timestamp is int",
+            id="numeric-time-regression",
+        ),
+        pytest.param(
+            _remove_genesis_chain_seq,
+            "audit.chain_seq is NoneType",
+            id="missing-genesis-chain-seq",
+        ),
+    ],
+)
+def test_malformed_chain_detector_inputs_fail_closed(
+    mutate: Any, finding_fragment: str
+) -> None:
+    """Wrong detector-input types become findings, never silent MATCHes."""
+    members = _chain()
+    mutate(members)
+    _reanchor_chain(members)
+
+    result = runner.verify_vector(_chain_vector(members))
+
+    assert result.reported is None  # no contract breach code is invented
+    assert any(finding_fragment in finding for finding in result.findings)
 
 
 def test_member_hash_mismatch_is_lifted_to_the_chain_and_outranks_the_rest() -> None:

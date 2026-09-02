@@ -488,6 +488,13 @@ def _shape_problems(decision_object: Mapping[str, Any]) -> list[str]:
             f"{name} is {type(node).__name__}, expected an object",
         )
 
+    timestamp = decision_object.get("timestamp")
+    require(
+        isinstance(timestamp, str),
+        f"timestamp is {type(timestamp).__name__}, expected a string; "
+        "chain time ordering cannot be applied",
+    )
+
     audit = decision_object.get("audit")
     if isinstance(audit, Mapping):
         require(
@@ -495,6 +502,12 @@ def _shape_problems(decision_object: Mapping[str, Any]) -> list[str]:
             "audit.preimage_version is not a string; the version gate cannot be applied",
         )
         require(isinstance(audit.get("mode"), str), "audit.mode is not a string")
+        chain_seq = audit.get("chain_seq")
+        require(
+            type(chain_seq) is int,
+            f"audit.chain_seq is {type(chain_seq).__name__}, expected an integer; "
+            "chain ordering cannot be applied",
+        )
 
     agent = decision_object.get("agent")
     if isinstance(agent, Mapping):
