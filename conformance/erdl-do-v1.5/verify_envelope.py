@@ -36,10 +36,11 @@ a field check. The distinction is the point of this docstring:
 5. **The envelope is well formed and pinned**: the six keys the submission
    guide fixes with validated provenance types and formats, a key grammar
    restricted to exactly one of the three shapes per vector id with
-   base/tampered pairing and contiguous chain indices, and a `method` string
-   naming the SHA-256 of the corpus the run was bound to. File, per-value and
-   aggregate hex ceilings derived from the pinned artifact bound allocations
-   before canonicalization begins.
+   base/tampered pairing and contiguous chain indices, the exact sorted-key
+   digest of the published 107-key set, exactly two independently anchored
+   C01 links, and a `method` string naming the SHA-256 of the corpus the run
+   was bound to. File, per-value and aggregate hex ceilings derived from the
+   pinned artifact bound allocations before canonicalization begins.
 
 `k01_check1` is checked to READ `"MISMATCH"`. That is a **self-reported field
 check, not a re-derivation of R5**: this script holds no stored `audit.hash` to
@@ -78,9 +79,13 @@ DEFAULT_OUTPUT = HERE / "concordia-python-erdl-do-v15-output.json"
 
 PREIMAGE_VERSION = "erdl-do-v1.5-hash-flat"
 EXPECTED_KEY_COUNT = 107
+EXPECTED_CANONICAL_KEYSET_SHA256 = (
+    "687aa65d4ee084d1b016804955c0b5a36a321750edd896f82db674f6a11846de"
+)
 VERSION_GATED_KEY = "V-DO-v15-C07[1]"
 CANARY_KEY = "V-DO-v15-K01"
 NORMAL_CHAIN_ID = "V-DO-v15-C01"
+EXPECTED_NORMAL_CHAIN_LINKS = 2
 ENVELOPE_FIELDS = ("runner", "method", "date", "artifact", "k01_check1", "canonical_hex")
 
 #: SHA-256 of the pinned upstream vector file. The envelope's `method` string
@@ -350,6 +355,13 @@ def verify_envelope(envelope: dict[str, Any]) -> dict[str, str]:
         f"{VERSION_GATED_KEY} is version-gated and MUST NOT have a key",
     )
     _check(CANARY_KEY in canonical_hex, f"the canary {CANARY_KEY} has no key")
+    keyset_payload = ("\n".join(sorted(canonical_hex)) + "\n").encode("utf-8")
+    keyset_digest = hashlib.sha256(keyset_payload).hexdigest()
+    _check(
+        keyset_digest == EXPECTED_CANONICAL_KEYSET_SHA256,
+        "canonical_hex key set does not match the pinned submission key set: "
+        f"sha256:{keyset_digest}",
+    )
     total_hex_chars = 0
     for key, hex_value in canonical_hex.items():
         _check(isinstance(hex_value, str), f"{key}: canonical_hex value is not a string")
@@ -400,7 +412,11 @@ def verify_chain_anchoring(canonical_hex: dict[str, str]) -> int:
         (key for key in canonical_hex if key.startswith(f"{NORMAL_CHAIN_ID}[")),
         key=lambda k: int(k[len(NORMAL_CHAIN_ID) + 1 : -1]),
     )
-    _check(len(members) >= 2, f"{NORMAL_CHAIN_ID}: need at least two members to check anchoring")
+    _check(
+        len(members) == EXPECTED_NORMAL_CHAIN_LINKS + 1,
+        f"{NORMAL_CHAIN_ID}: expected exactly {EXPECTED_NORMAL_CHAIN_LINKS + 1} members "
+        f"for {EXPECTED_NORMAL_CHAIN_LINKS} anchored links, found {len(members)}",
+    )
 
     compared = 0
     for index in range(1, len(members)):
@@ -414,6 +430,11 @@ def verify_chain_anchoring(canonical_hex: dict[str, str]) -> int:
             f"{recomputed!r} of {members[index - 1]}",
         )
         compared += 1
+    _check(
+        compared == EXPECTED_NORMAL_CHAIN_LINKS,
+        f"{NORMAL_CHAIN_ID}: expected exactly {EXPECTED_NORMAL_CHAIN_LINKS} anchored links, "
+        f"checked {compared}",
+    )
     return compared
 
 

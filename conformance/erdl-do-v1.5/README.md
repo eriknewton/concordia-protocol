@@ -235,7 +235,10 @@ keys the submission guide fixes (`runner`, `method`, `date`, `artifact`,
 `k01_check1`, `canonical_hex`), with the `canonical_hex` map keyed the way the
 guide specifies (`<id>`, `<id>-base` / `<id>-tampered`, `<id>[i]`) and
 `V-DO-v15-C07[1]` absent because the version gate stops before any bytes exist
-for it. Rename on submission:
+for it. The producer validates the type, length, whitespace/control-character,
+date-range, URL and corpus-digest provenance constraints before opening the
+output path; `verify_envelope.py` independently repeats those checks from the
+committed bytes. Rename on submission:
 
 ```bash
 cp conformance/erdl-do-v1.5/concordia-python-erdl-do-v15-output.json \
@@ -352,8 +355,11 @@ string `rule_id` and an object `canonical_tree`. The timestamp and chain
 sequence requirements are what keep the chain order detectors from silently
 skipping malformed inputs. Members the corpus does not carry everywhere
 (`knowledge_references`, `profile_hash`, `policies[].hash`) are type checked
-only when present. All 108 objects pass, so the guard adds no finding to the
-measurement above.
+only when present by the structural guard. Separately, R2 coverage requires
+every applicable object to supply its profile hash and every policy hash; a
+missing value is a finding and makes the object-coverage invariant fail. All
+108 objects pass the structural guard, so it adds no finding to the measurement
+above.
 
 ### R3, the breach codes
 
@@ -451,9 +457,13 @@ ambiguity that blocks implementation.
 
 The version gate terminates before intra-field checks, so coverage is stated
 over the 107 applicable decision objects, not all 108 enumerated objects.
-`policies[].hash` is present once per applicable object and recomputes for
-107/107. `compliance_profile.profile_hash` is present once per applicable
-object and recomputes for 106/107; the exception is
+Policy-hash coverage is counted once per applicable decision object, not once
+per policy: an object is MATCH only when it has at least one policy, every
+policy carries a string hash, and every hash recomputes. Thus an object with
+multiple policies fails closed if even one policy hash is missing or mismatched.
+The corpus measures 107 MATCH / 0 MISMATCH / 107 applicable objects.
+`compliance_profile.profile_hash` is likewise counted per applicable object and
+measures 106 MATCH / 1 MISMATCH / 107 applicable objects; the exception is
 `V-COMP-F02-tampered`, the swapped-profile tamper, whose stale profile hash is
 the tamper that vector encodes.
 
@@ -484,7 +494,7 @@ single-object vector and silent on a pair.
 | File | What it is |
 |---|---|
 | `runner.py` | The runner: pinned-input binding, JCS domain guards, R1/R2 preimages, the shape guard, R3 detection and priority, chain handling, vector enumeration, CLI. |
-| `verify_envelope.py` | A self-consistency check for the generated envelope, not an answer-key verifier. It holds no oracle and reads no vectors. It imports no Concordia code: it validates all six envelope fields and their provenance formats (including Unicode control/format rejection and a corpus-created-through-current-date bound), enforces one single/pair/chain shape per vector id, requires every canonical payload to be an object, applies file and hex allocation ceilings derived from the pinned artifact, re-derives every published byte string with the `rfc8785` reference package, checks the R2 exclusions and the version gate held in those bytes, and reproduces the `V-DO-v15-C01` chain anchors end to end. Its `k01_check1` assertion is a check on a self-reported envelope field, not a re-derivation of R5. |
+| `verify_envelope.py` | A self-consistency check for the generated envelope, not an answer-key verifier. It holds no oracle and reads no vectors. It imports no Concordia code: it validates all six envelope fields and their provenance formats (including Unicode control/format rejection and a corpus-created-through-current-date bound), pins the exact sorted 107-key set, enforces one single/pair/chain shape per vector id, requires every canonical payload to be an object, applies file and hex allocation ceilings derived from the pinned artifact, re-derives every published byte string with the `rfc8785` reference package, checks the R2 exclusions and the version gate held in those bytes, and reproduces exactly two `V-DO-v15-C01` chain anchors end to end. Its `k01_check1` assertion is a check on a self-reported envelope field, not a re-derivation of R5. |
 | `concordia-python-erdl-do-v15-output.json` | Generated submission envelope, 107 `canonical_hex` keys. |
 | `../../tests/test_a2a_2031_erdl_do_v15_runner.py` | The focused suite: synthetic rule-by-rule negative controls plus the corpus assertions. |
 
@@ -512,10 +522,10 @@ recomputing Check 1 against the pinned corpus.
   and is not re-measured would go unnoticed until the corpus half runs.
 - `verify_envelope.py` takes the envelope path as an argument, so it survives
   the rename to `submissions/concordia-python-output.json`, but its
-  `EXPECTED_KEY_COUNT = 107` and allocation ceilings are specific to this
-  pinned corpus. The 538,226-byte legitimate envelope, 6,352-character largest
-  value and 534,896-character aggregate are each given 2x headroom; a future
-  corpus revision must deliberately re-measure them.
+  exact 107-key-set digest, two-link C01 anchor count and allocation ceilings
+  are specific to this pinned corpus. The 538,226-byte legitimate envelope,
+  6,352-character largest value and 534,896-character aggregate are each given
+  2x headroom; a future corpus revision must deliberately re-measure them.
 
 ## Correction history
 

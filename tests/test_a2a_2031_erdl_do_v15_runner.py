@@ -129,8 +129,16 @@ def _base_decision_object() -> dict[str, Any]:
 
 
 def _seal(decision_object: dict[str, Any]) -> dict[str, Any]:
-    """Recompute and store `audit.hash` so the object passes Check 1."""
+    """Fill missing R2 hashes, then recompute `audit.hash` for Check 1."""
     sealed = copy.deepcopy(decision_object)
+    profile = sealed.get("compliance_profile")
+    if isinstance(profile, dict) and "profile_hash" not in profile:
+        profile["profile_hash"] = runner.recompute_profile_hash(profile)
+    policies = sealed.get("policies")
+    if isinstance(policies, list):
+        for policy in policies:
+            if isinstance(policy, dict) and "hash" not in policy:
+                policy["hash"] = runner.recompute_policy_hash(policy)
     sealed["audit"]["hash"] = runner.recompute_audit_hash(sealed)[0]
     return sealed
 
@@ -324,10 +332,14 @@ def test_intra_field_hash_divergence_survives_a_matching_flat_hash() -> None:
 
 def test_intra_field_hash_coverage_is_measured_at_the_applicable_object_layer() -> None:
     decision_object = _base_decision_object()
-    profile = decision_object["compliance_profile"]
-    profile["profile_hash"] = runner.recompute_profile_hash(profile)
     policy = decision_object["policies"][0]
-    policy["hash"] = runner.recompute_policy_hash(policy)
+    second_policy = {
+        **policy,
+        "id": "rule-unit-second",
+        "author_id": "author-independent-second",
+    }
+    second_policy["hash"] = runner.recompute_policy_hash(second_policy)
+    decision_object["policies"].append(second_policy)
     vector = {
         "id": "V-HASH-COVERAGE",
         "category": "synthetic",
@@ -343,6 +355,19 @@ def test_intra_field_hash_coverage_is_measured_at_the_applicable_object_layer() 
     assert report.policy_hash_match == 1
     assert report.policy_hash_mismatch == 0
 
+    policy_divergence = copy.deepcopy(vector)
+    policy_divergence["decision_object"]["policies"][1]["hash"] = "sha256:" + "d" * 64
+    policy_divergence["decision_object"]["audit"]["hash"] = runner.recompute_audit_hash(
+        policy_divergence["decision_object"]
+    )[0]
+    divergent_policy_report = runner.RunReport(
+        [runner.verify_vector(policy_divergence)]
+    )
+    assert divergent_policy_report.policy_hash_checked == 1
+    assert divergent_policy_report.policy_hash_match == 0
+    assert divergent_policy_report.policy_hash_mismatch == 1
+    assert divergent_policy_report.findings
+
     vector["decision_object"]["compliance_profile"]["profile_hash"] = "sha256:" + "e" * 64
     vector["decision_object"]["audit"]["hash"] = runner.recompute_audit_hash(
         vector["decision_object"]
@@ -351,6 +376,28 @@ def test_intra_field_hash_coverage_is_measured_at_the_applicable_object_layer() 
     assert divergent.profile_hash_checked == 1
     assert divergent.profile_hash_mismatch == 1
     assert divergent.findings
+
+
+def test_multiple_policies_with_one_missing_hash_fail_object_coverage_closed() -> None:
+    decision_object = _seal(_base_decision_object())
+    second_policy = copy.deepcopy(decision_object["policies"][0])
+    second_policy["id"] = "rule-unit-unhashed"
+    second_policy.pop("hash")
+    decision_object["policies"].append(second_policy)
+    decision_object["audit"]["hash"] = runner.recompute_audit_hash(decision_object)[0]
+    result = runner.verify_vector(
+        {
+            "id": "V-HASH-INCOMPLETE",
+            "category": "synthetic",
+            "decision_object": decision_object,
+            "expected": {"type": "MATCH"},
+        }
+    )
+    report = runner.RunReport([result])
+    assert report.policy_hash_checked == 0
+    assert any("without a string hash" in finding for finding in report.findings)
+    assert any("policy-hash object coverage" in problem for problem in report.invariant_problems())
+    assert not report.successful
 
 
 def test_pair_aggregation_is_explicitly_runner_policy() -> None:
@@ -799,7 +846,7 @@ def test_a_base_side_warning_never_outranks_a_tampered_side_breach() -> None:
     """
     base = _base_decision_object()
     base["evaluation"]["knowledge_references"] = [{"entry_id": "kb-gone"}]
-    tampered = _base_decision_object()
+    tampered = _seal(_base_decision_object())
     tampered["audit"]["hash"] = "sha256:" + "1" * 64
 
     result = runner.verify_vector(
@@ -920,6 +967,29 @@ def test_a_well_formed_object_trips_no_shape_finding() -> None:
     assert runner._shape_problems(_seal(_base_decision_object())) == []
 
 
+@pytest.mark.parametrize("payload", [None, [], ["not", "an", "object"], 7, "text"])
+@pytest.mark.parametrize("kind", ["single", "pair", "chain"])
+def test_non_object_decision_payloads_become_findings(
+    payload: Any, kind: str
+) -> None:
+    vector: dict[str, Any] = {
+        "id": "V-SHAPE-NONOBJECT",
+        "category": "synthetic",
+        "expected": {"type": "MATCH"},
+    }
+    if kind == "single":
+        vector["decision_object"] = payload
+    elif kind == "pair":
+        vector["base_do"] = payload
+        vector["tampered_do"] = _seal(_base_decision_object())
+    else:
+        vector["chain"] = [_seal(_base_decision_object()), payload]
+
+    result = runner.verify_vector(vector)
+    assert any("decision object is" in finding for finding in result.findings)
+    assert not runner.RunReport([result]).successful
+
+
 def test_declared_resolvable_set_disagreement_is_reported() -> None:
     vector = {
         "id": "V-SYNTH-R",
@@ -1033,6 +1103,90 @@ def test_failed_run_cannot_build_or_write_a_submission_envelope(
     assert not out.exists()
 
 
+def _successful_synthetic_submission_report() -> Any:
+    decision_object = _seal(_base_decision_object())
+    decision_object["audit"]["hash"] = "sha256:" + "0" * 64
+    document = {
+        "preimage_version": runner.PREIMAGE_VERSION,
+        "vectors": [
+            {
+                "id": runner.CANARY_VECTOR_ID,
+                "category": "synthetic",
+                "decision_object": decision_object,
+                "expected": {
+                    "type": "BREACH",
+                    "breach": runner.CANARY_EXPECTATION,
+                },
+            }
+        ],
+    }
+    report = runner.run(document)
+    assert report.successful
+    return report
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"runner_name": "bad runner"}, "runner name"),
+        ({"runner_name": "safe\u202ename"}, "control or format"),
+        ({"artifact": "http://example.test/output"}, "HTTPS URL"),
+        ({"artifact": "https://user:secret@example.test/output"}, "embedded credentials"),
+        ({"artifact": "https://exa mple.test/output"}, "whitespace"),
+        ({"date": "2026-9-2"}, "ISO YYYY-MM-DD"),
+        ({"date": "2026-08-21"}, "credible range"),
+    ],
+)
+def test_submission_producer_rejects_malformed_provenance_before_writing(
+    overrides: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        runner.submission_envelope(_successful_synthetic_submission_report(), **overrides)
+
+
+def test_submission_producer_rejects_a_regressed_method_pin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runner, "SUBMISSION_METHOD", "method without corpus provenance")
+    with pytest.raises(ValueError, match="pinned corpus digest"):
+        runner.submission_envelope(
+            _successful_synthetic_submission_report(), date="2026-09-02"
+        )
+
+
+def test_cli_writes_nothing_when_submission_provenance_is_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    decision_object = _seal(_base_decision_object())
+    decision_object["audit"]["hash"] = "sha256:" + "0" * 64
+    document = {
+        "preimage_version": runner.PREIMAGE_VERSION,
+        "vectors": [
+            {
+                "id": runner.CANARY_VECTOR_ID,
+                "category": "synthetic",
+                "decision_object": decision_object,
+                "expected": {
+                    "type": "BREACH",
+                    "breach": runner.CANARY_EXPECTATION,
+                },
+            }
+        ],
+    }
+    monkeypatch.setattr(runner, "load_pinned_vectors", lambda _path: document)
+    out = tmp_path / "must-not-exist.json"
+    assert runner.main(
+        [
+            str(tmp_path / "ignored-pinned-path.json"),
+            "--submission-out",
+            str(out),
+            "--runner-name",
+            "bad runner",
+        ]
+    ) == 1
+    assert not out.exists()
+
+
 def test_run_always_enforces_canonical_key_accounting() -> None:
     decision_object = _seal(_base_decision_object())
     duplicate = {
@@ -1109,6 +1263,12 @@ def test_object_and_check1_counts_are_reported_separately(corpus: Any) -> None:
     assert corpus.check1_match == 90
     assert corpus.check1_mismatch == 17
     assert corpus.check1_match + corpus.check1_mismatch == corpus.object_applicable
+    assert corpus.profile_hash_match == 106
+    assert corpus.profile_hash_mismatch == 1
+    assert corpus.profile_hash_checked == 107
+    assert corpus.policy_hash_match == 107
+    assert corpus.policy_hash_mismatch == 0
+    assert corpus.policy_hash_checked == 107
 
 
 @requires_vectors
@@ -1319,8 +1479,7 @@ def test_a_base_side_warning_does_not_mask_the_tampered_hash_mismatch() -> None:
 def test_committed_output_matches_a_fresh_run(corpus: Any) -> None:
     """Byte drift in the published artifact is a hard failure."""
     published = json.loads(COMMITTED_CANONICAL_HEX.read_text(encoding="utf-8"))
-    assert published["k01_check1"] == "MISMATCH"
-    assert published["canonical_hex"] == corpus.canonical_hex()
+    assert runner.submission_envelope(corpus, date=published["date"]) == published
 
 
 # ---------------------------------------------------------------------------
@@ -1338,6 +1497,25 @@ def test_shipped_envelope_check_passes() -> None:
     """
     verify = _load_named(ARTIFACT_DIR / "verify_envelope.py", "erdl_do_v15_verify")
     assert verify.main([]) == 0
+
+
+def test_shipped_verifier_pins_exact_key_set_and_anchor_count() -> None:
+    verify = _load_named(ARTIFACT_DIR / "verify_envelope.py", "erdl_do_v15_verify_exact")
+    envelope = json.loads(COMMITTED_CANONICAL_HEX.read_text(encoding="utf-8"))
+    canonical_hex = verify.verify_envelope(envelope)
+    assert verify.verify_chain_anchoring(canonical_hex) == 2
+    assert verify.EXPECTED_NORMAL_CHAIN_LINKS == 2
+
+    substituted = copy.deepcopy(envelope)
+    moved_value = substituted["canonical_hex"].pop("V-DO-v15-D01")
+    substituted["canonical_hex"]["V-DO-v15-Z99"] = moved_value
+    with pytest.raises(verify.VerificationError, match="pinned submission key set"):
+        verify.verify_envelope(substituted)
+
+    extra_anchor = copy.deepcopy(canonical_hex)
+    extra_anchor["V-DO-v15-C01[3]"] = extra_anchor["V-DO-v15-C01[2]"]
+    with pytest.raises(verify.VerificationError, match="exactly 3 members"):
+        verify.verify_chain_anchoring(extra_anchor)
 
 
 def test_shipped_envelope_check_takes_the_path_as_an_argument(tmp_path: Path) -> None:

@@ -66,10 +66,13 @@ import hashlib
 import json
 import math
 import os
+import re
 import sys
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
+from urllib.parse import urlsplit
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -225,6 +228,16 @@ SUBMISSION_ARTIFACT = (
     "https://github.com/eriknewton/concordia-protocol/tree/main/"
     "conformance/erdl-do-v1.5"
 )
+SUBMISSION_FIELDS = (
+    "runner",
+    "method",
+    "date",
+    "artifact",
+    "k01_check1",
+    "canonical_hex",
+)
+SUBMISSION_RUNNER_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,127})$")
+PINNED_CORPUS_CREATED = dt.date(2026, 8, 22)
 
 
 class DomainError(ValueError):
@@ -475,7 +488,10 @@ class DecisionObjectResult:
     breaches: list[Breach] = field(default_factory=list)
     notes: list[Note] = field(default_factory=list)
     profile_hash_check: str = "NOT_CHECKED"
-    policy_hash_checks: list[str] = field(default_factory=list)
+    #: One aggregate outcome per applicable decision object. With multiple
+    #: policies, every policy must carry a hash and every hash must match;
+    #: one missing or mismatching policy fails the object closed.
+    policy_hash_check: str = "NOT_CHECKED"
 
     @property
     def codes(self) -> list[str]:
@@ -522,7 +538,7 @@ class VectorResult:
 _REQUIRED_MAPPINGS = ("audit", "agent", "compliance_profile", "evaluation", "human_oversight")
 
 
-def _shape_problems(decision_object: Mapping[str, Any]) -> list[str]:
+def _shape_problems(decision_object: Any) -> list[str]:
     """Return one message per structural assumption the object breaks."""
     problems: list[str] = []
 
@@ -845,15 +861,25 @@ def version_supported(decision_object: Mapping[str, Any]) -> bool:
 def verify_decision_object(
     key: str,
     vector_id: str,
-    decision_object: Mapping[str, Any],
+    decision_object: Any,
     resolvable_entry_ids: Iterable[str] = DEFAULT_RESOLVABLE_ENTRY_IDS,
 ) -> DecisionObjectResult:
     """Run the shape guard, the version gate, Check 1, R2 intra-field and R3."""
+    shape = [Note("shape", problem) for problem in _shape_problems(decision_object)]
+    if not isinstance(decision_object, Mapping):
+        return DecisionObjectResult(
+            key=key,
+            vector_id=vector_id,
+            applicable=False,
+            check1="NOT_APPLICABLE",
+            stored_hash=None,
+            recomputed_hash=None,
+            canonical_hex=None,
+            notes=shape,
+        )
+
     audit = decision_object.get("audit")
     stored = audit.get("hash") if isinstance(audit, Mapping) else None
-    shape = [
-        Note("shape", problem) for problem in _shape_problems(decision_object)
-    ]
 
     if not version_supported(decision_object):
         declared = audit.get("preimage_version") if isinstance(audit, Mapping) else None
@@ -919,13 +945,29 @@ def verify_decision_object(
                     f"{profile['profile_hash']}, recomputed {recomputed_profile})",
                 )
             )
+    elif isinstance(profile, Mapping):
+        result.notes.append(
+            Note(
+                "compliance_profile.profile_hash",
+                "applicable decision object has no string profile_hash",
+            )
+        )
     policies = decision_object.get("policies")
     if isinstance(policies, list):
-        for policy in policies:
-            if not isinstance(policy, Mapping) or not isinstance(policy.get("hash"), str):
+        policy_checks: list[str] = []
+        for index, policy in enumerate(policies):
+            if not isinstance(policy, Mapping):
+                continue
+            if not isinstance(policy.get("hash"), str):
+                result.notes.append(
+                    Note(
+                        f"policies[{policy.get('id', index)!r}].hash",
+                        "applicable decision object has a policy without a string hash",
+                    )
+                )
                 continue
             recomputed_policy = recompute_policy_hash(policy)
-            result.policy_hash_checks.append(
+            policy_checks.append(
                 "MATCH" if recomputed_policy == policy["hash"] else "MISMATCH"
             )
             if recomputed_policy != policy["hash"]:
@@ -936,6 +978,17 @@ def verify_decision_object(
                         f"{policy['hash']}, recomputed {recomputed_policy})",
                     )
                 )
+        if policies and len(policy_checks) == len(policies):
+            result.policy_hash_check = (
+                "MATCH" if all(check == "MATCH" for check in policy_checks) else "MISMATCH"
+            )
+        elif not policies:
+            result.notes.append(
+                Note(
+                    "policies[].hash",
+                    "applicable decision object has no policy hash to verify",
+                )
+            )
 
     result.breaches.extend(detect_semantic_breaches(decision_object, resolvable_entry_ids))
     return result
@@ -947,7 +1000,7 @@ def verify_decision_object(
 
 
 def detect_chain_breaches(
-    members: Sequence[Mapping[str, Any]], results: Sequence[DecisionObjectResult]
+    members: Sequence[Any], results: Sequence[DecisionObjectResult]
 ) -> list[Breach]:
     """Return every holding chain-level breach, in contract priority order.
 
@@ -981,7 +1034,7 @@ def detect_chain_breaches(
 
     audits: list[Mapping[str, Any]] = []
     for member in members:
-        audit = member.get("audit")
+        audit = member.get("audit") if isinstance(member, Mapping) else None
         audits.append(audit if isinstance(audit, Mapping) else {})
 
     if audits and audits[0].get("chain_seq") == 0 and audits[0].get("previous_hash") is not None:
@@ -1003,7 +1056,17 @@ def detect_chain_breaches(
         prev_seq, cur_seq = previous.get("chain_seq"), current.get("chain_seq")
         if isinstance(prev_seq, int) and isinstance(cur_seq, int) and cur_seq != prev_seq + 1:
             gaps.append(f"chain_seq goes {prev_seq} -> {cur_seq} between members {index - 1} and {index}")
-        prev_ts, cur_ts = members[index - 1].get("timestamp"), members[index].get("timestamp")
+        previous_member, current_member = members[index - 1], members[index]
+        prev_ts = (
+            previous_member.get("timestamp")
+            if isinstance(previous_member, Mapping)
+            else None
+        )
+        cur_ts = (
+            current_member.get("timestamp")
+            if isinstance(current_member, Mapping)
+            else None
+        )
         if isinstance(prev_ts, str) and isinstance(cur_ts, str) and cur_ts < prev_ts:
             regressions.append(f"member {index} timestamp {cur_ts} precedes {prev_ts}")
 
@@ -1028,7 +1091,7 @@ def detect_chain_breaches(
 # --------------------------------------------------------------------------
 
 
-def enumerate_objects(vector: Mapping[str, Any]) -> list[tuple[str, Mapping[str, Any]]]:
+def enumerate_objects(vector: Mapping[str, Any]) -> list[tuple[str, Any]]:
     """Return ``(oracle key, decision object)`` for every DO in ``vector``.
 
     Key shapes are fixed by contract section 4: ``<id>`` for a single-DO
@@ -1264,15 +1327,15 @@ class RunReport:
 
     @property
     def policy_hash_checked(self) -> int:
-        return sum(len(o.policy_hash_checks) for o in self.objects)
+        return sum(1 for o in self.objects if o.policy_hash_check in {"MATCH", "MISMATCH"})
 
     @property
     def policy_hash_match(self) -> int:
-        return sum(check == "MATCH" for o in self.objects for check in o.policy_hash_checks)
+        return sum(1 for o in self.objects if o.policy_hash_check == "MATCH")
 
     @property
     def policy_hash_mismatch(self) -> int:
-        return sum(check == "MISMATCH" for o in self.objects for check in o.policy_hash_checks)
+        return sum(1 for o in self.objects if o.policy_hash_check == "MISMATCH")
 
     @property
     def findings(self) -> list[str]:
@@ -1320,6 +1383,16 @@ class RunReport:
             problems.append(
                 "applicable + NOT_APPLICABLE does not equal enumerated object count"
             )
+        if self.profile_hash_checked != self.object_applicable:
+            problems.append(
+                f"profile-hash object coverage {self.profile_hash_checked} != applicable "
+                f"object count {self.object_applicable}"
+            )
+        if self.policy_hash_checked != self.object_applicable:
+            problems.append(
+                f"policy-hash object coverage {self.policy_hash_checked} != applicable "
+                f"object count {self.object_applicable}"
+            )
         keys = [obj.key for obj in self.objects]
         if len(set(keys)) != len(keys):
             problems.append("decision-object oracle keys are not unique")
@@ -1361,6 +1434,84 @@ class RunReport:
         return problems
 
 
+def _submission_text(
+    envelope: Mapping[str, Any], field: str, max_chars: int
+) -> str:
+    value = envelope.get(field)
+    if not isinstance(value, str):
+        raise ValueError(f"submission envelope {field!r} is not a string")
+    if not value or value != value.strip():
+        raise ValueError(f"submission envelope {field!r} is empty or padded")
+    if len(value) > max_chars:
+        raise ValueError(
+            f"submission envelope {field!r} exceeds {max_chars} characters"
+        )
+    if any(unicodedata.category(char) in {"Cc", "Cf"} for char in value):
+        raise ValueError(
+            f"submission envelope {field!r} contains a control or format character"
+        )
+    return value
+
+
+def validate_submission_provenance(envelope: Mapping[str, Any]) -> None:
+    """Fail closed on every producer-owned envelope provenance field.
+
+    The independent verifier repeats these checks from the committed bytes;
+    this producer-side pass prevents malformed CLI arguments or a regressed
+    constant from ever reaching disk in the first place.
+    """
+    if set(envelope) != set(SUBMISSION_FIELDS):
+        raise ValueError("submission envelope does not carry exactly the six fixed fields")
+
+    runner_name = _submission_text(envelope, "runner", 128)
+    if not SUBMISSION_RUNNER_PATTERN.fullmatch(runner_name):
+        raise ValueError(f"invalid submission runner name {runner_name!r}")
+
+    method = _submission_text(envelope, "method", 2_048)
+    if f"sha256:{PINNED_VECTORS_SHA256}" not in method:
+        raise ValueError("submission method does not name the pinned corpus digest")
+
+    date_text = _submission_text(envelope, "date", 10)
+    try:
+        parsed_date = dt.date.fromisoformat(date_text)
+    except ValueError as exc:
+        raise ValueError(
+            f"submission envelope date is not ISO YYYY-MM-DD: {date_text!r}"
+        ) from exc
+    if parsed_date.isoformat() != date_text:
+        raise ValueError(f"submission envelope date is not canonical ISO: {date_text!r}")
+    if not PINNED_CORPUS_CREATED <= parsed_date <= dt.date.today():
+        raise ValueError(
+            f"submission envelope date {date_text!r} is outside the credible range "
+            f"{PINNED_CORPUS_CREATED.isoformat()}..{dt.date.today().isoformat()}"
+        )
+
+    artifact = _submission_text(envelope, "artifact", 2_048)
+    try:
+        parsed_artifact = urlsplit(artifact)
+        _ = parsed_artifact.port
+    except ValueError as exc:
+        raise ValueError(
+            f"submission envelope artifact is not a valid URL: {artifact!r}"
+        ) from exc
+    if not (
+        parsed_artifact.scheme == "https"
+        and parsed_artifact.hostname
+        and parsed_artifact.username is None
+        and parsed_artifact.password is None
+    ):
+        raise ValueError(
+            "submission envelope artifact must be an HTTPS URL without embedded credentials"
+        )
+    if any(char.isspace() for char in artifact):
+        raise ValueError("submission envelope artifact URL contains whitespace")
+
+    if envelope.get("k01_check1") != "MISMATCH":
+        raise ValueError("submission envelope k01_check1 must be MISMATCH")
+    if not isinstance(envelope.get("canonical_hex"), dict):
+        raise ValueError("submission envelope canonical_hex is not an object")
+
+
 def submission_envelope(
     report: "RunReport",
     runner_name: str = SUBMISSION_RUNNER_NAME,
@@ -1378,7 +1529,7 @@ def submission_envelope(
         raise ValueError("refusing submission envelope for failed run: " + "; ".join(problems))
     canary = report.canary()
     assert canary is not None
-    return {
+    envelope = {
         "runner": runner_name,
         "method": SUBMISSION_METHOD,
         "date": date or dt.date.today().isoformat(),
@@ -1386,6 +1537,8 @@ def submission_envelope(
         "k01_check1": canary.check1,
         "canonical_hex": report.canonical_hex(),
     }
+    validate_submission_provenance(envelope)
+    return envelope
 
 
 def run(
@@ -1424,9 +1577,9 @@ def _summary_lines(report: RunReport) -> list[str]:
         f"Check 1 raw MATCH           : {report.check1_match}/{report.object_applicable}",
         f"Check 1 raw MISMATCH        : {report.check1_mismatch}/{report.object_applicable}",
         f"canonical_hex keys emitted  : {len(report.canonical_hex())}",
-        f"profile hashes checked      : {report.profile_hash_checked} "
+        f"profile-hash objects checked: {report.profile_hash_checked} "
         f"({report.profile_hash_match} MATCH, {report.profile_hash_mismatch} MISMATCH)",
-        f"policy hashes checked       : {report.policy_hash_checked} "
+        f"policy-hash objects checked : {report.policy_hash_checked} "
         f"({report.policy_hash_match} MATCH, {report.policy_hash_mismatch} MISMATCH)",
         f"K01 Check 1                 : {canary.check1 if canary else 'ABSENT'} "
         "(R5 requires MISMATCH)",
