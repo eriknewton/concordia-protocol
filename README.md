@@ -20,7 +20,7 @@ node conformance/reference-runner-js/runner.mjs conformance/vectors | tail -1
 ```
 
 Expected summary for both:
-`[SUMMARY] positive=48 mutation=1484 canary=5 ok=1537 fail=0`
+`[SUMMARY] positive=53 mutation=1488 canary=5 ok=1546 fail=0`
 
 Contract: [`conformance/RUNNER_CONTRACT.md`](conformance/RUNNER_CONTRACT.md). Profiles: [`conformance/PROFILES.md`](conformance/PROFILES.md). Registry: [`conformance/IMPLEMENTATIONS.md`](conformance/IMPLEMENTATIONS.md).
 
@@ -313,6 +313,7 @@ Concordia defines:
 - **Reputation attestations**: signed behavioral records that feed portable trust scores
 - **Want registry**: agents publish what they seek; discovery happens on demand
 - **Predicate primitive**: signed v0.6 authority, policy, eligibility, and bounds evaluations
+- **Mandate revocation**: signed cross-mandate revocation records that revoke authority across delegation chains (v0.7)
 
 **The tool set:**
 - 59 MCP tools across negotiation, session receipts, competence proofs, reputation, discovery, agent profiles, want registry, relay, adoption, Sanctuary bridge, receipt bundles, provider-parameterized reputation reporting, mandate verification, and approval receipt verification
@@ -329,6 +330,7 @@ Concordia defines:
 - [Full Specification](SPEC.md): complete protocol specification
 - [Interop vectors](docs/interop/): runnable worked vectors a second implementer can reproduce offline. Each ships the fixture bytes, a deterministic generator, and a `verify.py` that checks the vector against those bytes with no network and no regeneration. They demonstrate that a record's identity is `SHA-256` over its RFC 8785 JCS canonical form, so it is checkable with an independent JCS library, with no Concordia code and no call to the issuer.
 - [v0.6 Predicate Primitive](docs/v0.6_predicate_primitive.md): signed predicate artifact, verifier, resolver, and CTEF mapping
+- [A2A composition](docs/A2A_COMPOSITION.md): Concordia declares itself through A2A's first-class extension mechanism and emits a matching agent card. A draft integration: proposed semantics, not yet a filed A2A extension.
 - [Python SDK](concordia/): reference implementation
 - [Examples](examples/): negotiation scripts and use cases
 - [Contributing Guide](CONTRIBUTING.md): how to contribute
