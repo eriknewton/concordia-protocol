@@ -72,17 +72,16 @@ The same boundary held for the correction described at the end of this
 document: the fixes were made from the contract text, the vector file, and the
 review findings, with none of the files above opened.
 
-**Dependencies:** the JCS layer is `concordia.canonicalization`, this
+**Dependencies:** the runner's JCS layer is `concordia.canonicalization`, this
 repository's own RFC 8785 canonicalizer, written for Concordia's signing
 surface long before this task and already covered by its own suite. No ERDL
-SDK and no third-party canonicalizer is used at runtime. The test suite
-additionally cross-checks the canonical bytes against the `rfc8785` reference
-package, which was authored separately from Concordia's canonicalizer, so byte
-agreement is between two implementations rather than a restatement of one.
-`rfc8785` is a declared dev dependency in `pyproject.toml`
-(`[project.optional-dependencies] dev`), which is what the `test` CI job
-installs, so the module-level import in the suite cannot become a collection
-error.
+SDK and no third-party canonicalizer is used by `runner.py`. The test suite and
+the standalone `verify_envelope.py` self-consistency checker additionally use
+the independently authored `rfc8785` reference package, so byte agreement is
+between two implementations rather than a restatement of one. `rfc8785` is
+declared in `pyproject.toml` under the `dev` optional dependency, which the
+`test` CI job installs. An operator running the standalone verifier must also
+install that extra with `pip install -e '.[dev]'`.
 
 ## Measured results
 
@@ -167,12 +166,14 @@ undeclared simultaneous breach planted against the `also_present` check, and
 one repair each for the SoD, tree-divergence, chain-sequence, time-regression
 and jurisdiction rules.
 
-Seven more were added after review, on paths the corpus itself does not reach:
+Nine more were added after review, on paths the corpus itself does not reach:
 a P6 and a P5 breach planted inside a chain member with the chain re-anchored,
 a P6 warning planted on a tamper pair's base side, a stale
 `compliance_profile.profile_hash` and a stale `policies[].hash` on a pair's
 base side, a stale `profile_hash` re-sealed so Check 1 still passes, and
-`jurisdictions` replaced by a bare string sentinel. All seventeen are caught.
+`jurisdictions` replaced by a bare string sentinel, plus non-string elements
+inside the `jurisdictions` and `activated_fields` lists. All nineteen are
+caught.
 A mutation the runner absorbed in silence would mean the matching rule is
 decorative.
 
@@ -216,8 +217,11 @@ python conformance/erdl-do-v1.5/runner.py \
 Exit 0 means every vector reproduced its compared expectations with no
 findings and all internal object/canonical-byte counts agree. Exit 1 is a red
 run; a requested diagnostic report may be written, but a requested submission
-envelope is not. Exit 2 means the supplied vector file is not the pinned corpus
-and nothing was measured or written. The narrow test suite:
+envelope is not. If internal accounting aborts before a complete `RunReport`
+exists, that diagnostic report contains `run_successful: false` and the error
+in `run_invariant_problems`, without invented partial counts. Exit 2 means the
+supplied vector file is not the pinned corpus and nothing was measured or
+written. The narrow test suite:
 
 ```bash
 # synthetic half only (what CI runs)
@@ -226,6 +230,15 @@ pytest tests/test_a2a_2031_erdl_do_v15_runner.py
 # including the corpus half
 ERDL_V15_VECTORS=/path/to/decision-object-vectors-v1.5.json \
     pytest tests/test_a2a_2031_erdl_do_v15_runner.py
+```
+
+The standalone envelope check uses the independently maintained `rfc8785`
+package from the declared development extra:
+
+```bash
+pip install -e '.[dev]'
+python conformance/erdl-do-v1.5/verify_envelope.py \
+    conformance/erdl-do-v1.5/concordia-python-erdl-do-v15-output.json
 ```
 
 ## The generated output, and why it lives here
@@ -341,13 +354,15 @@ ladder and comes out clean. The sharpest case is `jurisdictions` set to a bare
 string such as `"XX"`, since `str` is a `Sequence` in Python and a scalar
 sentinel would be read as a jurisdiction list.
 
-The runner therefore checks the shape of every decision object first and
-reports a divergence as a finding, which fails the run closed, rather than as
-an invented breach code. Every requirement in the guard is a measured property
+The runner therefore checks the shape of every decision object first, does not
+invoke the P1 to P6 detectors on a malformed object, and reports the divergence
+as a finding, which fails the run closed, rather than as an invented breach
+code or a detector exception. Every requirement in the guard is a measured property
 of all 108 objects in the pinned corpus rather than a guess at the schema:
 `audit`, `agent`, `compliance_profile`, `evaluation` and `human_oversight` are
 objects, `policies` and `matched_rules` and `jurisdictions` and
-`activated_fields` are lists, `timestamp`, `audit.preimage_version`,
+`activated_fields` are lists, every member of the last two lists is a string,
+`timestamp`, `audit.preimage_version`,
 `audit.mode`, `agent.id` and `risk_level` are strings, `audit.chain_seq` is an
 integer, `human_oversight.required` is a boolean, each policy carries a string
 `id` and `author_id` and an object `when`, and each matched rule carries a
@@ -430,7 +445,7 @@ what would falsify each:
 | `oversight_missing` | `risk_level` in `{high, critical}` requires `human_oversight.required` true. | Fires on `V-COMP-F04` alone; `F08` and `F09` are `critical` with oversight required and breach elsewhere. |
 | `sod_violation` | A policy authored by the deciding agent. | `V-COMP-F05` is the only decision object in the corpus whose policy `author_id` equals its `agent.id`; every other policy is authored by `author-openoba`. |
 | `tree_snapshot_divergence` | `canonical_tree` compared to the matched policy's `when` on canonical bytes. | Fires on `V-DO-v15-A07`, `A09`, `A10` and `V-COMP-F11`, which are exactly the four vectors declaring it. |
-| Chain rules | Genesis `previous_hash` non-null; broken predecessor link; non-consecutive `chain_seq`; disagreeing `audit.mode`; backwards `timestamp`. | Each fires on exactly its own `C0x` vector. |
+| Chain rules | First member `chain_seq` not zero or genesis `previous_hash` non-null; broken predecessor link; non-consecutive `chain_seq`; disagreeing `audit.mode`; backwards `timestamp`. | Each corpus rule fires on exactly its own `C0x` vector; a synthetic negative control independently exercises a chain that starts at a nonzero sequence. |
 
 `time_regression` compares timestamps as strings. Every timestamp in the corpus
 is `YYYY-MM-DDTHH:MM:SS.mmmZ`, so lexicographic order is chronological order

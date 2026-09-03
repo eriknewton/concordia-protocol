@@ -674,6 +674,13 @@ def test_genesis_with_a_previous_hash_is_a_genesis_mismatch() -> None:
     assert "chain_genesis_mismatch" in _chain_codes(members)
 
 
+def test_chain_starting_at_nonzero_seq_is_a_genesis_mismatch() -> None:
+    members = _chain()
+    members[0]["audit"]["chain_seq"] = 1
+    _reanchor_chain(members)
+    assert "chain_genesis_mismatch" in _chain_codes(members)
+
+
 def test_broken_previous_hash_link_is_dangling() -> None:
     members = _chain()
     members[1]["audit"]["previous_hash"] = "sha256:" + "f" * 64
@@ -935,6 +942,16 @@ def test_the_recorded_note_exception_is_excused_and_still_reported() -> None:
             id="jurisdictions-bare-string",
         ),
         pytest.param(
+            lambda do: do["compliance_profile"].update(jurisdictions=["CN", 7]),
+            id="jurisdiction-element-not-string",
+        ),
+        pytest.param(
+            lambda do: do["compliance_profile"].update(
+                activated_fields=["autonomy_level", None]
+            ),
+            id="activated-field-element-not-string",
+        ),
+        pytest.param(
             lambda do: do["evaluation"]["matched_rules"][0].pop("canonical_tree"),
             id="canonical-tree-removed",
         ),
@@ -965,6 +982,31 @@ def test_a_malformed_decision_object_fails_closed(mutate: Any) -> None:
 
 def test_a_well_formed_object_trips_no_shape_finding() -> None:
     assert runner._shape_problems(_seal(_base_decision_object())) == []
+
+
+@pytest.mark.parametrize(
+    ("field", "malformed", "finding"),
+    [
+        pytest.param(
+            "jurisdictions",
+            ["CN", 7],
+            "compliance_profile.jurisdictions[1] is int, expected a string",
+            id="jurisdiction-element-not-string",
+        ),
+        pytest.param(
+            "activated_fields",
+            ["autonomy_level", None],
+            "compliance_profile.activated_fields[1] is NoneType, expected a string",
+            id="activated-field-element-not-string",
+        ),
+    ],
+)
+def test_profile_list_elements_must_be_strings(
+    field: str, malformed: list[Any], finding: str
+) -> None:
+    decision_object = _base_decision_object()
+    decision_object["compliance_profile"][field] = malformed
+    assert finding in runner._shape_problems(decision_object)
 
 
 @pytest.mark.parametrize("payload", [None, [], ["not", "an", "object"], 7, "text"])
@@ -1103,6 +1145,83 @@ def test_failed_run_cannot_build_or_write_a_submission_envelope(
     assert not out.exists()
 
 
+def test_cli_turns_an_accounting_exception_into_a_clean_red_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    document = {"preimage_version": runner.PREIMAGE_VERSION, "vectors": []}
+    monkeypatch.setattr(runner, "load_pinned_vectors", lambda _path: document)
+
+    def fail_accounting(_document: Any, _known: Any) -> Any:
+        raise ValueError(
+            "run accounting invariant failed: planted canonical key accounting failure"
+        )
+
+    monkeypatch.setattr(runner, "run", fail_accounting)
+    submission = tmp_path / "must-not-exist-submission.json"
+    report = tmp_path / "accounting-failure-report.json"
+    exit_code = runner.main(
+        [
+            str(tmp_path / "ignored-pinned-path.json"),
+            "--submission-out",
+            str(submission),
+            "--report-out",
+            str(report),
+        ]
+    )
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert captured.err == (
+        "[FAIL] run accounting invariant failed: "
+        "planted canonical key accounting failure\n"
+    )
+    assert not submission.exists()
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    assert payload == {
+        "vectors_sha256": runner.PINNED_VECTORS_SHA256,
+        "run_successful": False,
+        "run_invariant_problems": [
+            "run accounting invariant failed: planted canonical key accounting failure"
+        ],
+        "findings": [],
+        "excused_notes": [],
+    }
+
+
+def test_cli_still_writes_a_diagnostic_report_for_a_semantic_red_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    decision_object = _seal(_base_decision_object())
+    document = {
+        "preimage_version": runner.PREIMAGE_VERSION,
+        "vectors": [
+            {
+                "id": "V-SEMANTIC-RED",
+                "category": "synthetic",
+                "decision_object": decision_object,
+                "expected": {"type": "BREACH", "breach": "jurisdiction_mismatch"},
+            }
+        ],
+    }
+    monkeypatch.setattr(runner, "load_pinned_vectors", lambda _path: document)
+    submission = tmp_path / "must-not-exist-submission.json"
+    report = tmp_path / "diagnostic-report.json"
+    assert runner.main(
+        [
+            str(tmp_path / "ignored-pinned-path.json"),
+            "--submission-out",
+            str(submission),
+            "--report-out",
+            str(report),
+        ]
+    ) == 1
+    assert not submission.exists()
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    assert payload["run_successful"] is False
+    assert payload["run_invariant_problems"] == []
+    assert payload["findings"]
+
+
 def _successful_synthetic_submission_report() -> Any:
     decision_object = _seal(_base_decision_object())
     decision_object["audit"]["hash"] = "sha256:" + "0" * 64
@@ -1211,9 +1330,15 @@ def test_the_runner_has_no_digest_opt_out() -> None:
         assert flag not in source
 
 
-def test_the_submitted_envelope_names_the_corpus_it_describes() -> None:
+def test_committed_envelope_provenance_matches_runner_constants_without_corpus() -> None:
     envelope = json.loads(COMMITTED_CANONICAL_HEX.read_text(encoding="utf-8"))
+    assert set(envelope) == set(runner.SUBMISSION_FIELDS)
+    assert envelope["runner"] == runner.SUBMISSION_RUNNER_NAME
+    assert envelope["method"] == runner.SUBMISSION_METHOD
+    assert envelope["artifact"] == runner.SUBMISSION_ARTIFACT
+    assert envelope["k01_check1"] == "MISMATCH"
     assert VECTORS_SHA256 in envelope["method"]
+    runner.validate_submission_provenance(envelope)
 
 
 # ---------------------------------------------------------------------------

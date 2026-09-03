@@ -11,6 +11,12 @@ disagreement rather than as a matching pair of wrong answers.
 
 Deliberately imports **no Concordia code**.
 
+Runtime dependency: this script requires the independently maintained
+`rfc8785` package, declared in this repository's `dev` optional dependency.
+From the repository root, install it with `pip install -e '.[dev]'` before
+running the verifier. The submission runner itself does not require this
+third-party package.
+
 Four properties are re-derived from the published bytes alone, and one is only
 a field check. The distinction is the point of this docstring:
 

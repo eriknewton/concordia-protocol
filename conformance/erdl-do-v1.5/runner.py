@@ -586,16 +586,32 @@ def _shape_problems(decision_object: Any) -> list[str]:
     if isinstance(profile, Mapping):
         # `str` is a Sequence, so a bare "XX" would otherwise be read as a
         # jurisdiction list and silently accepted by P1.
-        require(
-            isinstance(profile.get("jurisdictions"), list),
+        jurisdictions = profile.get("jurisdictions")
+        if require(
+            isinstance(jurisdictions, list),
             f"compliance_profile.jurisdictions is "
-            f"{type(profile.get('jurisdictions')).__name__}, expected a list",
-        )
-        require(
-            isinstance(profile.get("activated_fields"), list),
+            f"{type(jurisdictions).__name__}, expected a list",
+        ):
+            assert isinstance(jurisdictions, list)
+            for index, jurisdiction in enumerate(jurisdictions):
+                require(
+                    isinstance(jurisdiction, str),
+                    f"compliance_profile.jurisdictions[{index}] is "
+                    f"{type(jurisdiction).__name__}, expected a string",
+                )
+        activated_fields = profile.get("activated_fields")
+        if require(
+            isinstance(activated_fields, list),
             f"compliance_profile.activated_fields is "
-            f"{type(profile.get('activated_fields')).__name__}, expected a list",
-        )
+            f"{type(activated_fields).__name__}, expected a list",
+        ):
+            assert isinstance(activated_fields, list)
+            for index, activated_field in enumerate(activated_fields):
+                require(
+                    isinstance(activated_field, str),
+                    f"compliance_profile.activated_fields[{index}] is "
+                    f"{type(activated_field).__name__}, expected a string",
+                )
         require(
             isinstance(profile.get("risk_level"), str),
             "compliance_profile.risk_level is not a string; P2 and P3 both read it",
@@ -866,6 +882,7 @@ def verify_decision_object(
 ) -> DecisionObjectResult:
     """Run the shape guard, the version gate, Check 1, R2 intra-field and R3."""
     shape = [Note("shape", problem) for problem in _shape_problems(decision_object)]
+    structurally_valid = not shape
     if not isinstance(decision_object, Mapping):
         return DecisionObjectResult(
             key=key,
@@ -990,7 +1007,13 @@ def verify_decision_object(
                 )
             )
 
-    result.breaches.extend(detect_semantic_breaches(decision_object, resolvable_entry_ids))
+    # The detector contracts intentionally assume the structural guard has
+    # succeeded. Do not pass malformed values (for example a non-string dotted
+    # field path) into them after already recording the shape finding.
+    if structurally_valid:
+        result.breaches.extend(
+            detect_semantic_breaches(decision_object, resolvable_entry_ids)
+        )
     return result
 
 
@@ -1006,7 +1029,8 @@ def detect_chain_breaches(
 
     Derived rules, each of which fires on exactly the vector that declares it:
 
-    * `chain_genesis_mismatch` - the seq-0 member's `previous_hash` is not null.
+    * `chain_genesis_mismatch` - the first member is not seq 0 or its
+      `previous_hash` is not null.
     * `previous_hash_dangling` - a non-genesis member's `previous_hash` is not
       the predecessor's self-reported `audit.hash`.
     * `chain_seq_gap`          - `audit.chain_seq` does not increase by one.
@@ -1037,10 +1061,13 @@ def detect_chain_breaches(
         audit = member.get("audit") if isinstance(member, Mapping) else None
         audits.append(audit if isinstance(audit, Mapping) else {})
 
-    if audits and audits[0].get("chain_seq") == 0 and audits[0].get("previous_hash") is not None:
+    first_seq = audits[0].get("chain_seq") if audits else None
+    first_previous_hash = audits[0].get("previous_hash") if audits else None
+    if type(first_seq) is int and (first_seq != 0 or first_previous_hash is not None):
         found["chain_genesis_mismatch"] = Breach(
             "chain_genesis_mismatch",
-            f"genesis member previous_hash is {audits[0].get('previous_hash')!r}, expected null",
+            f"first member chain_seq is {first_seq!r}, expected 0; "
+            f"previous_hash is {first_previous_hash!r}, expected null",
         )
 
     dangling: list[str] = []
@@ -1624,7 +1651,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"[FAIL] {exc}", file=sys.stderr)
         return 2
     known = [s for s in args.resolvable_entry_ids.split(",") if s]
-    report = run(document, known)
+    try:
+        report = run(document, known)
+    except ValueError as exc:
+        print(f"[FAIL] {exc}", file=sys.stderr)
+        if args.report_out:
+            args.report_out.parent.mkdir(parents=True, exist_ok=True)
+            args.report_out.write_text(
+                json.dumps(
+                    {
+                        "vectors_sha256": PINNED_VECTORS_SHA256,
+                        "run_successful": False,
+                        "run_invariant_problems": [str(exc)],
+                        "findings": [],
+                        "excused_notes": [],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        return 1
     ok = report.successful
 
     for line in _summary_lines(report):
