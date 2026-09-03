@@ -102,7 +102,7 @@ Produced by the command in the next section, against the pinned input.
 | `V-DO-v15-K01` Check 1 | **MISMATCH** (R5 requires exactly this) |
 | Findings | 0 |
 | Excused diagnostics (recorded, printed) | 1 |
-| Planted corpus defects caught by the runner | 17 / 17 |
+| Planted corpus defects caught by the runner | 19 / 19 |
 
 ### Which parts of `expected` the 78/78 counts
 
