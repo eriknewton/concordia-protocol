@@ -211,8 +211,14 @@ reproduced. Conformance and registration are upstream's determination.
 ```bash
 python conformance/erdl-do-v1.5/runner.py \
     /path/to/decision-object-vectors-v1.5.json \
+    --date 2026-09-02 \
     --submission-out /tmp/concordia-python-erdl-do-v15-output.json
 ```
+
+The pinned date is the date recorded in the committed envelope, so this
+reproduction command remains byte-deterministic after that day. Omit
+`--date` only when producing a new submission whose provenance should record
+the current run date.
 
 Exit 0 means every vector reproduced its compared expectations with no
 findings and all internal object/canonical-byte counts agree. Exit 1 is a red

@@ -134,6 +134,22 @@ def _check(condition: bool, message: str) -> None:
         raise VerificationError(message)
 
 
+def _reject_duplicate_members(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Build one JSON object while rejecting ambiguous duplicate members.
+
+    ``object_pairs_hook`` invokes this for every object, not only the envelope
+    root. Rejecting recursively prevents a first-wins consumer and Python's
+    last-wins decoder from assigning different meanings to the same submitted
+    bytes, including duplicate names inside ``canonical_hex``.
+    """
+    result: dict[str, Any] = {}
+    for name, value in pairs:
+        if name in result:
+            raise VerificationError(f"duplicate JSON object member {name!r}")
+        result[name] = value
+    return result
+
+
 def _read_bounded(path: Path, limit: int) -> bytes:
     """Read at most ``limit`` bytes, checking before and during allocation."""
     try:
@@ -169,7 +185,7 @@ def load_envelope(path: Path) -> dict[str, Any]:
     except UnicodeDecodeError as exc:
         raise VerificationError(f"{path}: envelope is not valid UTF-8: {exc}") from exc
     try:
-        envelope = json.loads(text)
+        envelope = json.loads(text, object_pairs_hook=_reject_duplicate_members)
     except json.JSONDecodeError as exc:
         raise VerificationError(f"{path}: envelope is not valid JSON: {exc}") from exc
     _check(isinstance(envelope, dict), "submission envelope is not an object")
@@ -205,7 +221,7 @@ def _decode(key: str, hex_value: str) -> tuple[bytes, dict[str, Any]]:
     except UnicodeDecodeError as exc:
         raise VerificationError(f"{key}: canonical bytes are not valid UTF-8: {exc}") from exc
     try:
-        parsed = json.loads(text)
+        parsed = json.loads(text, object_pairs_hook=_reject_duplicate_members)
     except json.JSONDecodeError as exc:
         raise VerificationError(f"{key}: canonical bytes are not valid JSON: {exc}") from exc
     _check(isinstance(parsed, dict), f"{key}: canonical payload is not an object")

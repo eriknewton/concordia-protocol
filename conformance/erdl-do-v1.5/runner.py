@@ -68,6 +68,7 @@ import math
 import os
 import re
 import sys
+import tempfile
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -246,6 +247,104 @@ class DomainError(ValueError):
 
 class PinnedInputError(ValueError):
     """The supplied vector file is not the pinned upstream corpus."""
+
+
+class OutputPathCollisionError(ValueError):
+    """The requested submission and diagnostic outputs may name one file."""
+
+
+def _lexical_output_path(path: Path) -> str:
+    """Return a cwd-bound lexical path without touching the filesystem."""
+    return os.path.normcase(os.path.abspath(os.fspath(path)))
+
+
+def require_distinct_output_paths(
+    submission_path: Path | None, report_path: Path | None
+) -> None:
+    """Reject lexical, resolved and existing-inode output aliases.
+
+    This preflight is intentionally read-only: it never creates a parent,
+    opens an output, or truncates an existing artifact. The three comparisons
+    cover direct/lexical aliases, symlinked parents and leaves, and hard links.
+    """
+    if submission_path is None or report_path is None:
+        return
+
+    if _lexical_output_path(submission_path) == _lexical_output_path(report_path):
+        raise OutputPathCollisionError(
+            "--submission-out and --report-out name the same lexical path"
+        )
+
+    try:
+        submission_resolved = submission_path.resolve(strict=False)
+        report_resolved = report_path.resolve(strict=False)
+    except (OSError, RuntimeError) as exc:
+        raise OutputPathCollisionError(
+            "cannot safely resolve --submission-out and --report-out to prove "
+            f"they are distinct: {exc}"
+        ) from exc
+    if submission_resolved == report_resolved:
+        raise OutputPathCollisionError(
+            "--submission-out and --report-out resolve to the same path"
+        )
+
+    try:
+        if (
+            os.path.lexists(submission_path)
+            and os.path.lexists(report_path)
+            and os.path.samefile(submission_path, report_path)
+        ):
+            raise OutputPathCollisionError(
+                "--submission-out and --report-out are links to the same existing inode"
+            )
+    except OutputPathCollisionError:
+        raise
+    except OSError as exc:
+        raise OutputPathCollisionError(
+            "cannot safely stat --submission-out and --report-out to prove "
+            f"they are distinct: {exc}"
+        ) from exc
+
+
+def _fsync_directory(path: Path) -> None:
+    """Persist a directory entry update where the host exposes directory fsync."""
+    if os.name == "nt":
+        # Windows does not expose a portable directory-fsync primitive through
+        # Python. os.replace still provides the atomic visibility boundary.
+        return
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_fd = os.open(path, flags)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
+    """Atomically replace one JSON artifact after flushing bytes and its parent."""
+    parent = path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    temporary_path = Path(temporary_name)
+    replaced = False
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as target:
+            target.write(json.dumps(payload, indent=2) + "\n")
+            target.flush()
+            os.fsync(target.fileno())
+        os.replace(temporary_path, path)
+        replaced = True
+        _fsync_directory(parent)
+    finally:
+        if not replaced:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def load_pinned_vectors(path: Path) -> dict[str, Any]:
@@ -1126,24 +1225,55 @@ def enumerate_objects(vector: Mapping[str, Any]) -> list[tuple[str, Any]]:
     ``<id>[i]`` for the i-th chain member.
     """
     vector_id = vector["id"]
-    if "decision_object" in vector:
+    kind = vector_kind(vector)
+    if kind == "single":
         return [(vector_id, vector["decision_object"])]
-    if "chain" in vector:
+    if kind == "chain":
         return [(f"{vector_id}[{i}]", do) for i, do in enumerate(vector["chain"])]
-    if "base_do" in vector and "tampered_do" in vector:
+    if kind == "pair":
         return [
             (f"{vector_id}-base", vector["base_do"]),
             (f"{vector_id}-tampered", vector["tampered_do"]),
         ]
-    raise ValueError(f"{vector_id}: unrecognised vector shape {sorted(vector)}")
+    raise AssertionError(f"unreachable validated vector kind {kind!r}")
 
 
 def vector_kind(vector: Mapping[str, Any]) -> str:
-    if "decision_object" in vector:
-        return "single"
-    if "chain" in vector:
-        return "chain"
-    return "pair"
+    """Return the one complete vector shape, rejecting ambiguity and half-pairs."""
+    vector_id = vector.get("id", "<missing-id>")
+    has_single = "decision_object" in vector
+    has_chain = "chain" in vector
+    has_base = "base_do" in vector
+    has_tampered = "tampered_do" in vector
+    has_any_pair = has_base or has_tampered
+
+    if has_any_pair and not (has_base and has_tampered):
+        missing = "tampered_do" if has_base else "base_do"
+        raise ValueError(
+            f"{vector_id}: incomplete tamper-pair vector shape; missing {missing}"
+        )
+
+    declared = [
+        name
+        for name, present in (
+            ("single", has_single),
+            ("pair", has_base and has_tampered),
+            ("chain", has_chain),
+        )
+        if present
+    ]
+    if len(declared) != 1:
+        raise ValueError(
+            f"{vector_id}: expected exactly one complete single/pair/chain vector "
+            f"shape, found {declared or 'none'}"
+        )
+    if has_chain:
+        chain = vector["chain"]
+        if not isinstance(chain, list) or not chain:
+            raise ValueError(
+                f"{vector_id}: chain vector shape requires a non-empty list"
+            )
+    return declared[0]
 
 
 def verify_vector(
@@ -1642,6 +1772,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
+    # The submission and diagnostic payloads have different schemas. If they
+    # alias, the second write can replace the first and still leave exit 0.
+    # Establish separation before the corpus is opened and before any output
+    # parent or file is created.
+    try:
+        require_distinct_output_paths(args.submission_out, args.report_out)
+    except OutputPathCollisionError as exc:
+        print(f"[FAIL] {exc}", file=sys.stderr)
+        return 2
+
     # Fail closed on a substituted corpus before anything is measured or
     # written. No override flag exists: an escape hatch here would make every
     # published number conditional on a promise that it was not used.
@@ -1656,20 +1796,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ValueError as exc:
         print(f"[FAIL] {exc}", file=sys.stderr)
         if args.report_out:
-            args.report_out.parent.mkdir(parents=True, exist_ok=True)
-            args.report_out.write_text(
-                json.dumps(
-                    {
-                        "vectors_sha256": PINNED_VECTORS_SHA256,
-                        "run_successful": False,
-                        "run_invariant_problems": [str(exc)],
-                        "findings": [],
-                        "excused_notes": [],
-                    },
-                    indent=2,
-                )
-                + "\n",
-                encoding="utf-8",
+            write_json_atomic(
+                args.report_out,
+                {
+                    "vectors_sha256": PINNED_VECTORS_SHA256,
+                    "run_successful": False,
+                    "run_invariant_problems": [str(exc)],
+                    "findings": [],
+                    "excused_notes": [],
+                },
             )
         return 1
     ok = report.successful
@@ -1699,58 +1834,49 @@ def main(argv: Sequence[str] | None = None) -> int:
             ok = False
 
     if args.submission_out and submission_payload is not None:
-        args.submission_out.parent.mkdir(parents=True, exist_ok=True)
-        args.submission_out.write_text(
-            json.dumps(submission_payload, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        write_json_atomic(args.submission_out, submission_payload)
     if args.report_out:
-        args.report_out.parent.mkdir(parents=True, exist_ok=True)
-        args.report_out.write_text(
-            json.dumps(
-                {
-                    "vectors_sha256": PINNED_VECTORS_SHA256,
-                    "r3_codes_not_implemented": list(UNIMPLEMENTED_R3_CODES),
-                    "check2": "NOT_RUN",
-                    "vector_total": report.vector_total,
-                    "vector_outcome_ok": report.vector_outcome_ok,
-                    "object_total": report.object_total,
-                    "object_applicable": report.object_applicable,
-                    "check1_match": report.check1_match,
-                    "check1_mismatch": report.check1_mismatch,
-                    "check1_not_applicable": report.check1_not_applicable,
-                    "canonical_hex_keys": len(report.canonical_hex()),
-                    "profile_hash_checked": report.profile_hash_checked,
-                    "profile_hash_match": report.profile_hash_match,
-                    "profile_hash_mismatch": report.profile_hash_mismatch,
-                    "policy_hash_checked": report.policy_hash_checked,
-                    "policy_hash_match": report.policy_hash_match,
-                    "policy_hash_mismatch": report.policy_hash_mismatch,
-                    "run_successful": ok,
-                    "run_invariant_problems": report.invariant_problems(),
-                    "findings": report.findings,
-                    "excused_notes": report.excused_notes,
-                    "vectors": [
-                        {
-                            "id": v.vector_id,
-                            "kind": v.kind,
-                            "expected_type": v.expected_type,
-                            "expected_breach": v.expected_breach,
-                            "reported": v.reported,
-                            "also_present": v.also_present,
-                            "outcome_ok": v.outcome_ok,
-                            "objects": [
-                                {"key": o.key, "check1": o.check1, "breaches": o.codes}
-                                for o in v.objects
-                            ],
-                        }
-                        for v in report.vectors
-                    ],
-                },
-                indent=2,
-            )
-            + "\n",
-            encoding="utf-8",
+        write_json_atomic(
+            args.report_out,
+            {
+                "vectors_sha256": PINNED_VECTORS_SHA256,
+                "r3_codes_not_implemented": list(UNIMPLEMENTED_R3_CODES),
+                "check2": "NOT_RUN",
+                "vector_total": report.vector_total,
+                "vector_outcome_ok": report.vector_outcome_ok,
+                "object_total": report.object_total,
+                "object_applicable": report.object_applicable,
+                "check1_match": report.check1_match,
+                "check1_mismatch": report.check1_mismatch,
+                "check1_not_applicable": report.check1_not_applicable,
+                "canonical_hex_keys": len(report.canonical_hex()),
+                "profile_hash_checked": report.profile_hash_checked,
+                "profile_hash_match": report.profile_hash_match,
+                "profile_hash_mismatch": report.profile_hash_mismatch,
+                "policy_hash_checked": report.policy_hash_checked,
+                "policy_hash_match": report.policy_hash_match,
+                "policy_hash_mismatch": report.policy_hash_mismatch,
+                "run_successful": ok,
+                "run_invariant_problems": report.invariant_problems(),
+                "findings": report.findings,
+                "excused_notes": report.excused_notes,
+                "vectors": [
+                    {
+                        "id": v.vector_id,
+                        "kind": v.kind,
+                        "expected_type": v.expected_type,
+                        "expected_breach": v.expected_breach,
+                        "reported": v.reported,
+                        "also_present": v.also_present,
+                        "outcome_ok": v.outcome_ok,
+                        "objects": [
+                            {"key": o.key, "check1": o.check1, "breaches": o.codes}
+                            for o in v.objects
+                        ],
+                    }
+                    for v in report.vectors
+                ],
+            },
         )
 
     return 0 if ok else 1

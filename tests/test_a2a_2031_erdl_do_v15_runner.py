@@ -791,8 +791,60 @@ def test_oracle_key_shapes_follow_contract_section_4() -> None:
 
 
 def test_unrecognised_vector_shape_fails_closed() -> None:
-    with pytest.raises(ValueError, match="unrecognised vector shape"):
+    with pytest.raises(ValueError, match="exactly one complete"):
         runner.enumerate_objects({"id": "V-Q", "something_else": {}})
+
+
+def _assert_vector_shape_fails_closed(vector: dict[str, Any], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        runner.enumerate_objects(vector)
+    with pytest.raises(ValueError, match=message):
+        runner.run({"preimage_version": runner.PREIMAGE_VERSION, "vectors": [vector]})
+
+
+def test_cross_shape_vector_heads_fail_closed() -> None:
+    decision_object = _seal(_base_decision_object())
+    collisions = [
+        {
+            "id": "V-SINGLE-CHAIN",
+            "decision_object": decision_object,
+            "chain": [decision_object],
+        },
+        {
+            "id": "V-SINGLE-PAIR",
+            "decision_object": decision_object,
+            "base_do": decision_object,
+            "tampered_do": decision_object,
+        },
+        {
+            "id": "V-PAIR-CHAIN",
+            "base_do": decision_object,
+            "tampered_do": decision_object,
+            "chain": [decision_object],
+        },
+        {
+            "id": "V-ALL-SHAPES",
+            "decision_object": decision_object,
+            "base_do": decision_object,
+            "tampered_do": decision_object,
+            "chain": [decision_object],
+        },
+    ]
+    for vector in collisions:
+        _assert_vector_shape_fails_closed(vector, "exactly one complete")
+
+
+@pytest.mark.parametrize("present", ["base_do", "tampered_do"])
+def test_half_pair_vector_heads_fail_closed(present: str) -> None:
+    vector = {"id": "V-HALF-PAIR", present: _seal(_base_decision_object())}
+    _assert_vector_shape_fails_closed(vector, "incomplete tamper-pair")
+
+
+@pytest.mark.parametrize("chain", [[], {}, "not-a-chain"])
+def test_chain_vector_shape_requires_a_nonempty_list(chain: Any) -> None:
+    _assert_vector_shape_fails_closed(
+        {"id": "V-BAD-CHAIN", "chain": chain}, "non-empty list"
+    )
 
 
 def test_run_rejects_a_document_for_another_preimage_version() -> None:
@@ -1121,6 +1173,72 @@ def test_the_cli_writes_no_output_for_a_substituted_corpus(tmp_path: Path) -> No
     out = tmp_path / "submission.json"
     assert runner.main([str(substituted), "--submission-out", str(out)]) == 2
     assert not out.exists()
+
+
+def _assert_collision_preflight_does_not_read_or_write(
+    submission: Path,
+    report: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden_load(_path: Path) -> Any:
+        pytest.fail("output alias preflight must run before the corpus is read")
+
+    monkeypatch.setattr(runner, "load_pinned_vectors", forbidden_load)
+    assert runner.main(
+        [
+            "ignored-vectors.json",
+            "--submission-out",
+            str(submission),
+            "--report-out",
+            str(report),
+        ]
+    ) == 2
+
+
+def test_output_preflight_rejects_a_direct_collision_without_truncating(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shared = tmp_path / "shared.json"
+    shared.write_text("preserve-direct", encoding="utf-8")
+    _assert_collision_preflight_does_not_read_or_write(shared, shared, monkeypatch)
+    assert shared.read_text(encoding="utf-8") == "preserve-direct"
+
+
+def test_output_preflight_rejects_a_symlink_collision_without_truncating(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    submission = tmp_path / "submission.json"
+    report_link = tmp_path / "report-link.json"
+    submission.write_text("preserve-symlink-target", encoding="utf-8")
+    report_link.symlink_to(submission)
+    _assert_collision_preflight_does_not_read_or_write(
+        submission, report_link, monkeypatch
+    )
+    assert submission.read_text(encoding="utf-8") == "preserve-symlink-target"
+    assert report_link.is_symlink()
+
+
+def test_output_preflight_rejects_a_hardlink_collision_without_truncating(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    submission = tmp_path / "submission.json"
+    report_link = tmp_path / "report-hardlink.json"
+    submission.write_text("preserve-hardlink-target", encoding="utf-8")
+    os.link(submission, report_link)
+    _assert_collision_preflight_does_not_read_or_write(
+        submission, report_link, monkeypatch
+    )
+    assert submission.read_text(encoding="utf-8") == "preserve-hardlink-target"
+    assert report_link.read_text(encoding="utf-8") == "preserve-hardlink-target"
+
+
+def test_json_artifacts_are_replaced_atomically(tmp_path: Path) -> None:
+    target = tmp_path / "nested" / "report.json"
+    runner.write_json_atomic(target, {"run_successful": True})
+    assert json.loads(target.read_text(encoding="utf-8")) == {
+        "run_successful": True
+    }
+    assert list(target.parent.glob(f".{target.name}.*.tmp")) == []
 
 
 def test_failed_run_cannot_build_or_write_a_submission_envelope(
@@ -1649,6 +1767,35 @@ def test_shipped_envelope_check_takes_the_path_as_an_argument(tmp_path: Path) ->
     renamed = tmp_path / "concordia-python-output.json"
     renamed.write_text(COMMITTED_CANONICAL_HEX.read_text(encoding="utf-8"), encoding="utf-8")
     assert verify.main([str(renamed)]) == 0
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"runner":"first","runner":"second"}',
+        '{"canonical_hex":{"V-X":"00","V-X":"02"}}',
+    ],
+    ids=["top-level", "nested-canonical-hex"],
+)
+def test_shipped_envelope_loader_rejects_duplicate_json_members(
+    raw: str, tmp_path: Path
+) -> None:
+    verify = _load_named(
+        ARTIFACT_DIR / "verify_envelope.py", "erdl_do_v15_verify_duplicates"
+    )
+    envelope = tmp_path / "duplicate-members.json"
+    envelope.write_text(raw, encoding="utf-8")
+    with pytest.raises(verify.VerificationError, match="duplicate JSON object member"):
+        verify.load_envelope(envelope)
+
+
+def test_shipped_envelope_decoder_rejects_duplicate_members_in_canonical_payload() -> None:
+    verify = _load_named(
+        ARTIFACT_DIR / "verify_envelope.py", "erdl_do_v15_verify_payload_duplicates"
+    )
+    duplicate_nested_member = b'{"audit":{"mode":"hash","mode":"signature"}}'
+    with pytest.raises(verify.VerificationError, match="duplicate JSON object member"):
+        verify._decode("V-X", duplicate_nested_member.hex())
 
 
 def test_shipped_envelope_key_grammar_discriminates() -> None:
