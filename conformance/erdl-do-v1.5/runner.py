@@ -258,14 +258,100 @@ def _lexical_output_path(path: Path) -> str:
     return os.path.normcase(os.path.abspath(os.fspath(path)))
 
 
+def _nearest_existing_ancestor(path: Path) -> tuple[Path, tuple[str, ...]]:
+    """Return the nearest existing path and the missing suffix below it."""
+    suffix: list[str] = []
+    candidate = path
+    while not os.path.lexists(candidate):
+        parent = candidate.parent
+        if parent == candidate:
+            raise OutputPathCollisionError(
+                f"cannot find an existing ancestor for output path {path}"
+            )
+        suffix.append(candidate.name)
+        candidate = parent
+    return candidate, tuple(reversed(suffix))
+
+
+def _reject_absent_path_aliases(
+    submission_path: Path, report_path: Path
+) -> None:
+    """Reject absent paths that the destination filesystem treats as one name."""
+    if os.path.lexists(submission_path) or os.path.lexists(report_path):
+        return
+
+    submission_ancestor, submission_suffix = _nearest_existing_ancestor(
+        submission_path
+    )
+    report_ancestor, report_suffix = _nearest_existing_ancestor(report_path)
+    try:
+        same_ancestor = os.path.samefile(submission_ancestor, report_ancestor)
+    except OSError as exc:
+        raise OutputPathCollisionError(
+            "cannot safely compare output ancestors to prove the paths are distinct: "
+            f"{exc}"
+        ) from exc
+    if not same_ancestor or len(submission_suffix) != len(report_suffix):
+        return
+
+    if not submission_ancestor.is_dir():
+        raise OutputPathCollisionError(
+            "cannot safely probe output filesystem below a non-directory ancestor"
+        )
+
+    # Reproduce the exact missing component names inside a private temporary
+    # directory on the destination filesystem. This asks the filesystem itself
+    # whether each pair aliases, rather than guessing its case-folding or
+    # Unicode-normalization rules from the host operating system.
+    try:
+        with tempfile.TemporaryDirectory(
+            dir=submission_ancestor,
+            prefix=".erdl-output-alias-probe-",
+        ) as probe_name:
+            probe_parent = Path(probe_name)
+            for index, (submission_component, report_component) in enumerate(
+                zip(submission_suffix, report_suffix, strict=True)
+            ):
+                submission_probe = probe_parent / submission_component
+                report_probe = probe_parent / report_component
+                if index == len(submission_suffix) - 1:
+                    descriptor = os.open(
+                        submission_probe,
+                        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                        0o600,
+                    )
+                    os.close(descriptor)
+                else:
+                    submission_probe.mkdir()
+
+                if not os.path.lexists(report_probe) or not os.path.samefile(
+                    submission_probe, report_probe
+                ):
+                    return
+                probe_parent = submission_probe
+    except OSError as exc:
+        raise OutputPathCollisionError(
+            "cannot safely probe output filesystem name equivalence to prove "
+            f"the paths are distinct: {exc}"
+        ) from exc
+
+    raise OutputPathCollisionError(
+        "--submission-out and --report-out are equivalent names on the "
+        "destination filesystem"
+    )
+
+
 def require_distinct_output_paths(
     submission_path: Path | None, report_path: Path | None
 ) -> None:
     """Reject lexical, resolved and existing-inode output aliases.
 
-    This preflight is intentionally read-only: it never creates a parent,
-    opens an output, or truncates an existing artifact. The three comparisons
-    cover direct/lexical aliases, symlinked parents and leaves, and hard links.
+    This preflight never creates a parent, opens an output, or truncates an
+    existing artifact. When two absent names differ only by case or Unicode
+    normalization, it creates and removes random probes in their nearest shared
+    existing ancestor to measure that filesystem's actual comparison rules.
+    The comparisons cover direct/lexical aliases, symlinked parents and leaves,
+    hard links, and case/normalization-equivalent initially absent paths.
     """
     if submission_path is None or report_path is None:
         return
@@ -304,6 +390,8 @@ def require_distinct_output_paths(
             "cannot safely stat --submission-out and --report-out to prove "
             f"they are distinct: {exc}"
         ) from exc
+
+    _reject_absent_path_aliases(submission_resolved, report_resolved)
 
 
 def _fsync_directory(path: Path) -> None:

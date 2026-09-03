@@ -35,6 +35,7 @@ import importlib.util
 import json
 import os
 import sys
+import unicodedata
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -1175,7 +1176,7 @@ def test_the_cli_writes_no_output_for_a_substituted_corpus(tmp_path: Path) -> No
     assert not out.exists()
 
 
-def _assert_collision_preflight_does_not_read_or_write(
+def _assert_collision_preflight_preserves_outputs_before_read(
     submission: Path,
     report: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1200,7 +1201,9 @@ def test_output_preflight_rejects_a_direct_collision_without_truncating(
 ) -> None:
     shared = tmp_path / "shared.json"
     shared.write_text("preserve-direct", encoding="utf-8")
-    _assert_collision_preflight_does_not_read_or_write(shared, shared, monkeypatch)
+    _assert_collision_preflight_preserves_outputs_before_read(
+        shared, shared, monkeypatch
+    )
     assert shared.read_text(encoding="utf-8") == "preserve-direct"
 
 
@@ -1211,7 +1214,7 @@ def test_output_preflight_rejects_a_symlink_collision_without_truncating(
     report_link = tmp_path / "report-link.json"
     submission.write_text("preserve-symlink-target", encoding="utf-8")
     report_link.symlink_to(submission)
-    _assert_collision_preflight_does_not_read_or_write(
+    _assert_collision_preflight_preserves_outputs_before_read(
         submission, report_link, monkeypatch
     )
     assert submission.read_text(encoding="utf-8") == "preserve-symlink-target"
@@ -1225,11 +1228,89 @@ def test_output_preflight_rejects_a_hardlink_collision_without_truncating(
     report_link = tmp_path / "report-hardlink.json"
     submission.write_text("preserve-hardlink-target", encoding="utf-8")
     os.link(submission, report_link)
-    _assert_collision_preflight_does_not_read_or_write(
+    _assert_collision_preflight_preserves_outputs_before_read(
         submission, report_link, monkeypatch
     )
     assert submission.read_text(encoding="utf-8") == "preserve-hardlink-target"
     assert report_link.read_text(encoding="utf-8") == "preserve-hardlink-target"
+
+
+def _directory_treats_names_as_aliases(
+    directory: Path, first_name: str, second_name: str
+) -> bool:
+    first = directory / first_name
+    second = directory / second_name
+    first.write_text("filesystem-name-probe", encoding="utf-8")
+    try:
+        return second.exists() and os.path.samefile(first, second)
+    finally:
+        first.unlink()
+
+
+def test_output_preflight_rejects_absent_case_aliases_on_case_insensitive_filesystem(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if not _directory_treats_names_as_aliases(
+        tmp_path, "Case-Sensitivity-Probe", "case-sensitivity-probe"
+    ):
+        pytest.skip("host cannot provide a case-insensitive test directory")
+
+    submission = tmp_path / "Submission.json"
+    report = tmp_path / "submission.json"
+    assert not submission.exists() and not report.exists()
+    _assert_collision_preflight_preserves_outputs_before_read(
+        submission, report, monkeypatch
+    )
+    assert not submission.exists() and not report.exists()
+
+
+def test_output_preflight_rejects_absent_normalization_aliases_on_insensitive_filesystem(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    composed_probe = "normalization-\N{LATIN SMALL LETTER E WITH ACUTE}-probe"
+    decomposed_probe = unicodedata.normalize("NFD", composed_probe)
+    if not _directory_treats_names_as_aliases(
+        tmp_path, composed_probe, decomposed_probe
+    ):
+        pytest.skip("host cannot provide a normalization-insensitive test directory")
+
+    submission = tmp_path / "caf\N{LATIN SMALL LETTER E WITH ACUTE}.json"
+    report = tmp_path / unicodedata.normalize("NFD", submission.name)
+    assert not submission.exists() and not report.exists()
+    _assert_collision_preflight_preserves_outputs_before_read(
+        submission, report, monkeypatch
+    )
+    assert not submission.exists() and not report.exists()
+
+
+def test_output_preflight_preserves_distinct_case_on_case_sensitive_filesystem(
+    tmp_path: Path,
+) -> None:
+    if _directory_treats_names_as_aliases(
+        tmp_path, "Case-Sensitivity-Probe", "case-sensitivity-probe"
+    ):
+        pytest.skip("host cannot provide a case-sensitive test directory")
+
+    submission = tmp_path / "Submission.json"
+    report = tmp_path / "submission.json"
+    runner.require_distinct_output_paths(submission, report)
+    assert not submission.exists() and not report.exists()
+
+
+def test_output_preflight_preserves_distinct_normalization_on_sensitive_filesystem(
+    tmp_path: Path,
+) -> None:
+    composed_name = "caf\N{LATIN SMALL LETTER E WITH ACUTE}.json"
+    decomposed_name = unicodedata.normalize("NFD", composed_name)
+    if _directory_treats_names_as_aliases(
+        tmp_path, composed_name, decomposed_name
+    ):
+        pytest.skip("host cannot provide a normalization-sensitive test directory")
+
+    submission = tmp_path / composed_name
+    report = tmp_path / decomposed_name
+    runner.require_distinct_output_paths(submission, report)
+    assert not submission.exists() and not report.exists()
 
 
 def test_json_artifacts_are_replaced_atomically(tmp_path: Path) -> None:
