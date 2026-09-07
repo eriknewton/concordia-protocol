@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""CLI for the independent ERDL expression-layer runner.
+
+Reads OpenOBA's published `v-engine-vectors.json`, evaluates all 239 vectors
+with the kernel in `erdl_expr/`, and writes the submission file the
+expression-runner contract's ER3 shape describes.
+
+Independence (ER2, ER9): the kernel was written from the ERDL v2.1
+specification and `EXPRESSION-RUNNER-CONTRACT.md`. The reference engine
+(`scripts/v-engine.mjs`), the in-repo verifier scripts (`verify-v-engine*.mjs`),
+`erdl-formal`, `@openoba/erdl` and the answer oracle (`v-engine-answers.json`)
+were not opened, imported, vendored or consulted. The submission's `method`
+field carries that statement so it travels with the artifact.
+
+This runner reports one measurement. It does not declare conformance: ER4 is
+settled by a cross-verification run that compares against an oracle this runner
+is forbidden to read, and registration is upstream's to record.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from collections import Counter
+from pathlib import Path
+from typing import Sequence
+
+PACKAGE_ROOT = Path(__file__).resolve().parent
+if str(PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_ROOT))
+
+from erdl_expr import gloss  # noqa: E402
+from erdl_expr.results import (  # noqa: E402
+    NUMBER_FORMATS,
+    VectorResult,
+    corpus_sha256,
+    dumps,
+    evaluate_corpus,
+    load_corpus,
+    submission_payload,
+)
+
+DEFAULT_RUNNER_NAME = "concordia-python-expression"
+DEFAULT_ARTIFACT = (
+    "https://github.com/eriknewton/concordia-protocol/tree/main/"
+    "conformance/erdl-expression-v1"
+)
+
+#: What was read, and what was not. ER2 and ER9 rest entirely on this claim,
+#: so it is a constant here rather than a CLI string a caller could weaken
+#: without review.
+METHOD_READ = (
+    "Read: erdl-spec v2.1 (sections 5, 7, appendices A and B), "
+    "EXPRESSION-RUNNER-CONTRACT.md (ER1-ER9), v-engine-vectors.json, "
+    "and erdl-vectors submissions/README.md for the submission envelope shape. "
+    "NOT read: the reference engine (scripts/v-engine.mjs), the in-repo verifier "
+    "scripts (verify-v-engine.mjs, verify-v-engine-full.mjs, "
+    "verify-v-engine-reverse.mjs), the generator (generate-v-engine.mjs), "
+    "@openoba/erdl, erdl-formal, and the answer oracle v-engine-answers.json."
+)
+
+
+def build_method(vectors_sha256: str, number_format: str, language: str) -> str:
+    return (
+        "Python 3, standard library only, spec-and-contract-only implementation of the "
+        "34-node expression kernel, the Simple 30-operator compiler, the decision-table "
+        "compiler and the gloss renderer. Arithmetic uses exact rationals "
+        "(fractions.Fraction) with a single scale-14 half-even rounding at the reported "
+        "value (E2); no binary float is used anywhere. "
+        f"{METHOD_READ} "
+        f"v-engine-vectors.json sha256={vectors_sha256}. "
+        f"Number encoding={number_format}; gloss language={language}."
+    )
+
+
+def summary_lines(results: list[VectorResult]) -> list[str]:
+    groups = Counter(result.group for result in results)
+    types = Counter(result.value_type for result in results)
+    errored = sum(1 for result in results if result.errored)
+    lines = [
+        f"vectors evaluated           : {len(results)}",
+        f"errored (E12 fold to false) : {errored}",
+        "value types                 : "
+        + ", ".join(f"{name}={count}" for name, count in sorted(types.items())),
+        "groups                      :",
+    ]
+    for name, count in sorted(groups.items()):
+        lines.append(f"  {name:<24} {count}")
+    lines.append(
+        "status                      : one measurement; ER4 cross-verification and "
+        "registration are upstream's to run"
+    )
+    return lines
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("vectors", type=Path, help="path to v-engine-vectors.json")
+    parser.add_argument(
+        "--submission-out",
+        type=Path,
+        default=None,
+        help="write the ER3 submission envelope to this path",
+    )
+    parser.add_argument("--runner-name", default=DEFAULT_RUNNER_NAME)
+    parser.add_argument("--artifact-url", default=DEFAULT_ARTIFACT)
+    parser.add_argument("--date", required=True, help="ISO date recorded in the submission")
+    parser.add_argument(
+        "--number-format",
+        choices=NUMBER_FORMATS,
+        default="json-number",
+        help="how a reported number is encoded; see RESULTS.md ambiguity A1",
+    )
+    parser.add_argument(
+        "--gloss-language",
+        choices=gloss.LANGUAGES,
+        default="en",
+        help="gloss template language; see RESULTS.md ambiguity A4",
+    )
+    args = parser.parse_args(list(argv) if argv is not None else None)
+
+    try:
+        document = load_corpus(str(args.vectors))
+    except (OSError, ValueError) as exc:
+        print(f"[FAIL] {exc}", file=sys.stderr)
+        return 2
+    digest = corpus_sha256(str(args.vectors))
+    try:
+        results = evaluate_corpus(document, language=args.gloss_language)
+    except ValueError as exc:
+        print(f"[FAIL] {exc}", file=sys.stderr)
+        return 1
+
+    for line in summary_lines(results):
+        print(line)
+
+    if args.submission_out:
+        payload = submission_payload(
+            results,
+            runner=args.runner_name,
+            method=build_method(digest, args.number_format, args.gloss_language),
+            date=args.date,
+            artifact=args.artifact_url,
+            number_format=args.number_format,
+        )
+        args.submission_out.parent.mkdir(parents=True, exist_ok=True)
+        args.submission_out.write_text(dumps(payload), encoding="utf-8")
+        print(f"submission written          : {args.submission_out}")
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())
