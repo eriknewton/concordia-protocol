@@ -1,0 +1,79 @@
+"""The ER3 result object and the submission file's numeric encoding."""
+
+from __future__ import annotations
+
+import json
+from fractions import Fraction
+
+import pytest
+from erdl_expr.results import (
+    VectorResult,
+    dumps,
+    evaluate_vector,
+    submission_payload,
+)
+
+
+def _envelope(results: list[VectorResult], number_format: str = "json-number") -> str:
+    return dumps(
+        submission_payload(
+            results,
+            runner="test",
+            method="test",
+            date="2026-09-07",
+            artifact="https://example.invalid",
+            number_format=number_format,
+        )
+    )
+
+
+def test_each_result_carries_the_four_er3_fields() -> None:
+    result = evaluate_vector(
+        {"id": "T1", "category": "V-ENGINE", "node_group": "comparison",
+         "expr_tree": {"eq": [{"field": "a"}, 1]}, "context": {"a": 1}}
+    )
+    assert set(result.as_object()) == {"value", "value_type", "errored", "warnings"}
+    assert result.value_type == "boolean"
+    assert result.errored is False
+
+
+def test_a_number_is_written_as_an_exact_json_number() -> None:
+    results = [VectorResult("T1", "V-ENGINE", "arithmetic",
+                            Fraction(1, 3), "number", False, ())]
+    text = _envelope(results)
+    assert '"value": 0.33333333333333' in text
+    assert json.loads(text)["results"]["T1"]["value_type"] == "number"
+
+
+def test_a_large_integer_survives_the_round_trip() -> None:
+    # The reason numbers do not go through the JSON encoder's float path: this
+    # value is not representable as a double, and a float round trip would
+    # write 1e+21 and drop the increment.
+    big = Fraction(10**21 + 1)
+    text = _envelope([VectorResult("T1", "V-ENGINE", "arithmetic", big, "number", False, ())])
+    assert '"value": 1000000000000000000001' in text
+    assert json.loads(text)["results"]["T1"]["value"] == 10**21 + 1
+
+
+def test_the_decimal_string_encoding_regenerates_the_same_values_quoted() -> None:
+    results = [VectorResult("T1", "V-ENGINE", "arithmetic",
+                            Fraction(1, 3), "number", False, ())]
+    payload = json.loads(_envelope(results, "decimal-string"))
+    assert payload["results"]["T1"]["value"] == "0.33333333333333"
+    assert payload["number_format"] == "decimal-string"
+
+
+def test_a_string_value_containing_the_sentinel_is_refused_not_corrupted() -> None:
+    # The number encoding works by substituting a marker out of the serialized
+    # text. If a real string ever carried the marker the substitution would
+    # corrupt it, so the writer fails instead of publishing.
+    poisoned = [VectorResult("T1", "V-GLOSS", "gloss",
+                             "@@ERDL-NUM:1@@", "string", False, ())]
+    with pytest.raises(ValueError, match="sentinel"):
+        _envelope(poisoned)
+
+
+def test_an_unknown_number_format_is_refused() -> None:
+    with pytest.raises(ValueError):
+        submission_payload([], runner="r", method="m", date="d",
+                           artifact="a", number_format="binary")

@@ -1,0 +1,1584 @@
+{
+  "runner": "concordia-python-expression",
+  "method": "Python 3, standard library only, spec-and-contract-only implementation of the 34-node expression kernel, the Simple 30-operator compiler, the decision-table compiler and the gloss renderer. Arithmetic uses exact rationals (fractions.Fraction) with a single scale-14 half-even rounding at the reported value (E2); no binary float is used anywhere. Read: erdl-spec v2.1 (sections 5, 7, appendices A and B), EXPRESSION-RUNNER-CONTRACT.md (ER1-ER9), v-engine-vectors.json, and erdl-vectors submissions/README.md for the submission envelope shape. NOT read: the reference engine (scripts/v-engine.mjs), the in-repo verifier scripts (verify-v-engine.mjs, verify-v-engine-full.mjs, verify-v-engine-reverse.mjs), the generator (generate-v-engine.mjs), @openoba/erdl, erdl-formal, and the answer oracle v-engine-answers.json. v-engine-vectors.json sha256=bcfe424fdebaecee11ce81ce3097ccaee0d9db0cc99f5a2d9624f4b3c8bd9ac8. Number encoding=json-number; gloss language=en.",
+  "date": "2026-09-07",
+  "artifact": "https://github.com/eriknewton/concordia-protocol/tree/main/conformance/erdl-expression-v1",
+  "layer": "expression",
+  "vector_file": "v-engine-vectors.json",
+  "vector_count": 239,
+  "number_format": "json-number",
+  "results": {
+    "V-ENGINE-field-001": {
+      "value": 35,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-field-002": {
+      "value": "John Doe",
+      "value_type": "string",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-field-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": [
+        "safe_fold_undefined_result"
+      ]
+    },
+    "V-ENGINE-field-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": [
+        "safe_fold_undefined_result"
+      ]
+    },
+    "V-ENGINE-var-001": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": [
+        "safe_fold_non_scalar_result"
+      ]
+    },
+    "V-ENGINE-var-002": {
+      "value": "x",
+      "value_type": "string",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-var-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": [
+        "safe_fold_undefined_result"
+      ]
+    },
+    "V-ENGINE-var-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": [
+        "safe_fold_undefined_result"
+      ]
+    },
+    "V-ENGINE-literal-001": {
+      "value": 42,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-literal-002": {
+      "value": 0,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-literal-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": [
+        "safe_fold_undefined_result"
+      ]
+    },
+    "V-ENGINE-literal-003": {
+      "value": "é",
+      "value_type": "string",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-and-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-and-002": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-and-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "type_mismatch"
+      ]
+    },
+    "V-ENGINE-and-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "division_by_zero"
+      ]
+    },
+    "V-ENGINE-or-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-or-002": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-or-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "type_mismatch"
+      ]
+    },
+    "V-ENGINE-or-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "division_by_zero"
+      ]
+    },
+    "V-ENGINE-not-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-not-002": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-not-004": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-not-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "division_by_zero"
+      ]
+    },
+    "V-ENGINE-eq-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-eq-002": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-eq-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-eq-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "type_mismatch"
+      ]
+    },
+    "V-ENGINE-ne-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-ne-002": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-ne-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-ne-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "type_mismatch"
+      ]
+    },
+    "V-ENGINE-gt-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-gt-002": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-gt-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-gt-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-gte-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-gte-002": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-gte-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-gte-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-lt-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-lt-002": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-lt-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-lt-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-lte-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-lte-002": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-lte-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-lte-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-in-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-in-002": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-in-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-in-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "not_an_array"
+      ]
+    },
+    "V-ENGINE-contains-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-contains-002": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-contains-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-contains-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "type_mismatch"
+      ]
+    },
+    "V-ENGINE-match-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-match-002": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-match-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-match-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "regex_unsafe"
+      ]
+    },
+    "V-ENGINE-starts_with-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-starts_with-002": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-starts_with-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-starts_with-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "type_mismatch"
+      ]
+    },
+    "V-ENGINE-ends_with-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-ends_with-002": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-ends_with-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-ends_with-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "type_mismatch"
+      ]
+    },
+    "V-ENGINE-exists-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-exists-002": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-exists-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-exists-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "division_by_zero"
+      ]
+    },
+    "V-ENGINE-length-001": {
+      "value": 3,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-length-002": {
+      "value": 4,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-length-004": {
+      "value": 0,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-length-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "type_mismatch"
+      ]
+    },
+    "V-ENGINE-between-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-between-002": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-between-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-between-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-all-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-all-002": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": [
+        "safe_fold_empty_array"
+      ]
+    },
+    "V-ENGINE-all-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-all-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "not_an_array"
+      ]
+    },
+    "V-ENGINE-any-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-any-002": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-any-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": [
+        "safe_fold_empty_array"
+      ]
+    },
+    "V-ENGINE-any-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "not_an_array"
+      ]
+    },
+    "V-ENGINE-none-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-none-002": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": [
+        "safe_fold_empty_array"
+      ]
+    },
+    "V-ENGINE-none-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-none-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "not_an_array"
+      ]
+    },
+    "V-ENGINE-add-001": {
+      "value": 3,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-add-002": {
+      "value": 0.3,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-add-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "type_mismatch"
+      ]
+    },
+    "V-ENGINE-add-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "type_mismatch"
+      ]
+    },
+    "V-ENGINE-sub-001": {
+      "value": 2,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-sub-002": {
+      "value": 0.2,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-sub-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "type_mismatch"
+      ]
+    },
+    "V-ENGINE-sub-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "arity"
+      ]
+    },
+    "V-ENGINE-mul-001": {
+      "value": 12,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-mul-002": {
+      "value": 0.02,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-mul-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "type_mismatch"
+      ]
+    },
+    "V-ENGINE-mul-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "type_mismatch"
+      ]
+    },
+    "V-ENGINE-div-001": {
+      "value": 1.33333333333333,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-div-002": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "division_by_zero"
+      ]
+    },
+    "V-ENGINE-div-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "type_mismatch"
+      ]
+    },
+    "V-ENGINE-div-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "arity"
+      ]
+    },
+    "V-ENGINE-round-001": {
+      "value": 4,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-round-002": {
+      "value": 4,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-round-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "type_mismatch"
+      ]
+    },
+    "V-ENGINE-round-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "type_mismatch"
+      ]
+    },
+    "V-ENGINE-days_between-001": {
+      "value": 10,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-days_between-002": {
+      "value": 0,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-days_between-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "type_mismatch"
+      ]
+    },
+    "V-ENGINE-days_between-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "invalid_date"
+      ]
+    },
+    "V-ENGINE-epoch_ms-001": {
+      "value": 1767225600000,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-epoch_ms-002": {
+      "value": 0,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-epoch_ms-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "type_mismatch"
+      ]
+    },
+    "V-ENGINE-epoch_ms-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "invalid_date"
+      ]
+    },
+    "V-ENGINE-date_add-001": {
+      "value": "2026-01-15T00:00:00.000Z",
+      "value_type": "string",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-date_add-002": {
+      "value": "2024-02-29T00:00:00.000Z",
+      "value_type": "string",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-date_add-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "type_mismatch"
+      ]
+    },
+    "V-ENGINE-date_add-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "invalid_date"
+      ]
+    },
+    "V-ENGINE-date_part-001": {
+      "value": 2026,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-date_part-002": {
+      "value": 6,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-date_part-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "type_mismatch"
+      ]
+    },
+    "V-ENGINE-date_part-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "invalid_date"
+      ]
+    },
+    "V-ENGINE-month_last_day-001": {
+      "value": "2024-02-29T00:00:00.000Z",
+      "value_type": "string",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-month_last_day-002": {
+      "value": "2026-01-31T00:00:00.000Z",
+      "value_type": "string",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-month_last_day-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "type_mismatch"
+      ]
+    },
+    "V-ENGINE-month_last_day-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "invalid_date"
+      ]
+    },
+    "V-ENGINE-aggregate-001": {
+      "value": 3,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-aggregate-002": {
+      "value": 0.6,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-aggregate-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": [
+        "safe_fold_empty_array"
+      ]
+    },
+    "V-ENGINE-aggregate-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "type_mismatch"
+      ]
+    },
+    "V-ENGINE-E1-001": {
+      "value": 3,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E1-002": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E1-003": {
+      "value": 1,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E2-001": {
+      "value": 0.3,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E2-002": {
+      "value": 0.33333333333333,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E2-003": {
+      "value": 0,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E2-004": {
+      "value": 2,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E2-005": {
+      "value": 2,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E2-006": {
+      "value": 4,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E2-007": {
+      "value": 1000000000000000000001,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E2-008": {
+      "value": 0.3,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E3-001": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "division_by_zero"
+      ]
+    },
+    "V-ENGINE-E3-002": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E3-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "invalid_date"
+      ]
+    },
+    "V-ENGINE-E3-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "arity"
+      ]
+    },
+    "V-ENGINE-E3-005": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "arity"
+      ]
+    },
+    "V-ENGINE-E3-006": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "not_an_array"
+      ]
+    },
+    "V-ENGINE-E4-001": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "resource_limit"
+      ]
+    },
+    "V-ENGINE-E4-002": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "resource_limit"
+      ]
+    },
+    "V-ENGINE-E4-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "resource_limit"
+      ]
+    },
+    "V-ENGINE-E4-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "resource_limit"
+      ]
+    },
+    "V-ENGINE-E4-005": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "resource_limit"
+      ]
+    },
+    "V-ENGINE-E4-006": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "regex_unsafe"
+      ]
+    },
+    "V-ENGINE-E5-001": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "schema_violation"
+      ]
+    },
+    "V-ENGINE-E5-002": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E5-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E8-001": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": [
+        "safe_fold_empty_array"
+      ]
+    },
+    "V-ENGINE-E8-002": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": [
+        "safe_fold_empty_array"
+      ]
+    },
+    "V-ENGINE-E8-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": [
+        "safe_fold_empty_array"
+      ]
+    },
+    "V-ENGINE-E8-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": [
+        "safe_fold_empty_array"
+      ]
+    },
+    "V-ENGINE-E8-005": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": [
+        "safe_fold_empty_array"
+      ]
+    },
+    "V-ENGINE-E9-001": {
+      "value": 1767270645000,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E9-002": {
+      "value": 1767270645000,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E9-003": {
+      "value": 1767241845000,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E9-004": {
+      "value": 0,
+      "value_type": "number",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E9-005": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "type_mismatch"
+      ]
+    },
+    "V-ENGINE-E10-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E10-002": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E11-001": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": [
+        "safe_fold_undefined_result"
+      ]
+    },
+    "V-ENGINE-E11-002": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E11-003": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E11-004": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": true,
+      "warnings": [
+        "type_mismatch"
+      ]
+    },
+    "V-ENGINE-E11-005": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E11-006": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E11-007": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E11-008": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E11-009": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E11-010": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E11-011": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E11-012": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-E11-013": {
+      "value": false,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-eq-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-ne-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-gt-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-gte-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-lt-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-lte-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-in-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-contains-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-match-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-starts_with-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-ends_with-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-exists-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-between-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-not_in-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-not_contains-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-not_starts_with-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-not_ends_with-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-not_exists-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-not_between-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-length_gt-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-length_gte-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-length_lt-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-length_lte-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-length_eq-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-count_gt-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-count_gte-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-count_lt-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-count_lte-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-rate-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-ENGINE-SIMPLE-within-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-GLOSS-001": {
+      "value": "age equals 35",
+      "value_type": "string",
+      "errored": false,
+      "warnings": []
+    },
+    "V-GLOSS-002": {
+      "value": "a equals 1 and b equals 2",
+      "value_type": "string",
+      "errored": false,
+      "warnings": []
+    },
+    "V-GLOSS-003": {
+      "value": "a equals 1 or b equals 2",
+      "value_type": "string",
+      "errored": false,
+      "warnings": []
+    },
+    "V-GLOSS-004": {
+      "value": "not (age equals 35)",
+      "value_type": "string",
+      "errored": false,
+      "warnings": []
+    },
+    "V-GLOSS-005": {
+      "value": "cat is in [a, b]",
+      "value_type": "string",
+      "errored": false,
+      "warnings": []
+    },
+    "V-GLOSS-006": {
+      "value": "cmd contains rm",
+      "value_type": "string",
+      "errored": false,
+      "warnings": []
+    },
+    "V-GLOSS-007": {
+      "value": "is_active is true",
+      "value_type": "string",
+      "errored": false,
+      "warnings": []
+    },
+    "V-GLOSS-008": {
+      "value": "age is between 16 and 60",
+      "value_type": "string",
+      "errored": false,
+      "warnings": []
+    },
+    "V-GLOSS-009": {
+      "value": "every item in items satisfies: x is greater than 0",
+      "value_type": "string",
+      "errored": false,
+      "warnings": []
+    },
+    "V-GLOSS-010": {
+      "value": "a plus b",
+      "value_type": "string",
+      "errored": false,
+      "warnings": []
+    },
+    "V-GLOSS-011": {
+      "value": "date plus 2 years duration",
+      "value_type": "string",
+      "errored": false,
+      "warnings": []
+    },
+    "V-GLOSS-012": {
+      "value": "the sum of nums",
+      "value_type": "string",
+      "errored": false,
+      "warnings": []
+    },
+    "V-GLOSS-INTEGRITY-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-GLOSS-INTEGRITY-002": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-GLOSS-INTEGRITY-003": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-GLOSS-INTEGRITY-004": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-PROJ-001": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-PROJ-002": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-PROJ-003": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-PROJ-004": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-PROJ-005": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    },
+    "V-PROJ-006": {
+      "value": true,
+      "value_type": "boolean",
+      "errored": false,
+      "warnings": []
+    }
+  }
+}
