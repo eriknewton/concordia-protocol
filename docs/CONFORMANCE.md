@@ -220,3 +220,23 @@ Verify:
 ```bash
 python scripts/claims/adapter_not_exercised.py
 ```
+
+### `erdl-v15-runner-pins-its-corpus`
+
+Claim:
+
+> The runner's CLI refuses any vector file whose SHA-256 is not the pinned upstream digest, and writes no submission envelope for either a refused input or a completed run with failed outcome/accounting invariants. A substituted same-version corpus and a red run therefore fail closed before a publishable artifact is produced.
+
+Stated in: `conformance/erdl-do-v1.5/README.md`
+
+Enforced by: CI job `test`
+
+Verify:
+
+```bash
+pip install -e ".[dev]"
+npm ci --prefix conformance/reference-runner-js
+pip install pip-audit && pip-audit --requirement requirements.lock --ignore-vuln CVE-2026-4539
+pytest -v
+bash scripts/test-floor.sh
+```
