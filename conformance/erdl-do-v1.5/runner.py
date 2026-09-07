@@ -134,10 +134,13 @@ OVERSIGHT_REQUIRED_RISK_LEVELS = frozenset({"high", "critical"})
 SIGNATURE_REQUIRED_RISK_LEVEL = "critical"
 
 #: IEEE-754 double integer safety bound. JCS defers number formatting to
-#: ECMA-262, where integers beyond this magnitude are not exactly
-#: representable, so two conforming implementations can disagree on the bytes.
-#: Reject rather than emit bytes that are not reproducible.
-MAX_SAFE_INTEGER = 2**53 - 1
+#: ECMA-262, where a double's 52-bit mantissa plus its implicit leading bit
+#: represents every integer up to and including 2**53 exactly; 2**53 + 1 is
+#: the first integer that magnitude cannot hold, so two conforming
+#: implementations can disagree on its bytes. RFC 8785 Appendix B lists
+#: 9007199254740992 (2**53) as a valid canonicalization sample, so the bound
+#: is inclusive of 2**53 and rejects only beyond it.
+MAX_SAFE_INTEGER = 2**53
 
 #: Knowledge entries the content layer can resolve. The contract defers
 #: `content_unresolvable` detection to a document outside the permitted input
@@ -435,6 +438,25 @@ def write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
                 pass
 
 
+def _reject_duplicate_members(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Build one JSON object while rejecting ambiguous duplicate members.
+
+    Must match `_reject_duplicate_members` in `verify_envelope.py`. The two
+    scripts deliberately do not import each other (verify_envelope.py is a
+    zero-shared-code double-check on the runner's output), so this hook is
+    duplicated rather than imported; a change to one must be mirrored in the
+    other. ``object_pairs_hook`` invokes this for every object, not only the
+    document root, so a duplicate member anywhere in the pinned corpus (not
+    just at the top level) is refused rather than silently last-wins resolved.
+    """
+    result: dict[str, Any] = {}
+    for name, value in pairs:
+        if name in result:
+            raise PinnedInputError(f"duplicate JSON object member {name!r}")
+        result[name] = value
+    return result
+
+
 def load_pinned_vectors(path: Path) -> dict[str, Any]:
     """Read the vector document, refusing anything but the pinned corpus.
 
@@ -488,7 +510,10 @@ def load_pinned_vectors(path: Path) -> dict[str, Any]:
             f"{PINNED_VECTORS_SHA256}; refusing to measure a substituted vector "
             "file. Re-pin deliberately if upstream reissued the vectors."
         )
-    return json.loads(bytes(raw).decode("utf-8"))
+    document = json.loads(bytes(raw).decode("utf-8"), object_pairs_hook=_reject_duplicate_members)
+    if not isinstance(document, dict):
+        raise PinnedInputError(f"{path}: pinned corpus root is not a JSON object")
+    return document
 
 
 # --------------------------------------------------------------------------
@@ -1829,14 +1854,17 @@ def _summary_lines(report: RunReport) -> list[str]:
         f"K01 Check 1                 : {canary.check1 if canary else 'ABSENT'} "
         "(R5 requires MISMATCH)",
         "Check 2                     : NOT RUN - the answers file is out of scope "
-        "for this runner (R6); the emitted canonical_hex is its input",
+        "for this runner (R6); the emitted canonical_hex is its input; this "
+        "runner has never run Check 2",
         f"findings                    : {len(report.findings)}",
         f"excused diagnostics         : {len(report.excused_notes)} "
         "(recorded exceptions, listed below)",
         "R3 not implemented          : " + ", ".join(UNIMPLEMENTED_R3_CODES)
         + " (time anchoring, signature layer)",
         "status                      : independent submission candidate; "
-        "Check 2 / oracle agreement and registration pending upstream verification",
+        "concordia-python registered upstream in OpenOBA/erdl-vectors "
+        "IMPLEMENTATIONS.md on 2026-09-02 (107/107 canonical bytes); "
+        "Check 2 / oracle agreement was never run by this runner",
     ]
 
 

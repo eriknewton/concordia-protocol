@@ -137,10 +137,15 @@ def _check(condition: bool, message: str) -> None:
 def _reject_duplicate_members(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     """Build one JSON object while rejecting ambiguous duplicate members.
 
-    ``object_pairs_hook`` invokes this for every object, not only the envelope
-    root. Rejecting recursively prevents a first-wins consumer and Python's
-    last-wins decoder from assigning different meanings to the same submitted
-    bytes, including duplicate names inside ``canonical_hex``.
+    Must match `_reject_duplicate_members` in `runner.py`. The two scripts
+    deliberately do not import each other (this module imports no Concordia
+    code and no sibling conformance script, so a bug in one shows up as a
+    disagreement rather than a shared bug propagating to both), so this hook
+    is duplicated rather than imported; a change to one must be mirrored in
+    the other. ``object_pairs_hook`` invokes this for every object, not only
+    the envelope root. Rejecting recursively prevents a first-wins consumer
+    and Python's last-wins decoder from assigning different meanings to the
+    same submitted bytes, including duplicate names inside ``canonical_hex``.
     """
     result: dict[str, Any] = {}
     for name, value in pairs:
@@ -189,6 +194,7 @@ def load_envelope(path: Path) -> dict[str, Any]:
     except json.JSONDecodeError as exc:
         raise VerificationError(f"{path}: envelope is not valid JSON: {exc}") from exc
     _check(isinstance(envelope, dict), "submission envelope is not an object")
+    assert isinstance(envelope, dict)
     return envelope
 
 
@@ -368,6 +374,7 @@ def verify_envelope(envelope: dict[str, Any]) -> dict[str, str]:
     )
     canonical_hex = envelope["canonical_hex"]
     _check(isinstance(canonical_hex, dict), "canonical_hex is not an object")
+    assert isinstance(canonical_hex, dict)
     _check(
         len(canonical_hex) == EXPECTED_KEY_COUNT,
         f"expected {EXPECTED_KEY_COUNT} canonical_hex keys, found {len(canonical_hex)}",
@@ -385,7 +392,10 @@ def verify_envelope(envelope: dict[str, Any]) -> dict[str, str]:
         f"sha256:{keyset_digest}",
     )
     total_hex_chars = 0
+    validated_canonical_hex: dict[str, str] = {}
     for key, hex_value in canonical_hex.items():
+        _check(isinstance(key, str), f"canonical_hex key {key!r} is not a string")
+        assert isinstance(key, str)
         _check(isinstance(hex_value, str), f"{key}: canonical_hex value is not a string")
         assert isinstance(hex_value, str)
         _check(
@@ -398,8 +408,9 @@ def verify_envelope(envelope: dict[str, Any]) -> dict[str, str]:
             total_hex_chars <= MAX_CANONICAL_HEX_TOTAL_CHARS,
             f"canonical_hex values exceed {MAX_CANONICAL_HEX_TOTAL_CHARS} aggregate characters",
         )
-    verify_key_grammar(canonical_hex)
-    return canonical_hex
+        validated_canonical_hex[key] = hex_value
+    verify_key_grammar(validated_canonical_hex)
+    return validated_canonical_hex
 
 
 def verify_canonical_bytes(canonical_hex: dict[str, str]) -> int:

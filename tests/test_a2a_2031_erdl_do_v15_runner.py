@@ -155,12 +155,27 @@ def _verify(decision_object: dict[str, Any]) -> Any:
 
 def test_safe_integer_boundary_is_accepted() -> None:
     """2^53 - 1 is exactly representable, so it canonicalizes."""
-    assert runner.canonical_bytes({"n": runner.MAX_SAFE_INTEGER}) == b'{"n":9007199254740991}'
+    assert runner.canonical_bytes({"n": 2**53 - 1}) == b'{"n":9007199254740991}'
 
 
-@pytest.mark.parametrize("value", [2**53, -(2**53), 2**64])
+def test_appendix_b_safe_integer_sample_is_accepted() -> None:
+    """RFC 8785 Appendix B lists 9007199254740992 (2^53) as a valid sample.
+
+    2^53 is exactly representable by a double (52-bit mantissa plus the
+    implicit leading bit); it is `runner.MAX_SAFE_INTEGER` and must canonicalize,
+    not be rejected as unsafe.
+    """
+    assert runner.MAX_SAFE_INTEGER == 2**53
+    assert runner.canonical_bytes({"n": runner.MAX_SAFE_INTEGER}) == b'{"n":9007199254740992}'
+
+
+@pytest.mark.parametrize("value", [2**53 + 1, -(2**53 + 1), 2**64])
 def test_unsafe_integer_is_rejected(value: int) -> None:
-    """Beyond the IEEE-754 safe range two conforming runners can disagree."""
+    """Beyond the IEEE-754 safe range two conforming runners can disagree.
+
+    2^53 + 1 is the first integer a double cannot hold exactly; it is the
+    boundary case for the rejected side, one past `runner.MAX_SAFE_INTEGER`.
+    """
     with pytest.raises(runner.DomainError, match="safe range"):
         runner.canonical_bytes({"n": value})
 
@@ -185,7 +200,7 @@ def test_non_representable_floats_are_rejected(value: float) -> None:
 def test_domain_validation_reports_every_offending_path() -> None:
     """A malformed artifact should be diagnosable, not merely refused."""
     with pytest.raises(runner.DomainError) as excinfo:
-        runner.canonical_bytes({"a": 2**53, "b": {"c": 2**60}})
+        runner.canonical_bytes({"a": 2**53 + 1, "b": {"c": 2**60}})
     message = str(excinfo.value)
     assert "$.a" in message and "$.b.c" in message
 
@@ -1147,6 +1162,27 @@ def test_a_substituted_same_version_corpus_is_refused(tmp_path: Path) -> None:
     )
     with pytest.raises(runner.PinnedInputError, match="pinned upstream corpus"):
         runner.load_pinned_vectors(substituted)
+
+
+def test_pinned_vectors_with_duplicate_member_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`load_pinned_vectors` rejects a duplicate JSON object member.
+
+    It must use the same duplicate-rejecting `object_pairs_hook` as
+    `verify_envelope.load_envelope`; a first-wins or last-wins parse of a
+    duplicate member would let two consumers of the same bytes disagree on
+    their meaning. The digest and byte-length pins are patched to this
+    synthetic document so the duplicate-member path is reached rather than
+    the pinned-corpus mismatch path.
+    """
+    raw = b'{"preimage_version": "erdl-do-v1.5-hash-flat", "vectors": [], "vectors": []}'
+    monkeypatch.setattr(runner, "PINNED_VECTORS_SHA256", hashlib.sha256(raw).hexdigest())
+    monkeypatch.setattr(runner, "PINNED_VECTORS_BYTES", len(raw))
+    corpus = tmp_path / "duplicate-member-vectors.json"
+    corpus.write_bytes(raw)
+    with pytest.raises(runner.PinnedInputError, match="duplicate JSON object member"):
+        runner.load_pinned_vectors(corpus)
 
 
 def test_oversized_corpus_is_refused_before_allocation(tmp_path: Path) -> None:

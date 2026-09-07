@@ -8,9 +8,11 @@ field and chain layer, run against OpenOBA's published
 and this document does not declare conformance. R4 makes conformance the
 conjunction of Check 1 and Check 2, and Check 2 compares recomputed canonical
 bytes against an answers file that R6 forbids a submitting runner from reading.
-Check 2, agreement with the oracle, and registration are upstream's to run and
-to record. What is here is one measurement plus the `canonical_hex` map that
-Check 2 consumes.
+`concordia-python` was registered in upstream `OpenOBA/erdl-vectors`
+`IMPLEMENTATIONS.md` on 2026-09-02, with 107/107 canonical bytes recorded.
+This runner has never run Check 2 and never opened the answers file; agreement
+with the oracle is upstream's to run and to record. What is here is one
+measurement plus the `canonical_hex` map that Check 2 consumes.
 
 Nothing here is a verification of ERDL by ERDL, and nothing here is a
 third-party check of Concordia. It is one measurement: what a runner written
@@ -46,7 +48,7 @@ describes.
 
 ## Independence boundary
 
-This is the load-bearing property of the artifact, so it is recorded exactly.
+This property is what the artifact exists to establish, so it is recorded exactly.
 
 **Read while implementing** - two files only:
 
@@ -300,7 +302,7 @@ Two consequences of the move, recorded rather than left to be discovered:
    `scripts/conformance/generate_vectors.py --check`, which flags any file it
    did not generate. `erdl-do-v1.5` is added to that check's excluded
    directories, alongside `reference-runner` and `reference-runner-js`, which
-   are excluded for the same reason: they are hand-written, not generated. The
+   are excluded for the same reason: they are written by hand rather than generated. The
    check's subject, `conformance/vectors/`, is untouched.
 2. `docs/**/*.md` is the scan scope of the executable-claims prose gate, so
    moving this README out of `docs/` would have removed it from that gate as a
@@ -321,7 +323,7 @@ runs against Concordia's own vector manifest.
 audit.hash = "sha256:" + hex( SHA-256( UTF-8( JCS( DO - audit.hash ) ) ) )
 ```
 
-`audit.hash` is deleted, not blanked. Blanking produces different bytes, and
+`audit.hash` is deleted rather than blanked. Blanking produces different bytes, and
 the test suite asserts that directly. `signature` and `signing_key_id` are
 deleted defensively; in hash mode they are absent and the deletion is a no-op,
 which is also asserted. Every other field participates: no whitelist, no
@@ -340,7 +342,12 @@ conforming implementations could otherwise legitimately disagree on them:
 
 - integers outside the IEEE-754 safe range (JCS number formatting defers to
   ECMA-262, whose doubles cannot hold them exactly);
-- non-finite floats and negative zero, which JCS cannot represent;
+- non-finite floats (NaN and Infinity), which RFC 8785 itself requires an
+  implementation to reject rather than serialize; and negative zero, which
+  RFC 8785 Appendix B actually does serialize, as the literal `0`. This
+  runner rejects negative zero anyway, by policy rather than by RFC
+  requirement, because the pinned v1.5 corpus never contains it and
+  admitting it would silently discard a sign a producer wrote;
 - unpaired UTF-16 surrogates, which have no UTF-8 encoding and which JSON
   implementations disagree about.
 
@@ -562,7 +569,7 @@ plus claim precision. This revision, in the same branch:
 | Intra-field notes suppressed for every pair vector | One recorded exception keyed to `V-COMP-F02-tampered` and one field, printed rather than dropped |
 | "any such divergence necessarily also breaks the whole-object flat hash" | Corrected; the repository's own test refutes it |
 | R3 described as implemented | Time-anchoring codes declared unimplemented, in the runner, the summary, the envelope and here |
-| "R1 to R6 implemented", conformance framing | Independent submission candidate; Check 2, oracle agreement and registration pending upstream |
+| "R1 to R6 implemented", conformance framing | Independent submission candidate; registered upstream 2026-09-02, Check 2 and oracle agreement never run by this runner |
 | Any vector file accepted at the CLI | Bound to the pinned SHA-256, fail closed, no opt-out |
 | `.json.txt` in `docs/interop/` | A real `.json` in `conformance/erdl-do-v1.5/` |
 | `verify.py`, called an answer-key verifier | `verify_envelope.py`, an envelope self-consistency check |
