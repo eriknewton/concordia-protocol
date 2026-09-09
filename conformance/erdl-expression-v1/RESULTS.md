@@ -1,9 +1,26 @@
 # ERDL expression layer: measured results
 
-One measurement, taken on 2026-09-07 against OpenOBA's published
+One measurement, taken on 2026-09-09 against OpenOBA's published
 `v-engine-vectors.json` (SHA-256
-`bcfe424fdebaecee11ce81ce3097ccaee0d9db0cc99f5a2d9624f4b3c8bd9ac8`, 239
+`3ee30466cc6d95ddd99bc412cfc88b2f2dd3f890b8687b8f12043cc40074c902`, 240
 vectors, `vector_version` v2.0.0, `spec` erdl-spec-v2.1).
+
+This replaces the 2026-09-07 measurement, which was taken against the 239-vector
+corpus before the v1.6.0 revision. The sources this round was read against, at
+the exact commits:
+
+| Source | Repository | Commit |
+|---|---|---|
+| `v-engine-vectors.json`, `EXPRESSION-RUNNER-CONTRACT.md`, `scripts/verify-v-engine-submission.mjs`, `CHANGELOG.md` | `OpenOBA/erdl-vectors` (`master`) | `97e0c00723aec526983cea5804e148680b3e0539` |
+| `erdl-spec.en.md` (sections 5, 7, 8, appendix E) | `OpenOBA/erdl-landing` (`main`) | `dcb7a554c00c047d849899a6327ef6e37d7a39de` |
+
+The independence boundary is unchanged and is restated in the submission's
+`method` field: the reference engine (`scripts/v-engine.mjs`), the in-repo
+verifier scripts, the generator, `@openoba/erdl`, `erdl-formal` and the answer
+oracle `v-engine-answers.json` were not opened, imported, vendored or consulted
+in this round either. The one file read that was not read in the first round is
+`scripts/verify-v-engine-submission.mjs`, and only for its envelope contract
+and its comparison rule; it carries no node semantics.
 
 This is not a conformance declaration. ER4 is settled by a cross-verification
 run against an oracle this runner is forbidden to read (ER9), and registration
@@ -11,17 +28,101 @@ is upstream's to record. What is here is the result of evaluating every vector
 with an implementation written from the specification and the contract, plus
 the questions the specification left open and the reading each one was given.
 
+## What changed since the 2026-09-07 measurement
+
+Six of the 240 result objects differ from the previous envelope. Nothing in the
+evaluator's numeric model, its `errored` assignment or its folding changed.
+
+| Vector | Change | Cause |
+|---|---|---|
+| `V-ENGINE-E10-003` | new, `true` | the corpus's new E10 in-membership NFC vector; the kernel already NFC-normalized both sides of `in`, so it evaluated correctly with no code change |
+| `V-GLOSS-005` | `cat is in [a, b]` to `cat in [a, b]` | spec v2.1 reworded the section 5.5 `in` template |
+| `V-GLOSS-008` | `age is between 16 and 60` to `age is in the inclusive range 16 to 60` | reworded `between` template |
+| `V-GLOSS-009` | `every item in items satisfies: ...` to `all elements in items satisfy "..."` | reworded `all` template |
+| `V-GLOSS-011` | `date plus 2 years duration` to `date plus 2 years` | `date_add` template became `{A} plus {B} {unit}`, two slots rather than one pre-joined duration string |
+| `V-GLOSS-012` | `the sum of nums` to `sum of nums` | reworded `aggregate(sum)` template |
+
+Fifteen English templates were reworded in the 2026-09-09 spec revision
+(`in`, `match`, `length`, `between`, `all`, `any`, `none`, `epoch_ms`,
+`date_add`, `date_part`, `var` and the five `aggregate` forms). Only five of
+them are reachable from the twelve `V-GLOSS` vectors, but all fifteen were
+transcribed, and `tests/test_gloss.py` now pins the whole English table by
+full-set equality rather than by spot check, so a later drift fails a test
+instead of silently changing a reported string.
+
+## The number question, answered
+
+The maintainer asked whether this runner's JSON-number choice is load-bearing
+for the evaluator or a serialization-level detail, citing `V-ENGINE-E2-007`
+(`add(1e21, 1)`) reading `1e+21` in the submitted envelope.
+
+**It is serialization-level here, and the `1e+21` is a reader-side artifact,
+not something this runner ever wrote.** The evidence is three facts that can
+each be checked directly:
+
+1. **The evaluator has no binary float in it at all.** The corpus loader parses
+   numeric literals with `parse_float=Decimal` (`erdl_expr/values.py`,
+   `load_json_exact`), the value domain is `fractions.Fraction`, and rounding
+   happens exactly once, at the reported value, in `fixed_point_int`. That is
+   what spec E2 and section 7.3(c) require: *"intermediate computation uses
+   high-precision bounded rationals (e.g. 128-bit integer numerator or
+   denominator); only output nodes round to scale=14 + half-even string
+   serialization."* `1e21 + 1` is computed exactly, as an exact rational, in
+   both the previous round and this one.
+2. **The bytes in the submitted envelope are already the exact digits.** The
+   2026-09-07 file that was submitted upstream contains
+   `"value": 1000000000000000000001`. The writer never routes a number through
+   the JSON encoder's float path; it emits the exact decimal token through a
+   sentinel and unquotes it (`erdl_expr/results.py`, `dumps`).
+3. **`1e+21` is what a double-typed reader recovers, on either side.** The
+   value is above `2**53 - 1`, so `JSON.parse` in Node turns those exact digits
+   into the double `1e21`, and `JSON.stringify` prints `1e+21`. Reading the
+   submitted file back in Node reproduces the maintainer's observation exactly,
+   from a file that carries the exact digits.
+
+The consequence worth acting on is on the verifier's side, not the runner's.
+`scripts/verify-v-engine-submission.mjs` compares
+`JSON.stringify(actual.value) === JSON.stringify(expected.value)`, and both
+operands have already been through `JSON.parse`. Above `2**53 - 1` that
+comparison is between two doubles: it will agree on `E2-007` whatever the two
+implementations actually computed, and it would equally agree if one of them
+had genuinely lost the `+1`. That is precisely the case RFC 8785 section 3.1
+recommends a JSON string for, and it is the reason ambiguity A1 stayed open
+rather than being closed on the first round.
+
+`tests/test_submission_format.py::test_an_exact_integer_beyond_the_double_range_is_a_reader_side_bound`
+pins all of this, so the distinction between "what the file carries" and "what a
+double-typed reader recovers" cannot quietly collapse again.
+
+## Cross-verification status
+
+`scripts/verify-v-engine-submission.mjs` **does not run standalone.** It reads
+`v-engine-answers.json`, which is gitignored and absent from a fresh clone of
+`OpenOBA/erdl-vectors` at `97e0c00`; the only local way to produce it is
+`npm run generate:vengine`, which runs the reference engine. Generating the
+oracle and then consulting it is what ER9 forbids, so it was not done, and this
+runner reports no cross-verification result. That check is upstream's to run,
+which is what the contract says it is for.
+
+What was checked locally is the envelope's **shape** against the verifier's own
+consumption path: the verifier was run against an answers file synthesized from
+this runner's own output, which exercises the real code path (`layer` gate, id
+coverage, per-entry `value` / `value_type` / `errored` access) and reports
+`240/240 passed`, exit 0. That proves the envelope parses and is complete under
+the verifier's reader. It proves nothing about semantics, and is recorded here
+as a shape check rather than as a result.
+
 ## Coverage
 
 | Family | Vectors | Evaluated |
 |---|---:|---:|
 | Node kernel (34 nodes, 10 groups) | 136 | 136 |
-| Constraints E1 to E11 | 51 | 51 |
+| Constraints E1 to E11 | 52 | 52 |
 | Simple compilation (28 operators, 2 modifiers) | 30 | 30 |
 | gloss rendering | 12 | 12 |
 | gloss integrity (tamper pairs) | 4 | 4 |
 | Projection equivalence | 6 | 6 |
-| **Total** | **239** | **239** |
+| **Total** | **240** | **240** |
 
 ### Node groups
 
@@ -39,7 +140,7 @@ the questions the specification left open and the reading each one was given.
 |---|---:|---|---:|
 | E1 (purity) | 3 | E8 (empty-array folding) | 5 |
 | E2 (fixed point) | 8 | E9 (UTC, no clock read) | 5 |
-| E3 (evaluation errors) | 6 | E10 (NFC) | 2 |
+| E3 (evaluation errors) | 6 | E10 (NFC) | 3 |
 | E4 (resource limits) | 6 | E11 (missing-field collapse) | 13 |
 | E5 (load-time exclusivity) | 3 | | |
 
@@ -47,11 +148,11 @@ the questions the specification left open and the reading each one was given.
 
 | Measure | Count |
 |---|---:|
-| `value_type` boolean | 183 |
+| `value_type` boolean | 184 |
 | `value_type` number | 37 |
 | `value_type` string | 19 |
 | `errored` true (E12 fold to false) | 53 |
-| value true | 66 |
+| value true | 67 |
 
 The 53 errored vectors break down by warning code as: 24 `type_mismatch`, 6
 `division_by_zero`, 6 `invalid_date`, 5 `not_an_array`, 5 `resource_limit`, 4
@@ -90,22 +191,38 @@ Each row is a place where the specification text supports more than one
 reading. The chosen reading is the one the constraint text supports, and none
 of them was settled by consulting the reference engine or the oracle.
 
-### A1. How a reported number is encoded
+### A1. How a reported number is encoded: SETTLED by the contract, with one residual
 
+* **Settled 2026-09-09 in favour of the reading this runner already shipped.**
 * **Affects:** the 37 vectors whose `value_type` is number.
-* **Reading 1 (chosen):** a JSON number. ER3 writes the schema as
-  `"value": <number|string|boolean>` paired with `"value_type"`, which reads as
-  the JSON type of `value` matching `value_type`.
-* **Reading 2:** a decimal string. E2 says "fixed-point decimal scale=14 +
-  half-even + string serialization", and section 8.2 canonicalizes numbers as
-  fixed-point decimal strings.
-* **Why 1:** section 8.2 governs the canonical tree, not the result object, so
-  the only text about the result object is ER3's type pairing. Numbers are
-  emitted at their exact scale-14 value with trailing zeros trimmed, and never
-  through a binary float, so `1e21 + 1` is written as
-  `1000000000000000000001` rather than `1e+21`. Reading 2 is one flag away:
-  `--number-format decimal-string` regenerates the whole file with every number
-  quoted, and the envelope records which encoding it carries.
+* **Settled reading (chosen, unchanged):** a JSON number, rendered from the
+  scale-14 fixed-point value with trailing zeros trimmed.
+* **What settles it:** the contract now says so outright, in both languages, at
+  `97e0c00`. `EXPRESSION-RUNNER-CONTRACT.md` ER3: *"`value` with `value_type:
+  "number"` is a JSON number (decimal) ... **not** a decimal string. The
+  decimal-string form (spec section 8.2) governs `canonical_tree` literals only,
+  not the result object. `"1e21 + 1"` reports `1000000000000000000001` (a JSON
+  number), never `1e+21`."* The zh-CN contract, synced later the same day, says
+  the same thing in the same words. That is exactly reading 1, including the
+  worked example, so the shipped envelope keeps `number_format: "json-number"`.
+* **Residual, and the reason this row is not simply closed:** the same
+  repository's `CHANGELOG.md` for v1.6.0 describes the ER3 change as *"numbers
+  serialized as decimal strings (RFC 8785 section 3.1)"*, which is the opposite
+  of what both contract files say. The two statements cannot both describe the
+  answer oracle. The stake is real rather than cosmetic: the submission
+  verifier compares `JSON.stringify` of two already-parsed values, so above
+  `2**53 - 1` a JSON number is compared as a double on both sides and cannot
+  distinguish an exact result from a lost one, which is the situation RFC 8785
+  section 3.1 recommends a string for. A decimal string is byte-exact at any
+  magnitude and would make that comparison meaningful.
+* **What this runner does about it:** it ships both encodings of the same
+  measurement, so whichever the oracle carries can be cross-verified without
+  another round trip. `output/concordia-python-expression-output.json` is the
+  submission and carries JSON numbers per ER3.
+  `output/concordia-python-expression-output.decimal-string.json` is the same
+  240 results with every number quoted, produced by the same run through
+  `--number-format decimal-string`. It is an alternate encoding for the
+  maintainer's convenience, not a second submission.
 
 ### A2. A non-scalar value at the root
 
@@ -134,16 +251,21 @@ of them was settled by consulting the reference engine or the oracle.
   evaluation feeds, which is a top-level notion, so the fold is read as
   top-level in both directions.
 
-### A4. Which gloss language the reported string uses
+### A4. Which gloss language the reported string uses: SETTLED, English
 
+* **Settled 2026-09-09 in favour of the reading this runner already shipped.**
 * **Affects:** the 12 `V-GLOSS` vectors.
-* **Reading 1 (chosen):** English.
-* **Reading 2:** Chinese.
-* **Why 1:** section 5.5's template table is bilingual and marks neither
-  language subordinate, so the corpus is the only tiebreaker available, and its
-  own `scenario` text is written in English throughout. Reading 2 is one flag
-  away: `--gloss-language zh` regenerates every gloss from the Chinese column
-  of the same frozen table, and both columns are implemented and tested.
+* **Settled reading (chosen, unchanged):** English.
+* **What settles it:** spec v2.1's 2026-09-09 revision pins section 5.5 to
+  English as canonical and demotes the Chinese column to "a presentation-only
+  optional projection", and the corpus's own expected gloss values became
+  English-only in the same revision. The bilingual table that made this a
+  question is gone. `--gloss-language zh` survives as that presentation
+  projection and is still tested, but it is no longer a live reading of what a
+  reported value carries.
+* **What did change:** the same revision reworded fifteen English templates to
+  match the reference renderer. Those are transcribed and pinned; see "What
+  changed since the 2026-09-07 measurement" above.
 * **Bound worth stating separately:** G3 requires gloss to use the Entity
   `display_name` rather than a raw field path. The corpus carries no Entity
   declarations, so there is no display name to substitute and the raw path is
@@ -278,9 +400,15 @@ of them was settled by consulting the reference engine or the oracle.
   rather than coerced. A runner that borrowed truthiness here would also have
   to explain why `eq(false, 100)` is false.
 
-### A14. Whether a cross-type ordered comparison is an evaluation error: SETTLED, silent false
+### A14. Whether a cross-type ordered comparison is an evaluation error: SETTLED, silent false, CONFIRMED upstream
 
-* **Settled 2026-09-07, fix-round 2.** The prior entry chose the E3
+* **Settled 2026-09-07, fix-round 2. Confirmed correct by the spec maintainer
+  on 2026-09-09**, and now written into the spec: section 7.3(a)'s table row
+  reads "Type-mismatched comparison | returns false (no implicit conversion;
+  not an error, errored=false)", and the new warning-asymmetry note names
+  `gt-003` and `E3-002` as the vectors that carry `warnings=[]`. The reading
+  below was reached from the spec text before that annotation existed; the
+  annotation states it directly. The prior entry chose the E3
   evaluation-error reading; that reading is retracted. The evidence below was
   reweighed against the direct fixing sentences and the fixing sentences win.
 * **Affects:** `V-ENGINE-gt-003`, `-gte-003`, `-lt-003`, `-lte-003`,
@@ -331,8 +459,9 @@ of them was settled by consulting the reference engine or the oracle.
   (`_ordered`) plus `_between`, which is a closed interval written as two
   ordered comparisons, so all five operators cannot drift apart.
 
-### A15. When `rate` first fires
+### A15. When `rate` first fires: CONFIRMED upstream
 
+* **Confirmed correct by the spec maintainer on 2026-09-09.** No change.
 * **Affects:** `V-ENGINE-SIMPLE-rate-001` and `V-ENGINE-SIMPLE-within-001`.
 * **Reading 1 (chosen):** the check is "the window holds at least N recorded
   events", so a sequence of N records followed by a check reports true.
@@ -378,15 +507,93 @@ of them was settled by consulting the reference engine or the oracle.
   object changed in this round. Their `value` and `errored` are unchanged, so
   the ER4 comparison surface is untouched.
 
+### A17. Whether a warned-but-not-EvaluationError type mismatch sets `errored`
+
+* **Opened 2026-09-09**, by the v2.1 revision that introduced the `errored`
+  flag as a specified field rather than an inferred one.
+* **Affects:** 5 vectors whose `errored` differs between the readings:
+  `V-ENGINE-contains-003`, `-starts_with-003`, `-ends_with-003`,
+  `-length-003`, `-aggregate-003`. Their `value` is `false` under both
+  readings, so only `errored` is in question, and ER4 compares `errored`.
+* **Reading 1 (chosen, unchanged from the previous round):** `errored: true`.
+  E3 now reads *"Evaluation errors are recorded as eval_warnings with
+  errored=true"*, which makes "records an eval_warning" and "is an evaluation
+  error" the same predicate. Section 7.3(a)'s new warning-asymmetry note is
+  then a statement of which cases are errors: comparison nodes and `between`
+  fold "silently (no warning)", whereas `in`, the string nodes, `length` and
+  `aggregate` "record a `type_mismatch` warning". Contract ER8 independently
+  names a non-array `aggregate` an evaluation error, and `aggregate` is in the
+  warned group, which is the one cross-check available.
+* **Reading 2:** `errored: false` with the warning still recorded. Appendix E's
+  new glossary row enumerates the errored-true cases as "division by zero /
+  invalid date / arity / type-mismatched arithmetic", and a string or `length`
+  type mismatch is on none of those four.
+* **Why 1:** the glossary enumeration cannot be exhaustive, because ER8 places
+  a non-array `aggregate` inside the errored set and the enumeration does not
+  list it. Read as illustrative, the enumeration and E3 agree; read as
+  exhaustive, it contradicts ER8. Reading 1 is the one that leaves no sentence
+  false, and it keeps a single predicate (a recorded warning) deciding
+  `errored`, rather than a per-node table that would have to be maintained by
+  hand on both sides.
+* **What would settle it:** one sentence saying whether "records a
+  `type_mismatch` warning" implies `errored: true`, or naming the warned
+  non-arithmetic nodes as errored-false.
+
+### A18. Whether a missing field reaching a time node is an error
+
+* **Opened 2026-09-09**, for the same reason as A17.
+* **Affects:** 5 vectors, all with the corpus's `null` scenario:
+  `V-ENGINE-days_between-004`, `-epoch_ms-004`, `-date_add-004`,
+  `-date_part-004`, `-month_last_day-004`. `value` is `false` under both
+  readings.
+* **Reading 1 (chosen, unchanged):** `errored: true` with a `type_mismatch`
+  warning, treating a time node like an arithmetic one. Section 7.3(a)'s table
+  makes arithmetic on a missing field an EvaluationError when the tree is an
+  arithmetic expression rather than a condition, and these five trees are
+  value-producing expressions of exactly that shape; ER3 also lists "invalid
+  date" among the errored cases, and an absent base is not a valid date.
+* **Reading 2:** `errored: false`, on ER3's "null/missing-field propagation
+  (E11) are normal false results, not errors". The spec's node taxonomy counts
+  time and arithmetic as separate groups, so the section 7.3(a) row about
+  "arithmetic" may not reach them.
+* **Why 1:** the section 7.3(a) row is about the shape of the tree (expression
+  versus condition), not about which of the ten node groups the operator was
+  filed under, and a date computation is the same shape as an arithmetic one.
+  Applying E11's leaf collapse instead would mean `days_between` on an absent
+  date reports the same clean `false` as a comparison against an absent field,
+  which loses the distinction an auditor needs.
+* **What would settle it:** naming time nodes explicitly in the section 7.3(a)
+  row, in either direction.
+
+### A19. How a list literal renders in gloss
+
+* **Opened 2026-09-09.** Not previously recorded, and reachable now that gloss
+  values are compared as English strings.
+* **Affects:** `V-GLOSS-005` and, through the tamper pair, the boolean of
+  `V-GLOSS-INTEGRITY-004`.
+* **Reading 1 (chosen, unchanged):** bracketed and comma-separated, so
+  `["a","b"]` renders `[a, b]` and the whole vector reads `cat in [a, b]`.
+* **Reading 2:** any other list form the renderer happens to use, for example
+  a bare comma list or quoted members.
+* **Why 1:** section 5.5's table gives `literal` the template `{value}` and
+  says nothing about an array literal, so the bracketed JSON-like form is the
+  reading that stays closest to `{value}` while keeping the member boundary
+  visible; a bare comma list would make a two-member set indistinguishable
+  from one member containing a comma.
+* **Why it is worth a row:** `in` is one of the five templates reworded on
+  2026-09-09, so this is the one `V-GLOSS` vector whose expected string depends
+  on a rendering detail the template table does not specify. If it mismatches,
+  the list form is where to look, not the `in` wording.
+
 ## What the tests cover
 
-The suite is 137 tests and runs without the corpus. One module per node group
-covers the semantics from the specification text; `test_sentinels.py` covers
+The suite is 141 tests, 135 of which run without the corpus. One module per
+node group covers the semantics from the specification text; `test_sentinels.py` covers
 E2, E8, E10, E11 and E12; `test_limits.py` covers E4 and the regex subset;
 `test_simple_compile.py` covers the 30 Simple operators, the decision-table
 compiler and the two stateful modifiers; `test_gloss.py` covers the frozen
 templates; `test_submission_format.py` covers the ER3 shape and the numeric
-encoding. `test_corpus.py` runs all 239 vectors and asserts the result shape,
+encoding. `test_corpus.py` runs all 240 vectors and asserts the result shape,
 and skips when `ERDL_V_ENGINE_VECTORS` is unset, because the corpus is
 OpenOBA's artifact rather than this repository's.
 
@@ -403,7 +610,33 @@ Planting half-up as the shipped default, rather than as a test parameter, fails
 `test_e2_half_even_sentinel_fails_under_a_planted_half_up_mode`,
 `test_round_is_half_even_at_the_reporting_scale` and
 `test_the_corpus_runner_refuses_a_planted_semantics`, and restoring half-even
-returns the suite to 137 passing.
+returns the suite to 141 passing.
+
+Two tests were added in this round, both pinning a distinction the 2026-09-09
+exchange showed can be lost. `test_the_english_templates_are_the_frozen_section_5_5_table`
+compares the whole English template table for equality against the section 5.5
+transcription, because a parity test that names only the rows it happens to
+check cannot notice a row that went missing.
+`test_an_exact_integer_beyond_the_double_range_is_a_reader_side_bound` asserts
+both halves of the number question at once: the envelope's bytes for
+`1e21 + 1` are the exact digits, and the same value collapses in any reader
+that parses JSON numbers into doubles.
+
+## Defects found and fixed in the 2026-09-09 re-run
+
+* The gloss renderer carried the pre-revision section 5.5 templates. Fifteen
+  English templates were reworded upstream on 2026-09-09; five of them are
+  reachable from the `V-GLOSS` vectors, so five reported strings were wrong
+  against the current spec. All fifteen were retranscribed and the whole table
+  is now pinned by a full-set equality test.
+* `date_add` built its duration by joining the amount and the unit before
+  substitution, which happened to produce the right English text under the old
+  template and would not survive the new two-slot form. The template now owns
+  the spacing, which is the only difference between the English and Chinese
+  renderings of that node.
+* No defect was found in the numeric model, the `errored` assignment or the
+  folding. The `1e+21` reading that prompted this round is a property of a
+  double-typed reader, not of the envelope; see "The number question, answered".
 
 ## Defects found and fixed in the fix round
 

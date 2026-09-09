@@ -5,11 +5,17 @@ node (spec section 5.5). G4 keeps it out of the hash, so a wording difference
 between implementations does not break cross-implementation consistency, and G2
 is the lint that binds a stored gloss to its tree.
 
-The template table is bilingual and the spec marks neither language as
-subordinate, so the language is a parameter. English is the default because the
-vector corpus's own scenario text is English. RESULTS.md records this as
-ambiguity A4 and the CLI carries `--gloss-language` so the whole submission can
-be regenerated in Chinese without touching a template.
+Section 5.5 pins the rendering templates to English as canonical (spec v2.1,
+2026-09-09); the Chinese column is a presentation-only projection and is no
+longer part of the frozen table. English is therefore what a reported gloss
+string carries, and `--gloss-language zh` survives only as that presentation
+projection. RESULTS.md records the resolution as ambiguity A4.
+
+The English templates below are transcribed from the section 5.5 table at
+erdl-spec v2.1 (erdl-landing commit dcb7a55). Fifteen of them were reworded in
+that revision, so a template edited here without re-reading that table will
+silently change every reported gloss string; the wording is the contract, not a
+matter of taste.
 
 G3 (use the Entity `display_name`, never a raw field path) cannot be honoured
 from this corpus: the vectors carry no Entity declarations, so there is no
@@ -40,36 +46,44 @@ _TEMPLATES: Final[dict[str, dict[str, str]]] = {
     "gte": {"en": "{A} is greater than or equal to {B}", "zh": "{A} 大于等于 {B}"},
     "lt": {"en": "{A} is less than {B}", "zh": "{A} 小于 {B}"},
     "lte": {"en": "{A} is less than or equal to {B}", "zh": "{A} 小于等于 {B}"},
-    "in": {"en": "{A} is in {B}", "zh": "{A} 属于 {B}"},
+    "in": {"en": "{A} in {B}", "zh": "{A} 属于 {B}"},
     "contains": {"en": "{A} contains {B}", "zh": "{A} 包含 {B}"},
-    "match": {"en": "{A} matches regex {B}", "zh": "{A} 匹配正则 {B}"},
+    "match": {"en": "{A} matches {B}", "zh": "{A} 匹配正则 {B}"},
     "starts_with": {"en": "{A} starts with {B}", "zh": "{A} 以 {B} 开头"},
     "ends_with": {"en": "{A} ends with {B}", "zh": "{A} 以 {B} 结尾"},
     "exists": {"en": "{A} exists", "zh": "{A} 已发生"},
     "exists_boolean": {"en": "{A} is true", "zh": "{A} 为“是”"},
-    "length": {"en": "the length of {A}", "zh": "{A} 的长度"},
-    "between": {"en": "{A} is between {B} and {C}", "zh": "{A} 介于 {B} 与 {C} 之间"},
-    "all": {"en": "every item in {A} satisfies: {B}", "zh": "{A} 中每一项均满足：{B}"},
-    "any": {"en": "some item in {A} satisfies: {B}", "zh": "{A} 中存在一项满足：{B}"},
-    "none": {"en": "no item in {A} satisfies: {B}", "zh": "{A} 中无一项满足：{B}"},
+    "length": {"en": "length of {A}", "zh": "{A} 的长度"},
+    "between": {
+        "en": "{A} is in the inclusive range {B} to {C}",
+        "zh": "{A} 介于 {B} 与 {C} 之间",
+    },
+    "all": {"en": 'all elements in {A} satisfy "{B}"', "zh": "{A} 中每一项均满足：{B}"},
+    "any": {
+        # "satisfy", not "satisfies": the section 5.5 table reads that way and a
+        # frozen template is reproduced verbatim, grammar included.
+        "en": 'at least one element in {A} satisfy "{B}"',
+        "zh": "{A} 中存在一项满足：{B}",
+    },
+    "none": {"en": 'no elements in {A} satisfy "{B}"', "zh": "{A} 中无一项满足：{B}"},
     "add": {"en": "{A} plus {B}", "zh": "{A} 加 {B}"},
     "sub": {"en": "{A} minus {B}", "zh": "{A} 减 {B}"},
     "mul": {"en": "{A} times {B}", "zh": "{A} 乘 {B}"},
     "div": {"en": "{A} divided by {B}", "zh": "{A} 除以 {B}"},
     "round": {"en": "{A} rounded", "zh": "{A} 四舍五入"},
     "days_between": {"en": "days between {A} and {B}", "zh": "{A} 与 {B} 之间的天数"},
-    "epoch_ms": {"en": "the epoch milliseconds of {A}", "zh": "{A} 的时间戳"},
-    "date_add": {"en": "{A} plus {B} duration", "zh": "{A} 加 {B} 时长"},
-    "date_part": {"en": "the {part} of {A}", "zh": "{A} 的 {part}"},
+    "epoch_ms": {"en": "epoch ms of {A}", "zh": "{A} 的时间戳"},
+    "date_add": {"en": "{A} plus {B} {unit}", "zh": "{A} 加 {B}{unit}"},
+    "date_part": {"en": "{part} of {A}", "zh": "{A} 的 {part}"},
     "month_last_day": {
         "en": "the last day of the month of {A}",
         "zh": "{A} 所在月的最后一日",
     },
-    "count": {"en": "the count of {A}", "zh": "{A} 的元素个数"},
-    "sum": {"en": "the sum of {A}", "zh": "{A} 之和"},
-    "avg": {"en": "the average of {A}", "zh": "{A} 的平均值"},
-    "min": {"en": "the minimum of {A}", "zh": "{A} 的最小值"},
-    "max": {"en": "the maximum of {A}", "zh": "{A} 的最大值"},
+    "count": {"en": "count of {A}", "zh": "{A} 的元素个数"},
+    "sum": {"en": "sum of {A}", "zh": "{A} 之和"},
+    "avg": {"en": "average of {A}", "zh": "{A} 的平均值"},
+    "min": {"en": "minimum of {A}", "zh": "{A} 的最小值"},
+    "max": {"en": "maximum of {A}", "zh": "{A} 的最大值"},
 }
 
 LANGUAGES: Final[tuple[str, ...]] = ("en", "zh")
@@ -175,13 +189,15 @@ def _render_node(node: dict[str, Any], language: str) -> str:
     if name == "date_add":
         if not isinstance(payload, dict):
             raise GlossError("date_add needs an object")
-        amount = _render(payload.get("amount"), language)
-        unit = str(payload.get("unit"))
-        duration = f"{amount} {unit}" if language == "en" else f"{amount}{unit}"
+        # Section 5.5 spells this template `{A} plus {B} {unit}`: the amount and
+        # the unit are two slots, not one pre-joined "duration" string. Keeping
+        # them separate is what lets the template own the spacing, which is the
+        # only thing that distinguishes the English and Chinese forms here.
         return (
             _template("date_add", language)
             .replace("{A}", _render(payload.get("base"), language))
-            .replace("{B}", duration)
+            .replace("{B}", _render(payload.get("amount"), language))
+            .replace("{unit}", str(payload.get("unit")))
         )
     if name == "date_part":
         if not isinstance(payload, dict):

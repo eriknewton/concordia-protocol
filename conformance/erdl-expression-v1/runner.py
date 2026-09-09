@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """CLI for the independent ERDL expression-layer runner.
 
-Reads OpenOBA's published `v-engine-vectors.json`, evaluates all 239 vectors
+Reads OpenOBA's published `v-engine-vectors.json`, evaluates all 240 vectors
 with the kernel in `erdl_expr/`, and writes the submission file the
 expression-runner contract's ER3 shape describes.
 
@@ -50,13 +50,18 @@ DEFAULT_ARTIFACT = (
 #: so it is a constant here rather than a CLI string a caller could weaken
 #: without review.
 METHOD_READ = (
-    "Read: erdl-spec v2.1 (sections 5, 7, appendices A and B), "
-    "EXPRESSION-RUNNER-CONTRACT.md (ER1-ER9), v-engine-vectors.json, "
+    "Read: erdl-spec v2.1 (sections 5, 7, 8, appendix E; erdl-landing "
+    "dcb7a554c00c047d849899a6327ef6e37d7a39de), EXPRESSION-RUNNER-CONTRACT.md "
+    "(ER1-ER9), CHANGELOG.md, v-engine-vectors.json and "
+    "scripts/verify-v-engine-submission.mjs for the envelope contract and its "
+    "comparison rule (erdl-vectors 97e0c00723aec526983cea5804e148680b3e0539), "
     "and erdl-vectors submissions/README.md for the submission envelope shape. "
     "NOT read: the reference engine (scripts/v-engine.mjs), the in-repo verifier "
     "scripts (verify-v-engine.mjs, verify-v-engine-full.mjs, "
     "verify-v-engine-reverse.mjs), the generator (generate-v-engine.mjs), "
-    "@openoba/erdl, erdl-formal, and the answer oracle v-engine-answers.json."
+    "@openoba/erdl, erdl-formal, and the answer oracle v-engine-answers.json, "
+    "which was never generated locally because generating it runs the reference "
+    "engine and consulting the result is what ER9 forbids."
 )
 
 

@@ -77,3 +77,29 @@ def test_an_unknown_number_format_is_refused() -> None:
     with pytest.raises(ValueError):
         submission_payload([], runner="r", method="m", date="d",
                            artifact="a", number_format="binary")
+
+
+def test_an_exact_integer_beyond_the_double_range_is_a_reader_side_bound() -> None:
+    # What the file carries and what a double-typed reader recovers are two
+    # different questions, and conflating them is what makes `1e+21` look like a
+    # runner defect. The envelope's bytes for `add(1e21, 1)` are the exact
+    # digits; a reader that parses JSON numbers into IEEE 754 doubles (any
+    # JavaScript one, `JSON.parse` included) collapses them, because the value
+    # is above 2**53 - 1 and is not representable. Python's int parse is exact,
+    # so the bound belongs to the consumer, never to the encoder here.
+    big = 10**21 + 1
+    text = _envelope([VectorResult("T1", "V-ENGINE", "arithmetic",
+                                   Fraction(big), "number", False, ())])
+    assert '"value": 1000000000000000000001' in text
+    assert json.loads(text)["results"]["T1"]["value"] == big
+    # 9007199254740991 = 2**53 - 1, the largest integer a double represents
+    # exactly; every ER4 number vector in the corpus except this one is under it.
+    assert big > 2**53 - 1
+    assert float(big) == float(10**21)
+    # The decimal-string encoding is the form that survives a double-typed
+    # reader, which is the whole of RFC 8785 section 3.1's recommendation and
+    # the whole of ambiguity A1.
+    quoted = json.loads(_envelope(
+        [VectorResult("T1", "V-ENGINE", "arithmetic", Fraction(big), "number", False, ())],
+        "decimal-string"))
+    assert quoted["results"]["T1"]["value"] == "1000000000000000000001"
