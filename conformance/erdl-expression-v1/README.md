@@ -4,8 +4,9 @@ A Python implementation of the ERDL expression kernel, written from the ERDL
 v2.1 specification and the expression-runner contract, and run against
 OpenOBA's published `v-engine-vectors.json`.
 
-**Status: independent submission candidate.** This is not a conforming runner
-and this document does not declare conformance. ER4 makes conformance a
+**Status: independent submission candidate, re-measured 2026-09-09 against the
+240-vector corpus.** This is not a conforming runner and this document does not
+declare conformance. ER4 makes conformance a
 value-identical recomputation checked against an answer oracle that ER9 forbids
 a submitting runner from reading, so the cross-verification and the registry
 entry are upstream's to run and to record. What is here is one measurement plus
@@ -28,10 +29,16 @@ the boundary is recorded here and repeated verbatim in the submission file's
 * `erdl-spec.md` v2.1 and its English translation, sections 5 (the three
   writing projections, the 34-node kernel, the gloss templates), 7 (evaluation
   semantics, the E1 to E12 constraints, the deterministic-semantics rules) and
-  appendices A and B.
+  8 (serialization and canonicalization), and appendices A, B and E (the
+  34-node reference table, the Simple 30-operator reference table, and the
+  glossary).
 * `EXPRESSION-RUNNER-CONTRACT.md`, ER1 through ER9.
+* `CHANGELOG.md` in `OpenOBA/erdl-vectors`, for the v1.6.0 revision notes.
 * `v-engine-vectors.json`, for the vector shapes and the published compile
   targets. The file ships no expected values.
+* `scripts/verify-v-engine-submission.mjs` in `OpenOBA/erdl-vectors`, for the
+  envelope contract and its comparison rule only; it carries no node
+  semantics.
 * `submissions/README.md` in `OpenOBA/erdl-vectors`, for the shape of a
   submission envelope.
 
@@ -57,7 +64,7 @@ the non-dependency between Concordia and any other project is preserved.
 | Expression kernel | the 34 nodes in 10 groups: value, logic, comparison, set, string, existence and measure, quantifier, arithmetic, time, aggregate |
 | Simple compiler | the 30 operators, 28 conditions and 2 stateful modifiers, with the exists guard the specification's compile table requires |
 | Decision-table compiler | cells in the six comparison operators, in both the specification's row shape and the corpus's, compiled to a logical AND in column order, row order as precedence, the empty row to literal true, and the row decision checked against the section 6 enumeration |
-| gloss renderer | the frozen per-node templates, in both the English and the Chinese column |
+| gloss renderer | the frozen per-node templates from spec v2.1 section 5.5, English canonical, with the Chinese column kept as a presentation-only projection |
 | Constraints | E1 to E5 and E7 to E12 |
 
 Arithmetic runs on exact rationals (`fractions.Fraction`), with a single
@@ -79,7 +86,8 @@ conformance/erdl-expression-v1/
                  simple, gloss, temporal, results
   tests/         one module per node group, plus sentinels, limits, gloss,
                  submission format, and the whole-corpus run
-  output/        the generated submission file
+  output/        the generated submission file, plus the same measurement in
+                 the alternate decimal-string number encoding
 ```
 
 ## Running it
@@ -91,23 +99,29 @@ referenced by digest instead of vendored. Fetch it from
 Evaluate the corpus and print the counts:
 
 ```
-python3 conformance/erdl-expression-v1/runner.py /path/to/v-engine-vectors.json --date 2026-09-07
+python3 conformance/erdl-expression-v1/runner.py /path/to/v-engine-vectors.json --date 2026-09-09
 ```
 
 Regenerate the submission file:
 
 ```
 python3 conformance/erdl-expression-v1/runner.py /path/to/v-engine-vectors.json \
-  --date 2026-09-07 \
+  --date 2026-09-09 \
   --submission-out conformance/erdl-expression-v1/output/concordia-python-expression-output.json
 ```
 
-Two flags exist because the specification leaves two questions open, and both
-are recorded in RESULTS.md with the reading each default takes:
+Both flags below were opened by ambiguities the specification has since
+settled, and both are kept because the alternate form is still useful:
 
 * `--number-format {json-number,decimal-string}` selects how a reported number
-  is encoded (ambiguity A1). The envelope records which encoding it carries.
-* `--gloss-language {en,zh}` selects the gloss template column (ambiguity A4).
+  is encoded. Contract ER3 settles this on `json-number`, which is what the
+  submission carries; the envelope records which encoding it holds. The
+  decimal-string form is regenerated alongside it because the same repository's
+  CHANGELOG describes the oracle's numbers the other way, and a decimal string
+  is the only form that stays exact past `2**53 - 1`. See RESULTS.md A1.
+* `--gloss-language {en,zh}` selects the gloss template column. Spec v2.1 pins
+  section 5.5 to English as canonical, so `en` is what a reported value
+  carries and `zh` is a presentation projection. See RESULTS.md A4.
 
 ## Running the tests
 

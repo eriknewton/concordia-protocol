@@ -97,6 +97,11 @@ def test_e10_nfc_normalization_makes_the_two_encodings_meet() -> None:
     assert_true({"contains": [{"field": "s"}, precomposed]}, {"s": decomposed + " au lait"})
     # And the reverse direction, so the normalization is not one-sided.
     assert_true({"eq": [{"field": "s"}, decomposed]}, {"s": precomposed})
+    # `in` goes through the same _equal comparison as eq on each candidate
+    # (evaluator.py:94,176), so both sides of the membership check must
+    # NFC-normalize for the two encodings to meet here too.
+    assert_true({"in": [{"field": "s"}, [precomposed]]}, {"s": decomposed})
+    assert_true({"in": [{"field": "s"}, [decomposed]]}, {"s": precomposed})
 
 
 def test_e12_folds_an_error_to_false_and_never_to_true() -> None:

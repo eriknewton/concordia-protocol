@@ -25,8 +25,8 @@ from erdl_expr.simple import compile_decision_table, compile_simple
 #: SHA-256 of the exact corpus every number in `output/` and `RESULTS.md` was
 #: measured against. A different digest means the numbers describe a different
 #: input, so the test says so rather than quietly re-measuring.
-CORPUS_SHA256 = "bcfe424fdebaecee11ce81ce3097ccaee0d9db0cc99f5a2d9624f4b3c8bd9ac8"
-EXPECTED_TOTAL = 239
+CORPUS_SHA256 = "3ee30466cc6d95ddd99bc412cfc88b2f2dd3f890b8687b8f12043cc40074c902"
+EXPECTED_TOTAL = 240
 
 _PATH = os.environ.get("ERDL_V_ENGINE_VECTORS", "")
 pytestmark = pytest.mark.skipif(
