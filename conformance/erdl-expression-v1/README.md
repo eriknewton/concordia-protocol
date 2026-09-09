@@ -29,10 +29,16 @@ the boundary is recorded here and repeated verbatim in the submission file's
 * `erdl-spec.md` v2.1 and its English translation, sections 5 (the three
   writing projections, the 34-node kernel, the gloss templates), 7 (evaluation
   semantics, the E1 to E12 constraints, the deterministic-semantics rules) and
-  appendices A and B.
+  8 (serialization and canonicalization), and appendices A, B and E (the
+  34-node reference table, the Simple 30-operator reference table, and the
+  glossary).
 * `EXPRESSION-RUNNER-CONTRACT.md`, ER1 through ER9.
+* `CHANGELOG.md` in `OpenOBA/erdl-vectors`, for the v1.6.0 revision notes.
 * `v-engine-vectors.json`, for the vector shapes and the published compile
   targets. The file ships no expected values.
+* `scripts/verify-v-engine-submission.mjs` in `OpenOBA/erdl-vectors`, for the
+  envelope contract and its comparison rule only; it carries no node
+  semantics.
 * `submissions/README.md` in `OpenOBA/erdl-vectors`, for the shape of a
   submission envelope.
 

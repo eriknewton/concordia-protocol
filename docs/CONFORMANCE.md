@@ -238,5 +238,6 @@ pip install -e ".[dev]"
 npm ci --prefix conformance/reference-runner-js
 pip install pip-audit && pip-audit --requirement requirements.lock --ignore-vuln CVE-2026-4539
 pytest -v
+pytest conformance/erdl-expression-v1 -v
 bash scripts/test-floor.sh
 ```

@@ -44,7 +44,7 @@ evaluator's numeric model, its `errored` assignment or its folding changed.
 
 Fifteen English templates were reworded in the 2026-09-09 spec revision
 (`in`, `match`, `length`, `between`, `all`, `any`, `none`, `epoch_ms`,
-`date_add`, `date_part`, `var` and the five `aggregate` forms). Only five of
+`date_add`, `date_part` and the five `aggregate` forms). Only five of
 them are reachable from the twelve `V-GLOSS` vectors, but all fifteen were
 transcribed, and `tests/test_gloss.py` now pins the whole English table by
 full-set equality rather than by spot check, so a later drift fails a test
@@ -238,7 +238,10 @@ of them was settled by consulting the reference engine or the oracle.
 ### A3. Where the E12 error fold is taken
 
 * **Affects:** `V-ENGINE-not-003` and `V-ENGINE-exists-003` are the two vectors
-  that distinguish the readings; the fold applies to all 59 errored vectors.
+  that distinguish the readings; the fold applies to all 53 errored vectors
+  (see "Reported values" above: 24 `type_mismatch` + 6 `division_by_zero` + 6
+  `invalid_date` + 5 `not_an_array` + 5 `resource_limit` + 4 `arity` + 2
+  `regex_unsafe` + 1 `schema_violation` = 53).
 * **Reading 1 (chosen):** once, at the top of the evaluation. Any error folds
   the whole result to `false`.
 * **Reading 2:** at the erroring node, so evaluation continues around it. Under
@@ -263,9 +266,15 @@ of them was settled by consulting the reference engine or the oracle.
   question is gone. `--gloss-language zh` survives as that presentation
   projection and is still tested, but it is no longer a live reading of what a
   reported value carries.
-* **What did change:** the same revision reworded fifteen English templates to
-  match the reference renderer. Those are transcribed and pinned; see "What
-  changed since the 2026-09-07 measurement" above.
+* **What did change:** the same revision reworded fifteen English templates.
+  The spec's own revision-history line for this change reads: "§5.5 aligns
+  gloss template wording to the renderer" (`erdl-spec.en.md`, Revision
+  History, v2.1, 2026-09-09). That is the spec describing why upstream
+  changed the wording; this runner transcribed the resulting section 5.5
+  table from the spec text and never opened, read or consulted
+  `scripts/v-engine.mjs` or any other renderer to produce it. The fifteen
+  templates are transcribed and pinned; see "What changed since the
+  2026-09-07 measurement" above.
 * **Bound worth stating separately:** G3 requires gloss to use the Entity
   `display_name` rather than a raw field path. The corpus carries no Entity
   declarations, so there is no display name to substitute and the raw path is
@@ -503,9 +512,11 @@ of them was settled by consulting the reference engine or the oracle.
   needs to know. The empty-sum identity for `sum` and the zero for `count` are
   ordinary results rather than folds under section 7.3(e), so they record
   nothing.
-* **Effect on the envelope:** these 9 vectors are the only ones whose result
-  object changed in this round. Their `value` and `errored` are unchanged, so
-  the ER4 comparison surface is untouched.
+* **Effect on the envelope:** these 9 vectors are the warning attachments the
+  previous (2026-09-07) round added; they are not among the six result objects
+  that changed this round (see "What changed since the 2026-09-07
+  measurement" above). Their `value` and `errored` are unchanged, so the ER4
+  comparison surface is untouched.
 
 ### A17. Whether a warned-but-not-EvaluationError type mismatch sets `errored`
 
@@ -517,24 +528,37 @@ of them was settled by consulting the reference engine or the oracle.
   readings, so only `errored` is in question, and ER4 compares `errored`.
 * **Reading 1 (chosen, unchanged from the previous round):** `errored: true`.
   E3 now reads *"Evaluation errors are recorded as eval_warnings with
-  errored=true"*, which makes "records an eval_warning" and "is an evaluation
-  error" the same predicate. Section 7.3(a)'s new warning-asymmetry note is
-  then a statement of which cases are errors: comparison nodes and `between`
-  fold "silently (no warning)", whereas `in`, the string nodes, `length` and
-  `aggregate` "record a `type_mismatch` warning". Contract ER8 independently
-  names a non-array `aggregate` an evaluation error, and `aggregate` is in the
-  warned group, which is the one cross-check available.
+  errored=true"*. That sentence does not license the converse: "records an
+  eval_warning" and "is an evaluation error" are not the same predicate in
+  this runner's own envelope, which carries 16 warned, `errored: false`
+  safe-folds elsewhere (A16). What supports reading 1 for these five vectors
+  specifically is narrower: section 7.3(a)'s warning-asymmetry note states
+  that comparison nodes and `between` fold "silently (no warning)", whereas
+  `in`, the string nodes, `length` and `aggregate` "record a `type_mismatch`
+  warning", and contract ER8 independently names a non-array `aggregate` an
+  evaluation error, which is the one cross-check available for that vector.
+* **Complicating evidence:** `CHANGELOG.md` v1.6.0 (`erdl-vectors` commit
+  `97e0c00`) states the warning semantics as *"comparison / string
+  type-mismatch → silent false; quantifier over a missing field → silent
+  false (E11)"*. Four of the five affected vectors are string nodes
+  (`contains`, `starts_with`, `ends_with`, `length`), and this line reads them
+  into the same silent-false, `errored: false` group as comparisons, which is
+  reading 2, not reading 1. Only `aggregate-003` has the independent ER8
+  support cited above; the four string vectors rest on the section 7.3(a)
+  warning-asymmetry note alone, against this changelog line.
 * **Reading 2:** `errored: false` with the warning still recorded. Appendix E's
   new glossary row enumerates the errored-true cases as "division by zero /
   invalid date / arity / type-mismatched arithmetic", and a string or `length`
-  type mismatch is on none of those four.
+  type mismatch is on none of those four; the changelog line above reads the
+  same way for the string nodes.
 * **Why 1:** the glossary enumeration cannot be exhaustive, because ER8 places
   a non-array `aggregate` inside the errored set and the enumeration does not
   list it. Read as illustrative, the enumeration and E3 agree; read as
   exhaustive, it contradicts ER8. Reading 1 is the one that leaves no sentence
-  false, and it keeps a single predicate (a recorded warning) deciding
-  `errored`, rather than a per-node table that would have to be maintained by
-  hand on both sides.
+  in the contract false for `aggregate-003`; for the four string vectors it is
+  the weaker reading, held only because a per-node exception (string nodes
+  behave like comparisons, not like `in`) is not stated anywhere in the spec
+  or contract text read for this round.
 * **What would settle it:** one sentence saying whether "records a
   `type_mismatch` warning" implies `errored: true`, or naming the warned
   non-arithmetic nodes as errored-false.
@@ -552,10 +576,10 @@ of them was settled by consulting the reference engine or the oracle.
   arithmetic expression rather than a condition, and these five trees are
   value-producing expressions of exactly that shape; ER3 also lists "invalid
   date" among the errored cases, and an absent base is not a valid date.
-* **Reading 2:** `errored: false`, on ER3's "null/missing-field propagation
-  (E11) are normal false results, not errors". The spec's node taxonomy counts
-  time and arithmetic as separate groups, so the section 7.3(a) row about
-  "arithmetic" may not reach them.
+* **Reading 2:** `errored: false`, on ER4's "null/missing-field propagation
+  (E11) are normal false results, not errors" (`EXPRESSION-RUNNER-CONTRACT.md`
+  ER4). The spec's node taxonomy counts time and arithmetic as separate
+  groups, so the section 7.3(a) row about "arithmetic" may not reach them.
 * **Why 1:** the section 7.3(a) row is about the shape of the tree (expression
   versus condition), not about which of the ten node groups the operator was
   filed under, and a date computation is the same shape as an arithmetic one.
