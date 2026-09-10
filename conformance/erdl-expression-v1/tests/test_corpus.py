@@ -51,18 +51,13 @@ def test_every_vector_produces_a_well_formed_er3_result(document: dict[str, Any]
     for result in results:
         payload = result.as_object()
         assert set(payload) == {"value", "value_type", "errored", "warnings"}
-        # `value_type` is the string `"null"` only for an E4
-        # constraint-verification vector (RESULTS.md A21): it was never
-        # evaluated, so `value` is the literal `null` of "no result", not a
-        # folded boolean. It is the string `"null"`, not the JSON literal
-        # `None`/`null`, because that is what the oracle
-        # (`v-engine-answers.json`) itself emits -- confirmed by reading that
-        # file directly, since the erdl-vectors PR#3 CI log renders a real
-        # `null`-vs-`"null"` mismatch identically as `type=null≠null`.
-        assert payload["value_type"] in {"number", "string", "boolean", "null"}
+        # `value_type` is `None` only for an E4 constraint-verification
+        # vector (RESULTS.md A21): it was never evaluated, so `value` is the
+        # literal `null` of "no result", not a folded boolean.
+        assert payload["value_type"] in {"number", "string", "boolean", None}
         assert isinstance(payload["errored"], bool)
         assert isinstance(payload["warnings"], list)
-        if payload["value_type"] == "null":
+        if payload["value_type"] is None:
             assert payload["value"] is None
             assert payload["errored"] is False
         if payload["value_type"] == "boolean":

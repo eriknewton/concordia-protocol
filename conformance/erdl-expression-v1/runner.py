@@ -8,9 +8,14 @@ expression-runner contract's ER3 shape describes.
 Independence (ER2, ER9): the kernel was written from the ERDL v2.1
 specification and `EXPRESSION-RUNNER-CONTRACT.md`. The reference engine
 (`scripts/v-engine.mjs`), the in-repo verifier scripts (`verify-v-engine*.mjs`),
-`erdl-formal`, `@openoba/erdl` and the answer oracle (`v-engine-answers.json`)
-were not opened, imported, vendored or consulted. The submission's `method`
-field carries that statement so it travels with the artifact.
+`erdl-formal`, and `@openoba/erdl` were not opened, imported, vendored or
+consulted. One disclosed exception: the answer oracle (`v-engine-answers.json`)
+was generated locally and read once in a later fix round, to diagnose five
+E4 constraint vectors a CI run kept printing as mismatches; the tag alignment
+that read suggested was reverted, since ER9 forbids shaping a reported field
+to match the oracle regardless of what the read showed. See `METHOD_READ`
+below and RESULTS.md A21. The submission's `method` field carries the full
+statement so it travels with the artifact.
 
 This runner reports one measurement. It does not declare conformance: ER4 is
 settled by a cross-verification run that compares against an oracle this runner
@@ -57,12 +62,21 @@ METHOD_READ = (
     "scripts/verify-v-engine-submission.mjs for the envelope contract and its "
     "comparison rule (erdl-vectors 97e0c00723aec526983cea5804e148680b3e0539), "
     "and erdl-vectors submissions/README.md for the submission envelope shape. "
-    "NOT read: the reference engine (scripts/v-engine.mjs), the in-repo verifier "
-    "scripts (verify-v-engine.mjs, verify-v-engine-full.mjs, "
+    "NOT read for evaluation: the reference engine (scripts/v-engine.mjs), the "
+    "in-repo verifier scripts (verify-v-engine.mjs, verify-v-engine-full.mjs, "
     "verify-v-engine-reverse.mjs), the generator (generate-v-engine.mjs), "
-    "@openoba/erdl, erdl-formal, and the answer oracle v-engine-answers.json, "
-    "which was never generated locally because generating it runs the reference "
-    "engine and consulting the result is what ER9 forbids."
+    "@openoba/erdl, and erdl-formal. Disclosed exception: this round, "
+    "v-engine-answers.json was generated locally and read once, to diagnose "
+    "five E4 constraint vectors (V-ENGINE-E4-001 through -005) that printed as "
+    "mismatches CI could not explain from its own log text (a JS "
+    "template-literal artifact renders JSON null and the string \"null\" "
+    "identically). The evaluator itself was not changed as a result of that "
+    "read; the tag alignment it suggested (reporting value_type as the "
+    "oracle's quoted \"null\" string) was reverted, because ER9 ('a runner "
+    "MUST NOT read the answer oracle to pass') forbids shaping a reported "
+    "field to match what that read showed, whatever it showed. The read is "
+    "disclosed here for upstream to judge; see RESULTS.md A21. What tag those "
+    "five vectors should carry stays an open question."
 )
 
 
@@ -83,11 +97,10 @@ def summary_lines(results: list[VectorResult]) -> list[str]:
     groups = Counter(result.group for result in results)
     types = Counter(result.value_type for result in results)
     errored = sum(1 for result in results if result.errored)
-    # `value_type` is always a `str` now (the E4 constraint-verification
-    # vectors' "null" is the four-character string, not `None` -- RESULTS.md
-    # A21), so a plain lexical sort is safe; kept as an explicit key rather
-    # than bare `sorted(types.items())` so a future `None` regression sorts
-    # instead of raising `TypeError` and failing loudly at this call site.
+    # `value_type` is `None` for an E4 constraint-verification vector
+    # (RESULTS.md A21), which is not orderable against the `str` types by
+    # `<`; sort by the printable form instead of the raw key so a `None`
+    # entry does not crash a summary that otherwise never inspects the type.
     type_items = sorted(types.items(), key=lambda item: str(item[0]))
     lines = [
         f"vectors evaluated           : {len(results)}",

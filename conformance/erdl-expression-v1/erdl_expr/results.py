@@ -1,13 +1,10 @@
 """Turn each corpus vector into the ER3 result object, and serialize the file.
 
 ER3 fixes the shape: `{value, value_type, errored, warnings}` with `value_type`
-one of number, string or boolean. A fourth tag, the string `"null"`, reports
-an E4 constraint-verification vector that was never evaluated at all
-(RESULTS.md A21); the contract's ER3 schema line does not name this shape, so
-the runner follows the oracle's own observable choice rather than inventing
-one. ER4 compares `value` (a scale-14 fixed-point integer for a number, byte
-equality after NFC for a string) and `errored`; `warnings` is not part of the
-equality criteria, so the codes here are diagnostic.
+one of number, string or boolean. ER4 compares `value` (a scale-14 fixed-point
+integer for a number, byte equality after NFC for a string) and `errored`;
+`warnings` is not part of the equality criteria, so the codes here are
+diagnostic.
 
 A value outside the three reportable types is folded rather than invented. An
 array, an object, a JSON null and the missing-field sentinel all fold to
@@ -57,22 +54,27 @@ _SENTINEL_PATTERN: Final[re.Pattern[str]] = re.compile(
 class VectorResult:
     """One vector's ER3 result plus the bookkeeping the report needs.
 
-    `value_type` is the literal string `"null"` only for an E4
-    constraint-verification vector (RESULTS.md A21): it was never evaluated,
-    so it has no reportable type, which is a different condition from an
-    evaluated `value_type: "boolean"` result of `false`. The string (not the
-    JSON literal `null`) is what `v-engine-answers.json` itself emits for
-    these vectors, confirmed by reading that file directly; a JSON `null`
-    here looked equivalent in a JS template-literal log line
-    (`${null}` and `${"null"}` both print as `null`) but is `!==` under the
-    verifier's `actual.value_type === expected.value_type` check.
+    `value_type` is `None` only for an E4 constraint-verification vector
+    (RESULTS.md A21): it was never evaluated, so it has no reportable type,
+    which is a different condition from an evaluated `value_type: "boolean"`
+    result of `false`. The contract's ER3 schema line names only
+    number/string/boolean for an evaluated result and states no shape for a
+    constraint vector at all, so JSON `null` is the contract-blind reading
+    here, not a copy of the oracle's own choice: a fix round read
+    `v-engine-answers.json` directly, found it emits this tag as the quoted
+    string `"null"`, and aligned this field to that string, which ER9 ("a
+    runner MUST NOT read the answer oracle to pass") rules out regardless of
+    what the file said. That alignment is reverted; the read is disclosed in
+    `METHOD_READ` and RESULTS.md A21, and what tag an E4 constraint vector
+    should carry is left an open question for upstream to settle from text,
+    not from the oracle.
     """
 
     vector_id: str
     category: str
     group: str
     value: Value
-    value_type: str
+    value_type: str | None
     errored: bool
     warnings: tuple[str, ...]
 
@@ -85,22 +87,22 @@ class VectorResult:
         }
 
 
-def _report(outcome: Outcome) -> tuple[Value, str, bool, tuple[str, ...]]:
+def _report(outcome: Outcome) -> tuple[Value, str | None, bool, tuple[str, ...]]:
     """Fold one evaluation outcome into the ER3 reportable domain."""
     if outcome.not_evaluated:
         # EXPRESSION-RUNNER-CONTRACT.md (b56c1c2) "Constraint vectors
         # (E4/E5)": an E4 rejection's `expected` "records whether the
         # constraint was correctly detected/triggered ... not an evaluation
-        # result", so `value` is reported as a literal null rather than
+        # result", so it is reported as a literal null value/type rather than
         # routed through the errored fold or the missing-value fold below,
-        # both of which describe something that was actually evaluated.
-        # `value_type` is the STRING "null", not the JSON literal null: the
-        # oracle (`v-engine-answers.json`) emits it quoted, confirmed by
-        # reading that file directly, not by the erdl-vectors PR#3 CI log
-        # line alone (a JS template literal renders `null` and `"null"`
-        # identically, so `type=null≠null` in that log is a real mismatch
-        # hiding behind matching-looking text). RESULTS.md A21.
-        return None, "null", False, outcome.warnings
+        # both of which describe something that was actually evaluated. The
+        # `value_type` tag stays JSON `null`, not a quoted string: a prior
+        # round read `v-engine-answers.json` directly and aligned this tag to
+        # the oracle's own `"null"` string, which ER9 forbids regardless of
+        # what the file said; that alignment is reverted, the read stays
+        # disclosed in `METHOD_READ`, and the correct tag for an E4
+        # constraint vector is left open for upstream. RESULTS.md A21.
+        return None, None, False, outcome.warnings
     if outcome.errored:
         return False, "boolean", True, outcome.warnings
     value = outcome.value

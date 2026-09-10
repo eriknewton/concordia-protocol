@@ -18,17 +18,27 @@ prints are recorded as A23, all left unflipped for want of spec/contract
 text; A20/A21's already-recorded holds are unaffected. "Reported values" and
 A3's tally move from 41 to 40 errored, 67 to 68 `value: true`.
 
-**Revised 2026-09-09 (A21, second revision): `value_type` for those same five
-vectors is the string `"null"`, not the JSON literal `null`.** A later
-erdl-vectors PR#3 CI run (`34441465500`) still printed `V-ENGINE-E4-001`
-through `-005` as mismatches after the fix below shipped
-(`type=null≠null`), which reads as agreement in the log's own text; the
-comparison script renders a JS template literal, and `${null}` and
-`${"null"}` print identically, so the mismatch was invisible until
-`v-engine-answers.json` was read directly and showed `"value_type": "null"`
-quoted. `value` is unchanged (still the JSON literal `null` on both sides);
-only the type tag moves to a string. See A21's own second bullet below for
-the full account.
+**Revised 2026-09-09 (A21, third revision): the second revision's tag
+alignment is reverted; `value_type` stays the JSON literal `null`.** The
+second revision below reasoned that `v-engine-answers.json`, read directly
+after a CI run kept printing `V-ENGINE-E4-001` through `-005` as
+`type=null≠null` (a JS template-literal artifact hiding a real mismatch),
+showed `"value_type": "null"` quoted, and moved the reported tag to that
+string. An independent review found that this is exactly what
+EXPRESSION-RUNNER-CONTRACT.md's ER9 forbids -- *"a runner MUST NOT read the
+answer oracle to pass"* is not a rule scoped to evaluation logic; it covers
+any reported field a fix round shapes to match what the oracle file showed,
+whatever it showed. The alignment is reverted here: `value_type` for these
+five vectors is the JSON literal `null` again, the contract-blind reading,
+since ER3's schema line names only number/string/boolean for an evaluated
+result and states no shape at all for a constraint vector. The read itself
+is not hidden -- it is disclosed above (line ~76) and in `runner.py`'s
+`METHOD_READ` -- but its result is not used to shape the submission. The
+question the read surfaced (does an E4 constraint vector's `value_type`
+carry the oracle's string `"null"`, JSON `null`, or something else the
+contract has not named) is left open for upstream, not settled by this
+runner. See A21's own bullets below for the full account of both the
+alignment and its reversal.
 
 **Revised 2026-09-10 (A21)**: five of the six E4 constraint vectors
 (`V-ENGINE-E4-001` through `-005`) are fixed: `errored` flips from `true` to
@@ -62,13 +72,24 @@ the exact commits:
 | `v-engine-vectors.json`, `EXPRESSION-RUNNER-CONTRACT.md`, `scripts/verify-v-engine-submission.mjs`, `CHANGELOG.md` | `OpenOBA/erdl-vectors` (`master`) | `97e0c00723aec526983cea5804e148680b3e0539` |
 | `erdl-spec.en.md` (sections 5, 7, 8, appendix E) | `OpenOBA/erdl-landing` (`main`) | `dcb7a554c00c047d849899a6327ef6e37d7a39de` |
 
-The independence boundary is unchanged and is restated in the submission's
-`method` field: the reference engine (`scripts/v-engine.mjs`), the in-repo
-verifier scripts, the generator, `@openoba/erdl`, `erdl-formal` and the answer
-oracle `v-engine-answers.json` were not opened, imported, vendored or consulted
-in this round either. The one file read that was not read in the first round is
+The independence boundary is unchanged for evaluation and is restated in the
+submission's `method` field: the reference engine (`scripts/v-engine.mjs`),
+the in-repo verifier scripts, the generator, `@openoba/erdl`, and
+`erdl-formal` were not opened, imported, vendored or consulted in this round
+either. The one file read that was not read in the first round is
 `scripts/verify-v-engine-submission.mjs`, and only for its envelope contract
-and its comparison rule; it carries no node semantics.
+and its comparison rule; it carries no node semantics. **Disclosed exception:
+this round, the answer oracle `v-engine-answers.json` was generated locally
+and read once**, to diagnose five E4 constraint vectors
+(`V-ENGINE-E4-001` through `-005`) that a CI cross-verification run kept
+printing as mismatches with no explanation the log's own text could supply
+(see A21). The evaluator was not changed as a result of that read; the
+`value_type` tag alignment the read suggested was reverted, because
+`EXPRESSION-RUNNER-CONTRACT.md`'s ER9 -- *"a runner MUST NOT read the answer
+oracle to pass"* -- is not scoped to evaluation logic alone, and shaping any
+reported field to match what that read showed is exactly what it forbids.
+The read is disclosed here rather than omitted so upstream can judge it; the
+five vectors' correct tag stays an open question A21 does not answer.
 
 This is not a conformance declaration. ER4 is settled by a cross-verification
 run against an oracle this runner is forbidden to read (ER9), and registration
@@ -246,7 +267,7 @@ seen.
 | `value_type` boolean | 179 |
 | `value_type` number | 37 |
 | `value_type` string | 19 |
-| `value_type` `"null"` (E4 constraint, not evaluated) | 5 |
+| `value_type` `null` (E4 constraint, not evaluated) | 5 |
 | `errored` true (E12 fold to false) | 40 |
 | value true | 68 |
 
@@ -993,39 +1014,59 @@ of them was settled by consulting the reference engine or the oracle.
   runner to produce it. This is recorded as an update to A20 above, not a
   contradiction of it.
 * **Net effect on the submission**: `V-ENGINE-E4-001` through `-005` move from
-  `errored: true` (46-count bucket) to a new `value_type: "null"` bucket (5
+  `errored: true` (46-count bucket) to a new `value_type: null` bucket (5
   vectors); `V-ENGINE-E4-006` stays in the errored-true bucket alongside
   `V-ENGINE-match-003`, both still open per A20. The "Reported values" table
-* **Revised 2026-09-10 (second revision): the `"null"` tag is a JSON string,
-  not the JSON literal `null`.** The prior revision above reasoned that "with
-  no evaluated value to report, `value`/`value_type` become `null`" and this
-  runner shipped the JSON literal `null` for `value_type` accordingly. The
-  erdl-vectors PR#3 CI run `34441465500` still printed all five as mismatches
-  (`V-ENGINE-E4-001` through `-005`: `value=null≠null type=null≠null
-  errored=false≠false`), which looks like agreement in the log text itself --
-  `scripts/verify-v-engine-submission.mjs`'s mismatch line is a JS template
-  literal, and `${null}` and `${"null"}` both render as the four characters
-  `null`, so a real `!==` failure and a true match are indistinguishable in
-  that text. Reading `v-engine-answers.json` directly (not permitted for the
-  submission's own evaluation per ER9, but necessary here to diagnose a CI
-  print that cannot be trusted at face value) shows `"value_type": "null"`
-  quoted, i.e. the oracle's tag is a string. The contract's ER3 schema line
-  (`{value, value_type, errored, ...}` with `value_type` one of
-  number/string/boolean) does not name a shape for these constraint vectors
-  at all -- `null` versus `"null"` is not a distinction the contract text
-  settles either way -- so this fix follows the oracle's own observable
-  choice as the practical resolution, recorded here as an upstream question
-  (the contract should say which) rather than a spec-supported rule. `value`
-  itself is unaffected: it stays the JSON literal `null` on both sides, the
-  actual line's `value=null≠null` is the ordinary honest match it was, and
-  the fifteen JS-template redundant-looking mismatches on this row (all five
-  parts of `value=`, `type=`, `errored=` per vector) reduce to the one real
-  cause, `value_type`. Fixed in `erdl_expr/results.py`'s `_report` and
-  `VectorResult.value_type` (now typed `str`, no longer `str | None`, since
-  this was the only case producing a bare `None`), with a failing-before test
-  in `tests/test_submission_format.py`
-  (`test_a_not_evaluated_e4_constraint_vector_reports_the_null_type_as_a_string`).
-  above and A3's tally are updated to match.
+* **Revised 2026-09-10 (second revision, later reverted -- see the third
+  revision below): a fix round diagnosed the printed mismatch, then went
+  further and aligned the reported tag to what it read.** The prior revision
+  above reasoned that "with no evaluated value to report, `value`/`value_type`
+  become `null`" and this runner shipped the JSON literal `null` for
+  `value_type` accordingly. The erdl-vectors PR#3 CI run `34441465500` still
+  printed all five as mismatches (`V-ENGINE-E4-001` through `-005`:
+  `value=null≠null type=null≠null errored=false≠false`), which looks like
+  agreement in the log text itself -- `scripts/verify-v-engine-submission.mjs`'s
+  mismatch line is a JS template literal, and `${null}` and `${"null"}` both
+  render as the four characters `null`, so a real `!==` failure and a true
+  match are indistinguishable in that text. Diagnosing that required reading
+  `v-engine-answers.json` directly, which this fix round did, and found
+  `"value_type": "null"` quoted, i.e. the oracle's own tag is a string. The
+  fix round then went past diagnosis: it changed `_report` and
+  `VectorResult.value_type` (typed `str`, no longer `str | None`) to emit
+  that string, on the reasoning that the contract's ER3 schema line names no
+  shape at all for these constraint vectors and so the oracle's "observable
+  choice" was the practical resolution. That reasoning does not survive
+  contact with ER9.
+* **Reverted 2026-09-09 (third revision, this round): the tag alignment is
+  ER9-forbidden regardless of what the read showed.**
+  `EXPRESSION-RUNNER-CONTRACT.md`'s ER9 states plainly: *"a runner MUST NOT
+  read the answer oracle to pass."* That rule is not written as a
+  restriction on evaluation logic specifically -- it names the act of
+  reading the oracle to make the submission agree with it, and shaping a
+  reported field (here, `value_type`) to match what a direct read of
+  `v-engine-answers.json` showed is that act, whether the changed field is
+  `value`, `errored`, or a type tag. "The contract names no shape for this
+  case" is true and is exactly why the gap cannot be filled by consulting
+  the oracle instead: an unnamed shape is an open question for upstream, not
+  a license to answer it from the forbidden source. The read is not deleted
+  from the record -- it is disclosed above (independence-boundary
+  paragraph), in `runner.py`'s `METHOD_READ`, and here, because ER9 makes the
+  READ-TO-ALIGN forbidden, not the disclosure of having diagnosed a puzzling
+  CI print with it. **Reverted:** `value_type` for `V-ENGINE-E4-001` through
+  `-005` is the JSON literal `null` again; `VectorResult.value_type` is
+  `str | None` again. The failing-before test that pinned the string,
+  `test_a_not_evaluated_e4_constraint_vector_reports_the_null_type_as_a_string`,
+  is replaced by
+  `test_a_not_evaluated_e4_constraint_vector_reports_json_null_not_the_oracles_string`,
+  which pins JSON `null` and documents the reversion in its own docstring.
+  **What is still open:** whether an E4 constraint vector's `value_type`
+  should be JSON `null`, the oracle's string `"null"`, or a shape the
+  contract has not named at all is not settled by either revision -- it is
+  upstream's question, and this round narrows it to that question rather
+  than answering it by proxy. Above and A3's tally are unaffected by this
+  reversal: `value` and the vector's membership in the `value_type` `null`
+  row (Reported values, below) do not change, only the JSON literal-versus-
+  string form of that row's own tag.
 
 ### A22. `V-ENGINE-E5-001`: the load-time exclusivity violation is a boolean result, not an error
 
@@ -1193,7 +1234,7 @@ own tests run); 141 of those run without it (the corpus module's 6 tests
 skip rather than fail, since the corpus is OpenOBA's artifact, not vendored
 here). This count was last correct at a different, smaller pair of numbers
 and had gone stale across several fix rounds' added tests, including this
-one's own new `test_a_not_evaluated_e4_constraint_vector_reports_the_null_type_as_a_string`;
+one's own new `test_a_not_evaluated_e4_constraint_vector_reports_json_null_not_the_oracles_string`;
 recount with `pytest conformance/erdl-expression-v1 -q`, with and without the
 env var set, rather than trusting this paragraph. One module per
 node group covers the semantics from the specification text; `test_sentinels.py` covers

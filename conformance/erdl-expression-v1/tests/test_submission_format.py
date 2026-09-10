@@ -129,21 +129,21 @@ def test_an_exact_integer_beyond_the_double_range_is_a_reader_side_bound() -> No
     assert quoted["results"]["T1"]["value"] == "1000000000000000000001"
 
 
-def test_a_not_evaluated_e4_constraint_vector_reports_the_null_type_as_a_string() -> None:
-    """RESULTS.md A21 (revised 2026-09-10, second revision): the oracle
-    (`v-engine-answers.json`) reports `value_type: "null"` as the JSON
-    *string* `"null"`, not the JSON literal `null`, for an E4
-    constraint-verification vector that was never evaluated. erdl-vectors
-    PR#3 CI run `34441465500` prints `V-ENGINE-E4-001` through `-005` as
-    `type=null≠null` -- a JS template-literal artifact: `${null}` and
-    `${"null"}` both render as the four characters `null`, so a real
-    mismatch (this runner's JSON `null` against the oracle's JSON string
-    `"null"`) is invisible in the log's own text and has to be confirmed by
-    reading `v-engine-answers.json` directly (`"value_type": "null"`, quoted,
-    at the `V-ENGINE-E4-001` entry). `value` itself stays the JSON literal
-    `null`; only the type tag is a string, because JSON's type system has no
-    separate null-type tag to name a fourth reportable domain alongside
-    number/string/boolean, and `"null"` is the label the oracle chose for it.
+def test_a_not_evaluated_e4_constraint_vector_reports_json_null_not_the_oracles_string() -> None:
+    """RESULTS.md A21: this stays the JSON literal `null` for both `value`
+    and `value_type` on an E4 constraint-verification vector that was never
+    evaluated, even though reading `v-engine-answers.json` directly (a prior
+    fix round did, then reverted the read's effect) shows the oracle reports
+    `value_type` as the quoted *string* `"null"`. The contract's ER3 schema
+    line names only number/string/boolean for an evaluated result and states
+    no shape at all for a constraint vector, so there is no contract text
+    that would make the string the correct tag; the only source for it was
+    the oracle file itself, and ER9 ("a runner MUST NOT read the answer
+    oracle to pass") forbids shaping a reported field to match what that read
+    showed, whatever it showed. This pins the contract-blind reading (JSON
+    `null`) rather than the read-aligned one, and leaves what the E4 tag
+    should be an open question for upstream, not something this runner
+    infers from the oracle.
     """
     vector = {
         "id": "T1", "category": "V-ENGINE", "node_group": "logic",
@@ -151,7 +151,7 @@ def test_a_not_evaluated_e4_constraint_vector_reports_the_null_type_as_a_string(
     }
     result = evaluate_vector(vector)
     assert result.value is None
-    assert result.value_type == "null"
+    assert result.value_type is None
     payload = json.loads(_envelope([result]))
     assert payload["results"]["T1"]["value"] is None
-    assert payload["results"]["T1"]["value_type"] == "null"
+    assert payload["results"]["T1"]["value_type"] is None
