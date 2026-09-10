@@ -55,6 +55,24 @@ def assert_errored(tree: Any, fact: dict[str, Any] | None = None, code: str | No
         assert code in outcome.warnings, outcome.warnings
 
 
+def assert_warned_not_errored(tree: Any, fact: dict[str, Any] | None, code: str) -> None:
+    """A17 (erdl-vectors discussion #2031, spec §7.3(a) fixed at fb428b7): a
+    string-family, `length`, or `aggregate` type mismatch folds to false and
+    records the warning, but is NOT an evaluation error.
+
+    All three are asserted, the same way `assert_errored` asserts both halves
+    of its own predicate: `errored` distinguishes this from `assert_errored`'s
+    class (a raised `EvalError`), `value` distinguishes it from a plain
+    `assert_false` (a false that happens to record nothing), and the warning
+    distinguishes it from every other silent-false fold (comparison, `between`)
+    that A17 explicitly leaves alone.
+    """
+    outcome = run(tree, fact)
+    assert outcome.errored is False, outcome.warnings
+    assert outcome.value is False
+    assert code in outcome.warnings, outcome.warnings
+
+
 def assert_number(tree: Any, expected: str, fact: dict[str, Any] | None = None) -> None:
     outcome = run(tree, fact)
     assert outcome.errored is False, outcome.warnings

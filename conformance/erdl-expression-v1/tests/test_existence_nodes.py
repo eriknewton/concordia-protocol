@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from .helpers import assert_errored, assert_false, assert_number, assert_true
+from .helpers import (
+    assert_false,
+    assert_number,
+    assert_true,
+    assert_warned_not_errored,
+)
 
 
 def test_exists_is_present_and_not_null() -> None:
@@ -34,8 +39,11 @@ def test_length_of_a_missing_field_is_zero() -> None:
     assert_number({"length": {"field": "missing"}}, "0", {})
 
 
-def test_length_of_a_number_is_a_type_mismatch() -> None:
-    assert_errored({"length": {"field": "n"}}, {"n": 42}, "type_mismatch")
+def test_length_of_a_number_is_warned_not_errored() -> None:
+    # A17 settled this (RESULTS.md, spec section 7.3(a)): a non-string,
+    # non-array `length` operand is a warned type mismatch, not an
+    # EvaluationError.
+    assert_warned_not_errored({"length": {"field": "n"}}, {"n": 42}, "type_mismatch")
 
 
 def test_between_is_a_closed_numeric_interval() -> None:

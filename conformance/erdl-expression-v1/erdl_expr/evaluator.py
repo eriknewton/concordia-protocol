@@ -403,7 +403,21 @@ class Evaluator:
         if isinstance(subject, Undefined):
             return self._missing()
         if not isinstance(subject, str) or not isinstance(pattern, str):
-            raise EvalError(TYPE_MISMATCH, f"{op} takes two strings")
+            if op == "match":
+                # `match` is not part of the A17 settlement below: no vector
+                # exercises a regex-pattern type mismatch, and staying an
+                # EvaluationError here is the pre-A17 behavior this fix does
+                # not touch.
+                raise EvalError(TYPE_MISMATCH, f"{op} takes two strings")
+            # Upstream settled A17 (erdl-vectors discussion #2031, spec
+            # §7.3(a) fixed at fb428b7): a string-family type mismatch on
+            # contains/starts_with/ends_with is warned, not an
+            # EvaluationError. Record the warning and fold this node to
+            # false rather than raising, so E12's error fold never triggers
+            # for it; comparison/`between` stay silently false with no
+            # warning, and this must not touch `match` above.
+            self._record(TYPE_MISMATCH)
+            return False
         if op == "contains":
             return pattern in subject
         if op == "starts_with":
@@ -429,7 +443,7 @@ class Evaluator:
         # null do not.
         return not (isinstance(value, Undefined) or value is None)
 
-    def _length(self, payload: Any) -> Fraction:
+    def _length(self, payload: Any) -> Value:
         value = self.evaluate(payload)
         if isinstance(value, Undefined):
             # Section 5.2 states length(missing) = 0 explicitly, and names it as
@@ -440,7 +454,15 @@ class Evaluator:
         if isinstance(value, list):
             check_array_bound(len(value), "length")
             return Fraction(len(value))
-        raise EvalError(TYPE_MISMATCH, "length takes a string or an array")
+        # A17 (erdl-vectors discussion #2031, spec §7.3(a) fixed at
+        # fb428b7): a non-string, non-array operand is a warned type
+        # mismatch, not an EvaluationError, so it must not reach E12's
+        # error fold. Record the warning and fold to false in place,
+        # matching the string-family and aggregate settlement of the same
+        # ambiguity; time nodes are the stated exception (A18) and are
+        # untouched.
+        self._record(TYPE_MISMATCH)
+        return False
 
     def _between(self, payload: Any) -> bool:
         subject_node, low_node, high_node = self._operands(payload, 3, "between")
@@ -614,7 +636,16 @@ class Evaluator:
         numbers: list[Fraction] = []
         for item in items:
             if not is_number(item):
-                raise EvalError(TYPE_MISMATCH, f"{function} over a non-numeric element")
+                # A17 (erdl-vectors discussion #2031, spec §7.3(a) fixed at
+                # fb428b7): a non-numeric element inside an otherwise valid
+                # `over` array is a warned type mismatch, not an
+                # EvaluationError, so it must not reach E12's error fold.
+                # Record the warning and fold this aggregate to false in
+                # place. This does not extend to a missing/non-array
+                # `over` above (section 7.3(e) names that case explicitly
+                # and it is out of scope for A17).
+                self._record(TYPE_MISMATCH)
+                return False
             assert isinstance(item, Fraction)
             numbers.append(item)
         if function == "sum":

@@ -526,7 +526,19 @@ of them was settled by consulting the reference engine or the oracle.
   `V-ENGINE-contains-003`, `-starts_with-003`, `-ends_with-003`,
   `-length-003`, `-aggregate-003`. Their `value` is `false` under both
   readings, so only `errored` is in question, and ER4 compares `errored`.
-* **Reading 1 (chosen, unchanged from the previous round):** `errored: true`.
+* **SETTLED 2026-09-09 by the upstream maintainer (reading 2 adopted).**
+  haoran-tang-ch, A2A discussion #2031
+  (https://github.com/a2aproject/A2A/discussions/2031#discussioncomment-18375034):
+  the reference engine's authority is `errored: false` with the
+  `type_mismatch` warning still recorded; these nodes are warned, not silent;
+  only comparison and `between` are silent. Spec section 7.3(a) now carries an
+  explicit clause (upstream `fb428b7`) and the v1.6.0 changelog line was
+  corrected (`34f47df`). The runner was changed accordingly (`evaluator.py`,
+  `_string`, `_length`, `_aggregate`) and the five vectors now report
+  `errored: false`; the submission was regenerated with exactly those five
+  entries changed. The reasoning below is kept as the record of why reading 1
+  was held before the clause existed.
+* **Reading 1 (held until settled):** `errored: true`.
   E3 now reads *"Evaluation errors are recorded as eval_warnings with
   errored=true"*. That sentence does not license the converse: "records an
   eval_warning" and "is an evaluation error" are not the same predicate in

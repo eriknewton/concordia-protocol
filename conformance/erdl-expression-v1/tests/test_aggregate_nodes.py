@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .helpers import assert_errored, assert_false, assert_number, dec
+from .helpers import assert_errored, assert_false, assert_number, assert_warned_not_errored, dec
 
 
 def test_the_five_aggregate_functions() -> None:
@@ -41,5 +41,10 @@ def test_a_missing_over_is_a_type_mismatch_and_differs_from_an_empty_array() -> 
     assert_errored({"sum": {"field": "n"}}, {"n": 5}, "type_mismatch")
 
 
-def test_a_non_numeric_member_is_a_type_mismatch() -> None:
-    assert_errored({"min": {"field": "n"}}, {"n": [1, "x", 3]}, "type_mismatch")
+def test_a_non_numeric_member_is_warned_not_errored() -> None:
+    # A17 settled this (RESULTS.md, spec section 7.3(a)): a non-numeric
+    # element inside an otherwise valid `over` array is a warned type
+    # mismatch, not an EvaluationError. This is distinct from the
+    # missing/non-array `over` case just above, which section 7.3(e) names
+    # explicitly and which A17 does not touch.
+    assert_warned_not_errored({"min": {"field": "n"}}, {"n": [1, "x", 3]}, "type_mismatch")
