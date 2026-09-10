@@ -64,6 +64,14 @@ def assert_constraint_violated(tree: Any, fact: dict[str, Any] | None, code: str
     `assert_warned_not_errored`'s evaluated-and-warned `false` either. All
     three are asserted so a runner that quietly reused one of those two
     shapes for an E4 rejection is caught here.
+
+    This checks `Outcome.value`/`not_evaluated`, which stay Python `None`/
+    `True` regardless; `Outcome` carries no `value_type` field at all. The
+    `value_type: "null"` string tag (RESULTS.md A21, revised) is assigned one
+    layer up, in `erdl_expr.results._report`, when an `Outcome` is folded
+    into a `VectorResult` -- see `tests/test_submission_format.py`'s
+    `test_a_not_evaluated_e4_constraint_vector_reports_the_null_type_as_a_string`
+    for that layer's own assertion.
     """
     outcome = run(tree, fact)
     assert outcome.errored is False, outcome.warnings

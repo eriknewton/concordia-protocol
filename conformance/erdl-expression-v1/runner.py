@@ -83,10 +83,11 @@ def summary_lines(results: list[VectorResult]) -> list[str]:
     groups = Counter(result.group for result in results)
     types = Counter(result.value_type for result in results)
     errored = sum(1 for result in results if result.errored)
-    # `value_type` is `None` for an E4 constraint-verification vector
-    # (RESULTS.md A21), which is not orderable against the `str` types by
-    # `<`; sort by the printable form instead of the raw key so a `None`
-    # entry does not crash a summary that otherwise never inspects the type.
+    # `value_type` is always a `str` now (the E4 constraint-verification
+    # vectors' "null" is the four-character string, not `None` -- RESULTS.md
+    # A21), so a plain lexical sort is safe; kept as an explicit key rather
+    # than bare `sorted(types.items())` so a future `None` regression sorts
+    # instead of raising `TypeError` and failing loudly at this call site.
     type_items = sorted(types.items(), key=lambda item: str(item[0]))
     lines = [
         f"vectors evaluated           : {len(results)}",

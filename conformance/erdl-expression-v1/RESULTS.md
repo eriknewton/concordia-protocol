@@ -18,6 +18,18 @@ prints are recorded as A23, all left unflipped for want of spec/contract
 text; A20/A21's already-recorded holds are unaffected. "Reported values" and
 A3's tally move from 41 to 40 errored, 67 to 68 `value: true`.
 
+**Revised 2026-09-09 (A21, second revision): `value_type` for those same five
+vectors is the string `"null"`, not the JSON literal `null`.** A later
+erdl-vectors PR#3 CI run (`34441465500`) still printed `V-ENGINE-E4-001`
+through `-005` as mismatches after the fix below shipped
+(`type=null≠null`), which reads as agreement in the log's own text; the
+comparison script renders a JS template literal, and `${null}` and
+`${"null"}` print identically, so the mismatch was invisible until
+`v-engine-answers.json` was read directly and showed `"value_type": "null"`
+quoted. `value` is unchanged (still the JSON literal `null` on both sides);
+only the type tag moves to a string. See A21's own second bullet below for
+the full account.
+
 **Revised 2026-09-10 (A21)**: five of the six E4 constraint vectors
 (`V-ENGINE-E4-001` through `-005`) are fixed: `errored` flips from `true` to
 `false` and `value`/`value_type` flip from `false`/`boolean` to a literal
@@ -234,7 +246,7 @@ seen.
 | `value_type` boolean | 179 |
 | `value_type` number | 37 |
 | `value_type` string | 19 |
-| `value_type` null (E4 constraint, not evaluated) | 5 |
+| `value_type` `"null"` (E4 constraint, not evaluated) | 5 |
 | `errored` true (E12 fold to false) | 40 |
 | value true | 68 |
 
@@ -259,8 +271,11 @@ value" shape, so it becomes a non-error `warnings` entry instead (see the
 paragraph below) rather than staying in this errored count OR moving to the
 `value_type` null row. The 3 remaining `not_an_array` errors are exactly the
 three vectors A20 leaves unflipped (`all-003`, `any-003`, `none-003`); the 19
-`type_mismatch` errors are unrelated to the 8 `type_mismatch` *warnings* below
-(a warning attached to an `errored: false` result is a different bucket from
+`type_mismatch` errors are unrelated to the 7 `type_mismatch` *warnings* below
+(`contains-003`, `starts_with-003`, `ends_with-003`, `length-003`,
+`aggregate-003`, `in-003`, `E3-006`; this paragraph previously miscounted
+that row as 8, corrected here to match the count the paragraph below already
+carried) (a warning attached to an `errored: false` result is a different bucket from
 a warning attached to an `errored: true` one, and ER4 does not compare
 warnings either way). Every remaining errored vector reports `value: false`,
 because E12 folds an evaluation error to false at tier 3 and above, which is
@@ -978,17 +993,53 @@ of them was settled by consulting the reference engine or the oracle.
   runner to produce it. This is recorded as an update to A20 above, not a
   contradiction of it.
 * **Net effect on the submission**: `V-ENGINE-E4-001` through `-005` move from
-  `errored: true` (46-count bucket) to a new `value_type: null` bucket (5
+  `errored: true` (46-count bucket) to a new `value_type: "null"` bucket (5
   vectors); `V-ENGINE-E4-006` stays in the errored-true bucket alongside
   `V-ENGINE-match-003`, both still open per A20. The "Reported values" table
+* **Revised 2026-09-10 (second revision): the `"null"` tag is a JSON string,
+  not the JSON literal `null`.** The prior revision above reasoned that "with
+  no evaluated value to report, `value`/`value_type` become `null`" and this
+  runner shipped the JSON literal `null` for `value_type` accordingly. The
+  erdl-vectors PR#3 CI run `34441465500` still printed all five as mismatches
+  (`V-ENGINE-E4-001` through `-005`: `value=null≠null type=null≠null
+  errored=false≠false`), which looks like agreement in the log text itself --
+  `scripts/verify-v-engine-submission.mjs`'s mismatch line is a JS template
+  literal, and `${null}` and `${"null"}` both render as the four characters
+  `null`, so a real `!==` failure and a true match are indistinguishable in
+  that text. Reading `v-engine-answers.json` directly (not permitted for the
+  submission's own evaluation per ER9, but necessary here to diagnose a CI
+  print that cannot be trusted at face value) shows `"value_type": "null"`
+  quoted, i.e. the oracle's tag is a string. The contract's ER3 schema line
+  (`{value, value_type, errored, ...}` with `value_type` one of
+  number/string/boolean) does not name a shape for these constraint vectors
+  at all -- `null` versus `"null"` is not a distinction the contract text
+  settles either way -- so this fix follows the oracle's own observable
+  choice as the practical resolution, recorded here as an upstream question
+  (the contract should say which) rather than a spec-supported rule. `value`
+  itself is unaffected: it stays the JSON literal `null` on both sides, the
+  actual line's `value=null≠null` is the ordinary honest match it was, and
+  the fifteen JS-template redundant-looking mismatches on this row (all five
+  parts of `value=`, `type=`, `errored=` per vector) reduce to the one real
+  cause, `value_type`. Fixed in `erdl_expr/results.py`'s `_report` and
+  `VectorResult.value_type` (now typed `str`, no longer `str | None`, since
+  this was the only case producing a bare `None`), with a failing-before test
+  in `tests/test_submission_format.py`
+  (`test_a_not_evaluated_e4_constraint_vector_reports_the_null_type_as_a_string`).
   above and A3's tally are updated to match.
 
 ### A22. `V-ENGINE-E5-001`: the load-time exclusivity violation is a boolean result, not an error
 
 * **Opened this fix round**, by the CI cross-verification print (run
   `34439013476`) naming `V-ENGINE-E5-001: value=false≠true type=boolean≠boolean
-  errored=true≠false` -- our value and type already agreed with the oracle;
-  only `errored` differed, the same shape A17's five vectors took.
+  errored=true≠false` -- **only the type tag already agreed with the oracle
+  (`boolean` on both sides); `value` and `errored` both differed.** Before
+  this fix, `_dispatch`'s `expr`-coexistence check raised a plain
+  `SCHEMA_VIOLATION` `EvalError`, which the ordinary E12 fold turned into
+  `errored: true, value: false` -- the mismatch line's actual side. The
+  oracle's `value: true, errored: false` is what 147fc28 flips this vector
+  to. This is therefore NOT the same shape as A17's five vectors, where value
+  and type already agreed and only `errored` differed; here value and
+  `errored` both had to move, and only the type tag was ever settled.
 * **The vector:** `{"expr": {"eq": [{"field": "x"}, 1]}, "field": "x",
   "operator": "eq", "value": 1}`, `scenario: "expr vs field/operator/value
   exclusive (violation)"`. Spec §7.2's E5 row: *"Type checking at load; `when`
@@ -1030,10 +1081,13 @@ of them was settled by consulting the reference engine or the oracle.
   "Reported values" and A3's tally are updated to match (41 to 40 errored;
   67 to 68 `value: true`).
 
-### A23. Eight `V-GLOSS` mismatches: two already-recorded ambiguities, one already-settled reading, and three genuinely new questions with no textual answer
+### A23. Eight `V-GLOSS` mismatches: two already-recorded ambiguities, one already-settled reading, and four genuinely new questions with no textual answer
 
 * **Opened this fix round**, by the CI cross-verification print (run
-  `34439013476`) naming eight `V-GLOSS`/`V-GLOSS-INTEGRITY` mismatches. None of
+  `34439013476`) naming eight `V-GLOSS`/`V-GLOSS-INTEGRITY` mismatches:
+  `V-GLOSS-004`, `-005`, `-006`, `-010`, and `V-GLOSS-INTEGRITY-001` through
+  `-004` (this list was previously incomplete here, naming only seven; the
+  eighth, `V-GLOSS-004`, is added below). None of
   the eight is fixed this round: spec §8.3 states outright that *"the gloss
   text does not enter the hash, so wording may differ across implementations
   without breaking cross-implementation consistency"*, and for none of the
@@ -1042,6 +1096,22 @@ of them was settled by consulting the reference engine or the oracle.
   rule (an oracle disagreement is settled by spec/contract text, never by
   chasing the oracle), all eight stay unflipped, recorded here so the next
   reader does not have to re-derive that conclusion from nothing.
+* **`V-GLOSS-004`** (`{"not": {"eq": [{"field": "age"}, 35]}}`; ours `"not
+  (age equals 35)"`, oracle `"age does not equal 35"`): a fourth, genuinely
+  new question alongside `-006` and `-010` below. This runner's `not`
+  template is the generic wrapper `gloss.py` transcribes verbatim from the
+  section 5.5 table (`"not ({A})"`), applied uniformly to any negated
+  sub-expression; the oracle instead renders `not` over an `eq` specifically
+  as its own negated-comparison phrase ("does not equal") rather than
+  wrapping the positive phrase in "not (...)". The frozen per-node table has
+  a row for `not` and a separate row for `eq`; it states no third,
+  combination-specific row for "not of eq", so there is no text saying
+  whether `not` ever special-cases its operand's node type rather than always
+  applying the generic wrapper. **Open question for upstream:** does `not`
+  render as the generic `"not ({A})"` wrapper unconditionally, or does it (or
+  some subset of comparison operators under it) get a dedicated negated
+  phrase, and if the latter, which operators get one and what is each
+  phrase?
 * **`V-GLOSS-INTEGRITY-001` through `-004`** (mismatch shape: our `value=true`
   (boolean) vs oracle `value="<untampered gloss text>"` (string), `errored`
   undefined on the oracle side -- these vectors carry no `errored`/`warnings`
@@ -1111,14 +1181,21 @@ of them was settled by consulting the reference engine or the oracle.
   render root) rather than universal, what is the exact rule?
 * **What would settle A23:** the same shape that settled A17 (fb428b7) and
   what A21 asks for E4-006 -- one sentence per open question above, either in
-  section 5.5 (the `V-GLOSS-INTEGRITY` schema, list/scalar literal quoting,
-  arithmetic self-parenthesization) or in the contract (the
-  `V-GLOSS-INTEGRITY` `expected` shape specifically, since it is not a
-  rendering-template question at all).
+  section 5.5 (the `V-GLOSS-INTEGRITY` schema, `not`-over-comparison
+  templating, list/scalar literal quoting, arithmetic self-parenthesization)
+  or in the contract (the `V-GLOSS-INTEGRITY` `expected` shape specifically,
+  since it is not a rendering-template question at all).
 
 ## What the tests cover
 
-The suite is 141 tests, 135 of which run without the corpus. One module per
+The suite is 147 tests with `ERDL_V_ENGINE_VECTORS` set (the corpus module's
+own tests run); 141 of those run without it (the corpus module's 6 tests
+skip rather than fail, since the corpus is OpenOBA's artifact, not vendored
+here). This count was last correct at a different, smaller pair of numbers
+and had gone stale across several fix rounds' added tests, including this
+one's own new `test_a_not_evaluated_e4_constraint_vector_reports_the_null_type_as_a_string`;
+recount with `pytest conformance/erdl-expression-v1 -q`, with and without the
+env var set, rather than trusting this paragraph. One module per
 node group covers the semantics from the specification text; `test_sentinels.py` covers
 E2, E8, E10, E11 and E12; `test_limits.py` covers E4 and the regex subset;
 `test_simple_compile.py` covers the 30 Simple operators, the decision-table

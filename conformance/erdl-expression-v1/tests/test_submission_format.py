@@ -127,3 +127,31 @@ def test_an_exact_integer_beyond_the_double_range_is_a_reader_side_bound() -> No
         [VectorResult("T1", "V-ENGINE", "arithmetic", Fraction(big), "number", False, ())],
         "decimal-string"))
     assert quoted["results"]["T1"]["value"] == "1000000000000000000001"
+
+
+def test_a_not_evaluated_e4_constraint_vector_reports_the_null_type_as_a_string() -> None:
+    """RESULTS.md A21 (revised 2026-09-10, second revision): the oracle
+    (`v-engine-answers.json`) reports `value_type: "null"` as the JSON
+    *string* `"null"`, not the JSON literal `null`, for an E4
+    constraint-verification vector that was never evaluated. erdl-vectors
+    PR#3 CI run `34441465500` prints `V-ENGINE-E4-001` through `-005` as
+    `type=null≠null` -- a JS template-literal artifact: `${null}` and
+    `${"null"}` both render as the four characters `null`, so a real
+    mismatch (this runner's JSON `null` against the oracle's JSON string
+    `"null"`) is invisible in the log's own text and has to be confirmed by
+    reading `v-engine-answers.json` directly (`"value_type": "null"`, quoted,
+    at the `V-ENGINE-E4-001` entry). `value` itself stays the JSON literal
+    `null`; only the type tag is a string, because JSON's type system has no
+    separate null-type tag to name a fourth reportable domain alongside
+    number/string/boolean, and `"null"` is the label the oracle chose for it.
+    """
+    vector = {
+        "id": "T1", "category": "V-ENGINE", "node_group": "logic",
+        "expr_tree": {"and": [True] * 65},
+    }
+    result = evaluate_vector(vector)
+    assert result.value is None
+    assert result.value_type == "null"
+    payload = json.loads(_envelope([result]))
+    assert payload["results"]["T1"]["value"] is None
+    assert payload["results"]["T1"]["value_type"] == "null"
