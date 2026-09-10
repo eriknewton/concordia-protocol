@@ -542,7 +542,9 @@
       "value": false,
       "value_type": "boolean",
       "errored": false,
-      "warnings": []
+      "warnings": [
+        "type_mismatch"
+      ]
     },
     "V-ENGINE-all-003": {
       "value": false,
@@ -598,7 +600,9 @@
       "value": false,
       "value_type": "boolean",
       "errored": false,
-      "warnings": []
+      "warnings": [
+        "type_mismatch"
+      ]
     },
     "V-ENGINE-none-003": {
       "value": false,

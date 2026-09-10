@@ -546,8 +546,14 @@ of them was settled by consulting the reference engine or the oracle.
 ### A8. A quantifier over a missing field
 
 * **Affects:** `V-ENGINE-all-004` and `V-ENGINE-none-004`.
-* **Reading 1 (chosen):** silent `false`, no warning, `errored: false`.
-* **Reading 2:** a `type_mismatch` warning, by analogy with the aggregate rule.
+* **SETTLED 2026-09-10 (second round): reading 2.** Spec v2.1 at erdl-landing
+  `79dd76a`, section 7.3(b), names the missing case together with scalar and
+  object as the quantifier's `type_mismatch` warning (`errored: false`,
+  value `false`); the runner now records it and both vectors carry the
+  warning (values unchanged). Reading 1 below is kept as the record of the
+  earlier hold.
+* **Reading 1 (held until settled):** silent `false`, no warning, `errored: false`.
+* **Reading 2 (now the rule):** a `type_mismatch` warning.
 * **Why 1:** section 7.3(e) states the type-mismatch rule for the `over` of
   `aggregate` and enumerates missing, scalar and object there. It names
   `aggregate` and only `aggregate`. With no equivalent sentence for the

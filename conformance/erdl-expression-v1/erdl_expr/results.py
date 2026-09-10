@@ -75,7 +75,7 @@ class VectorResult:
     sentence, not to the earlier oracle read.
 
     `threw` is `True` only for the same five E4 structural-ceiling vectors:
-    EXPRESSION-RUNNER-CONTRACT.md's ER3/ER4 (`79dd76a` / `a12f352`) states
+    EXPRESSION-RUNNER-CONTRACT.md's ER3/ER4 (erdl-vectors `fe93f7f` / `a12f352`) states
     the constraint-verification result object as `{value: null, value_type:
     "null", errored: false, threw: true}` and that "for E4
     constraint-verification vectors, `threw` must also match." A vector that

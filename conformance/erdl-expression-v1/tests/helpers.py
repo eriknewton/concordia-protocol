@@ -69,8 +69,7 @@ def assert_constraint_violated(tree: Any, fact: dict[str, Any] | None, code: str
     `True` regardless; `Outcome` carries no `value_type` field at all. The
     `value_type` tag itself is assigned one layer up, in
     `erdl_expr.results._report`, when an `Outcome` is folded into a
-    `VectorResult` -- see `tests/test_submission_format.py`'s
-    `test_submission_format.py`'s E4 tag test for that layer's own assertion,
+    `VectorResult` -- see `tests/test_submission_format.py`'s E4 tag test for that layer's own assertion,
     and RESULTS.md A21 for the tag's history: JSON `null` under the
     contract-blind reading, then the literal string `"null"` once contract
     ER3 (erdl-vectors `a12f352`) stated it.
