@@ -47,9 +47,25 @@ def test_a_string_operator_on_a_missing_field_is_false() -> None:
 
 
 def test_a_non_string_operand_on_contains_or_starts_with_or_ends_with_is_warned_not_errored() -> None:
-    # A17 settled these three (RESULTS.md, spec section 7.3(a)); `match` is
-    # untouched below because A17 does not name it and no vector exercises a
-    # regex-pattern type mismatch.
+    # A17 settled these three (RESULTS.md, spec section 7.3(a)).
     assert_warned_not_errored({"contains": [{"field": "cmd"}, 123]}, {"cmd": "rm"}, "type_mismatch")
     assert_warned_not_errored({"starts_with": [{"field": "n"}, 1]}, {"n": "safe"}, "type_mismatch")
     assert_warned_not_errored({"ends_with": [{"field": "n"}, 1]}, {"n": "x"}, "type_mismatch")
+
+
+def test_a_non_string_operand_on_match_is_also_warned_not_errored() -> None:
+    # Fix round found this as a gap in A17, not a new ambiguity: fb428b7's
+    # warning-asymmetry clause names its "string nodes" family as exactly
+    # "contains/match/starts_with/ends_with" (spec §7.3(a)) -- `match` is
+    # already named in the settled text, alongside the three above, not an
+    # unsettled fourth case. Before this fix, `_string` carved `match` out of
+    # the shared branch and raised `EvalError(TYPE_MISMATCH, ...)` here
+    # (errored=true), on the theory that no corpus vector exercises this
+    # exact shape; that reasoning does not survive contact with the clause's
+    # own unconditional wording. This is a plain operand-type mismatch (the
+    # pattern is a number, not a regex string), distinct from
+    # `V-ENGINE-match-003`'s regex-*safety* rejection on a correctly-typed
+    # string pattern (RESULTS.md A20/A21, `test_an_unsafe_pattern_is_caught_
+    # statically_not_only_when_it_is_reached` in test_limits.py), which stays
+    # an EvaluationError because §7.3(d) states no `errored` value for it.
+    assert_warned_not_errored({"match": [{"field": "cmd"}, 123]}, {"cmd": "rm"}, "type_mismatch")

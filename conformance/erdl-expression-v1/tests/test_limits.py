@@ -8,7 +8,7 @@ import pytest
 from erdl_expr.errors import EvalError
 from erdl_expr.limits import _longest_array, check_regex_safety, check_tree, measure
 
-from .helpers import assert_constraint_violated, assert_errored, assert_true, run
+from .helpers import assert_constraint_violated, assert_errored, assert_false, assert_true, run
 
 
 def test_an_ordinary_guarded_composition_is_well_inside_every_limit() -> None:
@@ -203,3 +203,37 @@ def test_the_five_structural_e4_ceilings_report_no_evaluated_value() -> None:
         assert outcome.errored is False, (tree, outcome)
         assert outcome.value is None, (tree, outcome)
         assert "resource_limit" in outcome.warnings, (tree, outcome)
+
+
+def test_an_e5_load_time_exclusivity_violation_reports_true_not_an_error() -> None:
+    """RESULTS.md A22 (`V-ENGINE-E5-001`). Before this fix, `expr` coexisting
+    with the Simple triple (`field`/`operator`/`value`) raised a plain
+    `SCHEMA_VIOLATION` `EvalError`, which `evaluate_tree` folded through the
+    ordinary EvalError path to `errored=True, value=False`. But
+    EXPRESSION-RUNNER-CONTRACT.md (b56c1c2) "Constraint vectors (E4/E5)" says
+    E5, like E4, is a constraint-verification vector, not an evaluation
+    vector -- and unlike E4 it gives E5 a definite reportable answer: "E5
+    `value: true` = violation detected". This tree is exactly
+    `V-ENGINE-E5-001` ("expr vs field/operator/value exclusive (violation)"):
+    reporting `errored=True` for it was folding a constraint-detection result
+    through the evaluation-error path the contract explicitly carves it out
+    of, the same category error A21 already found and fixed for E4.
+    """
+    tree = {
+        "expr": {"eq": [{"field": "x"}, 1]},
+        "field": "x",
+        "operator": "eq",
+        "value": 1,
+    }
+    outcome = run(tree, {})
+    assert outcome.not_evaluated is False, outcome
+    assert outcome.errored is False, outcome
+    assert outcome.value is True, outcome
+    assert "expr_load_exclusivity_violation" in outcome.warnings, outcome
+
+
+def test_an_expr_only_node_has_no_exclusivity_violation_and_evaluates_normally() -> None:
+    # V-ENGINE-E5-002 ("expr-only valid"): no field/operator/value alongside
+    # `expr`, so this is not a violation at all -- it evaluates the inner
+    # tree, which is E11's ordinary missing-field leaf collapse here.
+    assert_false({"expr": {"eq": [{"field": "x"}, 1]}}, {})

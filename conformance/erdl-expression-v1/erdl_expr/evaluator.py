@@ -31,6 +31,7 @@ from . import times
 from .errors import (
     ARITY,
     DIVISION_BY_ZERO,
+    LOAD_EXCLUSIVITY_VIOLATION,
     NOT_AN_ARRAY,
     RESOURCE_LIMIT,
     SAFE_FOLD_EMPTY,
@@ -183,9 +184,18 @@ class Evaluator:
     def _dispatch(self, node: dict[str, Any]) -> Value:
         keys = set(node)
         if "expr" in keys:
-            # E5: `expr` and the Simple triple must not coexist.
+            # E5 (spec §7.2): `expr` and the Simple triple must not coexist.
+            # EXPRESSION-RUNNER-CONTRACT.md "Constraint vectors (E4/E5)"
+            # names this a constraint-verification result, not an evaluation
+            # error ("E5 `value: true` = violation detected"), so it raises a
+            # dedicated code rather than SCHEMA_VIOLATION: `evaluate_tree`
+            # gives LOAD_EXCLUSIVITY_VIOLATION its own branch that reports
+            # the violation as a literal `True`, and reusing SCHEMA_VIOLATION
+            # here would route it through the ordinary EvalError fold
+            # (errored=true, value=false) that every genuine schema defect
+            # takes, which is the wrong shape for this vector class.
             if keys & {"field", "operator", "value"}:
-                raise EvalError(SCHEMA_VIOLATION, "expr coexists with field/operator/value")
+                raise EvalError(LOAD_EXCLUSIVITY_VIOLATION, "expr coexists with field/operator/value")
             return self.evaluate(node["expr"])
         if "operator" in keys:
             # A Simple condition, not a bare field node. Compiling it here keeps
@@ -412,19 +422,22 @@ class Evaluator:
         if isinstance(subject, Undefined):
             return self._missing()
         if not isinstance(subject, str) or not isinstance(pattern, str):
-            if op == "match":
-                # `match` is not part of the A17 settlement below: no vector
-                # exercises a regex-pattern type mismatch, and staying an
-                # EvaluationError here is the pre-A17 behavior this fix does
-                # not touch.
-                raise EvalError(TYPE_MISMATCH, f"{op} takes two strings")
             # Upstream settled A17 (erdl-vectors discussion #2031, spec
-            # §7.3(a) fixed at fb428b7): a string-family type mismatch on
-            # contains/starts_with/ends_with is warned, not an
-            # EvaluationError. Record the warning and fold this node to
-            # false rather than raising, so E12's error fold never triggers
-            # for it; comparison/`between` stay silently false with no
-            # warning, and this must not touch `match` above.
+            # §7.3(a) fixed at fb428b7): the warning-asymmetry clause names
+            # its "string nodes" family as "contains/match/starts_with/
+            # ends_with" -- `match` IS one of the four named families, not
+            # an exception to it. A prior reading of this branch carved
+            # `match` out on the theory that no vector exercises a
+            # regex-pattern type mismatch, which is true but irrelevant: the
+            # clause is unconditional on the operand type, not conditioned
+            # on corpus coverage. Record the warning and fold this node to
+            # false rather than raising, exactly like contains/starts_with/
+            # ends_with below; comparison/`between` stay silently false with
+            # no warning. This does NOT cover a regex-safety rejection on a
+            # correctly-typed `match` pattern (`V-ENGINE-match-003`,
+            # RESULTS.md A20/A21): that is a §7.3(d) concern reached only
+            # after this isinstance check passes, with no stated `errored`
+            # value, and stays an EvaluationError below.
             self._record(TYPE_MISMATCH)
             return False
         if op == "contains":
@@ -625,10 +638,21 @@ class Evaluator:
     def _aggregate(self, function: str, payload: Any) -> Value:
         items = self.evaluate(payload)
         if not isinstance(items, list):
-            # Section 7.3(e) names missing, scalar and object alike as a
-            # type mismatch here, which is why a missing `over` is an error for
-            # aggregate while a missing quantifier `over` is a silent false.
-            raise EvalError(TYPE_MISMATCH, f"{function} takes an array")
+            # Section 7.3(e), verbatim: "The `over` of `aggregate` MUST be an
+            # array; a non-array (missing/scalar/object) returns `null` +
+            # `type_mismatch` warning (folded to false)." That sentence
+            # already names the errored value -- a warning, explicitly NOT
+            # an EvaluationError -- which a prior reading of this branch
+            # missed while correctly applying the *weaker*-supported sibling
+            # case just below (a non-numeric element inside an otherwise
+            # valid array, which 7.3(e) does not name explicitly at all).
+            # Record the warning and fold to false like every other member
+            # of the four-family list in §7.3(a) (`in`/string/`length`/
+            # `aggregate`); a missing quantifier `over` is a silent false
+            # with no warning by contrast, because 7.3(e) names `aggregate`
+            # and only `aggregate`.
+            self._record(TYPE_MISMATCH)
+            return False
         check_array_bound(len(items), function)
         if function == "count":
             return Fraction(len(items))
@@ -710,6 +734,17 @@ def evaluate_tree(
             # fact-borne array -- is a constraint-verification outcome, not an
             # evaluation error, so it carries no evaluated value.
             return Outcome(value=None, errored=False, warnings=(exc.code,), not_evaluated=True)
+        if exc.code == LOAD_EXCLUSIVITY_VIOLATION:
+            # RESULTS.md A22: an E5 load-time exclusivity breach is likewise a
+            # constraint-verification outcome (EXPRESSION-RUNNER-CONTRACT.md
+            # "Constraint vectors (E4/E5)", "E5 `value: true` = violation
+            # detected"), but unlike E4 it has a definite boolean answer
+            # rather than no evaluated value at all, so it is reported as a
+            # real (not folded) `True` with `errored: false` -- the ordinary
+            # bool branch in `results._report` then reports it as
+            # `value_type: "boolean"`, exactly the reportable shape a
+            # genuinely-evaluated boolean node gets.
+            return Outcome(value=True, errored=False, warnings=(exc.code,))
         # An error supersedes any fold recorded on the way to it: the result
         # object reports one outcome, and E12's fold is that outcome.
         return Outcome(value=False, errored=True, warnings=(exc.code,))

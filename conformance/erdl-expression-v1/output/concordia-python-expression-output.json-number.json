@@ -1,7 +1,7 @@
 {
   "runner": "concordia-python-expression",
-  "method": "Python 3, standard library only, spec-and-contract-only implementation of the 34-node expression kernel, the Simple 30-operator compiler, the decision-table compiler and the gloss renderer. Arithmetic uses exact rationals (fractions.Fraction) with a single scale-14 half-even rounding at the reported value (E2); no binary float is used anywhere. Read: erdl-spec v2.1 (sections 5, 7, 8, appendix E; erdl-landing dcb7a554c00c047d849899a6327ef6e37d7a39de), EXPRESSION-RUNNER-CONTRACT.md (ER1-ER9), CHANGELOG.md, v-engine-vectors.json and scripts/verify-v-engine-submission.mjs for the envelope contract and its comparison rule (erdl-vectors 97e0c00723aec526983cea5804e148680b3e0539), and erdl-vectors submissions/README.md for the submission envelope shape. NOT read: the reference engine (scripts/v-engine.mjs), the in-repo verifier scripts (verify-v-engine.mjs, verify-v-engine-full.mjs, verify-v-engine-reverse.mjs), the generator (generate-v-engine.mjs), @openoba/erdl, erdl-formal, and the answer oracle v-engine-answers.json, which was never generated locally because generating it runs the reference engine and consulting the result is what ER9 forbids. v-engine-vectors.json sha256=3ee30466cc6d95ddd99bc412cfc88b2f2dd3f890b8687b8f12043cc40074c902. Number encoding=json-number; gloss language=en.",
-  "date": "2026-09-10",
+  "method": "Python 3, standard library only, spec-and-contract-only implementation of the 34-node expression kernel, the Simple 30-operator compiler, the decision-table compiler and the gloss renderer. Arithmetic uses exact rationals (fractions.Fraction) with a single scale-14 half-even rounding at the reported value (E2); no binary float is used anywhere. Read: erdl-spec v2.1 (sections 5, 7, 8, appendix E; erdl-landing dcb7a554c00c047d849899a6327ef6e37d7a39de), EXPRESSION-RUNNER-CONTRACT.md (ER1-ER9; erdl-vectors b56c1c2ad575a1c0f87298cf0f27d509f7a60f56, 'Constraint vectors (E4/E5)'), CHANGELOG.md, v-engine-vectors.json and scripts/verify-v-engine-submission.mjs for the envelope contract and its comparison rule (erdl-vectors 97e0c00723aec526983cea5804e148680b3e0539), and erdl-vectors submissions/README.md for the submission envelope shape. NOT read: the reference engine (scripts/v-engine.mjs), the in-repo verifier scripts (verify-v-engine.mjs, verify-v-engine-full.mjs, verify-v-engine-reverse.mjs), the generator (generate-v-engine.mjs), @openoba/erdl, erdl-formal, and the answer oracle v-engine-answers.json, which was never generated locally because generating it runs the reference engine and consulting the result is what ER9 forbids. v-engine-vectors.json sha256=3ee30466cc6d95ddd99bc412cfc88b2f2dd3f890b8687b8f12043cc40074c902. Number encoding=json-number; gloss language=en.",
+  "date": "2026-09-09",
   "artifact": "https://github.com/eriknewton/concordia-protocol/tree/main/conformance/erdl-expression-v1",
   "layer": "expression",
   "vector_file": "v-engine-vectors.json",
@@ -1035,41 +1035,41 @@
       ]
     },
     "V-ENGINE-E4-001": {
-      "value": false,
-      "value_type": "boolean",
-      "errored": true,
+      "value": null,
+      "value_type": null,
+      "errored": false,
       "warnings": [
         "resource_limit"
       ]
     },
     "V-ENGINE-E4-002": {
-      "value": false,
-      "value_type": "boolean",
-      "errored": true,
+      "value": null,
+      "value_type": null,
+      "errored": false,
       "warnings": [
         "resource_limit"
       ]
     },
     "V-ENGINE-E4-003": {
-      "value": false,
-      "value_type": "boolean",
-      "errored": true,
+      "value": null,
+      "value_type": null,
+      "errored": false,
       "warnings": [
         "resource_limit"
       ]
     },
     "V-ENGINE-E4-004": {
-      "value": false,
-      "value_type": "boolean",
-      "errored": true,
+      "value": null,
+      "value_type": null,
+      "errored": false,
       "warnings": [
         "resource_limit"
       ]
     },
     "V-ENGINE-E4-005": {
-      "value": false,
-      "value_type": "boolean",
-      "errored": true,
+      "value": null,
+      "value_type": null,
+      "errored": false,
       "warnings": [
         "resource_limit"
       ]
@@ -1083,11 +1083,11 @@
       ]
     },
     "V-ENGINE-E5-001": {
-      "value": false,
+      "value": true,
       "value_type": "boolean",
-      "errored": true,
+      "errored": false,
       "warnings": [
-        "schema_violation"
+        "expr_load_exclusivity_violation"
       ]
     },
     "V-ENGINE-E5-002": {
