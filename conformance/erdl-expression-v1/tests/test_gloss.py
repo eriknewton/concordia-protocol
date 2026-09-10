@@ -14,17 +14,44 @@ def test_the_frozen_templates_render_each_node_group() -> None:
     assert render({"and": [{"eq": [{"field": "a"}, 1]}, {"eq": [{"field": "b"}, 2]}]}) == (
         "a equals 1 and b equals 2"
     )
-    assert render({"not": {"eq": [{"field": "age"}, 35]}}) == "not (age equals 35)"
-    assert render({"in": [{"field": "cat"}, ["a", "b"]]}) == "cat in [a, b]"
-    assert render({"contains": [{"field": "cmd"}, "rm"]}) == "cmd contains rm"
     assert render({"between": [{"field": "age"}, 16, 60]}) == (
         "age is in the inclusive range 16 to 60"
     )
-    assert render({"add": [{"field": "a"}, {"field": "b"}]}) == "a plus b"
     assert render({"sum": {"field": "nums"}}) == "sum of nums"
     assert render({"length": {"field": "s"}}) == "length of s"
-    assert render({"match": [{"field": "s"}, "^a"]}) == "s matches ^a"
     assert render({"month_last_day": {"field": "d"}}) == "the last day of the month of d"
+
+
+def test_not_of_eq_normalizes_to_the_ne_template() -> None:
+    # spec v2.1 (erdl-landing 79dd76a) 5.5: "not(eq({A},{B})) normalizes to
+    # the `ne` template ... not a literal `not ({A} equals {B})` nesting."
+    # RESULTS.md A23 (V-GLOSS-004). `not` over anything else still takes the
+    # generic wrapper -- see test_a_simple_rule_glosses_after_compilation's
+    # `not(exists(...))` below, which is unaffected.
+    assert render({"not": {"eq": [{"field": "age"}, 35]}}) == "age does not equal 35"
+
+
+def test_string_literals_render_quoted_scalar_and_list_member_alike() -> None:
+    # spec v2.1 (erdl-landing 79dd76a) 5.5: "string literals render quoted
+    # (`"rm"`), and list literals render their string members quoted
+    # (`["a", "b"]`)." RESULTS.md A23 (V-GLOSS-005 list member,
+    # V-GLOSS-006 bare scalar). A field path is not a string literal and is
+    # unaffected (asserted throughout this file, e.g. `"cat"` above staying
+    # bare).
+    assert render({"in": [{"field": "cat"}, ["a", "b"]]}) == 'cat in ["a", "b"]'
+    assert render({"contains": [{"field": "cmd"}, "rm"]}) == 'cmd contains "rm"'
+    assert render({"match": [{"field": "s"}, "^a"]}) == 's matches "^a"'
+
+
+def test_arithmetic_nodes_render_self_parenthesized() -> None:
+    # spec v2.1 (erdl-landing 79dd76a) 5.5: "arithmetic nodes (`add`/`sub`/
+    # `mul`/`div`) render parenthesized (`(a plus b)`) to preserve operator
+    # precedence in the natural-language reading." RESULTS.md A23
+    # (V-GLOSS-010).
+    assert render({"add": [{"field": "a"}, {"field": "b"}]}) == "(a plus b)"
+    assert render({"sub": [{"field": "a"}, {"field": "b"}]}) == "(a minus b)"
+    assert render({"mul": [{"field": "a"}, {"field": "b"}]}) == "(a times b)"
+    assert render({"div": [{"field": "a"}, {"field": "b"}]}) == "(a divided by b)"
 
 
 def test_a_quantifier_renders_its_binding_and_predicate() -> None:

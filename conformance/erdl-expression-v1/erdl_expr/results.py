@@ -1,10 +1,15 @@
 """Turn each corpus vector into the ER3 result object, and serialize the file.
 
 ER3 fixes the shape: `{value, value_type, errored, warnings}` with `value_type`
-one of number, string or boolean. ER4 compares `value` (a scale-14 fixed-point
-integer for a number, byte equality after NFC for a string) and `errored`;
-`warnings` is not part of the equality criteria, so the codes here are
-diagnostic.
+one of number, string, boolean or the literal string `"null"` (the last only
+for an E4 constraint-verification vector that was never evaluated;
+EXPRESSION-RUNNER-CONTRACT.md, erdl-vectors `a12f352`: "`value_type` is
+always a string, never a JSON value ... the literal `"null"` (not JSON
+`null`)"). A constraint-verification vector (E4) additionally carries
+`threw: true` (ER4, same commit). ER4 compares `value` (a scale-14
+fixed-point value for a number, byte equality after NFC for a string),
+`errored`, and -- for E4 vectors only -- `threw`; `warnings` is not part of
+the equality criteria, so the codes here are diagnostic.
 
 A value outside the three reportable types is folded rather than invented. An
 array, an object, a JSON null and the missing-field sentinel all fold to
@@ -54,67 +59,87 @@ _SENTINEL_PATTERN: Final[re.Pattern[str]] = re.compile(
 class VectorResult:
     """One vector's ER3 result plus the bookkeeping the report needs.
 
-    `value_type` is `None` only for an E4 constraint-verification vector
-    (RESULTS.md A21): it was never evaluated, so it has no reportable type,
-    which is a different condition from an evaluated `value_type: "boolean"`
-    result of `false`. The contract's ER3 schema line names only
-    number/string/boolean for an evaluated result and states no shape for a
-    constraint vector at all, so JSON `null` is the contract-blind reading
-    here, not a copy of the oracle's own choice: a fix round read
-    `v-engine-answers.json` directly, found it emits this tag as the quoted
-    string `"null"`, and aligned this field to that string, which ER9 ("a
-    runner MUST NOT read the answer oracle to pass") rules out regardless of
-    what the file said. That alignment is reverted; the read is disclosed in
-    `METHOD_READ` and RESULTS.md A21, and what tag an E4 constraint vector
-    should carry is left an open question for upstream to settle from text,
-    not from the oracle.
+    `value_type` is the string `"null"`, never JSON `null`, for an E4
+    constraint-verification vector that was never evaluated (RESULTS.md A21,
+    re-settled this round): a prior round read `v-engine-answers.json`
+    directly (disclosed in `METHOD_READ`), found the oracle emits this tag as
+    the quoted string `"null"`, and aligned this field to it, which ER9 ("a
+    runner MUST NOT read the answer oracle to pass") then ruled out -- the
+    contract text at the time named no shape for a constraint vector at all,
+    so the alignment had no textual support and was reverted to JSON `null`.
+    The maintainer has since settled it from text, not from that read:
+    EXPRESSION-RUNNER-CONTRACT.md (erdl-vectors `a12f352`) now states
+    plainly, "`value_type` is always a string, never a JSON value: it is
+    `"number"`, `"string"`, `"boolean"`, or -- for E4 throw results -- the
+    literal `"null"` (not JSON `null`)." This field is re-applied to that
+    sentence, not to the earlier oracle read.
+
+    `threw` is `True` only for the same five E4 structural-ceiling vectors:
+    EXPRESSION-RUNNER-CONTRACT.md's ER3/ER4 (erdl-vectors `fe93f7f` / `a12f352`) states
+    the constraint-verification result object as `{value: null, value_type:
+    "null", errored: false, threw: true}` and that "for E4
+    constraint-verification vectors, `threw` must also match." A vector that
+    was actually evaluated always carries `threw: False`; `as_object` and the
+    submission writer surface the key only when `True`, matching the
+    contract's "constraint-verification vectors (E4) additionally carry
+    `threw: true`" wording -- an ordinary evaluated result does not carry
+    this field at all.
     """
 
     vector_id: str
     category: str
     group: str
     value: Value
-    value_type: str | None
+    value_type: str
     errored: bool
     warnings: tuple[str, ...]
+    threw: bool = False
 
     def as_object(self) -> dict[str, Any]:
-        return {
+        obj: dict[str, Any] = {
             "value": self.value,
             "value_type": self.value_type,
             "errored": self.errored,
             "warnings": list(self.warnings),
         }
+        if self.threw:
+            obj["threw"] = True
+        return obj
 
 
-def _report(outcome: Outcome) -> tuple[Value, str | None, bool, tuple[str, ...]]:
-    """Fold one evaluation outcome into the ER3 reportable domain."""
+def _report(outcome: Outcome) -> tuple[Value, str, bool, tuple[str, ...], bool]:
+    """Fold one evaluation outcome into the ER3 reportable domain.
+
+    Returns `(value, value_type, errored, warnings, threw)`.
+    """
     if outcome.not_evaluated:
-        # EXPRESSION-RUNNER-CONTRACT.md (b56c1c2) "Constraint vectors
-        # (E4/E5)": an E4 rejection's `expected` "records whether the
-        # constraint was correctly detected/triggered ... not an evaluation
-        # result", so it is reported as a literal null value/type rather than
-        # routed through the errored fold or the missing-value fold below,
-        # both of which describe something that was actually evaluated. The
-        # `value_type` tag stays JSON `null`, not a quoted string: a prior
-        # round read `v-engine-answers.json` directly and aligned this tag to
-        # the oracle's own `"null"` string, which ER9 forbids regardless of
-        # what the file said; that alignment is reverted, the read stays
-        # disclosed in `METHOD_READ`, and the correct tag for an E4
-        # constraint vector is left open for upstream. RESULTS.md A21.
-        return None, None, False, outcome.warnings
+        # EXPRESSION-RUNNER-CONTRACT.md ER3/ER4 (erdl-vectors `fe93f7f` /
+        # `a12f352`), "Constraint vectors (E4/E5)": an E4 rejection's
+        # `expected` "records whether the constraint was correctly
+        # detected/triggered ... not an evaluation result", stated as
+        # `{value: null, value_type: "null", errored: false, threw: true}` --
+        # so it is reported directly in that shape rather than routed through
+        # the errored fold or the missing-value fold below, both of which
+        # describe something that was actually evaluated. `value_type` is the
+        # literal string `"null"`, per ER3's own words: "`value_type` is
+        # always a string, never a JSON value ... the literal `"null"` (not
+        # JSON `null`)" -- re-settling RESULTS.md A21's prior contract-blind
+        # JSON-`null` reading from that text, not from the earlier
+        # oracle read `METHOD_READ` discloses. `threw=True` is the ER4
+        # comparison field this same text adds for E4 vectors only.
+        return None, "null", False, outcome.warnings, True
     if outcome.errored:
-        return False, "boolean", True, outcome.warnings
+        return False, "boolean", True, outcome.warnings, False
     value = outcome.value
     if isinstance(value, bool):
-        return value, "boolean", False, outcome.warnings
+        return value, "boolean", False, outcome.warnings, False
     if isinstance(value, Fraction):
-        return value, "number", False, outcome.warnings
+        return value, "number", False, outcome.warnings, False
     if isinstance(value, str):
-        return value, "string", False, outcome.warnings
+        return value, "string", False, outcome.warnings, False
     if isinstance(value, Undefined) or value is None:
-        return False, "boolean", False, outcome.warnings + (SAFE_FOLD_UNDEFINED,)
-    return False, "boolean", False, outcome.warnings + (SAFE_FOLD_NON_SCALAR,)
+        return False, "boolean", False, outcome.warnings + (SAFE_FOLD_UNDEFINED,), False
+    return False, "boolean", False, outcome.warnings + (SAFE_FOLD_NON_SCALAR,), False
 
 
 def _group_of(vector: dict[str, Any]) -> str:
@@ -164,22 +189,27 @@ def evaluate_vector(vector: dict[str, Any], semantics: Semantics = DEFAULT_SEMAN
         outcome = evaluate_tree(tree, context, semantics)
     else:
         outcome = evaluate_tree(vector.get("expr_tree"), context, semantics)
-    value, value_type, errored, warnings = _report(outcome)
-    return VectorResult(vector_id, category, group, value, value_type, errored, warnings)
+    value, value_type, errored, warnings, threw = _report(outcome)
+    return VectorResult(vector_id, category, group, value, value_type, errored, warnings, threw)
 
 
 def _gloss_result(vector: dict[str, Any], vector_id: str, category: str, group: str,
                   language: str) -> VectorResult:
-    rendered = gloss.render(vector.get("expr_tree"), language)
-    tampered = vector.get("tampered_tree")
-    if tampered is None:
-        return VectorResult(vector_id, category, group, rendered, "string", False, ())
-    # An integrity vector asserts the property "tampering the tree changes the
-    # gloss" (G2), so the reportable value is that property, not either gloss.
-    # RESULTS.md records the other reading (report the untampered gloss) as
-    # ambiguity A7.
-    changed = gloss.render(tampered, language) != rendered
-    return VectorResult(vector_id, category, group, changed, "boolean", False, ())
+    # EXPRESSION-RUNNER-CONTRACT.md (erdl-vectors `fe93f7f`), "gloss vectors
+    # (V-GLOSS, incl. V-GLOSS-INTEGRITY)": "the `value` is the **gloss
+    # string** rendered from the vector's `expr_tree` ... not a boolean.
+    # `V-GLOSS-INTEGRITY-*` vectors carry an extra `tampered_tree` field that
+    # is **integrity evidence only**; the runner still renders and reports
+    # the **original** `expr_tree` gloss ... (it is not evaluated)." This
+    # settles RESULTS.md A7's "reading 2" as the contract-text answer,
+    # reversing this runner's prior "reading 1" (the tamper-changes-render
+    # boolean); `tampered_tree` is read from the vector only to decide the
+    # `_group_of` bookkeeping label (`gloss_integrity` vs. `gloss`), never
+    # rendered.
+    return VectorResult(
+        vector_id, category, group, gloss.render(vector.get("expr_tree"), language),
+        "string", False, (),
+    )
 
 
 def _projection_result(vector: dict[str, Any], vector_id: str, category: str, group: str,
@@ -191,12 +221,12 @@ def _projection_result(vector: dict[str, Any], vector_id: str, category: str, gr
         other = compile_decision_table(dict(vector["decision_table"]))
     first = evaluate_tree(simple_tree, context, semantics)
     second = evaluate_tree(other, context, semantics)
-    value, value_type, errored, warnings = _report(first)
+    value, value_type, errored, warnings, threw = _report(first)
     if _report(second)[:3] != (value, value_type, errored):
         # E7: the projections share one evaluation core, so a divergence is a
         # defect in this runner, not a property of the vector.
         raise ValueError(f"{vector_id}: projections disagree")
-    return VectorResult(vector_id, category, group, value, value_type, errored, warnings)
+    return VectorResult(vector_id, category, group, value, value_type, errored, warnings, threw)
 
 
 def load_corpus(path: str) -> dict[str, Any]:
@@ -308,6 +338,11 @@ def submission_payload(
                 "value_type": result.value_type,
                 "errored": result.errored,
                 "warnings": list(result.warnings),
+                # ER3/ER4 (erdl-vectors `fe93f7f`/`a12f352`): "constraint-
+                # verification vectors (E4) additionally carry `threw: true`"
+                # -- an ordinary evaluated vector's object stays the plain
+                # four-field shape, so the key is present only when true.
+                **({"threw": True} if result.threw else {}),
             }
             for result in results
         },

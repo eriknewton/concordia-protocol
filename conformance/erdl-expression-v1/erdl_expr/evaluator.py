@@ -32,7 +32,7 @@ from .errors import (
     ARITY,
     DIVISION_BY_ZERO,
     LOAD_EXCLUSIVITY_VIOLATION,
-    NOT_AN_ARRAY,
+    REGEX_RE_DOS,
     RESOURCE_LIMIT,
     SAFE_FOLD_EMPTY,
     SCHEMA_VIOLATION,
@@ -309,13 +309,33 @@ class Evaluator:
             raise EvalError(ARITY, f"{node} takes exactly {expected} operands")
         return payload
 
+    def _logic_operand(self, value: Value) -> bool:
+        """Coerce one `and`/`or` operand to bool, per spec v2.1 (erdl-landing
+        79dd76a, section 7.3(a)): "comparison nodes, `between`, and logic
+        nodes (`and`/`or`) over a non-boolean operand fold type mismatches
+        to false **silently** (no warning)". This governs `and`/`or` only,
+        not `not` or a quantifier predicate (neither is named by that
+        sentence), so `_boolean` -- which still raises on a non-boolean, the
+        correct behaviour for those two -- is not reused here. RESULTS.md
+        A13/A20 (V-ENGINE-and-004/-or-004): the type-mismatch VALUE (fold to
+        false) was already settled by A13; this round settles `errored`
+        (false, silent) from the maintainer's text, reversing the prior
+        `_boolean`-raises-TYPE_MISMATCH path that folded it through E12's
+        errored branch instead.
+        """
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, Undefined) or value is None:
+            return self._missing()
+        return False
+
     def _and(self, payload: Any) -> bool:
         if not isinstance(payload, list):
             raise EvalError(ARITY, "and takes a list")
         for operand in payload:
             # Short-circuit: the Simple compiler's `exists(f) AND ...` guard is
             # only protective if a false guard stops the derived expression.
-            if not self._boolean(self.evaluate(operand)):
+            if not self._logic_operand(self.evaluate(operand)):
                 return False
         return True
 
@@ -323,7 +343,7 @@ class Evaluator:
         if not isinstance(payload, list):
             raise EvalError(ARITY, "or takes a list")
         for operand in payload:
-            if self._boolean(self.evaluate(operand)):
+            if self._logic_operand(self.evaluate(operand)):
                 return True
         return False
 
@@ -512,12 +532,25 @@ class Evaluator:
         if not isinstance(binding, str):
             raise EvalError(SCHEMA_VIOLATION, f"{kind} needs a binding name")
         items = self.evaluate(payload.get("over"))
-        if isinstance(items, Undefined):
-            # A missing array is E11 leaf collapse, not the section 7.3(e)
-            # aggregate rule: that rule names `aggregate`, and only aggregate.
-            return self._missing()
-        if not isinstance(items, list):
-            raise EvalError(NOT_AN_ARRAY, f"{kind} takes an array")
+        if isinstance(items, Undefined) or not isinstance(items, list):
+            # spec v2.1 (erdl-landing 79dd76a, section 7.3(b)) names the
+            # missing case together with scalar and object: all three are the
+            # quantifier's `type_mismatch` warning, so a missing `over` is NOT
+            # the silent E11 leaf collapse that governs comparison leaves.
+            # spec v2.1 (erdl-landing 79dd76a, section 7.3(b)): "An `over`
+            # that is not an array (missing/scalar/object) is a
+            # `type_mismatch` warning: `all/any/none` fold to `false` with
+            # `errored: false`." Before this fix, a *present* non-array
+            # `over` raised `NOT_AN_ARRAY` and folded through E12's errored
+            # branch instead -- `not_an_array` is also not in
+            # EXPRESSION-RUNNER-CONTRACT.md's closed warning vocabulary
+            # (erdl-vectors fe93f7f), so the warning code moves to
+            # `TYPE_MISMATCH` too, matching the other four warned-not-errored
+            # families this same clause already covers (`in`/string/`length`/
+            # `aggregate`). RESULTS.md A20 (V-ENGINE-all-003/-any-003/
+            # -none-003).
+            self._record(TYPE_MISMATCH)
+            return False
         check_array_bound(len(items), kind)
         if not items:
             if self.semantics.empty_quantifier_folds_false:
@@ -745,6 +778,25 @@ def evaluate_tree(
             # `value_type: "boolean"`, exactly the reportable shape a
             # genuinely-evaluated boolean node gets.
             return Outcome(value=True, errored=False, warnings=(exc.code,))
+        if exc.code == REGEX_RE_DOS:
+            # spec v2.1 (erdl-landing 79dd76a, section 7.3(d)): "a regex that
+            # violates these limits (nested quantifiers, backreferences,
+            # lookaround, or a step-limit violation) folds to `false` with a
+            # `regex_re_dos` warning and `errored: false` -- it is not an E3
+            # EvaluationError." Before this fix `check_regex_safety`'s raise
+            # (whether from the static `check_tree` gate above or from
+            # `_string`'s dynamic check) fell through to the generic
+            # errored-fold branch below, the same category error A21/A22
+            # already found and fixed for E4/E5: routing a warned,
+            # evaluation-vector fold through the path reserved for genuine
+            # EvaluationErrors. This is a normal evaluated `boolean` result
+            # (`value: false`), unlike the E4 ceilings above (no evaluated
+            # value at all) and E5 (a definite `true`) -- it reaches this
+            # generic `Outcome(value=False, ...)` shape but with
+            # `errored=False`. RESULTS.md A20/A23 (V-ENGINE-match-003,
+            # V-ENGINE-E4-006 -- the latter is thereby an evaluation vector,
+            # not a constraint vector, despite its "E4" scenario label).
+            return Outcome(value=False, errored=False, warnings=(exc.code,))
         # An error supersedes any fold recorded on the way to it: the result
         # object reports one outcome, and E12's fold is that outcome.
         return Outcome(value=False, errored=True, warnings=(exc.code,))

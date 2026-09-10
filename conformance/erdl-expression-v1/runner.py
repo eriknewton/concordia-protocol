@@ -80,7 +80,18 @@ METHOD_READ = (
     "MUST NOT read the answer oracle to pass') forbids shaping a reported "
     "field to match what that read showed, whatever it showed. The read is "
     "disclosed here for upstream to judge; see RESULTS.md A21. What tag those "
-    "five vectors should carry stays an open question."
+    "five vectors should carry stays an open question. Second round (this "
+    "round): the maintainer answered directly in A2A discussion #2031 "
+    "(2026-09-10T06:12Z/06:36Z), pushing spec text to erdl-landing "
+    "c06c425/79dd76a and contract text to erdl-vectors fe93f7f/c2db961/"
+    "a12f352. That text -- not the oracle read above -- is what this round's "
+    "fixes are read against, including the E4 value_type tag (a12f352 states "
+    "it is always a string, the literal 'null', superseding the prior "
+    "reversion), the E4 threw field (ER4, same commits), the and/or and "
+    "quantifier warning-asymmetry extension and the regex_re_dos fold "
+    "(79dd76a section 7.3), and four of the eight V-GLOSS mismatches (79dd76a "
+    "section 5.5, fe93f7f's gloss-vector semantics clause). See RESULTS.md "
+    "A20 through A23."
 )
 
 
@@ -101,14 +112,15 @@ def summary_lines(results: list[VectorResult]) -> list[str]:
     groups = Counter(result.group for result in results)
     types = Counter(result.value_type for result in results)
     errored = sum(1 for result in results if result.errored)
-    # `value_type` is `None` for an E4 constraint-verification vector
-    # (RESULTS.md A21), which is not orderable against the `str` types by
-    # `<`; sort by the printable form instead of the raw key so a `None`
-    # entry does not crash a summary that otherwise never inspects the type.
-    type_items = sorted(types.items(), key=lambda item: str(item[0]))
+    threw = sum(1 for result in results if result.threw)
+    # `value_type` is always a string (ER3, erdl-vectors `a12f352`),
+    # including the literal `"null"` for an E4 constraint-verification
+    # vector (RESULTS.md A21), so an ordinary `str` sort is enough.
+    type_items = sorted(types.items())
     lines = [
         f"vectors evaluated           : {len(results)}",
         f"errored (E12 fold to false) : {errored}",
+        f"threw (E4 constraint, ER4)  : {threw}",
         "value types                 : "
         + ", ".join(f"{name}={count}" for name, count in type_items),
         "groups                      :",

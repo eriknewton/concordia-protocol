@@ -122,7 +122,16 @@ def _render(node: Any, language: str) -> str:
         # noise. The tree, not the gloss, is what the hash covers (G4).
         return decimal_string(to_fraction(node))
     if isinstance(node, str):
-        return nfc(node)
+        # spec v2.1 (erdl-landing 79dd76a) 5.5 "Gloss rendering details":
+        # "string literals render quoted (`"rm"`), and list literals render
+        # their string members quoted (`["a", "b"]`)". A list's members reach
+        # this same branch one at a time (the `list` case above calls
+        # `_render` per item), so quoting here covers both V-GLOSS-005 (list
+        # member) and V-GLOSS-006 (bare scalar). A `field`/`var` path never
+        # reaches this branch: both are dispatched and returned earlier in
+        # `_render_node`, before any node falls through to the generic
+        # literal renderer. RESULTS.md A23.
+        return f'"{nfc(node)}"'
     if node is None:
         return "null"
     raise GlossError(f"unrenderable literal: {type(node).__name__}")
@@ -151,9 +160,35 @@ def _render_node(node: dict[str, Any], language: str) -> str:
             joined = _template(name, language).replace("{A}", joined).replace("{B}", part)
         return joined
     if name == "not":
+        if isinstance(payload, dict) and set(payload) == {"eq"}:
+            # spec v2.1 (erdl-landing 79dd76a) 5.5 "Gloss rendering details":
+            # "`not(eq({A},{B}))` normalizes to the `ne` template (`{A} does
+            # not equal {B}`), not a literal `not ({A} equals {B})` nesting."
+            # Scoped to exactly this shape -- `not` over any other node
+            # (`exists`, `and`, ...) still takes the generic wrapper below,
+            # which is what the frozen `not` row is for. RESULTS.md A23
+            # (V-GLOSS-004).
+            left, right = _pair(payload["eq"], "eq")
+            return (
+                _template("ne", language)
+                .replace("{A}", _render(left, language))
+                .replace("{B}", _render(right, language))
+            )
         return _template("not", language).replace("{A}", _render(payload, language))
+    if name in {"add", "sub", "mul", "div"}:
+        left, right = _pair(payload, name)
+        rendered = (
+            _template(name, language)
+            .replace("{A}", _render(left, language))
+            .replace("{B}", _render(right, language))
+        )
+        # spec v2.1 (erdl-landing 79dd76a) 5.5 "Gloss rendering details":
+        # "arithmetic nodes (`add`/`sub`/`mul`/`div`) render parenthesized
+        # (`(a plus b)`) to preserve operator precedence in the
+        # natural-language reading." RESULTS.md A23 (V-GLOSS-010).
+        return f"({rendered})"
     if name in {"eq", "ne", "gt", "gte", "lt", "lte", "in", "contains", "match",
-                "starts_with", "ends_with", "add", "sub", "mul", "div", "days_between"}:
+                "starts_with", "ends_with", "days_between"}:
         left, right = _pair(payload, name)
         return (
             _template(name, language)

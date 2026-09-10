@@ -1,7 +1,7 @@
 {
   "runner": "concordia-python-expression",
-  "method": "Python 3, standard library only, spec-and-contract-only implementation of the 34-node expression kernel, the Simple 30-operator compiler, the decision-table compiler and the gloss renderer. Arithmetic uses exact rationals (fractions.Fraction) with a single scale-14 half-even rounding at the reported value (E2); no binary float is used anywhere. Read: erdl-spec v2.1 (sections 5, 7, 8, appendix E; erdl-landing dcb7a554c00c047d849899a6327ef6e37d7a39de), EXPRESSION-RUNNER-CONTRACT.md (ER1-ER9; erdl-vectors b56c1c2ad575a1c0f87298cf0f27d509f7a60f56, 'Constraint vectors (E4/E5)'), CHANGELOG.md, v-engine-vectors.json and scripts/verify-v-engine-submission.mjs for the envelope contract and its comparison rule (erdl-vectors 97e0c00723aec526983cea5804e148680b3e0539), and erdl-vectors submissions/README.md for the submission envelope shape. NOT read for the implementation: the reference engine source (scripts/v-engine.mjs), the in-repo verifier scripts (verify-v-engine.mjs, verify-v-engine-full.mjs, verify-v-engine-reverse.mjs), the generator source (generate-v-engine.mjs), @openoba/erdl, and erdl-formal. Disclosed exception: this round, the generator was RUN once (npm run generate:vengine, which executes the reference engine) to produce v-engine-answers.json locally, and that file was read once, to diagnose five E4 constraint vectors (V-ENGINE-E4-001 through -005) that printed as mismatches CI could not explain from its own log text (a JS template-literal artifact renders JSON null and the string \"null\" identically). The evaluator itself was not changed as a result of that read; the tag alignment it suggested (reporting value_type as the oracle's quoted \"null\" string) was reverted, because ER9 ('a runner MUST NOT read the answer oracle to pass') forbids shaping a reported field to match what that read showed, whatever it showed. The read is disclosed here for upstream to judge; see RESULTS.md A21. What tag those five vectors should carry stays an open question. v-engine-vectors.json sha256=3ee30466cc6d95ddd99bc412cfc88b2f2dd3f890b8687b8f12043cc40074c902. Number encoding=json-number; gloss language=en.",
-  "date": "2026-09-09",
+  "method": "Python 3, standard library only, spec-and-contract-only implementation of the 34-node expression kernel, the Simple 30-operator compiler, the decision-table compiler and the gloss renderer. Arithmetic uses exact rationals (fractions.Fraction) with a single scale-14 half-even rounding at the reported value (E2); no binary float is used anywhere. Read: erdl-spec v2.1 (sections 5, 7, 8, appendix E; erdl-landing dcb7a554c00c047d849899a6327ef6e37d7a39de), EXPRESSION-RUNNER-CONTRACT.md (ER1-ER9; erdl-vectors b56c1c2ad575a1c0f87298cf0f27d509f7a60f56, 'Constraint vectors (E4/E5)'), CHANGELOG.md, v-engine-vectors.json and scripts/verify-v-engine-submission.mjs for the envelope contract and its comparison rule (erdl-vectors 97e0c00723aec526983cea5804e148680b3e0539), and erdl-vectors submissions/README.md for the submission envelope shape. NOT read for the implementation: the reference engine source (scripts/v-engine.mjs), the in-repo verifier scripts (verify-v-engine.mjs, verify-v-engine-full.mjs, verify-v-engine-reverse.mjs), the generator source (generate-v-engine.mjs), @openoba/erdl, and erdl-formal. Disclosed exception: this round, the generator was RUN once (npm run generate:vengine, which executes the reference engine) to produce v-engine-answers.json locally, and that file was read once, to diagnose five E4 constraint vectors (V-ENGINE-E4-001 through -005) that printed as mismatches CI could not explain from its own log text (a JS template-literal artifact renders JSON null and the string \"null\" identically). The evaluator itself was not changed as a result of that read; the tag alignment it suggested (reporting value_type as the oracle's quoted \"null\" string) was reverted, because ER9 ('a runner MUST NOT read the answer oracle to pass') forbids shaping a reported field to match what that read showed, whatever it showed. The read is disclosed here for upstream to judge; see RESULTS.md A21. What tag those five vectors should carry stays an open question. Second round (this round): the maintainer answered directly in A2A discussion #2031 (2026-09-10T06:12Z/06:36Z), pushing spec text to erdl-landing c06c425/79dd76a and contract text to erdl-vectors fe93f7f/c2db961/a12f352. That text -- not the oracle read above -- is what this round's fixes are read against, including the E4 value_type tag (a12f352 states it is always a string, the literal 'null', superseding the prior reversion), the E4 threw field (ER4, same commits), the and/or and quantifier warning-asymmetry extension and the regex_re_dos fold (79dd76a section 7.3), and four of the eight V-GLOSS mismatches (79dd76a section 5.5, fe93f7f's gloss-vector semantics clause). See RESULTS.md A20 through A23. v-engine-vectors.json sha256=3ee30466cc6d95ddd99bc412cfc88b2f2dd3f890b8687b8f12043cc40074c902. Number encoding=json-number; gloss language=en.",
+  "date": "2026-09-10",
   "artifact": "https://github.com/eriknewton/concordia-protocol/tree/main/conformance/erdl-expression-v1",
   "layer": "expression",
   "vector_file": "v-engine-vectors.json",
@@ -107,10 +107,8 @@
     "V-ENGINE-and-004": {
       "value": false,
       "value_type": "boolean",
-      "errored": true,
-      "warnings": [
-        "type_mismatch"
-      ]
+      "errored": false,
+      "warnings": []
     },
     "V-ENGINE-and-003": {
       "value": false,
@@ -135,10 +133,8 @@
     "V-ENGINE-or-004": {
       "value": false,
       "value_type": "boolean",
-      "errored": true,
-      "warnings": [
-        "type_mismatch"
-      ]
+      "errored": false,
+      "warnings": []
     },
     "V-ENGINE-or-003": {
       "value": false,
@@ -395,9 +391,9 @@
     "V-ENGINE-match-003": {
       "value": false,
       "value_type": "boolean",
-      "errored": true,
+      "errored": false,
       "warnings": [
-        "regex_unsafe"
+        "regex_re_dos"
       ]
     },
     "V-ENGINE-starts_with-001": {
@@ -546,14 +542,16 @@
       "value": false,
       "value_type": "boolean",
       "errored": false,
-      "warnings": []
+      "warnings": [
+        "type_mismatch"
+      ]
     },
     "V-ENGINE-all-003": {
       "value": false,
       "value_type": "boolean",
-      "errored": true,
+      "errored": false,
       "warnings": [
-        "not_an_array"
+        "type_mismatch"
       ]
     },
     "V-ENGINE-any-001": {
@@ -579,9 +577,9 @@
     "V-ENGINE-any-003": {
       "value": false,
       "value_type": "boolean",
-      "errored": true,
+      "errored": false,
       "warnings": [
-        "not_an_array"
+        "type_mismatch"
       ]
     },
     "V-ENGINE-none-001": {
@@ -602,14 +600,16 @@
       "value": false,
       "value_type": "boolean",
       "errored": false,
-      "warnings": []
+      "warnings": [
+        "type_mismatch"
+      ]
     },
     "V-ENGINE-none-003": {
       "value": false,
       "value_type": "boolean",
-      "errored": true,
+      "errored": false,
       "warnings": [
-        "not_an_array"
+        "type_mismatch"
       ]
     },
     "V-ENGINE-add-001": {
@@ -1036,50 +1036,55 @@
     },
     "V-ENGINE-E4-001": {
       "value": null,
-      "value_type": null,
+      "value_type": "null",
       "errored": false,
       "warnings": [
         "resource_limit"
-      ]
+      ],
+      "threw": true
     },
     "V-ENGINE-E4-002": {
       "value": null,
-      "value_type": null,
+      "value_type": "null",
       "errored": false,
       "warnings": [
         "resource_limit"
-      ]
+      ],
+      "threw": true
     },
     "V-ENGINE-E4-003": {
       "value": null,
-      "value_type": null,
+      "value_type": "null",
       "errored": false,
       "warnings": [
         "resource_limit"
-      ]
+      ],
+      "threw": true
     },
     "V-ENGINE-E4-004": {
       "value": null,
-      "value_type": null,
+      "value_type": "null",
       "errored": false,
       "warnings": [
         "resource_limit"
-      ]
+      ],
+      "threw": true
     },
     "V-ENGINE-E4-005": {
       "value": null,
-      "value_type": null,
+      "value_type": "null",
       "errored": false,
       "warnings": [
         "resource_limit"
-      ]
+      ],
+      "threw": true
     },
     "V-ENGINE-E4-006": {
       "value": false,
       "value_type": "boolean",
-      "errored": true,
+      "errored": false,
       "warnings": [
-        "regex_unsafe"
+        "regex_re_dos"
       ]
     },
     "V-ENGINE-E5-001": {
@@ -1473,19 +1478,19 @@
       "warnings": []
     },
     "V-GLOSS-004": {
-      "value": "not (age equals 35)",
+      "value": "age does not equal 35",
       "value_type": "string",
       "errored": false,
       "warnings": []
     },
     "V-GLOSS-005": {
-      "value": "cat in [a, b]",
+      "value": "cat in [\"a\", \"b\"]",
       "value_type": "string",
       "errored": false,
       "warnings": []
     },
     "V-GLOSS-006": {
-      "value": "cmd contains rm",
+      "value": "cmd contains \"rm\"",
       "value_type": "string",
       "errored": false,
       "warnings": []
@@ -1509,7 +1514,7 @@
       "warnings": []
     },
     "V-GLOSS-010": {
-      "value": "a plus b",
+      "value": "(a plus b)",
       "value_type": "string",
       "errored": false,
       "warnings": []
@@ -1527,26 +1532,26 @@
       "warnings": []
     },
     "V-GLOSS-INTEGRITY-001": {
-      "value": true,
-      "value_type": "boolean",
+      "value": "age equals 35",
+      "value_type": "string",
       "errored": false,
       "warnings": []
     },
     "V-GLOSS-INTEGRITY-002": {
-      "value": true,
-      "value_type": "boolean",
+      "value": "age equals 35",
+      "value_type": "string",
       "errored": false,
       "warnings": []
     },
     "V-GLOSS-INTEGRITY-003": {
-      "value": true,
-      "value_type": "boolean",
+      "value": "a equals 1 and b equals 2",
+      "value_type": "string",
       "errored": false,
       "warnings": []
     },
     "V-GLOSS-INTEGRITY-004": {
-      "value": true,
-      "value_type": "boolean",
+      "value": "cat in [\"a\", \"b\"]",
+      "value_type": "string",
       "errored": false,
       "warnings": []
     },

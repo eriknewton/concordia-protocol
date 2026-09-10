@@ -129,21 +129,18 @@ def test_an_exact_integer_beyond_the_double_range_is_a_reader_side_bound() -> No
     assert quoted["results"]["T1"]["value"] == "1000000000000000000001"
 
 
-def test_a_not_evaluated_e4_constraint_vector_reports_json_null_not_the_oracles_string() -> None:
-    """RESULTS.md A21: this stays the JSON literal `null` for both `value`
-    and `value_type` on an E4 constraint-verification vector that was never
-    evaluated, even though reading `v-engine-answers.json` directly (a prior
-    fix round did, then reverted the read's effect) shows the oracle reports
-    `value_type` as the quoted *string* `"null"`. The contract's ER3 schema
-    line names only number/string/boolean for an evaluated result and states
-    no shape at all for a constraint vector, so there is no contract text
-    that would make the string the correct tag; the only source for it was
-    the oracle file itself, and ER9 ("a runner MUST NOT read the answer
-    oracle to pass") forbids shaping a reported field to match what that read
-    showed, whatever it showed. This pins the contract-blind reading (JSON
-    `null`) rather than the read-aligned one, and leaves what the E4 tag
-    should be an open question for upstream, not something this runner
-    infers from the oracle.
+def test_a_not_evaluated_e4_constraint_vector_reports_the_null_type_as_a_string_and_threw_true() -> None:
+    """RESULTS.md A21, re-settled this round from maintainer text, not from
+    the oracle read a prior fix round disclosed and reverted (that read is
+    still recorded in `METHOD_READ`; this settlement supersedes it).
+    EXPRESSION-RUNNER-CONTRACT.md (erdl-vectors `a12f352`, ER3) now states
+    plainly: "`value_type` is always a string, never a JSON value ... the
+    literal `"null"` (not JSON `null`)." The same commit's ER4 gives the
+    full constraint-verification result object as `{value: null, value_type:
+    "null", errored: false, threw: true}` and states "for E4
+    constraint-verification vectors, `threw` must also match" -- so `threw`
+    is asserted here too, a field this runner did not report at all before
+    this round.
     """
     vector = {
         "id": "T1", "category": "V-ENGINE", "node_group": "logic",
@@ -151,7 +148,25 @@ def test_a_not_evaluated_e4_constraint_vector_reports_json_null_not_the_oracles_
     }
     result = evaluate_vector(vector)
     assert result.value is None
-    assert result.value_type is None
+    assert result.value_type == "null"
+    assert result.threw is True
     payload = json.loads(_envelope([result]))
     assert payload["results"]["T1"]["value"] is None
-    assert payload["results"]["T1"]["value_type"] is None
+    assert payload["results"]["T1"]["value_type"] == "null"
+    assert payload["results"]["T1"]["threw"] is True
+
+
+def test_an_ordinary_evaluated_result_does_not_carry_a_threw_key() -> None:
+    # EXPRESSION-RUNNER-CONTRACT.md ER3 (erdl-vectors `a12f352`):
+    # "constraint-verification vectors (E4) additionally carry `threw:
+    # true`" -- "additionally" means an ordinary evaluated vector's object
+    # stays the plain four-field ER3 shape, with no `threw` key at all, not
+    # a `threw: false`.
+    result = evaluate_vector(
+        {"id": "T2", "category": "V-ENGINE", "node_group": "comparison",
+         "expr_tree": {"eq": [{"field": "a"}, 1]}, "context": {"a": 1}}
+    )
+    assert result.threw is False
+    assert "threw" not in result.as_object()
+    payload = json.loads(_envelope([result]))
+    assert "threw" not in payload["results"]["T2"]
