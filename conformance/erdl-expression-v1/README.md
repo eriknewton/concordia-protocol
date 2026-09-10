@@ -42,16 +42,22 @@ the boundary is recorded here and repeated verbatim in the submission file's
 * `submissions/README.md` in `OpenOBA/erdl-vectors`, for the shape of a
   submission envelope.
 
-**Not read, at any point:**
+**Not read for the implementation:**
 
-* The reference engine, `scripts/v-engine.mjs`.
+* The reference engine source, `scripts/v-engine.mjs`.
 * The in-repo verifier scripts, `verify-v-engine.mjs`,
   `verify-v-engine-full.mjs` and `verify-v-engine-reverse.mjs`, which the
   contract itself describes as a second source of the reference implementation
   rather than a third party.
-* The vector generator, `generate-v-engine.mjs`.
+* The vector generator source, `generate-v-engine.mjs`.
 * `@openoba/erdl`, `erdl-formal`, and any other OpenOBA engine or library.
-* The answer oracle `v-engine-answers.json`, which ER9 forbids.
+
+**One disclosed exception (2026-09-09, RESULTS.md A21):** the answer oracle
+`v-engine-answers.json`, which ER9 forbids reading to pass, was produced once
+by running `npm run generate:vengine` (the reference engine) and read once to
+diagnose five constraint vectors that CI printed as mismatches with identical
+fields. The evaluator was not changed from it; the one output tag it suggested
+was reverted. The submission's `method` field says the same.
 
 No ERDL package is a dependency of this runner. It is standard-library Python
 with no third-party imports at all, and it imports nothing from Concordia, so

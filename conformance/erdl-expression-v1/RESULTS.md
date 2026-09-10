@@ -169,9 +169,12 @@ double-typed reader recovers" cannot quietly collapse again.
 `v-engine-answers.json`, which is gitignored and absent from a fresh clone of
 `OpenOBA/erdl-vectors` at `97e0c00`; the only local way to produce it is
 `npm run generate:vengine`, which runs the reference engine. Generating the
-oracle and then consulting it is what ER9 forbids, so this runner has never
-generated it, and reports no result of its own. That check is upstream's to
-run, which is what the contract says it is for.
+oracle and then consulting it to pass is what ER9 forbids. Before the A21 round
+this runner had never generated it. On 2026-09-09 it was generated once and
+read once, for a diagnosis, and the one change it suggested was reverted; A21
+records exactly what was produced, opened, changed and undone. The runner
+reports no oracle result of its own; that check is upstream's to run, which is
+what the contract says it is for.
 
 What was checked locally is the envelope's **shape** against the verifier's own
 consumption path: the verifier was run against an answers file synthesized from
@@ -214,8 +217,9 @@ fixed both vectors identically; `E3-006` was not itself named in the printed
 shape with `in-003`), which is the reason this round fixes it at the code site
 rather than vector-by-vector — see AGENTS.md's shared-substrate discipline.
 
-**What is NOT independently confirmed**: this runner cannot see the other 30
-unprinted mismatches, and has deliberately not generated the oracle to look.
+**What is NOT independently confirmed**: at the time of this round the runner
+could not see the other 30 unprinted mismatches and had not generated the
+oracle to look (the later, one-time diagnostic generation is disclosed in A21).
 The number-encoding fix is applied uniformly to every `value_type: "number"`
 result regardless of vector id, and a corpus-wide search (below, A1) confirms
 no vector escapes it, so all 37 number vectors are expected to move to
