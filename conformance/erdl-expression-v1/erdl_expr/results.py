@@ -28,12 +28,15 @@ from .simple import compile_decision_table, compile_simple
 from .temporal import run_state_ops
 from .values import Undefined, Value, decimal_string, load_json_exact
 
-#: How a reported number is written into the submission file. ER3 pairs `value`
-#: with a `value_type` of "number", which reads as a JSON number, so that is the
-#: default; E2's "string serialization" is the other live reading of the same
-#: pair, so `decimal-string` regenerates the whole file in that form. RESULTS.md
-#: records this as ambiguity A1.
-NUMBER_FORMATS: Final[tuple[str, ...]] = ("json-number", "decimal-string")
+#: How a reported number is written into the submission file. Ambiguity A1 was
+#: settled 2026-09-10 by the upstream maintainer: contract ER3
+#: (`EXPRESSION-RUNNER-CONTRACT.md`, upstream `b56c1c2`) now reads "a decimal
+#: string (RFC 8785 §3.1) ... not a JSON number" — the prior contract text (a
+#: JSON number) was itself the stale reading, corrected to align with the
+#: v1.6.0 CHANGELOG it had drifted from. `decimal-string` is therefore the
+#: default; `json-number` is kept only as the superseded alternate encoding for
+#: comparison. RESULTS.md A1.
+NUMBER_FORMATS: Final[tuple[str, ...]] = ("decimal-string", "json-number")
 
 #: A JSON number cannot be emitted through `json.dumps` at arbitrary precision
 #: without going through `float`, which would destroy 1e21 + 1 and every
@@ -49,13 +52,29 @@ _SENTINEL_PATTERN: Final[re.Pattern[str]] = re.compile(
 
 @dataclass(frozen=True)
 class VectorResult:
-    """One vector's ER3 result plus the bookkeeping the report needs."""
+    """One vector's ER3 result plus the bookkeeping the report needs.
+
+    `value_type` is `None` only for an E4 constraint-verification vector
+    (RESULTS.md A21): it was never evaluated, so it has no reportable type,
+    which is a different condition from an evaluated `value_type: "boolean"`
+    result of `false`. The contract's ER3 schema line names only
+    number/string/boolean for an evaluated result and states no shape for a
+    constraint vector at all, so JSON `null` is the contract-blind reading
+    here, not a copy of the oracle's own choice: a fix round read
+    `v-engine-answers.json` directly, found it emits this tag as the quoted
+    string `"null"`, and aligned this field to that string, which ER9 ("a
+    runner MUST NOT read the answer oracle to pass") rules out regardless of
+    what the file said. That alignment is reverted; the read is disclosed in
+    `METHOD_READ` and RESULTS.md A21, and what tag an E4 constraint vector
+    should carry is left an open question for upstream to settle from text,
+    not from the oracle.
+    """
 
     vector_id: str
     category: str
     group: str
     value: Value
-    value_type: str
+    value_type: str | None
     errored: bool
     warnings: tuple[str, ...]
 
@@ -68,8 +87,22 @@ class VectorResult:
         }
 
 
-def _report(outcome: Outcome) -> tuple[Value, str, bool, tuple[str, ...]]:
+def _report(outcome: Outcome) -> tuple[Value, str | None, bool, tuple[str, ...]]:
     """Fold one evaluation outcome into the ER3 reportable domain."""
+    if outcome.not_evaluated:
+        # EXPRESSION-RUNNER-CONTRACT.md (b56c1c2) "Constraint vectors
+        # (E4/E5)": an E4 rejection's `expected` "records whether the
+        # constraint was correctly detected/triggered ... not an evaluation
+        # result", so it is reported as a literal null value/type rather than
+        # routed through the errored fold or the missing-value fold below,
+        # both of which describe something that was actually evaluated. The
+        # `value_type` tag stays JSON `null`, not a quoted string: a prior
+        # round read `v-engine-answers.json` directly and aligned this tag to
+        # the oracle's own `"null"` string, which ER9 forbids regardless of
+        # what the file said; that alignment is reverted, the read stays
+        # disclosed in `METHOD_READ`, and the correct tag for an E4
+        # constraint vector is left open for upstream. RESULTS.md A21.
+        return None, None, False, outcome.warnings
     if outcome.errored:
         return False, "boolean", True, outcome.warnings
     value = outcome.value
@@ -255,7 +288,7 @@ def submission_payload(
     method: str,
     date: str,
     artifact: str,
-    number_format: str = "json-number",
+    number_format: str = "decimal-string",
 ) -> dict[str, Any]:
     """Build the expression-layer submission envelope."""
     if number_format not in NUMBER_FORMATS:

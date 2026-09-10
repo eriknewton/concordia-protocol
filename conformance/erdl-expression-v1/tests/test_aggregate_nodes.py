@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .helpers import assert_errored, assert_false, assert_number, dec
+from .helpers import assert_false, assert_number, assert_warned_not_errored, dec
 
 
 def test_the_five_aggregate_functions() -> None:
@@ -37,9 +37,25 @@ def test_a_missing_over_is_a_type_mismatch_and_differs_from_an_empty_array() -> 
     # mismatch, count(empty) is 0. An implementation that folded both to 0
     # would report a rule as satisfied on a fact object that never carried the
     # field at all.
-    assert_errored({"count": {"field": "missing"}}, {}, "type_mismatch")
-    assert_errored({"sum": {"field": "n"}}, {"n": 5}, "type_mismatch")
+    #
+    # Fix round: this was `assert_errored` (errored=true) before this fix,
+    # which inverted the two textual readings available in 7.3(e). The
+    # section's own sentence is explicit: "a non-array (missing/scalar/
+    # object) returns `null` + `type_mismatch` warning (folded to false)" --
+    # a warning, not an EvaluationError. That sentence was already read
+    # correctly in RESULTS.md A8 ("section 7.3(e) states the type-mismatch
+    # rule for the `over` of aggregate ... it names aggregate and only
+    # aggregate"), but the code took the opposite reading, and instead
+    # "fixed" the sibling case below (a non-numeric *element* inside an
+    # otherwise valid array) which 7.3(e) does not name explicitly at all.
+    assert_warned_not_errored({"count": {"field": "missing"}}, {}, "type_mismatch")
+    assert_warned_not_errored({"sum": {"field": "n"}}, {"n": 5}, "type_mismatch")
 
 
-def test_a_non_numeric_member_is_a_type_mismatch() -> None:
-    assert_errored({"min": {"field": "n"}}, {"n": [1, "x", 3]}, "type_mismatch")
+def test_a_non_numeric_member_is_warned_not_errored() -> None:
+    # A17 settled this (RESULTS.md, spec section 7.3(a)): a non-numeric
+    # element inside an otherwise valid `over` array is a warned type
+    # mismatch, not an EvaluationError. This is distinct from the
+    # missing/non-array `over` case just above, which section 7.3(e) names
+    # explicitly and which A17 does not touch.
+    assert_warned_not_errored({"min": {"field": "n"}}, {"n": [1, "x", 3]}, "type_mismatch")

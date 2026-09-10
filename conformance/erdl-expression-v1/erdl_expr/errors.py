@@ -45,3 +45,16 @@ UNKNOWN_NODE: Final[str] = "unknown_node"
 SAFE_FOLD_EMPTY: Final[str] = "safe_fold_empty_array"
 SAFE_FOLD_NON_SCALAR: Final[str] = "safe_fold_non_scalar_result"
 SAFE_FOLD_UNDEFINED: Final[str] = "safe_fold_undefined_result"
+
+#: E5 (spec §7.2, "`when` and `expr` MUST NOT coexist"); the corpus's E5-01
+#: vector expresses the violation as `expr` coexisting with the Simple triple
+#: (`field`/`operator`/`value`) rather than as `when`+`expr` on a rule object,
+#: which is the same load-time exclusivity check applied one level down.
+#: EXPRESSION-RUNNER-CONTRACT.md (b56c1c2), "Constraint vectors (E4/E5)":
+#: E5 vectors are constraint-verification vectors whose `expected` "records
+#: whether the constraint was correctly detected/triggered ... E5 `value:
+#: true` = violation detected", not an evaluation result -- so this code is
+#: NOT folded through E12 like an ordinary EvalError (see
+#: `evaluate_tree`'s dedicated branch); it reports the violation itself as
+#: a literal boolean `true`.
+LOAD_EXCLUSIVITY_VIOLATION: Final[str] = "expr_load_exclusivity_violation"

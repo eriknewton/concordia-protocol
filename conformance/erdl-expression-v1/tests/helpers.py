@@ -55,6 +55,50 @@ def assert_errored(tree: Any, fact: dict[str, Any] | None = None, code: str | No
         assert code in outcome.warnings, outcome.warnings
 
 
+def assert_constraint_violated(tree: Any, fact: dict[str, Any] | None, code: str) -> None:
+    """RESULTS.md A21 / EXPRESSION-RUNNER-CONTRACT.md (b56c1c2), "Constraint
+    vectors (E4/E5)": an E4 resource-limit violation is a
+    constraint-verification vector, not an evaluation vector, so it is
+    reported as `errored: false` with a literal `null` value -- not
+    `assert_errored`'s evaluated-and-folded `false`, and not
+    `assert_warned_not_errored`'s evaluated-and-warned `false` either. All
+    three are asserted so a runner that quietly reused one of those two
+    shapes for an E4 rejection is caught here.
+
+    This checks `Outcome.value`/`not_evaluated`, which stay Python `None`/
+    `True` regardless; `Outcome` carries no `value_type` field at all. The
+    `value_type` tag itself is assigned one layer up, in
+    `erdl_expr.results._report`, when an `Outcome` is folded into a
+    `VectorResult` -- see `tests/test_submission_format.py`'s
+    `test_a_not_evaluated_e4_constraint_vector_reports_json_null_not_the_oracles_string`
+    for that layer's own assertion, and RESULTS.md A21 for why the tag is
+    JSON `null` rather than the quoted string the oracle emits.
+    """
+    outcome = run(tree, fact)
+    assert outcome.errored is False, outcome.warnings
+    assert outcome.value is None, outcome.value
+    assert outcome.not_evaluated is True
+    assert code in outcome.warnings, outcome.warnings
+
+
+def assert_warned_not_errored(tree: Any, fact: dict[str, Any] | None, code: str) -> None:
+    """A17 (erdl-vectors discussion #2031, spec §7.3(a) fixed at fb428b7): a
+    string-family, `length`, or `aggregate` type mismatch folds to false and
+    records the warning, but is NOT an evaluation error.
+
+    All three are asserted, the same way `assert_errored` asserts both halves
+    of its own predicate: `errored` distinguishes this from `assert_errored`'s
+    class (a raised `EvalError`), `value` distinguishes it from a plain
+    `assert_false` (a false that happens to record nothing), and the warning
+    distinguishes it from every other silent-false fold (comparison, `between`)
+    that A17 explicitly leaves alone.
+    """
+    outcome = run(tree, fact)
+    assert outcome.errored is False, outcome.warnings
+    assert outcome.value is False
+    assert code in outcome.warnings, outcome.warnings
+
+
 def assert_number(tree: Any, expected: str, fact: dict[str, Any] | None = None) -> None:
     outcome = run(tree, fact)
     assert outcome.errored is False, outcome.warnings

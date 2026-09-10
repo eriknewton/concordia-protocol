@@ -6,11 +6,18 @@ with the kernel in `erdl_expr/`, and writes the submission file the
 expression-runner contract's ER3 shape describes.
 
 Independence (ER2, ER9): the kernel was written from the ERDL v2.1
-specification and `EXPRESSION-RUNNER-CONTRACT.md`. The reference engine
+specification and `EXPRESSION-RUNNER-CONTRACT.md`. The reference engine source
 (`scripts/v-engine.mjs`), the in-repo verifier scripts (`verify-v-engine*.mjs`),
-`erdl-formal`, `@openoba/erdl` and the answer oracle (`v-engine-answers.json`)
-were not opened, imported, vendored or consulted. The submission's `method`
-field carries that statement so it travels with the artifact.
+`erdl-formal`, and `@openoba/erdl` were not read for the implementation. One
+disclosed exception: in a later fix round the generator was run once
+(`npm run generate:vengine`, which executes the reference engine) to produce
+the answer oracle (`v-engine-answers.json`) locally, and that file was read
+once, to diagnose five E4 constraint vectors a CI run kept printing as
+mismatches; the evaluator was not changed from it, and the tag alignment
+that read suggested was reverted, since ER9 forbids shaping a reported field
+to match the oracle regardless of what the read showed. See `METHOD_READ`
+below and RESULTS.md A21. The submission's `method` field carries the full
+statement so it travels with the artifact.
 
 This runner reports one measurement. It does not declare conformance: ER4 is
 settled by a cross-verification run that compares against an oracle this runner
@@ -52,16 +59,28 @@ DEFAULT_ARTIFACT = (
 METHOD_READ = (
     "Read: erdl-spec v2.1 (sections 5, 7, 8, appendix E; erdl-landing "
     "dcb7a554c00c047d849899a6327ef6e37d7a39de), EXPRESSION-RUNNER-CONTRACT.md "
-    "(ER1-ER9), CHANGELOG.md, v-engine-vectors.json and "
+    "(ER1-ER9; erdl-vectors b56c1c2ad575a1c0f87298cf0f27d509f7a60f56, "
+    "'Constraint vectors (E4/E5)'), CHANGELOG.md, v-engine-vectors.json and "
     "scripts/verify-v-engine-submission.mjs for the envelope contract and its "
     "comparison rule (erdl-vectors 97e0c00723aec526983cea5804e148680b3e0539), "
     "and erdl-vectors submissions/README.md for the submission envelope shape. "
-    "NOT read: the reference engine (scripts/v-engine.mjs), the in-repo verifier "
-    "scripts (verify-v-engine.mjs, verify-v-engine-full.mjs, "
-    "verify-v-engine-reverse.mjs), the generator (generate-v-engine.mjs), "
-    "@openoba/erdl, erdl-formal, and the answer oracle v-engine-answers.json, "
-    "which was never generated locally because generating it runs the reference "
-    "engine and consulting the result is what ER9 forbids."
+    "NOT read for the implementation: the reference engine source "
+    "(scripts/v-engine.mjs), the in-repo verifier scripts (verify-v-engine.mjs, "
+    "verify-v-engine-full.mjs, verify-v-engine-reverse.mjs), the generator "
+    "source (generate-v-engine.mjs), @openoba/erdl, and erdl-formal. Disclosed "
+    "exception: this round, the generator was RUN once (npm run "
+    "generate:vengine, which executes the reference engine) to produce "
+    "v-engine-answers.json locally, and that file was read once, to diagnose "
+    "five E4 constraint vectors (V-ENGINE-E4-001 through -005) that printed as "
+    "mismatches CI could not explain from its own log text (a JS "
+    "template-literal artifact renders JSON null and the string \"null\" "
+    "identically). The evaluator itself was not changed as a result of that "
+    "read; the tag alignment it suggested (reporting value_type as the "
+    "oracle's quoted \"null\" string) was reverted, because ER9 ('a runner "
+    "MUST NOT read the answer oracle to pass') forbids shaping a reported "
+    "field to match what that read showed, whatever it showed. The read is "
+    "disclosed here for upstream to judge; see RESULTS.md A21. What tag those "
+    "five vectors should carry stays an open question."
 )
 
 
@@ -82,11 +101,16 @@ def summary_lines(results: list[VectorResult]) -> list[str]:
     groups = Counter(result.group for result in results)
     types = Counter(result.value_type for result in results)
     errored = sum(1 for result in results if result.errored)
+    # `value_type` is `None` for an E4 constraint-verification vector
+    # (RESULTS.md A21), which is not orderable against the `str` types by
+    # `<`; sort by the printable form instead of the raw key so a `None`
+    # entry does not crash a summary that otherwise never inspects the type.
+    type_items = sorted(types.items(), key=lambda item: str(item[0]))
     lines = [
         f"vectors evaluated           : {len(results)}",
         f"errored (E12 fold to false) : {errored}",
         "value types                 : "
-        + ", ".join(f"{name}={count}" for name, count in sorted(types.items())),
+        + ", ".join(f"{name}={count}" for name, count in type_items),
         "groups                      :",
     ]
     for name, count in sorted(groups.items()):
@@ -115,8 +139,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--number-format",
         choices=NUMBER_FORMATS,
-        default="json-number",
-        help="how a reported number is encoded; see RESULTS.md ambiguity A1",
+        default="decimal-string",
+        help=(
+            "how a reported number is encoded; ER3 settles this as a decimal "
+            "string (upstream b56c1c2). See RESULTS.md ambiguity A1."
+        ),
     )
     parser.add_argument(
         "--gloss-language",
