@@ -52,7 +52,8 @@ DEFAULT_ARTIFACT = (
 METHOD_READ = (
     "Read: erdl-spec v2.1 (sections 5, 7, 8, appendix E; erdl-landing "
     "dcb7a554c00c047d849899a6327ef6e37d7a39de), EXPRESSION-RUNNER-CONTRACT.md "
-    "(ER1-ER9), CHANGELOG.md, v-engine-vectors.json and "
+    "(ER1-ER9; erdl-vectors b56c1c2ad575a1c0f87298cf0f27d509f7a60f56, "
+    "'Constraint vectors (E4/E5)'), CHANGELOG.md, v-engine-vectors.json and "
     "scripts/verify-v-engine-submission.mjs for the envelope contract and its "
     "comparison rule (erdl-vectors 97e0c00723aec526983cea5804e148680b3e0539), "
     "and erdl-vectors submissions/README.md for the submission envelope shape. "
@@ -82,11 +83,16 @@ def summary_lines(results: list[VectorResult]) -> list[str]:
     groups = Counter(result.group for result in results)
     types = Counter(result.value_type for result in results)
     errored = sum(1 for result in results if result.errored)
+    # `value_type` is `None` for an E4 constraint-verification vector
+    # (RESULTS.md A21), which is not orderable against the `str` types by
+    # `<`; sort by the printable form instead of the raw key so a `None`
+    # entry does not crash a summary that otherwise never inspects the type.
+    type_items = sorted(types.items(), key=lambda item: str(item[0]))
     lines = [
         f"vectors evaluated           : {len(results)}",
         f"errored (E12 fold to false) : {errored}",
         "value types                 : "
-        + ", ".join(f"{name}={count}" for name, count in sorted(types.items())),
+        + ", ".join(f"{name}={count}" for name, count in type_items),
         "groups                      :",
     ]
     for name, count in sorted(groups.items()):

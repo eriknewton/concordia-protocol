@@ -52,13 +52,19 @@ _SENTINEL_PATTERN: Final[re.Pattern[str]] = re.compile(
 
 @dataclass(frozen=True)
 class VectorResult:
-    """One vector's ER3 result plus the bookkeeping the report needs."""
+    """One vector's ER3 result plus the bookkeeping the report needs.
+
+    `value_type` is `None` only for an E4 constraint-verification vector
+    (RESULTS.md A21): it was never evaluated, so it has no reportable type,
+    which is a different condition from an evaluated `value_type: "boolean"`
+    result of `false`.
+    """
 
     vector_id: str
     category: str
     group: str
     value: Value
-    value_type: str
+    value_type: str | None
     errored: bool
     warnings: tuple[str, ...]
 
@@ -71,8 +77,17 @@ class VectorResult:
         }
 
 
-def _report(outcome: Outcome) -> tuple[Value, str, bool, tuple[str, ...]]:
+def _report(outcome: Outcome) -> tuple[Value, str | None, bool, tuple[str, ...]]:
     """Fold one evaluation outcome into the ER3 reportable domain."""
+    if outcome.not_evaluated:
+        # EXPRESSION-RUNNER-CONTRACT.md (b56c1c2) "Constraint vectors
+        # (E4/E5)": an E4 rejection's `expected` "records whether the
+        # constraint was correctly detected/triggered ... not an evaluation
+        # result", so it is reported as a literal null value/type rather than
+        # routed through the errored fold or the missing-value fold below,
+        # both of which describe something that was actually evaluated.
+        # RESULTS.md A21.
+        return None, None, False, outcome.warnings
     if outcome.errored:
         return False, "boolean", True, outcome.warnings
     value = outcome.value

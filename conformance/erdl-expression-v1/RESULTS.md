@@ -1,5 +1,16 @@
 # ERDL expression layer: measured results
 
+**Revised 2026-09-10 (A21)**: five of the six E4 constraint vectors
+(`V-ENGINE-E4-001` through `-005`) are fixed: `errored` flips from `true` to
+`false` and `value`/`value_type` flip from `false`/`boolean` to a literal
+`null`, on EXPRESSION-RUNNER-CONTRACT.md's (`b56c1c2`) own "Constraint vectors
+(E4/E5)" text -- a passage already cited in this file for A1's number-encoding
+fix but not, until now, applied to the E4 vectors it names directly. The
+sixth, `V-ENGINE-E4-006`, is deliberately left unchanged (`errored: true`);
+see A21 for why it does not share the other five's disposition even though a
+2026-09-10 erdl-vectors PR#3 CI run (`34439013476`) shows it, like
+`V-ENGINE-match-003`, expected as `false`/`boolean`/`errored: false`.
+
 **Revised 2026-09-10**: the number encoding (A1) reversed to decimal-string,
 `V-ENGINE-in-003`/`V-ENGINE-E3-006` are fixed (A17 addendum), and six vectors
 the erdl-vectors PR#3 CI cross-verification also flagged are recorded as
@@ -202,10 +213,11 @@ seen.
 
 | Measure | Count |
 |---|---:|
-| `value_type` boolean | 184 |
+| `value_type` boolean | 179 |
 | `value_type` number | 37 |
 | `value_type` string | 19 |
-| `errored` true (E12 fold to false) | 46 |
+| `value_type` null (E4 constraint, not evaluated) | 5 |
+| `errored` true (E12 fold to false) | 41 |
 | value true | 67 |
 
 **Updated 2026-09-10** (A17 addendum + A20): the 53-errored count below this
@@ -214,10 +226,14 @@ paragraph predates both the original A17 fix-round (5 vectors: `contains-003`,
 round's `in-003`/`E3-006` fix, and was never revised after either, which is a
 prose-drift defect in its own right (`.claude/RULES.md`-style: source is the
 regenerated output, this paragraph is the doc, and the doc had gone stale).
-The current, regenerated count is 46, breaking down as 19 `type_mismatch`, 6
-`division_by_zero`, 6 `invalid_date`, 5 `resource_limit`, 4 `arity`, 3
-`not_an_array`, 2 `regex_unsafe`, 1 `schema_violation` (19+6+6+5+4+3+2+1=46).
-The 3 remaining `not_an_array` errors are exactly the three vectors A20 leaves
+The current, regenerated count is 41, breaking down as 19 `type_mismatch`, 6
+`division_by_zero`, 6 `invalid_date`, 4 `arity`, 3 `not_an_array`, 2
+`regex_unsafe`, 1 `schema_violation` (19+6+6+4+3+2+1=41). The `resource_limit`
+row this count carried until A21 (below) is gone, not renumbered: A21 moves
+all 5 `resource_limit` errors out of this table into the new `value_type`
+null row above, because they are not evaluation errors at all under
+EXPRESSION-RUNNER-CONTRACT.md's "Constraint vectors (E4/E5)" clause. The 3
+remaining `not_an_array` errors are exactly the three vectors A20 leaves
 unflipped (`all-003`, `any-003`, `none-003`); the 19 `type_mismatch` errors are
 unrelated to the 7 `type_mismatch` *warnings* below (a warning attached to an
 `errored: false` result is a different bucket from a warning attached to an
@@ -334,10 +350,12 @@ of them was settled by consulting the reference engine or the oracle.
 ### A3. Where the E12 error fold is taken
 
 * **Affects:** `V-ENGINE-not-003` and `V-ENGINE-exists-003` are the two vectors
-  that distinguish the readings; the fold applies to all 53 errored vectors
-  (see "Reported values" above: 24 `type_mismatch` + 6 `division_by_zero` + 6
-  `invalid_date` + 5 `not_an_array` + 5 `resource_limit` + 4 `arity` + 2
-  `regex_unsafe` + 1 `schema_violation` = 53).
+  that distinguish the readings; the fold applies to every errored vector (this
+  53-count already predates the A17-addendum correction to 46 noted above, and
+  now also predates A21's further correction to 41 -- see "Reported values"
+  above for the current breakdown; the fold reading itself is unaffected by
+  either recount, since A21 removes `resource_limit` from the errored-fold
+  path entirely rather than changing which of the remaining codes fold).
 * **Reading 1 (chosen):** once, at the top of the evaluation. Any error folds
   the whole result to `false`.
 * **Reading 2:** at the erroring node, so evaluation continues around it. Under
@@ -805,11 +823,89 @@ of them was settled by consulting the reference engine or the oracle.
   `V-ENGINE-E4-006`, the other vector sharing this exact pattern (RESULTS.md
   A10), which the printed 30 mismatches did not name and this runner cannot
   check without the oracle?
+  **Update (A21, 2026-09-10):** a later erdl-vectors PR#3 CI run
+  (`34439013476`) prints `V-ENGINE-E4-006` too, and its oracle answer is the
+  same `false`/`boolean`/`errored: false` as `V-ENGINE-match-003`. This
+  confirms the two share one answer, which is unsurprising since they carry
+  the same tree and context; it does not supply the missing spec-text
+  sentence, so the reading here is deliberately left unflipped for both. See
+  A21 for the full disposition and for the reasoning that DOES have spec-text
+  support (E4-001 through -005, the five vectors that are not regex-safety
+  rejections).
 * **What would settle all three groups:** one sentence per group, the same
   shape as fb428b7's fix for A17: naming quantifiers and/or logic nodes
   explicitly in the warning-asymmetry clause (or explicitly excluding them),
   and naming a regex-safety rejection's `errored` value in §7.3(d) the way
   §7.3(a) now names it for its four families.
+
+### A21. The six E4 constraint vectors: five settled by contract text, one left with A20
+
+* **Opened 2026-09-10**, by this fix round's per-vector reading of
+  `EXPRESSION-RUNNER-CONTRACT.md` (upstream `b56c1c2`) against all six E4
+  vectors, cross-checked against the fuller erdl-vectors PR#3 CI print (run
+  `34439013476`, which names all 21 of that run's mismatches, not only the
+  10-line cap this repo's earlier reads were bounded by).
+* **The governing sentence**, ER3 "Constraint vectors (E4/E5)": "the E4
+  resource-limit vectors (`expectThrow`) and E5 load-time-exclusivity vectors
+  are constraint-verification vectors, not evaluation vectors — their
+  `expected` records whether the constraint was correctly detected/triggered
+  (E4 `threw: true`; E5 `value: true` = violation detected), not an
+  evaluation result. The E12 fold and `errored` rules above apply to
+  evaluation vectors only." This same document was already read for A1 (the
+  ER3 number-encoding correction), but this specific clause, about the E4/E5
+  vectors it names directly, was not previously applied to them; that is the
+  new reading this round makes, not a new source.
+* **V-ENGINE-E4-001 (node count), -002 (tree depth), -003 (arithmetic depth),
+  -004 (array length), -005 (quantifier nesting): FLIPPED.** Each is rejected
+  by `erdl_expr.limits.check_tree`, which runs before `Evaluator.evaluate` is
+  ever called (`erdl_expr/evaluator.py::evaluate_tree`), so nothing is
+  evaluated. The governing sentence says plainly that the `errored` rule (E3's
+  errored-on-EvaluationError glossary row Appendix E) "applies to evaluation
+  vectors only" — an E4 constraint-verification vector is stated, not implied,
+  to be outside that rule's scope. Reading it as `errored: true` was therefore
+  a category error: it borrowed the evaluation-error fold for a vector class
+  the same contract explicitly carves out of that fold. With no evaluated
+  value to report, `value`/`value_type` become `null`, matching the shape a
+  vector genuinely outside the reportable `number`/`string`/`boolean` domain
+  needs; this is a new, explicit fourth case alongside those three in ER3, not
+  a repurposing of the existing E11 missing-value fold to `false` (that fold
+  is for a value that WAS evaluated and turned out to be null/undefined,
+  which is a different condition from "no evaluation happened"). Fixed in
+  `erdl_expr/evaluator.py` (`Outcome.not_evaluated`, `evaluate_tree`'s
+  `RESOURCE_LIMIT` branch) and `erdl_expr/results.py` (`_report`), with a
+  failing-before test in `tests/test_limits.py`
+  (`test_the_five_structural_e4_ceilings_report_no_evaluated_value`) built
+  from the same five tree shapes the corpus vectors use (this runner's trees
+  were derived from the spec, not the corpus, per `tests/helpers.py`'s own
+  discipline note; the shapes happen to coincide exactly, which is how the
+  fix is known to reach the actual corpus vectors and not just a look-alike).
+* **V-ENGINE-E4-006 (regex nested-quantifier ReDoS): NOT flipped, unchanged
+  from A20/A10's reading.** This vector is not rejected by a resource-limit
+  ceiling at all; it is rejected by `check_regex_safety` raising
+  `regex_unsafe`, the SAME code path `V-ENGINE-match-003` goes through for
+  the identical pattern and context. The governing ER3 sentence quoted above
+  is scoped to "the E4 resource-limit vectors" — the five ceilings E4's own
+  spec-table row lists (arithmetic depth, tree depth, nodes, array, quantifier
+  nesting; erdl-spec.en.md §7.2's E4 row) — and a regex-safety rejection is a
+  §7.3(d) concern, a different subsection with no stated `errored` value, as
+  A10 already established. `V-ENGINE-E4-006`'s corpus `scenario` field calls
+  it a "regex nested quantifier ReDoS" case, which is what earns it a
+  constraint-family id, but the contract's "Constraint vectors (E4/E5)"
+  sentence does not extend its "not an evaluation vector" reading to a
+  regex-safety rejection just because the vector sits in the E4 family by
+  scenario label; the sentence's own examples (`threw: true` for the graded
+  ceilings) are about tree/array shape, not pattern safety. Flipping this one
+  vector without a comparable sentence would be exactly the oracle-chasing
+  this project's discipline forbids: the CI print now confirms what the
+  answer IS for both `E4-006` and `match-003`, but confirming an oracle
+  answer is not the same as finding the spec text that justifies changing the
+  runner to produce it. This is recorded as an update to A20 above, not a
+  contradiction of it.
+* **Net effect on the submission**: `V-ENGINE-E4-001` through `-005` move from
+  `errored: true` (46-count bucket) to a new `value_type: null` bucket (5
+  vectors); `V-ENGINE-E4-006` stays in the errored-true bucket alongside
+  `V-ENGINE-match-003`, both still open per A20. The "Reported values" table
+  above and A3's tally are updated to match.
 
 ## What the tests cover
 

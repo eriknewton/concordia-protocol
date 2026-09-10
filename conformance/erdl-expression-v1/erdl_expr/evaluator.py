@@ -668,11 +668,24 @@ class Evaluator:
 
 @dataclass(frozen=True)
 class Outcome:
-    """The folded outcome of one evaluation."""
+    """The folded outcome of one evaluation.
+
+    `not_evaluated` marks the one outcome that is not a fold of an evaluated
+    value at all: an E4 resource-limit rejection. EXPRESSION-RUNNER-CONTRACT.md
+    (upstream `b56c1c2`), "Constraint vectors (E4/E5)": "the E4 resource-limit
+    vectors ... are constraint-verification vectors, not evaluation vectors
+    ... The E12 fold and `errored` rules ... apply to evaluation vectors
+    only." A tree the static check rejects was never handed to the evaluator,
+    so it has no value to fold; `not_evaluated=True` is what tells
+    `results._report` to report that absence directly rather than routing it
+    through the errored-fold or the missing-value fold, both of which are
+    folds of something that was actually evaluated. RESULTS.md A21.
+    """
 
     value: Value
     errored: bool
     warnings: tuple[str, ...]
+    not_evaluated: bool = False
 
 
 def evaluate_tree(
@@ -691,6 +704,12 @@ def evaluate_tree(
         check_tree(tree)
         value = evaluator.evaluate(tree)
     except EvalError as exc:
+        if exc.code == RESOURCE_LIMIT:
+            # RESULTS.md A21: an E4 ceiling breach -- wherever raised, the
+            # static `check_tree` gate or a runtime array-bound check on a
+            # fact-borne array -- is a constraint-verification outcome, not an
+            # evaluation error, so it carries no evaluated value.
+            return Outcome(value=None, errored=False, warnings=(exc.code,), not_evaluated=True)
         # An error supersedes any fold recorded on the way to it: the result
         # object reports one outcome, and E12's fold is that outcome.
         return Outcome(value=False, errored=True, warnings=(exc.code,))
