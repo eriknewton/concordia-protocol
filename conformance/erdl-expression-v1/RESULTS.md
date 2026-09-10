@@ -72,15 +72,17 @@ the exact commits:
 | `v-engine-vectors.json`, `EXPRESSION-RUNNER-CONTRACT.md`, `scripts/verify-v-engine-submission.mjs`, `CHANGELOG.md` | `OpenOBA/erdl-vectors` (`master`) | `97e0c00723aec526983cea5804e148680b3e0539` |
 | `erdl-spec.en.md` (sections 5, 7, 8, appendix E) | `OpenOBA/erdl-landing` (`main`) | `dcb7a554c00c047d849899a6327ef6e37d7a39de` |
 
-The independence boundary is unchanged for evaluation and is restated in the
-submission's `method` field: the reference engine (`scripts/v-engine.mjs`),
-the in-repo verifier scripts, the generator, `@openoba/erdl`, and
-`erdl-formal` were not opened, imported, vendored or consulted in this round
-either. The one file read that was not read in the first round is
+The independence boundary for the implementation is restated in the
+submission's `method` field: the reference engine source (`scripts/v-engine.mjs`),
+the in-repo verifier scripts, the generator source, `@openoba/erdl`, and
+`erdl-formal` were not read for the implementation in this round either. The
+one file read that was not read in the first round is
 `scripts/verify-v-engine-submission.mjs`, and only for its envelope contract
 and its comparison rule; it carries no node semantics. **Disclosed exception:
-this round, the answer oracle `v-engine-answers.json` was generated locally
-and read once**, to diagnose five E4 constraint vectors
+this round, the generator was RUN once (`npm run generate:vengine`, which
+executes the reference engine) to produce the answer oracle
+`v-engine-answers.json` locally, and that file was read once**, to diagnose
+five E4 constraint vectors
 (`V-ENGINE-E4-001` through `-005`) that a CI cross-verification run kept
 printing as mismatches with no explanation the log's own text could supply
 (see A21). The evaluator was not changed as a result of that read; the

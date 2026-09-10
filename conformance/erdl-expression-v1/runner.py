@@ -6,12 +6,14 @@ with the kernel in `erdl_expr/`, and writes the submission file the
 expression-runner contract's ER3 shape describes.
 
 Independence (ER2, ER9): the kernel was written from the ERDL v2.1
-specification and `EXPRESSION-RUNNER-CONTRACT.md`. The reference engine
+specification and `EXPRESSION-RUNNER-CONTRACT.md`. The reference engine source
 (`scripts/v-engine.mjs`), the in-repo verifier scripts (`verify-v-engine*.mjs`),
-`erdl-formal`, and `@openoba/erdl` were not opened, imported, vendored or
-consulted. One disclosed exception: the answer oracle (`v-engine-answers.json`)
-was generated locally and read once in a later fix round, to diagnose five
-E4 constraint vectors a CI run kept printing as mismatches; the tag alignment
+`erdl-formal`, and `@openoba/erdl` were not read for the implementation. One
+disclosed exception: in a later fix round the generator was run once
+(`npm run generate:vengine`, which executes the reference engine) to produce
+the answer oracle (`v-engine-answers.json`) locally, and that file was read
+once, to diagnose five E4 constraint vectors a CI run kept printing as
+mismatches; the evaluator was not changed from it, and the tag alignment
 that read suggested was reverted, since ER9 forbids shaping a reported field
 to match the oracle regardless of what the read showed. See `METHOD_READ`
 below and RESULTS.md A21. The submission's `method` field carries the full
