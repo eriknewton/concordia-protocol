@@ -113,7 +113,7 @@ def _report(outcome: Outcome) -> tuple[Value, str, bool, tuple[str, ...], bool]:
     Returns `(value, value_type, errored, warnings, threw)`.
     """
     if outcome.not_evaluated:
-        # EXPRESSION-RUNNER-CONTRACT.md ER3/ER4 (erdl-vectors `79dd76a` /
+        # EXPRESSION-RUNNER-CONTRACT.md ER3/ER4 (erdl-vectors `fe93f7f` /
         # `a12f352`), "Constraint vectors (E4/E5)": an E4 rejection's
         # `expected` "records whether the constraint was correctly
         # detected/triggered ... not an evaluation result", stated as
@@ -338,7 +338,7 @@ def submission_payload(
                 "value_type": result.value_type,
                 "errored": result.errored,
                 "warnings": list(result.warnings),
-                # ER3/ER4 (erdl-vectors `79dd76a`/`a12f352`): "constraint-
+                # ER3/ER4 (erdl-vectors `fe93f7f`/`a12f352`): "constraint-
                 # verification vectors (E4) additionally carry `threw: true`"
                 # -- an ordinary evaluated vector's object stays the plain
                 # four-field shape, so the key is present only when true.

@@ -532,11 +532,11 @@ class Evaluator:
         if not isinstance(binding, str):
             raise EvalError(SCHEMA_VIOLATION, f"{kind} needs a binding name")
         items = self.evaluate(payload.get("over"))
-        if isinstance(items, Undefined):
-            # A missing array is E11 leaf collapse, not the section 7.3(e)
-            # aggregate rule: that rule names `aggregate`, and only aggregate.
-            return self._missing()
-        if not isinstance(items, list):
+        if isinstance(items, Undefined) or not isinstance(items, list):
+            # spec v2.1 (erdl-landing 79dd76a, section 7.3(b)) names the
+            # missing case together with scalar and object: all three are the
+            # quantifier's `type_mismatch` warning, so a missing `over` is NOT
+            # the silent E11 leaf collapse that governs comparison leaves.
             # spec v2.1 (erdl-landing 79dd76a, section 7.3(b)): "An `over`
             # that is not an array (missing/scalar/object) is a
             # `type_mismatch` warning: `all/any/none` fold to `false` with

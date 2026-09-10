@@ -28,18 +28,17 @@ def test_the_binding_is_scoped_to_its_own_predicate() -> None:
     assert_false({"eq": [{"var": "x"}, 1]}, {"items": [1]})
 
 
-def test_a_missing_array_is_silently_false_and_a_present_non_array_is_warned() -> None:
-    # E11 governs the missing case (silent false, no warning): section
-    # 7.3(e)'s aggregate type-mismatch rule names `aggregate`, not the
-    # quantifiers, so a missing `over` is the ordinary leaf collapse.
-    # spec v2.1 (erdl-landing 79dd76a, section 7.3(b)) settles the PRESENT
-    # non-array case A20 had left open: "an `over` that is not an array
+def test_a_missing_or_non_array_over_is_warned_not_errored() -> None:
+    # spec v2.1 (erdl-landing 79dd76a, section 7.3(b)) names the missing case
+    # with scalar and object, so a missing `over` is the quantifier's own
+    # `type_mismatch` warning, not E11's silent leaf collapse. It settles
+    # the case A20 had left open: "an `over` that is not an array
     # (missing/scalar/object) is a `type_mismatch` warning: `all/any/none`
     # fold to `false` with `errored: false`." Before this fix, `_quantifier`
     # raised `NOT_AN_ARRAY` for this branch and the generic EvalError fold
     # reported `errored=True`; RESULTS.md A20 (V-ENGINE-all-003/-any-003/
     # -none-003).
-    assert_false({"all": POSITIVE}, {})
+    assert_warned_not_errored({"all": POSITIVE}, {}, "type_mismatch")
     assert_warned_not_errored({"all": POSITIVE}, {"items": "not-array"}, "type_mismatch")
     assert_warned_not_errored({"any": POSITIVE}, {"items": 5}, "type_mismatch")
 
