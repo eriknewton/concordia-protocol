@@ -87,7 +87,7 @@ conformance/erdl-expression-v1/
   tests/         one module per node group, plus sentinels, limits, gloss,
                  submission format, and the whole-corpus run
   output/        the generated submission file, plus the same measurement in
-                 the alternate decimal-string number encoding
+                 the superseded json-number number encoding
 ```
 
 ## Running it
@@ -113,12 +113,13 @@ python3 conformance/erdl-expression-v1/runner.py /path/to/v-engine-vectors.json 
 Both flags below were opened by ambiguities the specification has since
 settled, and both are kept because the alternate form is still useful:
 
-* `--number-format {json-number,decimal-string}` selects how a reported number
-  is encoded. Contract ER3 settles this on `json-number`, which is what the
-  submission carries; the envelope records which encoding it holds. The
-  decimal-string form is regenerated alongside it because the same repository's
-  CHANGELOG describes the oracle's numbers the other way, and a decimal string
-  is the only form that stays exact past `2**53 - 1`. See RESULTS.md A1.
+* `--number-format {decimal-string,json-number}` selects how a reported number
+  is encoded. Contract ER3 settles this on `decimal-string` (upstream
+  `b56c1c2`, correcting an earlier contract/changelog contradiction), which is
+  what the submission carries by default; the envelope records which encoding
+  it holds. The `json-number` form is regenerated alongside it, labeled as the
+  superseded reading, purely for comparison — a decimal string is the only
+  form that stays exact past `2**53 - 1`. See RESULTS.md A1.
 * `--gloss-language {en,zh}` selects the gloss template column. Spec v2.1 pins
   section 5.5 to English as canonical, so `en` is what a reported value
   carries and `zh` is a presentation projection. See RESULTS.md A4.

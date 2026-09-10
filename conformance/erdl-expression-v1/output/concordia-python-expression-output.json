@@ -1,15 +1,15 @@
 {
   "runner": "concordia-python-expression",
-  "method": "Python 3, standard library only, spec-and-contract-only implementation of the 34-node expression kernel, the Simple 30-operator compiler, the decision-table compiler and the gloss renderer. Arithmetic uses exact rationals (fractions.Fraction) with a single scale-14 half-even rounding at the reported value (E2); no binary float is used anywhere. Read: erdl-spec v2.1 (sections 5, 7, 8, appendix E; erdl-landing dcb7a554c00c047d849899a6327ef6e37d7a39de), EXPRESSION-RUNNER-CONTRACT.md (ER1-ER9), CHANGELOG.md, v-engine-vectors.json and scripts/verify-v-engine-submission.mjs for the envelope contract and its comparison rule (erdl-vectors 97e0c00723aec526983cea5804e148680b3e0539), and erdl-vectors submissions/README.md for the submission envelope shape. NOT read: the reference engine (scripts/v-engine.mjs), the in-repo verifier scripts (verify-v-engine.mjs, verify-v-engine-full.mjs, verify-v-engine-reverse.mjs), the generator (generate-v-engine.mjs), @openoba/erdl, erdl-formal, and the answer oracle v-engine-answers.json, which was never generated locally because generating it runs the reference engine and consulting the result is what ER9 forbids. v-engine-vectors.json sha256=3ee30466cc6d95ddd99bc412cfc88b2f2dd3f890b8687b8f12043cc40074c902. Number encoding=json-number; gloss language=en.",
-  "date": "2026-09-09",
+  "method": "Python 3, standard library only, spec-and-contract-only implementation of the 34-node expression kernel, the Simple 30-operator compiler, the decision-table compiler and the gloss renderer. Arithmetic uses exact rationals (fractions.Fraction) with a single scale-14 half-even rounding at the reported value (E2); no binary float is used anywhere. Read: erdl-spec v2.1 (sections 5, 7, 8, appendix E; erdl-landing dcb7a554c00c047d849899a6327ef6e37d7a39de), EXPRESSION-RUNNER-CONTRACT.md (ER1-ER9), CHANGELOG.md, v-engine-vectors.json and scripts/verify-v-engine-submission.mjs for the envelope contract and its comparison rule (erdl-vectors 97e0c00723aec526983cea5804e148680b3e0539), and erdl-vectors submissions/README.md for the submission envelope shape. NOT read: the reference engine (scripts/v-engine.mjs), the in-repo verifier scripts (verify-v-engine.mjs, verify-v-engine-full.mjs, verify-v-engine-reverse.mjs), the generator (generate-v-engine.mjs), @openoba/erdl, erdl-formal, and the answer oracle v-engine-answers.json, which was never generated locally because generating it runs the reference engine and consulting the result is what ER9 forbids. v-engine-vectors.json sha256=3ee30466cc6d95ddd99bc412cfc88b2f2dd3f890b8687b8f12043cc40074c902. Number encoding=decimal-string; gloss language=en.",
+  "date": "2026-09-10",
   "artifact": "https://github.com/eriknewton/concordia-protocol/tree/main/conformance/erdl-expression-v1",
   "layer": "expression",
   "vector_file": "v-engine-vectors.json",
   "vector_count": 240,
-  "number_format": "json-number",
+  "number_format": "decimal-string",
   "results": {
     "V-ENGINE-field-001": {
-      "value": 35,
+      "value": "35",
       "value_type": "number",
       "errored": false,
       "warnings": []
@@ -67,13 +67,13 @@
       ]
     },
     "V-ENGINE-literal-001": {
-      "value": 42,
+      "value": "42",
       "value_type": "number",
       "errored": false,
       "warnings": []
     },
     "V-ENGINE-literal-002": {
-      "value": 0,
+      "value": "0",
       "value_type": "number",
       "errored": false,
       "warnings": []
@@ -343,9 +343,9 @@
     "V-ENGINE-in-003": {
       "value": false,
       "value_type": "boolean",
-      "errored": true,
+      "errored": false,
       "warnings": [
-        "not_an_array"
+        "type_mismatch"
       ]
     },
     "V-ENGINE-contains-001": {
@@ -369,7 +369,7 @@
     "V-ENGINE-contains-003": {
       "value": false,
       "value_type": "boolean",
-      "errored": true,
+      "errored": false,
       "warnings": [
         "type_mismatch"
       ]
@@ -421,7 +421,7 @@
     "V-ENGINE-starts_with-003": {
       "value": false,
       "value_type": "boolean",
-      "errored": true,
+      "errored": false,
       "warnings": [
         "type_mismatch"
       ]
@@ -447,7 +447,7 @@
     "V-ENGINE-ends_with-003": {
       "value": false,
       "value_type": "boolean",
-      "errored": true,
+      "errored": false,
       "warnings": [
         "type_mismatch"
       ]
@@ -479,19 +479,19 @@
       ]
     },
     "V-ENGINE-length-001": {
-      "value": 3,
+      "value": "3",
       "value_type": "number",
       "errored": false,
       "warnings": []
     },
     "V-ENGINE-length-002": {
-      "value": 4,
+      "value": "4",
       "value_type": "number",
       "errored": false,
       "warnings": []
     },
     "V-ENGINE-length-004": {
-      "value": 0,
+      "value": "0",
       "value_type": "number",
       "errored": false,
       "warnings": []
@@ -499,7 +499,7 @@
     "V-ENGINE-length-003": {
       "value": false,
       "value_type": "boolean",
-      "errored": true,
+      "errored": false,
       "warnings": [
         "type_mismatch"
       ]
@@ -613,13 +613,13 @@
       ]
     },
     "V-ENGINE-add-001": {
-      "value": 3,
+      "value": "3",
       "value_type": "number",
       "errored": false,
       "warnings": []
     },
     "V-ENGINE-add-002": {
-      "value": 0.3,
+      "value": "0.3",
       "value_type": "number",
       "errored": false,
       "warnings": []
@@ -641,13 +641,13 @@
       ]
     },
     "V-ENGINE-sub-001": {
-      "value": 2,
+      "value": "2",
       "value_type": "number",
       "errored": false,
       "warnings": []
     },
     "V-ENGINE-sub-002": {
-      "value": 0.2,
+      "value": "0.2",
       "value_type": "number",
       "errored": false,
       "warnings": []
@@ -669,13 +669,13 @@
       ]
     },
     "V-ENGINE-mul-001": {
-      "value": 12,
+      "value": "12",
       "value_type": "number",
       "errored": false,
       "warnings": []
     },
     "V-ENGINE-mul-002": {
-      "value": 0.02,
+      "value": "0.02",
       "value_type": "number",
       "errored": false,
       "warnings": []
@@ -697,7 +697,7 @@
       ]
     },
     "V-ENGINE-div-001": {
-      "value": 1.33333333333333,
+      "value": "1.33333333333333",
       "value_type": "number",
       "errored": false,
       "warnings": []
@@ -727,13 +727,13 @@
       ]
     },
     "V-ENGINE-round-001": {
-      "value": 4,
+      "value": "4",
       "value_type": "number",
       "errored": false,
       "warnings": []
     },
     "V-ENGINE-round-002": {
-      "value": 4,
+      "value": "4",
       "value_type": "number",
       "errored": false,
       "warnings": []
@@ -755,13 +755,13 @@
       ]
     },
     "V-ENGINE-days_between-001": {
-      "value": 10,
+      "value": "10",
       "value_type": "number",
       "errored": false,
       "warnings": []
     },
     "V-ENGINE-days_between-002": {
-      "value": 0,
+      "value": "0",
       "value_type": "number",
       "errored": false,
       "warnings": []
@@ -783,13 +783,13 @@
       ]
     },
     "V-ENGINE-epoch_ms-001": {
-      "value": 1767225600000,
+      "value": "1767225600000",
       "value_type": "number",
       "errored": false,
       "warnings": []
     },
     "V-ENGINE-epoch_ms-002": {
-      "value": 0,
+      "value": "0",
       "value_type": "number",
       "errored": false,
       "warnings": []
@@ -839,13 +839,13 @@
       ]
     },
     "V-ENGINE-date_part-001": {
-      "value": 2026,
+      "value": "2026",
       "value_type": "number",
       "errored": false,
       "warnings": []
     },
     "V-ENGINE-date_part-002": {
-      "value": 6,
+      "value": "6",
       "value_type": "number",
       "errored": false,
       "warnings": []
@@ -895,13 +895,13 @@
       ]
     },
     "V-ENGINE-aggregate-001": {
-      "value": 3,
+      "value": "3",
       "value_type": "number",
       "errored": false,
       "warnings": []
     },
     "V-ENGINE-aggregate-002": {
-      "value": 0.6,
+      "value": "0.6",
       "value_type": "number",
       "errored": false,
       "warnings": []
@@ -917,13 +917,13 @@
     "V-ENGINE-aggregate-003": {
       "value": false,
       "value_type": "boolean",
-      "errored": true,
+      "errored": false,
       "warnings": [
         "type_mismatch"
       ]
     },
     "V-ENGINE-E1-001": {
-      "value": 3,
+      "value": "3",
       "value_type": "number",
       "errored": false,
       "warnings": []
@@ -935,55 +935,55 @@
       "warnings": []
     },
     "V-ENGINE-E1-003": {
-      "value": 1,
+      "value": "1",
       "value_type": "number",
       "errored": false,
       "warnings": []
     },
     "V-ENGINE-E2-001": {
-      "value": 0.3,
+      "value": "0.3",
       "value_type": "number",
       "errored": false,
       "warnings": []
     },
     "V-ENGINE-E2-002": {
-      "value": 0.33333333333333,
+      "value": "0.33333333333333",
       "value_type": "number",
       "errored": false,
       "warnings": []
     },
     "V-ENGINE-E2-003": {
-      "value": 0,
+      "value": "0",
       "value_type": "number",
       "errored": false,
       "warnings": []
     },
     "V-ENGINE-E2-004": {
-      "value": 2,
+      "value": "2",
       "value_type": "number",
       "errored": false,
       "warnings": []
     },
     "V-ENGINE-E2-005": {
-      "value": 2,
+      "value": "2",
       "value_type": "number",
       "errored": false,
       "warnings": []
     },
     "V-ENGINE-E2-006": {
-      "value": 4,
+      "value": "4",
       "value_type": "number",
       "errored": false,
       "warnings": []
     },
     "V-ENGINE-E2-007": {
-      "value": 1000000000000000000001,
+      "value": "1000000000000000000001",
       "value_type": "number",
       "errored": false,
       "warnings": []
     },
     "V-ENGINE-E2-008": {
-      "value": 0.3,
+      "value": "0.3",
       "value_type": "number",
       "errored": false,
       "warnings": []
@@ -1029,9 +1029,9 @@
     "V-ENGINE-E3-006": {
       "value": false,
       "value_type": "boolean",
-      "errored": true,
+      "errored": false,
       "warnings": [
-        "not_an_array"
+        "type_mismatch"
       ]
     },
     "V-ENGINE-E4-001": {
@@ -1143,25 +1143,25 @@
       ]
     },
     "V-ENGINE-E9-001": {
-      "value": 1767270645000,
+      "value": "1767270645000",
       "value_type": "number",
       "errored": false,
       "warnings": []
     },
     "V-ENGINE-E9-002": {
-      "value": 1767270645000,
+      "value": "1767270645000",
       "value_type": "number",
       "errored": false,
       "warnings": []
     },
     "V-ENGINE-E9-003": {
-      "value": 1767241845000,
+      "value": "1767241845000",
       "value_type": "number",
       "errored": false,
       "warnings": []
     },
     "V-ENGINE-E9-004": {
-      "value": 0,
+      "value": "0",
       "value_type": "number",
       "errored": false,
       "warnings": []

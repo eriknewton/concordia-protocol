@@ -115,8 +115,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--number-format",
         choices=NUMBER_FORMATS,
-        default="json-number",
-        help="how a reported number is encoded; see RESULTS.md ambiguity A1",
+        default="decimal-string",
+        help=(
+            "how a reported number is encoded; ER3 settles this as a decimal "
+            "string (upstream b56c1c2). See RESULTS.md ambiguity A1."
+        ),
     )
     parser.add_argument(
         "--gloss-language",

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .helpers import assert_errored, assert_false, assert_true, assert_warned_not_errored
+from .helpers import assert_false, assert_true, assert_warned_not_errored
 
 
 def test_in_tests_membership_with_strict_equality() -> None:
@@ -12,9 +12,16 @@ def test_in_tests_membership_with_strict_equality() -> None:
     assert_false({"in": [{"field": "n"}, [1, 2]]}, {"n": "1"})
 
 
-def test_in_over_a_missing_field_is_false_and_over_a_non_array_is_an_error() -> None:
+def test_in_over_a_missing_field_is_false_and_over_a_non_array_is_warned_not_errored() -> None:
+    # Spec §7.3(a) (upstream fb428b7) names `in` (non-array right operand)
+    # explicitly among the four warned-not-errored families alongside string
+    # nodes/length/aggregate: "record a type_mismatch warning — these four set
+    # errored: false". This vector (V-ENGINE-in-003 in the upstream corpus) was
+    # left raising `not_an_array` (errored=true) when A17 fixed the other three
+    # families; the erdl-vectors PR#3 CI cross-verification flagged the miss
+    # (errored=true≠false against the oracle). RESULTS.md A17 addendum.
     assert_false({"in": [{"field": "missing"}, ["a"]]}, {})
-    assert_errored({"in": [{"field": "cat"}, "not-array"]}, {"cat": "a"}, "not_an_array")
+    assert_warned_not_errored({"in": [{"field": "cat"}, "not-array"]}, {"cat": "a"}, "type_mismatch")
 
 
 def test_string_operators_on_present_strings() -> None:

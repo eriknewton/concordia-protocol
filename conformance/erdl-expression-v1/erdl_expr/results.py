@@ -28,12 +28,15 @@ from .simple import compile_decision_table, compile_simple
 from .temporal import run_state_ops
 from .values import Undefined, Value, decimal_string, load_json_exact
 
-#: How a reported number is written into the submission file. ER3 pairs `value`
-#: with a `value_type` of "number", which reads as a JSON number, so that is the
-#: default; E2's "string serialization" is the other live reading of the same
-#: pair, so `decimal-string` regenerates the whole file in that form. RESULTS.md
-#: records this as ambiguity A1.
-NUMBER_FORMATS: Final[tuple[str, ...]] = ("json-number", "decimal-string")
+#: How a reported number is written into the submission file. Ambiguity A1 was
+#: settled 2026-09-10 by the upstream maintainer: contract ER3
+#: (`EXPRESSION-RUNNER-CONTRACT.md`, upstream `b56c1c2`) now reads "a decimal
+#: string (RFC 8785 §3.1) ... not a JSON number" — the prior contract text (a
+#: JSON number) was itself the stale reading, corrected to align with the
+#: v1.6.0 CHANGELOG it had drifted from. `decimal-string` is therefore the
+#: default; `json-number` is kept only as the superseded alternate encoding for
+#: comparison. RESULTS.md A1.
+NUMBER_FORMATS: Final[tuple[str, ...]] = ("decimal-string", "json-number")
 
 #: A JSON number cannot be emitted through `json.dumps` at arbitrary precision
 #: without going through `float`, which would destroy 1e21 + 1 and every
@@ -255,7 +258,7 @@ def submission_payload(
     method: str,
     date: str,
     artifact: str,
-    number_format: str = "json-number",
+    number_format: str = "decimal-string",
 ) -> dict[str, Any]:
     """Build the expression-layer submission envelope."""
     if number_format not in NUMBER_FORMATS:

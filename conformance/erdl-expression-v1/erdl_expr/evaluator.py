@@ -388,7 +388,16 @@ class Evaluator:
         member = self.evaluate(member_node)
         candidates = self.evaluate(set_node)
         if not isinstance(candidates, list):
-            raise EvalError(NOT_AN_ARRAY, "in takes an array on the right")
+            # Spec §7.3(a) warning asymmetry (upstream fb428b7) names `in`
+            # (non-array right operand) as one of the four families
+            # (`in`/string/`length`/`aggregate`) that record a type_mismatch
+            # warning but set `errored: false`; only comparison/`between` are
+            # silent. This must not raise, or E12's error fold would apply to
+            # a case the spec text explicitly excludes from it (RESULTS.md
+            # A17 addendum: the original A17 fix covered string/length/
+            # aggregate and missed this fourth named family).
+            self._record(TYPE_MISMATCH)
+            return False
         check_array_bound(len(candidates), "in")
         if isinstance(member, Undefined):
             return self._missing()
