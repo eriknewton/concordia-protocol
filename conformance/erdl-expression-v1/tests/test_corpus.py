@@ -50,16 +50,27 @@ def test_every_vector_produces_a_well_formed_er3_result(document: dict[str, Any]
     assert len(results) == EXPECTED_TOTAL
     for result in results:
         payload = result.as_object()
-        assert set(payload) == {"value", "value_type", "errored", "warnings"}
-        # `value_type` is `None` only for an E4 constraint-verification
-        # vector (RESULTS.md A21): it was never evaluated, so `value` is the
-        # literal `null` of "no result", not a folded boolean.
-        assert payload["value_type"] in {"number", "string", "boolean", None}
+        # EXPRESSION-RUNNER-CONTRACT.md ER3 (erdl-vectors `a12f352`):
+        # "constraint-verification vectors (E4) additionally carry `threw:
+        # true`" -- an ordinary evaluated result stays the plain four-field
+        # shape with no `threw` key at all.
+        assert set(payload) <= {"value", "value_type", "errored", "warnings", "threw"}
+        assert {"value", "value_type", "errored", "warnings"} <= set(payload)
+        # `value_type` is the literal string `"null"`, never JSON `null`,
+        # only for an E4 constraint-verification vector (RESULTS.md A21,
+        # re-settled this round from EXPRESSION-RUNNER-CONTRACT.md's own
+        # words: "`value_type` is always a string, never a JSON value"): it
+        # was never evaluated, so `value` is the literal `null` of "no
+        # result", not a folded boolean.
+        assert payload["value_type"] in {"number", "string", "boolean", "null"}
         assert isinstance(payload["errored"], bool)
         assert isinstance(payload["warnings"], list)
-        if payload["value_type"] is None:
+        if payload["value_type"] == "null":
             assert payload["value"] is None
             assert payload["errored"] is False
+            assert payload["threw"] is True
+        else:
+            assert "threw" not in payload
         if payload["value_type"] == "boolean":
             assert isinstance(payload["value"], bool)
         if payload["errored"]:

@@ -1,5 +1,52 @@
 # ERDL expression layer: measured results
 
+**Revised 2026-09-10 (second round: the maintainer's direct answer, A2A
+discussion #2031, 2026-09-10T06:12Z/06:36Z):** the maintainer settled every
+question A20 and A23 had left open, and re-settled A21's `value_type` tag,
+with spec text pushed to `erdl-landing` `c06c425`/`79dd76a` and contract text
+to `erdl-vectors` `fe93f7f`/`c2db961`/`a12f352`. The vector corpus itself did
+NOT change (`v-engine-vectors.json` is still sha256 `3ee30466…`, re-fetched
+and re-hashed this round to confirm); only the governing text moved. Twenty
+result objects change, none of them read from the answer oracle:
+
+* **`V-ENGINE-and-004`/`-or-004`** (A13/A20): `errored` flips `true` to
+  `false`, warnings clear to `[]` -- §7.3(a) extends the SILENT
+  (comparison/`between`) family to logic nodes over a non-boolean operand.
+* **`V-ENGINE-all-003`/`-any-003`/`-none-003`** (A20): `errored` flips `true`
+  to `false`, warning moves `not_an_array` to `type_mismatch` -- §7.3(b)
+  extends the WARNED (`in`/string/`length`/`aggregate`) family to quantifiers
+  over a present non-array `over`.
+* **`V-ENGINE-match-003`/`V-ENGINE-E4-006`** (A20/A21): `errored` flips `true`
+  to `false`, warning moves `regex_unsafe` to `regex_re_dos` -- §7.3(d) states
+  a ReDoS-shaped rejection folds to `false` with a `regex_re_dos` warning, not
+  a throw; `E4-006` is thereby confirmed an EVALUATION vector wearing an
+  E4-shaped `scenario` label, never routed through the `not_evaluated`/`threw`
+  branch its five sibling ceilings take.
+* **`V-ENGINE-E4-001` through `-005`** (A21, re-settled): `value_type` moves
+  from the JSON literal `null` back to the literal STRING `"null"`, and each
+  now carries `threw: true` -- ER3/ER4 (`a12f352`) state the tag is "always a
+  string ... never a JSON value" and give the full constraint-verification
+  object as `{value: null, value_type: "null", errored: false, threw: true}`.
+  This re-settlement is read from that sentence, not from the `v-engine-
+  answers.json` read A21 already disclosed and reverted.
+* **`V-GLOSS-004`/`-005`/`-006`/`-010`** (A23): §5.5's new "Gloss rendering
+  details" paragraph settles all four -- `not(eq(...))` normalizes to the
+  `ne` template; string literals (scalar and list-member) render quoted;
+  arithmetic binary nodes render self-parenthesized.
+* **`V-GLOSS-INTEGRITY-001` through `-004`** (A7/A23): `value` moves from the
+  tamper-changes-render boolean to the gloss STRING of the ORIGINAL
+  `expr_tree` -- the contract's new "gloss vectors" clause (`fe93f7f`) states
+  this directly: "the runner still renders and reports the **original**
+  `expr_tree` gloss ... `tampered_tree` ... is not evaluated."
+
+New counts (regenerated, not read from an oracle): `errored` true 40 to 33;
+`threw` true is a new field, 5 (the same 5 vectors A21 already moved out of
+`errored`); `value_type` boolean 179 to 175, string 19 to 23 (the four
+`V-GLOSS-INTEGRITY` vectors moving buckets), number and `null`-count
+unchanged at 37 and 5; `value` true 68 to 64 (the same four vectors, no
+longer boolean `true`). See A20 through A23 below for the full disposition,
+and "Reported values" for the corrected table.
+
 **Revised 2026-09-09 (A22, plus two same-class code fixes with no submission
 effect):** `V-ENGINE-E5-001` is fixed the same way A21 fixed the five E4
 ceiling vectors: `errored` flips from `true` to `false` and `value` flips
@@ -58,10 +105,12 @@ deliberately unflipped (A20), with the reasoning for each. The vector set
 itself, and every value this runner reports, are unchanged from the
 2026-09-09 measurement below; only the encoding and two `errored` flags moved.
 
-One measurement, taken on 2026-09-09 against OpenOBA's published
-`v-engine-vectors.json` (SHA-256
+One measurement, taken on 2026-09-09 and revised 2026-09-10 against OpenOBA's
+published `v-engine-vectors.json` (SHA-256
 `3ee30466cc6d95ddd99bc412cfc88b2f2dd3f890b8687b8f12043cc40074c902`, 240
-vectors, `vector_version` v2.0.0, `spec` erdl-spec-v2.1).
+vectors, `vector_version` v2.0.0, `spec` erdl-spec-v2.1) -- the corpus is
+unchanged between the two dates; only the governing spec/contract text moved
+(re-fetched and re-hashed 2026-09-10 to confirm the digest is still exact).
 
 This replaces the 2026-09-07 measurement, which was taken against the 239-vector
 corpus before the v1.6.0 revision. The sources this round was read against, at
@@ -71,6 +120,8 @@ the exact commits:
 |---|---|---|
 | `v-engine-vectors.json`, `EXPRESSION-RUNNER-CONTRACT.md`, `scripts/verify-v-engine-submission.mjs`, `CHANGELOG.md` | `OpenOBA/erdl-vectors` (`master`) | `97e0c00723aec526983cea5804e148680b3e0539` |
 | `erdl-spec.en.md` (sections 5, 7, 8, appendix E) | `OpenOBA/erdl-landing` (`main`) | `dcb7a554c00c047d849899a6327ef6e37d7a39de` |
+| `EXPRESSION-RUNNER-CONTRACT.md` (ER3/ER4, warning vocabulary, gloss-vector semantics) -- **second round, 2026-09-10** | `OpenOBA/erdl-vectors` (`master`) | `fe93f7f` / `c2db961` / `a12f352` |
+| `erdl-spec.en.md` (§7.3(a)/(b)/(d)/(g), §5.5 gloss rendering details) -- **second round, 2026-09-10** | `OpenOBA/erdl-landing` (`main`) | `c06c425` / `79dd76a` |
 
 The independence boundary for the implementation is restated in the
 submission's `method` field: the reference engine source (`scripts/v-engine.mjs`),
@@ -270,71 +321,56 @@ seen.
 
 | Measure | Count |
 |---|---:|
-| `value_type` boolean | 179 |
+| `value_type` boolean | 175 |
 | `value_type` number | 37 |
-| `value_type` string | 19 |
-| `value_type` `null` (E4 constraint, not evaluated) | 5 |
-| `errored` true (E12 fold to false) | 40 |
-| value true | 68 |
+| `value_type` string | 23 |
+| `value_type` `"null"` (E4 constraint, `threw: true`, not evaluated) | 5 |
+| `errored` true (E12 fold to false) | 33 |
+| `threw` true (E4 constraint-verification, ER4) | 5 |
+| value true | 64 |
 
-**Updated** (A17 addendum + A20 + A21 + A22): the 53-errored count this
-paragraph once carried predates the original A17 fix-round (5 vectors:
-`contains-003`, `starts_with-003`, `ends_with-003`, `length-003`,
-`aggregate-003`), the `in-003`/`E3-006` fix, A21's E4 reclassification, and
-A22's E5 reclassification, and was left stale after each of the first two,
-which is a prose-drift defect in its own right (`.claude/RULES.md`-style:
-source is the regenerated output, this paragraph is the doc, and the doc had
-gone stale). **The current, regenerated count is 40**, breaking down as 19
-`type_mismatch`, 6 `division_by_zero`, 6 `invalid_date`, 4 `arity`, 3
-`not_an_array`, 2 `regex_unsafe` (19+6+6+4+3+2=40). Two rows this count used to
-carry are now gone, not renumbered: A21 moved all 5 `resource_limit` errors
-out of this table into the `value_type` null row above (they are not
-evaluation errors at all under EXPRESSION-RUNNER-CONTRACT.md's "Constraint
-vectors (E4/E5)" clause), and this round's A22 moves the 1 `schema_violation`
-error (`V-ENGINE-E5-001`) out the same way -- E5, the contract's own text
-says, is a constraint-verification vector too, with a definite boolean
-answer ("`value: true` = violation detected") rather than E4's "no evaluated
-value" shape, so it becomes a non-error `warnings` entry instead (see the
-paragraph below) rather than staying in this errored count OR moving to the
-`value_type` null row. The 3 remaining `not_an_array` errors are exactly the
-three vectors A20 leaves unflipped (`all-003`, `any-003`, `none-003`); the 19
-`type_mismatch` errors are unrelated to the 7 `type_mismatch` *warnings* below
-(`contains-003`, `starts_with-003`, `ends_with-003`, `length-003`,
-`aggregate-003`, `in-003`, `E3-006`; this paragraph previously miscounted
-that row as 8, corrected here to match the count the paragraph below already
-carried) (a warning attached to an `errored: false` result is a different bucket from
-a warning attached to an `errored: true` one, and ER4 does not compare
-warnings either way). Every remaining errored vector reports `value: false`,
-because E12 folds an evaluation error to false at tier 3 and above, which is
-the whole expression projection.
+**Regenerated 2026-09-10 (second round)**, directly from
+`output/concordia-python-expression-output.json`, not from the oracle. Every
+count in this table and the two paragraphs below is a plain tally over that
+file, run fresh after the code changes A20/A21/A22/A23 record; a stale count
+here is a doc-drift defect the same way earlier rounds found it to be
+(`.claude/RULES.md`-style: the regenerated output is the source, this table
+is the doc). Two rows changed shape as well as number this round:
+`value_type` `null` is now the JSON string `"null"` (A21, re-settled), and
+`threw` is a new row entirely (ER4), both scoped to the same 5 vectors as
+before (`V-ENGINE-E4-001` through `-005`).
 
-A14, settled in fix-round 2, moved six vectors out of this count and into a
-plain, unwarned `errored: false`: `V-ENGINE-gt-003`, `-gte-003`, `-lt-003`,
-`-lte-003`, `V-ENGINE-E3-002` and `V-ENGINE-between-003`. Their `value` did
-not change (all six were already `false`); only `errored` and the
-`type_mismatch` warning were removed. That was the 59-to-53 and 30-to-24 drop
-this section originally recorded. A17 then moved five more (53 to 48), the
-`in-003`/`E3-006` fix moved two more (48 to 46), A21 moved five `resource_limit`
-vectors out on separate grounds (46 to 41, into the `value_type` null row, not
-this count), and this round's A22 moves the one remaining `schema_violation`
-vector out on the same "constraint-verification, not evaluation" grounds (41
-to 40); the 24 `type_mismatch` figure from the first drop is now 19 for the
-same reason.
+**The errored count dropped from 40 to 33**, losing exactly the 7 vectors
+A20 left open and this round settles: `V-ENGINE-and-004`/`-or-004` (now
+silently `errored: false`, no warning), `V-ENGINE-all-003`/`-any-003`/
+`-none-003` (now `errored: false` with a `type_mismatch` warning), and
+`V-ENGINE-match-003`/`V-ENGINE-E4-006` (now `errored: false` with a
+`regex_re_dos` warning). The breakdown is now 17 `type_mismatch`
+(the and/or pair's two vectors leave this bucket entirely, since their fold
+is silent), 6 `division_by_zero`, 6 `invalid_date`, 4 `arity`
+(17+6+6+4=33). `not_an_array` and `regex_unsafe` no longer appear anywhere
+in the submission: both codes are retired (`erdl_expr/errors.py`) because
+EXPRESSION-RUNNER-CONTRACT.md's warning vocabulary (erdl-vectors `fe93f7f`)
+is closed and names neither. Every remaining errored vector still reports
+`value: false` (E12's tier-3-and-above fold).
 
-A further 24 vectors carry a warning without being errors, because a recorded
-safe fold or a settled type-mismatch warning is not an evaluation error: 9
-`safe_fold_empty_array` (the E8 quantifier fold on `V-ENGINE-all-002`,
-`-any-004`, `-none-002` and `V-ENGINE-E8-001` to `-003`, plus the section
-7.3(e) avg, min and max folds on `V-ENGINE-aggregate-004` and `V-ENGINE-E8-004`
-and `-005`), 6 `safe_fold_undefined_result`, 1 `safe_fold_non_scalar_result`,
-7 `type_mismatch` (the A17 five plus the `in-003`/`E3-006` addendum above),
-and 1 `expr_load_exclusivity_violation` (`V-ENGINE-E5-001`, this round's A22).
-This 24 does not include the 5 `resource_limit` warnings on the E4
-constraint-verification vectors, which are a separate row in "Reported
-values" above (`value_type` null, not evaluated at all) rather than a
-warning on an evaluated `errored: false` result. Every vector in this
-paragraph's 24 has `errored: false`; all but `V-ENGINE-E5-001` (`value:
-true`) have `value: false`.
+**29 vectors now carry a warning without being an error** (was 24): 9
+`safe_fold_empty_array`, 6 `safe_fold_undefined_result`, 1
+`safe_fold_non_scalar_result`, 10 `type_mismatch` (the original A17 five,
+the `in-003`/`E3-006` addendum, and this round's `all-003`/`any-003`/
+`-none-003`), 2 `regex_re_dos` (`match-003`, `E4-006`, new this round), and 1
+`expr_load_exclusivity_violation` (`V-ENGINE-E5-001`, A22). This does not
+include the 5 `resource_limit` warnings on the E4 constraint-verification
+vectors (a separate `not_evaluated`/`threw` bucket, not an evaluated
+`errored: false` result). Every vector in this 29 has `errored: false`; all
+but `V-ENGINE-E5-001` (`value: true`) have `value: false`.
+
+**`value` true dropped from 68 to 64**, losing the four `V-GLOSS-INTEGRITY`
+vectors: A7/A23 settle their `value` as the ORIGINAL tree's gloss STRING
+(EXPRESSION-RUNNER-CONTRACT.md `fe93f7f`), not the tamper-changes-render
+boolean this runner previously reported, so all four leave `value_type`
+boolean for `value_type` string (179 to 175 boolean, 19 to 23 string) without
+touching `errored` (all four stay `errored: false`, as before).
 
 ## Independent confirmation available without an oracle
 
@@ -879,7 +915,7 @@ of them was settled by consulting the reference engine or the oracle.
   on a rendering detail the template table does not specify. If it mismatches,
   the list form is where to look, not the `in` wording.
 
-### A20. Six vectors the oracle disagrees with, where the settled spec text does not reach
+### A20. SETTLED 2026-09-10 (second round). Six vectors the oracle disagrees with, where the settled spec text did not reach
 
 * **Opened 2026-09-10**, by the erdl-vectors PR#3 CI cross-verification (run
   34437369770): `V-ENGINE-all-003`, `-any-003`, `-none-003`, `-and-004`,
@@ -955,8 +991,42 @@ of them was settled by consulting the reference engine or the oracle.
   explicitly in the warning-asymmetry clause (or explicitly excluding them),
   and naming a regex-safety rejection's `errored` value in §7.3(d) the way
   §7.3(a) now names it for its four families.
+* **Settled 2026-09-10 (second round), by exactly the sentences the entry
+  above asked for.** The maintainer answered directly in A2A discussion
+  #2031 (2026-09-10T06:12Z), pushing spec text to erdl-landing `c06c425` and
+  `79dd76a`:
+  * §7.3(a): *"comparison nodes, `between`, and logic nodes (`and`/`or`) over
+    a non-boolean operand fold type mismatches to false **silently** (no
+    warning); whereas `in` ... `length` ... `aggregate` ... and quantifiers
+    (`all`/`any`/`none`) over a non-array operand record a `type_mismatch`
+    warning — these all set `errored: false`."* `and-004`/`or-004` join the
+    SILENT family (fixed in `erdl_expr/evaluator.py::_logic_operand`);
+    `all-003`/`any-003`/`none-003` join the WARNED family (fixed in
+    `_quantifier`, which now records `TYPE_MISMATCH` and folds to `false`
+    instead of raising `NOT_AN_ARRAY`, a code the contract's closed warning
+    vocabulary never named -- see A23's governing paragraph below for that
+    same vocabulary text).
+  * §7.3(d): *"A regex that violates these limits (nested quantifiers,
+    backreferences, lookaround, or a step-limit violation) folds to `false`
+    with a `regex_re_dos` warning and `errored: false` — it is not an E3
+    EvaluationError."* `V-ENGINE-match-003` and `V-ENGINE-E4-006` both take
+    this fold (fixed in `evaluate_tree`'s new `REGEX_RE_DOS` branch,
+    `erdl_expr/evaluator.py`; `check_regex_safety`'s raises renamed from
+    `REGEX_UNSAFE` to `REGEX_RE_DOS` in `erdl_expr/limits.py`, again because
+    `regex_unsafe` was never in the closed vocabulary). §7.3(g) (new)
+    confirms the boundary this settles: *"A regex ReDoS violation (§7.3(d))
+    folds to `false` + `regex_re_dos` (not a throw)"* -- `E4-006` is
+    therefore a plain evaluation vector wearing an E4-shaped `scenario`
+    label, not a constraint-verification vector, and never takes the
+    `not_evaluated`/`threw` path A21 gives the five structural ceilings.
+  All three groups keep the VALUE reading this runner already had (A8, A13,
+  and the pre-existing regex-safety rejection all already folded to `false`);
+  only `errored` (and, for two groups, the warning code) moved. See the
+  top-of-file 2026-09-10 second-round banner for the full 20-vector diff and
+  `tests/test_logic_nodes.py`, `tests/test_quantifier_nodes.py`,
+  `tests/test_limits.py` for the failing-before tests this round adds.
 
-### A21. The six E4 constraint vectors: five settled by contract text, one left with A20
+### A21. SETTLED 2026-09-10 (second round, `value_type` re-settled). The six E4 constraint vectors
 
 * **Opened 2026-09-10**, by this fix round's per-vector reading of
   `EXPRESSION-RUNNER-CONTRACT.md` (upstream `b56c1c2`) against all six E4
@@ -1073,6 +1143,39 @@ of them was settled by consulting the reference engine or the oracle.
   reversal: `value` and the vector's membership in the `value_type` `null`
   row (Reported values, below) do not change, only the JSON literal-versus-
   string form of that row's own tag.
+* **Settled 2026-09-10 (second round, re-flipped from the third revision
+  above): `value_type` is the string `"null"` again, and a `threw` field is
+  added.** The question the third revision above left open -- "JSON `null`,
+  the oracle's string `"null"`, or an unnamed shape" -- is answered by
+  contract text, not by the earlier oracle read: EXPRESSION-RUNNER-CONTRACT.md
+  (erdl-vectors `a12f352`) states, in a passage headed exactly for this
+  purpose, *"`value_type` is always a string, never a JSON value: it is
+  `"number"`, `"string"`, `"boolean"`, or — for E4 throw results — the
+  literal `"null"` (not JSON `null`). This mirrors the number encoding:
+  `value_type` is a *tag*, and the tag is spelled as a string even when it
+  names the null type."* The same commit's ER4 adds the comparison field
+  this runner had not reported at all: *"For E4 constraint-verification
+  vectors, `threw` must also match (`threw: true`)"*, and states the full
+  object shape as `{value: null, value_type: "null", errored: false, threw:
+  true}`. This is a re-settlement FROM TEXT, distinct in kind from the
+  second revision's reversion: that revision read the string off a direct
+  `v-engine-answers.json` open and ER9 forbade shaping the field to match it
+  regardless of what the file said; this round reads a contract sentence the
+  maintainer pushed in response to the open question itself, which is
+  exactly the settlement path A1, A14, A17 and A20 above already establish
+  as legitimate. **Fixed:** `VectorResult.value_type` is `str` again (not
+  `str | None`), `VectorResult` gains a `threw: bool = False` field
+  (`erdl_expr/results.py`), `_report`'s `not_evaluated` branch returns
+  `"null"`/`True` for the tag and the new field, and the submission writer
+  emits `threw` only when true ("constraint-verification vectors (E4)
+  *additionally* carry `threw: true`" -- an ordinary evaluated vector's
+  object stays the plain four-field shape). The reverted test,
+  `test_a_not_evaluated_e4_constraint_vector_reports_json_null_not_the_oracles_string`,
+  is replaced by
+  `test_a_not_evaluated_e4_constraint_vector_reports_the_null_type_as_a_string_and_threw_true`.
+  "Reported values" gains a `threw` row and its `value_type` `null` row is
+  relabelled `"null"`; the row's COUNT (5) is unchanged, only its tag's JSON
+  shape.
 
 ### A22. `V-ENGINE-E5-001`: the load-time exclusivity violation is a boolean result, not an error
 
@@ -1128,7 +1231,7 @@ of them was settled by consulting the reference engine or the oracle.
   "Reported values" and A3's tally are updated to match (41 to 40 errored;
   67 to 68 `value: true`).
 
-### A23. Eight `V-GLOSS` mismatches: two already-recorded ambiguities, one already-settled reading, and four genuinely new questions with no textual answer
+### A23. SETTLED 2026-09-10 (second round). Eight `V-GLOSS` mismatches: two already-recorded ambiguities, one already-settled reading, and four genuinely new questions, all now answered by text
 
 * **Opened this fix round**, by the CI cross-verification print (run
   `34439013476`) naming eight `V-GLOSS`/`V-GLOSS-INTEGRITY` mismatches:
@@ -1232,17 +1335,68 @@ of them was settled by consulting the reference engine or the oracle.
   templating, list/scalar literal quoting, arithmetic self-parenthesization)
   or in the contract (the `V-GLOSS-INTEGRITY` `expected` shape specifically,
   since it is not a rendering-template question at all).
+* **Settled 2026-09-10 (second round), by exactly that shape.** The
+  maintainer's A2A discussion #2031 answer (2026-09-10T06:12Z, group 3)
+  pushed a new §5.5 "Gloss rendering details" paragraph (erdl-landing
+  `79dd76a`) covering three of the four rendering questions in one place, and
+  a new contract "gloss vectors" clause (erdl-vectors `fe93f7f`) covering the
+  fourth:
+  * **`V-GLOSS-004`**: *"`not(eq({A},{B}))` normalizes to the `ne` template
+    (`{A} does not equal {B}`), not a literal `not ({A} equals {B})`
+    nesting."* Scoped exactly to `not` over `eq`; `not` over anything else
+    (e.g. `not(exists(...))`, pinned in
+    `tests/test_gloss.py::test_a_simple_rule_glosses_after_compilation`)
+    keeps the generic wrapper. Fixed in `erdl_expr/gloss.py`'s `not` branch.
+  * **`V-GLOSS-005`/`-006`**: *"string literals render **quoted** (`"rm"`),
+    and list literals render their string members quoted (`["a", "b"]`)."*
+    One rule, not two, answering `-006`'s own open question about whether the
+    scalar and list-member cases share a rule. Fixed at the single point
+    both cases pass through, `_render`'s generic string-literal branch, which
+    a `field`/`var` node never reaches (both return earlier in
+    `_render_node`).
+  * **`V-GLOSS-010`**: *"arithmetic nodes (`add`/`sub`/`mul`/`div`) render
+    **parenthesized** (`(a plus b)`) to preserve operator precedence in the
+    natural-language reading."* Answers the "positional or universal" branch
+    of the open question directly: universal, one node at a time, not
+    "only when nested" -- the §5.5 illustrative example this entry read as
+    ambiguous was prose that undershot the eventual rule, not a competing
+    reading of it. Fixed in `erdl_expr/gloss.py` by giving `add`/`sub`/`mul`/
+    `div` their own branch, split out of the shared eq/ne/.../`days_between`
+    list, that wraps the rendered template in parens.
+  * **`V-GLOSS-INTEGRITY-001` through `-004`** (and A7 above, same
+    settlement): EXPRESSION-RUNNER-CONTRACT.md's new "gloss vectors (V-GLOSS,
+    incl. V-GLOSS-INTEGRITY)" clause (erdl-vectors `fe93f7f`) states
+    directly: *"the `value` is the **gloss string** rendered from the
+    vector's `expr_tree` ... not a boolean. `V-GLOSS-INTEGRITY-*` vectors
+    carry an extra `tampered_tree` field that is **integrity evidence
+    only**; the runner still renders and reports the **original** `expr_tree`
+    gloss ... (it is not evaluated)."* This settles A7's "reading 2" as the
+    contract-text answer, reversing this runner's prior "reading 1" (the
+    tamper-changes-render boolean) -- A7's own reasoning for reading 1 (the
+    `tamper` scenario labels, G2) is superseded by this direct statement of
+    the field's schema, not overruled by re-reading the same two texts.
+    Fixed in `erdl_expr/results.py::_gloss_result`, which no longer renders
+    the tampered tree at all.
+  All four questions are answered by text the maintainer pushed to the spec
+  itself (not a discussion reply alone), the same settlement path
+  A1/A14/A17/A20/A21 above already establish; none of the four fixes was read
+  off the CI print or the oracle. See
+  `tests/test_gloss.py` (three new tests replacing the stale assertions) and
+  `erdl_expr/results.py::_gloss_result`'s updated docstring.
 
 ## What the tests cover
 
-The suite is 147 tests with `ERDL_V_ENGINE_VECTORS` set (the corpus module's
-own tests run); 141 of those run without it (the corpus module's 6 tests
+The suite is 151 tests with `ERDL_V_ENGINE_VECTORS` set (the corpus module's
+own tests run); 145 of those run without it (the corpus module's 6 tests
 skip rather than fail, since the corpus is OpenOBA's artifact, not vendored
 here). This count was last correct at a different, smaller pair of numbers
-and had gone stale across several fix rounds' added tests, including this
-one's own new `test_a_not_evaluated_e4_constraint_vector_reports_json_null_not_the_oracles_string`;
-recount with `pytest conformance/erdl-expression-v1 -q`, with and without the
-env var set, rather than trusting this paragraph. One module per
+and had gone stale across several fix rounds' added tests; this round alone
+adds a net four (147 to 151 / 141 to 145: three new gloss tests split out of
+one rewritten assertion, one renamed E4-tag test replacing the reverted one,
+and one new "no `threw` key on an ordinary result" test, against two other
+tests renamed in place rather than added) -- recount with `pytest
+conformance/erdl-expression-v1 -q`, with and without the env var set, rather
+than trusting this paragraph. One module per
 node group covers the semantics from the specification text; `test_sentinels.py` covers
 E2, E8, E10, E11 and E12; `test_limits.py` covers E4 and the regex subset;
 `test_simple_compile.py` covers the 30 Simple operators, the decision-table
@@ -1276,6 +1430,34 @@ check cannot notice a row that went missing.
 both halves of the number question at once: the envelope's bytes for
 `1e21 + 1` are the exact digits, and the same value collapses in any reader
 that parses JSON numbers into doubles.
+
+## Defects found and fixed in the 2026-09-10 second round
+
+* Seven vectors (`and-004`, `or-004`, `all-003`, `any-003`, `none-003`,
+  `match-003`, `E4-006`) folded through the generic `EvalError`
+  `errored: true` path where §7.3(a)/(b)/(d) now name a silent or warned
+  `errored: false` fold instead; see A20's settlement above for the governing
+  text and A13/A8's already-correct VALUE readings, which did not move.
+* The five structural E4 ceilings' `value_type` and the E4/E5 result
+  object's `threw` field: a prior round's contract-blind JSON-`null` reading
+  is superseded by ER3's own words once the maintainer named the tag a
+  string outright; `threw` is a field this runner had never reported at all.
+  See A21's re-settlement above.
+* Two warning codes this runner had been emitting, `not_an_array` and
+  `regex_unsafe`, are not in EXPRESSION-RUNNER-CONTRACT.md's closed warning
+  vocabulary (erdl-vectors `fe93f7f`: "do not invent warning names
+  (`not_an_array`, `regex_unsafe`, `resource_limit`, `schema_violation` are
+  NOT in the vocabulary)"). Both codes are retired from `erdl_expr/errors.py`;
+  the two sites that raised them now raise `TYPE_MISMATCH` and the new
+  `REGEX_RE_DOS` respectively -- a defect independent of the errored/silent
+  reclassification above, since the vocabulary text applies regardless of
+  which fold a given branch takes.
+* Four `V-GLOSS` templates (`not`-over-`eq`, string-literal quoting,
+  arithmetic parenthesization) and the four `V-GLOSS-INTEGRITY` vectors'
+  reported value (the original tree's gloss string, not a tamper-detection
+  boolean) were wrong against the newly-pushed §5.5 gloss-rendering-details
+  paragraph and the contract's new gloss-vector-semantics clause
+  respectively; see A23's settlement above.
 
 ## Defects found and fixed in the 2026-09-09 re-run
 

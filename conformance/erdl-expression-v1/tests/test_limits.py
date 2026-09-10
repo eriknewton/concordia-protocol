@@ -8,7 +8,13 @@ import pytest
 from erdl_expr.errors import EvalError
 from erdl_expr.limits import _longest_array, check_regex_safety, check_tree, measure
 
-from .helpers import assert_constraint_violated, assert_errored, assert_false, assert_true, run
+from .helpers import (
+    assert_constraint_violated,
+    assert_false,
+    assert_true,
+    assert_warned_not_errored,
+    run,
+)
 
 
 def test_an_ordinary_guarded_composition_is_well_inside_every_limit() -> None:
@@ -117,7 +123,7 @@ def test_ambiguous_quantified_alternation_is_refused() -> None:
     for pattern in ("(ab|a)*$", "(a|a)*$", "(a|ab)+c", "(a|)*b", "([a-z]|b)*"):
         with pytest.raises(EvalError) as caught:
             check_regex_safety(pattern)
-        assert caught.value.code == "regex_unsafe"
+        assert caught.value.code == "regex_re_dos"
 
 
 def test_a_catastrophic_pattern_is_refused_rather_than_run() -> None:
@@ -127,10 +133,16 @@ def test_a_catastrophic_pattern_is_refused_rather_than_run() -> None:
     # 2**34 paths, which does not finish; a wall-clock bound is therefore the
     # honest assertion, and it is loose enough not to be a flake on a busy
     # machine.
+    #
+    # spec v2.1 (erdl-landing 79dd76a, section 7.3(d)) settles the `errored`
+    # question RESULTS.md A10/A20 had left open: "a regex that violates these
+    # limits ... folds to `false` with a `regex_re_dos` warning and
+    # `errored: false` -- it is not an E3 EvaluationError." Before this fix
+    # the refusal raised and folded through the generic errored branch.
     subject = "a" * 34 + "b"
     tree = {"match": [{"field": "cmd"}, "(a|a)*$"]}
     started = time.monotonic()
-    assert_errored(tree, {"cmd": subject}, "regex_unsafe")
+    assert_warned_not_errored(tree, {"cmd": subject}, "regex_re_dos")
     assert time.monotonic() - started < 1.0
 
 
@@ -152,9 +164,11 @@ def test_the_safe_subset_still_accepts_ordinary_patterns() -> None:
 
 def test_an_unsafe_pattern_is_caught_statically_not_only_when_it_is_reached() -> None:
     # The pattern sits on a branch a false guard short-circuits away, so a
-    # lazy check would never see it.
+    # lazy check would never see it. RESULTS.md A20/A23: the fold is now
+    # warned-not-errored (see test_a_catastrophic_pattern_is_refused_rather_
+    # than_run above for the governing text).
     tree = {"and": [False, {"match": [{"field": "cmd"}, "(a+)+$"]}]}
-    assert_errored(tree, {"cmd": "aaaa"}, "regex_unsafe")
+    assert_warned_not_errored(tree, {"cmd": "aaaa"}, "regex_re_dos")
 
 
 def test_the_five_structural_e4_ceilings_report_no_evaluated_value() -> None:
@@ -169,14 +183,18 @@ def test_the_five_structural_e4_ceilings_report_no_evaluated_value() -> None:
     value at all, not a folded `false`.
 
     V-ENGINE-E4-006 (the sixth E4 vector, a regex-safety rejection) is
-    deliberately NOT one of these five: RESULTS.md A10/A20 already settled
-    that reading as `errored=True` on separate spec grounds (section 7.3(d)
-    has no stated `errored` value for a regex-safety rejection, unlike the
-    explicit "not an evaluation vector" text E4's other five ceilings have),
-    and this fix must not silently change it. See
-    `test_a_catastrophic_pattern_is_refused_rather_than_run` and
+    deliberately NOT one of these five, and stays not one of them after this
+    round's further settlement: spec v2.1 (erdl-landing 79dd76a) section
+    7.3(g) states plainly that a regex ReDoS violation "folds to `false` +
+    `regex_re_dos` (not a throw)", in the same sentence that gives the five
+    structural ceilings their `threw: true`. E4-006 is thereby confirmed as
+    an EVALUATION vector wearing an E4-shaped `scenario` label, not a
+    constraint-verification vector -- `errored: false` with a `regex_re_dos`
+    warning, the warned-not-errored family, never `not_evaluated`/`threw`.
+    See `test_a_catastrophic_pattern_is_refused_rather_than_run` and
     `test_an_unsafe_pattern_is_caught_statically_not_only_when_it_is_reached`
-    above, both still asserting `errored=True` for a regex-unsafe fold.
+    above, both now asserting the warned-not-errored shape. RESULTS.md A20/
+    A21/A23.
     """
     node_ceiling = {"and": [True] * 65}  # V-ENGINE-E4-001
     depth_ceiling = {"not": {"not": {"not": {"not": {"not": {"not": {"not": True}}}}}}}  # E4-002

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .helpers import assert_errored, assert_false, assert_true, run
+from .helpers import assert_false, assert_true, assert_warned_not_errored, run
 
 POSITIVE = {"binding": "x", "over": {"field": "items"}, "predicate": {"gt": [{"var": "x"}, 0]}}
 
@@ -28,13 +28,20 @@ def test_the_binding_is_scoped_to_its_own_predicate() -> None:
     assert_false({"eq": [{"var": "x"}, 1]}, {"items": [1]})
 
 
-def test_a_missing_array_is_false_and_a_non_array_is_an_error() -> None:
-    # E11 governs the missing case (silent false); section 7.3(e)'s type
-    # mismatch rule names `aggregate`, not the quantifiers, so a present
-    # non-array is the error and an absent one is not.
+def test_a_missing_array_is_silently_false_and_a_present_non_array_is_warned() -> None:
+    # E11 governs the missing case (silent false, no warning): section
+    # 7.3(e)'s aggregate type-mismatch rule names `aggregate`, not the
+    # quantifiers, so a missing `over` is the ordinary leaf collapse.
+    # spec v2.1 (erdl-landing 79dd76a, section 7.3(b)) settles the PRESENT
+    # non-array case A20 had left open: "an `over` that is not an array
+    # (missing/scalar/object) is a `type_mismatch` warning: `all/any/none`
+    # fold to `false` with `errored: false`." Before this fix, `_quantifier`
+    # raised `NOT_AN_ARRAY` for this branch and the generic EvalError fold
+    # reported `errored=True`; RESULTS.md A20 (V-ENGINE-all-003/-any-003/
+    # -none-003).
     assert_false({"all": POSITIVE}, {})
-    assert_errored({"all": POSITIVE}, {"items": "not-array"}, "not_an_array")
-    assert_errored({"any": POSITIVE}, {"items": 5}, "not_an_array")
+    assert_warned_not_errored({"all": POSITIVE}, {"items": "not-array"}, "type_mismatch")
+    assert_warned_not_errored({"any": POSITIVE}, {"items": 5}, "type_mismatch")
 
 
 def test_the_empty_array_fold_is_recorded_not_only_taken() -> None:

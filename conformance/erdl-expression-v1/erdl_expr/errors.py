@@ -33,8 +33,17 @@ DIVISION_BY_ZERO: Final[str] = "division_by_zero"
 TYPE_MISMATCH: Final[str] = "type_mismatch"
 INVALID_DATE: Final[str] = "invalid_date"
 ARITY: Final[str] = "arity"
-NOT_AN_ARRAY: Final[str] = "not_an_array"
-REGEX_UNSAFE: Final[str] = "regex_unsafe"
+#: spec v2.1 (erdl-landing 79dd76a, section 7.3(d)): "a regex that violates
+#: these limits (nested quantifiers, backreferences, lookaround, or a
+#: step-limit violation) folds to `false` with a `regex_re_dos` warning and
+#: `errored: false` -- it is not an E3 EvaluationError." `not_an_array` and
+#: `regex_unsafe` are retired: EXPRESSION-RUNNER-CONTRACT.md's warning
+#: vocabulary (erdl-vectors fe93f7f) is closed and names neither -- "do not
+#: invent warning names (`not_an_array`, `regex_unsafe`, `resource_limit`,
+#: `schema_violation` are NOT in the vocabulary)" -- so every site that used
+#: to raise one of them now folds through `TYPE_MISMATCH` or `REGEX_RE_DOS`.
+#: RESULTS.md A20/A23 (this round).
+REGEX_RE_DOS: Final[str] = "regex_re_dos"
 RESOURCE_LIMIT: Final[str] = "resource_limit"
 SCHEMA_VIOLATION: Final[str] = "schema_violation"
 UNKNOWN_NODE: Final[str] = "unknown_node"

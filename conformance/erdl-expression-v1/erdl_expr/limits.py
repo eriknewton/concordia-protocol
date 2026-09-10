@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from typing import Any, Final
 
-from .errors import REGEX_UNSAFE, RESOURCE_LIMIT, EvalError
+from .errors import REGEX_RE_DOS, RESOURCE_LIMIT, EvalError
 
 #: E4 Grade A ceilings.
 MAX_NODES: Final[int] = 64
@@ -211,12 +211,12 @@ def check_regex_safety(pattern: str) -> None:
     silently admitting an exponential pattern is not.
     """
     if _BACKREFERENCE.search(pattern):
-        raise EvalError(REGEX_UNSAFE, "backreference")
+        raise EvalError(REGEX_RE_DOS, "backreference")
     if _LOOKAROUND.search(pattern):
-        raise EvalError(REGEX_UNSAFE, "lookaround")
+        raise EvalError(REGEX_RE_DOS, "lookaround")
     reason = _unsafe_quantified_group(pattern)
     if reason:
-        raise EvalError(REGEX_UNSAFE, reason)
+        raise EvalError(REGEX_RE_DOS, reason)
 
 
 def _unsafe_quantified_group(pattern: str) -> str:
