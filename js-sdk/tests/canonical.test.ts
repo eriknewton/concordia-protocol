@@ -198,3 +198,74 @@ describe('snapshotPlainJson - the realm/Proxy class (Codex P2, Grok findings, 20
     expect(() => canonicalizeJcs(proxied)).toThrow(CanonicalizationError);
   });
 });
+
+describe('snapshotPlainJson - plain-data prototype-chain test (Grok finding 2, 2026-09-16 delta-7 gate)', () => {
+  // Removing prototype-IDENTITY checking (delta-6, to fix the cross-realm
+  // case above) also removed the only thing that had been rejecting these
+  // non-JSON types: each construction below canonicalized to the bytes
+  // `{}` (or `[]` for the array subclass) against e1239db instead of
+  // throwing -- proved fail-before per test, stashing this describe block's
+  // sibling source fix and rerunning. Python's canonical_json raises
+  // TypeError for a datetime; JS silently dropping every field of these
+  // types to `{}`/`[]` is a JS-only over-acceptance, not a plain-JSON byte
+  // change (no legitimate JSON value parses to one of these types), so
+  // closing it cannot break a real cross-realm JSON.parse value -- which is
+  // exactly what the two hop-count helpers this fix adds test for, instead
+  // of the prototype identity the cross-realm fix had to remove.
+
+  it('rejects a Date (fail-before against e1239db: canonicalized to "{}")', () => {
+    expect(() => canonicalizeJcs({ t: new Date('2026-01-01T00:00:00Z') })).toThrow(
+      CanonicalizationError,
+    );
+  });
+
+  it('rejects a Map (fail-before against e1239db: canonicalized to "{}")', () => {
+    expect(() => canonicalizeJcs({ m: new Map([['a', 1]]) })).toThrow(CanonicalizationError);
+  });
+
+  it('rejects a Set (fail-before against e1239db: canonicalized to "{}")', () => {
+    expect(() => canonicalizeJcs({ s: new Set([1]) })).toThrow(CanonicalizationError);
+  });
+
+  it('rejects a boxed Number (fail-before against e1239db: canonicalized to "{}")', () => {
+    expect(() => canonicalizeJcs({ n: new Number(1) })).toThrow(CanonicalizationError);
+  });
+
+  it('rejects a class instance (fail-before against e1239db: canonicalized to "{}")', () => {
+    class Terms {
+      amount = 1;
+    }
+    expect(() => canonicalizeJcs({ v: new Terms() })).toThrow(CanonicalizationError);
+  });
+
+  it('rejects an object more than two hops from null (fail-before against e1239db: canonicalized to "{}")', () => {
+    // Object.create(Object.create({})): hop1 (its own prototype) is the
+    // inner Object.create({}) result, itself not null; hop2 (that result's
+    // prototype) is the `{}` literal, also not null -- one hop further than
+    // the two-hop plain-object budget, so it is refused on the same test
+    // that accepts an ordinary `{}` or a cross-realm JSON.parse object.
+    const tooDeep = Object.create(Object.create({})) as Record<string, unknown>;
+    expect(() => canonicalizeJcs({ v: tooDeep })).toThrow(CanonicalizationError);
+  });
+
+  it('rejects an Array subclass instance (fail-before against e1239db: canonicalized to "[]")', () => {
+    class Vec extends Array {}
+    const vec = Vec.from([1, 2, 3]);
+    // Precondition the construction depends on: Array.isArray alone would
+    // let this through, which is exactly why the array-side test counts
+    // prototype hops instead of relying on Array.isArray by itself.
+    expect(Array.isArray(vec)).toBe(true);
+    expect(() => canonicalizeJcs({ v: vec })).toThrow(CanonicalizationError);
+  });
+
+  it('still accepts a null-prototype object and a cross-realm array (no regression)', () => {
+    const nullProto = Object.assign(Object.create(null), { a: 1 }) as Record<string, unknown>;
+    expect(canonicalizeJcs(nullProto).toString('utf8')).toBe('{"a":1}');
+
+    const crossRealmArray = runInNewContext('[3, 1, 2]', {}) as unknown[];
+    // Precondition: a genuinely different realm's Array.prototype, not a
+    // same-realm no-op (mirrors the cross-realm object precondition above).
+    expect(Object.getPrototypeOf(crossRealmArray)).not.toBe(Array.prototype);
+    expect(canonicalizeJcs(crossRealmArray).toString('utf8')).toBe('[3,1,2]');
+  });
+});

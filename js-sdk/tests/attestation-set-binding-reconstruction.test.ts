@@ -131,30 +131,35 @@ describe('chain reconstruction ignores the presented order', () => {
     });
   });
 
-  it('does not consume a prev_hash inherited through the prototype chain', () => {
-    // 2026-09-16 delta-6 gate: canonicalizeJcs no longer checks prototype
+  it('rejects a message inherited through the prototype chain outright (Grok finding 2, 2026-09-16 delta-7 gate)', () => {
+    // 2026-09-16 delta-6 gate: canonicalizeJcs no longer checked prototype
     // identity at all (rejectForeignPrototype was itself a cross-realm
     // regression -- Codex P2 -- rejecting valid JSON parsed in a different
-    // realm). An object built via Object.create(proto) canonicalizes fine
-    // as plain data: snapshotPlainJson (canonicalize.ts) reads only OWN
-    // enumerable data properties through Object.getOwnPropertyDescriptor,
-    // which is exactly `Object.keys` semantics regardless of prototype, so
-    // `linked` below still has no own `prev_hash` in the snapshot even
-    // though its prototype now canonicalizes rather than being refused. The
-    // inherited link stays exactly as unreachable as it was before, just
-    // reached by a different route: `linked` has no prev_hash at all in the
-    // reconstructed view, so it reads as a second root rather than as a
-    // rejection. This restores the reconstruction-witnessing shape from
-    // before the round-5 foreign-prototype check existed (see the sibling
-    // non-enumerable-own-property and toJSON tests below, unaffected by
-    // either round).
+    // realm), so an object built via Object.create(proto) canonicalized
+    // fine as plain data with the inherited-only prev_hash still
+    // unreachable through snapshotPlainJson's own-property walk: `linked`
+    // read as a second root rather than as a rejection, restoring the
+    // reconstruction-witnessing shape from before the round-5
+    // foreign-prototype check existed. The delta-7 fix (finding 2) adds a
+    // realm-AGNOSTIC plain-data test -- prototype null within two hops --
+    // that does not reopen the cross-realm case (a `JSON.parse` result from
+    // any realm is still exactly two hops) but does refuse this shape: a
+    // message whose OWN prototype is a custom object, not
+    // `Object.prototype`, is three hops from null, one past the two-hop
+    // budget, so the whole message is refused outright now instead of
+    // merely having its inherited link ignored -- a strictly stronger
+    // closure of the same channel (see the sibling non-enumerable-own-
+    // property and toJSON tests below, which use a plain-prototype message
+    // and so still reach the graceful "second root" outcome, unaffected by
+    // this fix).
     const messages = base.messages!;
     const root = messages.find((message) => message.prev_hash === GENESIS_HASH);
     if (!root) throw new Error('fixture has no genesis-root message');
     const other = messages.find((message) => message !== root)!;
     const { prev_hash: _dropped, ...restFields } = other;
     // The link is offered SOLELY through the prototype: `linked` has no own
-    // `prev_hash` at all, only an inherited one.
+    // `prev_hash` at all, only an inherited one, and its own prototype is a
+    // custom object rather than `Object.prototype`.
     const linked = Object.assign(
       Object.create({ prev_hash: computeHash(root) }) as Msg,
       restFields,
@@ -163,16 +168,11 @@ describe('chain reconstruction ignores the presented order', () => {
     // code under test.
     expect(Object.prototype.hasOwnProperty.call(linked, 'prev_hash')).toBe(false);
     expect(linked.prev_hash).toBeDefined();
+    expect(Object.getPrototypeOf(Object.getPrototypeOf(linked))).not.toBeNull();
 
     const receipt = { ...base.receipt, message_count: 2, chain_head: GENESIS_HASH };
 
-    // The inherited-only prev_hash never reaches the snapshot, so `linked`
-    // has no prev_hash in the reconstructed view: both `root` and `linked`
-    // read as roots, and a chain has exactly one.
-    const result = verifyReceiptSetBinding(receipt, [root, linked]);
-    expect(result.state).not.toBe('bound');
-    expect(result.state).toBe('error');
-    expect(result.errors.some((e) => e.includes('root messages'))).toBe(true);
+    expect(() => verifyReceiptSetBinding(receipt, [root, linked])).toThrow(CanonicalizationError);
   });
 
   it('does not consume a prev_hash defined as a non-enumerable own property', () => {
@@ -276,18 +276,19 @@ describe('chain reconstruction ignores the presented order', () => {
     expect(result.errors.some((e) => e.includes('root messages'))).toBe(true);
   });
 
-  it('does not consume a prev_hash injected by a toJSON inherited through the prototype chain', () => {
+  it('rejects a message with a toJSON inherited through the prototype chain outright (Grok finding 2, 2026-09-16 delta-7 gate)', () => {
     // Combines the prototype-chain channel with the toJSON channel: the
     // fabricated link is reachable only by looking up `toJSON` through the
     // prototype AND calling it, which `JSON.stringify` does and
-    // `snapshotPlainJson`'s own-descriptor walk never does either way.
-    // 2026-09-16 delta-6 gate: canonicalizeJcs no longer checks prototype
-    // identity (see the sibling prototype-chain test above for why), so
-    // `linked`'s foreign prototype no longer causes an earlier rejection on
-    // its own -- but the toJSON channel stays closed on its own separate
-    // merits: snapshotPlainJson never looks up or calls `toJSON`, own or
-    // inherited, so the fabricated link still never reaches the snapshot
-    // and `linked` still has no prev_hash in the reconstructed view.
+    // `snapshotPlainJson`'s own-descriptor walk never does either way, so
+    // the toJSON channel was always closed on its own separate merits. The
+    // delta-7 fix (finding 2) closes the CARRYING shape as well: `linked`'s
+    // own prototype (the object literal holding `toJSON`) is not
+    // `Object.prototype`, so it is three hops from null, one past the
+    // two-hop plain-object budget, and the whole message is now refused
+    // outright rather than merely having its toJSON channel ignored (see
+    // the sibling prototype-chain test above for the non-toJSON case of the
+    // same shape).
     const messages = base.messages!;
     const root = messages.find((message) => message.prev_hash === GENESIS_HASH);
     if (!root) throw new Error('fixture has no genesis-root message');
@@ -306,13 +307,11 @@ describe('chain reconstruction ignores the presented order', () => {
     expect(Object.prototype.hasOwnProperty.call(linked, 'toJSON')).toBe(false);
     const stringified = JSON.parse(JSON.stringify(linked)) as Msg;
     expect(typeof stringified.prev_hash).toBe('string');
+    expect(Object.getPrototypeOf(Object.getPrototypeOf(linked))).not.toBeNull();
 
     const receipt = { ...base.receipt, message_count: 2, chain_head: GENESIS_HASH };
 
-    const result = verifyReceiptSetBinding(receipt, [root, linked]);
-    expect(result.state).not.toBe('bound');
-    expect(result.state).toBe('error');
-    expect(result.errors.some((e) => e.includes('root messages'))).toBe(true);
+    expect(() => verifyReceiptSetBinding(receipt, [root, linked])).toThrow(CanonicalizationError);
   });
 
   it('rejects a set with no root message', () => {
@@ -592,12 +591,103 @@ describe('the caller-supplied transcript is snapshotted once, at the boundary (C
 
     const result = verifyReceiptSetBinding(receipt, proxied as unknown as Msg[]);
     // Never bound for the one-message receipt: the snapshot reads the
-    // array's actual length exactly once, so it either sees two elements
-    // (and the reconstructed two-message set mismatches this receipt) or
-    // one (an honest single-message presentation, not a substitution). It
-    // cannot see two elements while wrongly acting on one, which is the
-    // shape that returned `bound` pre-fix.
-    expect(result.state).not.toBe('bound');
+    // array's actual length exactly once, so it sees the true two elements
+    // and the reconstructed two-message set mismatches this receipt's
+    // one-message claim on BOTH fields the receipt asserts -- never the
+    // silently-truncated one-message view that returned `bound` pre-fix
+    // (Grok finding 3, 2026-09-16 delta-7 gate: the prior assertion checked
+    // only `not.toBe('bound')`, which `legacy_set_unbound` or
+    // `fields_present_unverified` would also have satisfied without
+    // proving the snapshot actually saw both elements).
+    expect(result).toEqual({
+      state: 'error',
+      errors: [
+        'message_count mismatch: attestation has 1, transcript has 2',
+        'chain_head mismatch: attestation does not match transcript final message hash',
+      ],
+    });
+  });
+
+  it('a descriptor value getter answering ++n on each call is read exactly once (Grok finding 1a, 2026-09-16 delta-7 gate)', () => {
+    // Grok reproduction, proved fail-before against e1239db: the object
+    // branch of snapshotPlainJson read each member through Object.keys (one
+    // [[GetOwnProperty]] to test enumerability, which ALSO reads the
+    // descriptor's `value` getter, because the trap result is converted via
+    // ToPropertyDescriptor regardless of which fields the caller asked
+    // about) and then a SEPARATE Object.getOwnPropertyDescriptor call (a
+    // second [[GetOwnProperty]], reading the getter again): the snapshot
+    // kept the SECOND answer, canonicalizing `amount` as 2 instead of 1.
+    // Post-fix, snapshotPlainJson calls Object.getOwnPropertyDescriptors
+    // exactly once per object, which performs exactly one
+    // [[GetOwnProperty]] per key, so the getter fires once and the snapshot
+    // keeps the ONLY answer there is: `n` below stays 1.
+    let n = 0;
+    const root: Msg = { from: { agent_id: 'alice' }, prev_hash: GENESIS_HASH };
+    const message = new Proxy(root, {
+      ownKeys(target) {
+        return [...Reflect.ownKeys(target), 'amount'];
+      },
+      getOwnPropertyDescriptor(target, prop) {
+        if (prop === 'amount') {
+          return {
+            enumerable: true,
+            configurable: true,
+            writable: true,
+            get value() {
+              n += 1;
+              return n;
+            },
+          };
+        }
+        return Reflect.getOwnPropertyDescriptor(target, prop);
+      },
+    });
+    // The chain_head a caller presenting the FIRST (and, post-fix, only)
+    // answer can compute; a caller relying on the pre-fix second-read
+    // behavior would need `amount: 2` here instead.
+    const receipt = {
+      ...base.receipt,
+      message_count: 1,
+      chain_head: computeHash({ ...root, amount: 1 }),
+    };
+
+    const result = verifyReceiptSetBinding(receipt, [message as unknown as Msg]);
+    expect(result).toEqual({ state: 'bound', errors: [] });
+    expect(n).toBe(1);
+  });
+
+  it('a getOwnPropertyDescriptor trap that lies starting on its second call for a key never reaches that second call (Grok finding 1b, 2026-09-16 delta-7 gate)', () => {
+    // Grok reproduction, proved fail-before against e1239db: same
+    // double-observation shape as above, this time with the TRAP itself
+    // changing its answer rather than a getter on the descriptor object.
+    // Pre-fix, Object.keys's enumerability check was call 1 for `amount`
+    // (honest) and the loop's own Object.getOwnPropertyDescriptor was call
+    // 2 (the lie), so the snapshot kept the lie, canonicalizing `amount` as
+    // "lie" instead of "honest". Post-fix, the sole
+    // Object.getOwnPropertyDescriptors call is call 1 for every key: the
+    // trap never gets a second call to lie on.
+    const perKeyCalls: Record<string, number> = {};
+    const root: Msg = { from: { agent_id: 'alice' }, prev_hash: GENESIS_HASH, amount: 'honest' };
+    const message = new Proxy(root, {
+      getOwnPropertyDescriptor(target, prop) {
+        if (typeof prop === 'string') {
+          perKeyCalls[prop] = (perKeyCalls[prop] ?? 0) + 1;
+        }
+        if (prop === 'amount' && (perKeyCalls['amount'] ?? 0) > 1) {
+          return { value: 'lie', enumerable: true, configurable: true, writable: true };
+        }
+        return Reflect.getOwnPropertyDescriptor(target, prop);
+      },
+    });
+    const receipt = {
+      ...base.receipt,
+      message_count: 1,
+      chain_head: computeHash(root),
+    };
+
+    const result = verifyReceiptSetBinding(receipt, [message as unknown as Msg]);
+    expect(result).toEqual({ state: 'bound', errors: [] });
+    expect(perKeyCalls['amount']).toBe(1);
   });
 
   it('canonicalizeJcs on a plain (non-Proxy) transcript still binds two real messages (no regression)', () => {

@@ -73,6 +73,41 @@ export function canonicalCosignBytes(value: unknown): Buffer {
 }
 
 /**
+ * Realm-agnostic plain-data test for a non-array object: true when the
+ * prototype chain reaches null within two hops (a null-prototype object, or
+ * an ordinary object whose one-hop prototype's own prototype is null --
+ * `Object.prototype` in every realm, including a `node:vm` context or a
+ * browser iframe, satisfies this without the two `Object.prototype`
+ * identities ever being compared). This is a HOP COUNT, never an identity
+ * check, which is what lets a cross-realm `JSON.parse` result pass while a
+ * same-realm `Date`, `Map`, `Set`, boxed primitive, or class instance --
+ * every one of them three or more hops from null -- does not (Grok finding
+ * 2, 2026-09-16 delta-7 gate: removing the prior identity check to fix the
+ * cross-realm case re-accepted those non-JSON types as `{}`).
+ */
+function hasPlainObjectPrototypeChain(value: object): boolean {
+  const hop1 = Object.getPrototypeOf(value);
+  return hop1 === null || Object.getPrototypeOf(hop1) === null;
+}
+
+/**
+ * Realm-agnostic plain-data test for an array: true when the prototype
+ * chain is exactly three hops to null (`Array.prototype`, then
+ * `Object.prototype`, then null, in whichever realm constructed the
+ * array). An `Array` subclass instance inserts an extra prototype level and
+ * fails this count on purpose: `Array.isArray` alone does not distinguish a
+ * plain array from a subclass instance, and a subclass instance is not
+ * plain JSON data either (Grok finding 2, 2026-09-16 delta-7 gate).
+ */
+function hasPlainArrayPrototypeChain(value: object): boolean {
+  const hop1 = Object.getPrototypeOf(value);
+  if (hop1 === null) return false;
+  const hop2 = Object.getPrototypeOf(hop1);
+  if (hop2 === null) return false;
+  return Object.getPrototypeOf(hop2) === null;
+}
+
+/**
  * Produce a realm-local, plain-data deep copy of `value` in a single
  * traversal, reading each member of the caller-supplied structure exactly
  * once.
@@ -86,28 +121,28 @@ export function canonicalCosignBytes(value: unknown): Buffer {
  * snapshot in `conformance/reference-runner-js/runner.mjs`; must match
  * both).
  *
- * Every own, enumerable, string-keyed DATA property is read through exactly
- * one call to `Object.getOwnPropertyDescriptor` and copied from that
- * descriptor's `value` field directly -- never through `obj[k]` or
- * `value[index]`, which perform a SEPARATE `[[Get]]` a Proxy can answer
- * differently than the descriptor it just reported for the same member
- * (Grok finding 1, 2026-09-16 delta-6 gate: a Proxy `get` trap returning one
- * value to a signature check and a different one to chain reconstruction).
- * An accessor descriptor (`get`/`set`) throws outright, and an array index
- * with no own descriptor -- a sparse hole, including one an inherited
- * index getter would otherwise answer -- throws too, instead of falling
- * through to an indexed read that would reach the prototype chain.
+ * Every own, string-keyed property (object) or index (array) is observed
+ * through exactly ONE call to `Object.getOwnPropertyDescriptors`, which
+ * performs one `[[OwnPropertyKeys]]` and one `[[GetOwnProperty]]` per key
+ * and returns fresh, realm-local plain descriptor records whose `value` was
+ * read exactly once -- never a separate `Object.keys` enumerability pass
+ * followed by a per-key `Object.getOwnPropertyDescriptor` call, which is
+ * two independent trap invocations a Proxy can answer differently (Grok
+ * finding 1, 2026-09-16 delta-7 gate: a descriptor whose `value` field is
+ * itself a getter answers `++n` on each of the two calls and the old code
+ * kept the second answer; a `getOwnPropertyDescriptor` trap that lies
+ * starting on its second call passed the lie through the same way). This
+ * function never calls `Object.keys`, `Object.getOwnPropertyDescriptor`, or
+ * any indexed/keyed `[[Get]]` (`obj[k]`, `value[index]`) on the caller's
+ * own value -- only on the descriptor MAP this function itself built from
+ * that one call. An accessor descriptor (`get`/`set`) throws outright, and
+ * an array index absent from the map -- a sparse hole, including one an
+ * inherited index getter would otherwise answer -- throws too, instead of
+ * falling through to an indexed read that would reach the prototype chain.
  *
- * Prototype identity is NOT checked. A plain object literal, `JSON.parse`
- * output in this realm, and `JSON.parse` output from a DIFFERENT realm (a
- * `node:vm` context, a browser iframe) all have different `Object.prototype`
- * identities but are equally plain JSON data; rejecting the foreign one was
- * itself a cross-realm canonicalization regression (Codex P2, 2026-09-16
- * delta-5 gate). `Object.keys`-style enumeration already promises to see
- * only own enumerable members regardless of prototype, so reading a value
- * through that same promise -- rather than layering a prototype-identity
- * check on top of it -- closes the accessor/Proxy class without reopening
- * the realm one.
+ * Prototype IDENTITY is not checked -- that regressed cross-realm JSON (see
+ * {@link hasPlainObjectPrototypeChain}) -- but prototype SHAPE is: see the
+ * two hop-count helpers above.
  */
 export function snapshotPlainJson(value: unknown): unknown {
   if (value === null) return null;
@@ -122,22 +157,43 @@ export function snapshotPlainJson(value: unknown): unknown {
     return value;
   }
   if (Array.isArray(value)) {
-    // `length` is read exactly once, right here; every index bound below
-    // derives from THIS number, never from a fresh `value.length` read, so
-    // a Proxy `length` trap that answers 2 on one call and 1 on another
-    // cannot make this copy cover a shorter range than the one the loop
-    // below actually visits (Codex P1, 2026-09-16 delta-6 gate: a transcript
-    // array reporting length 2 during validation and length 1 during
-    // reconstruction).
-    const length = value.length;
-    if (!Number.isSafeInteger(length) || length < 0) {
+    if (!hasPlainArrayPrototypeChain(value)) {
+      throw new CanonicalizationError(
+        `Cannot canonicalize array: its prototype chain is not the plain three hops to null ` +
+          `(Array.prototype, Object.prototype, null); it is not plain JSON data.`,
+      );
+    }
+    // One call observes every index AND `length` together; there is no
+    // separate `value.length` read left for a `length` trap to answer
+    // differently from the descriptor map this loop actually walks (Codex
+    // P1, 2026-09-16 delta-6 gate: a transcript array reporting length 2
+    // during validation and length 1 during reconstruction).
+    // Cast, not a structural assignment: at runtime every property key on
+    // the object `Object.getOwnPropertyDescriptors` returns is already a
+    // string (array indices included -- `"0"`, `"1"`, ... -- same as any
+    // other own key), so indexing it by `String(index)` below matches the
+    // real keys exactly; the cast only tells TypeScript's mapped-array-type
+    // inference to stop guessing and use that flat shape.
+    const descriptors = Object.getOwnPropertyDescriptors(value) as unknown as Record<
+      string,
+      PropertyDescriptor
+    >;
+    const lengthDescriptor = descriptors.length;
+    if (
+      lengthDescriptor === undefined ||
+      lengthDescriptor.get !== undefined ||
+      typeof lengthDescriptor.value !== 'number' ||
+      !Number.isSafeInteger(lengthDescriptor.value) ||
+      lengthDescriptor.value < 0
+    ) {
       throw new CanonicalizationError(
         `Cannot canonicalize an array whose length is not a non-negative safe integer.`,
       );
     }
+    const length = lengthDescriptor.value;
     const out: unknown[] = new Array(length);
     for (let index = 0; index < length; index += 1) {
-      const descriptor = Object.getOwnPropertyDescriptor(value, index);
+      const descriptor = descriptors[String(index)];
       if (descriptor === undefined) {
         throw new CanonicalizationError(
           `Cannot canonicalize array index ${index}: a sparse hole is not a plain element.`,
@@ -155,14 +211,26 @@ export function snapshotPlainJson(value: unknown): unknown {
   }
   if (t === 'object') {
     const obj = value as object;
+    if (!hasPlainObjectPrototypeChain(obj)) {
+      throw new CanonicalizationError(
+        `Cannot canonicalize object: its prototype chain does not reach null within two hops; ` +
+          `it is not plain JSON data (a Date, Map, Set, boxed primitive, class instance, or ` +
+          `similar non-JSON type).`,
+      );
+    }
     const out: Record<string, unknown> = {};
-    // `Object.keys` enumerates own enumerable string keys without reading
-    // any member's value; the per-key descriptor read just below is the
-    // ONLY read of that member's value, taken from the descriptor itself
-    // rather than a follow-up `obj[k]`.
-    for (const key of Object.keys(obj)) {
-      const descriptor = Object.getOwnPropertyDescriptor(obj, key);
-      if (descriptor === undefined) continue; // raced deletion between the two calls; absent either way
+    // The ONE call: every own key of `obj` is observed here, once. A key
+    // absent from `obj` never appears in `descriptors` at all
+    // (getOwnPropertyDescriptors omits it outright, rather than two calls
+    // disagreeing about it), so there is no raced-deletion case left to
+    // silently skip.
+    const descriptors = Object.getOwnPropertyDescriptors(obj);
+    // `Object.keys` of THIS descriptor map -- a fresh plain object this
+    // function just built from the call above -- not of `obj`; enumerating
+    // it performs no further read of the caller-controlled object at all.
+    for (const key of Object.keys(descriptors)) {
+      const descriptor = descriptors[key]!;
+      if (!descriptor.enumerable) continue;
       if (descriptor.get !== undefined || descriptor.set !== undefined) {
         throw new CanonicalizationError(
           `Cannot canonicalize property ${JSON.stringify(key)}: it is an accessor property ` +
