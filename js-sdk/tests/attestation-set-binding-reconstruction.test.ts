@@ -130,6 +130,23 @@ describe('chain reconstruction ignores the presented order', () => {
     });
   });
 
+  it('does not consume a prev_hash inherited through the prototype chain', () => {
+    const messages = base.messages!;
+    // Every non-root message keeps its signed body but loses its own
+    // prev_hash; the link is offered only through the prototype. No signed
+    // or canonical form carries an inherited member, so reconstruction must
+    // treat these as messages with no predecessor, never as a bound chain.
+    const inherited = messages.map((message) => {
+      if (!Object.prototype.hasOwnProperty.call(message, 'prev_hash') || message.prev_hash === GENESIS_HASH) {
+        return message;
+      }
+      const { prev_hash: link, ...rest } = message;
+      return Object.assign(Object.create({ prev_hash: link }) as Msg, rest);
+    });
+    const result = verifyReceiptSetBinding(base.receipt, inherited);
+    expect(result.state).not.toBe('bound');
+  });
+
   it('rejects a set with no root message', () => {
     // The fixture is presented shuffled (not chain order), so the root is
     // wherever prev_hash === GENESIS_HASH lands, never necessarily index 0.

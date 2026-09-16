@@ -55,7 +55,7 @@ Vectors:
 
 - positive: `pos-synthetic-receipt-set-binding-reconstruction`;
 - mutations: `mut-synthetic-receipt-set-reconstruction-0001` through
-  `mut-synthetic-receipt-set-reconstruction-0007`.
+  `mut-synthetic-receipt-set-reconstruction-0008`.
 
 Reference implementations:
 

@@ -142,7 +142,10 @@ function reconstructSingleChain(transcript: Array<Record<string, unknown>>): {
   const successorOf = new Map<number, number>();
   for (let index = 0; index < transcript.length; index += 1) {
     const message = transcript[index]!;
-    const hasPrevHash = 'prev_hash' in message;
+    // Own property only: `in` also finds a prev_hash inherited through the
+    // prototype chain, which no canonical or signed form carries, so an
+    // inherited link would let reconstruction consume a value nobody signed.
+    const hasPrevHash = Object.prototype.hasOwnProperty.call(message, 'prev_hash');
     const prevHash = message.prev_hash;
     if (!hasPrevHash || prevHash === GENESIS_HASH) {
       roots.push(index);
