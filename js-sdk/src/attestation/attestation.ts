@@ -69,7 +69,7 @@ import {
   behaviorRecordToDict,
 } from '../types/index.js';
 import { validateReference } from '../predicate/references.js';
-import { GENESIS_HASH, computeHash, type Session } from '../session/index.js';
+import { GENESIS_HASH, computeHash, hashCanonicalBytes, type Session } from '../session/index.js';
 
 /** Attestation schema version, byte-identical to Python `ATTESTATION_VERSION`. */
 export const ATTESTATION_VERSION = '0.5.0';
@@ -122,7 +122,19 @@ function reconstructSingleChain(transcript: Array<Record<string, unknown>>): {
   }
   if (errors.length > 0) return { chain: [], errors };
 
-  const digests = transcript.map((message) => computeHash(message));
+  // One canonical byte string per message, computed once, feeds BOTH the
+  // digest and the link-reading view below. canonicalizeJcs walks only own
+  // enumerable string-keyed members (stableStringify's Object.keys, see
+  // canonicalize.ts) and never invokes a toJSON method, own or inherited,
+  // unlike JSON.stringify. A member that reaches the view therefore always
+  // reaches the digest too: there is no second channel (a hidden toJSON, an
+  // inherited or non-enumerable own accessor) that could carry a prev_hash
+  // the digest never covers. canonicalizeJcs still runs against the
+  // caller's original message object, so checkNoSpecialFloats keeps
+  // rejecting NaN, Infinity, -0, and lossy integers exactly as before.
+  const canonicalBytes = transcript.map((message) => canonicalizeJcs(message));
+
+  const digests = canonicalBytes.map((bytes) => hashCanonicalBytes(bytes));
   const byDigest = new Map<string, number>();
   for (let index = 0; index < digests.length; index += 1) {
     const digest = digests[index]!;
@@ -138,23 +150,12 @@ function reconstructSingleChain(transcript: Array<Record<string, unknown>>): {
     byDigest.set(digest, index);
   }
 
-  // Read every prev_hash through the exact view computeHash hashes (own
-  // enumerable string-keyed members, per stableStringify's Object.keys, see
-  // canonicalize.ts), never from the caller's object directly. This is a
-  // chokepoint, not another predicate: hasOwnProperty alone still accepts a
-  // non-enumerable own prev_hash, which stableStringify's Object.keys never
-  // sees, so a caller could attach a link the digest and signature never
-  // cover. JSON.stringify enumerates a value's members the same way
-  // Object.keys does, so a single JSON.parse(JSON.stringify(...)) round trip
-  // drops an inherited, non-enumerable, symbol-keyed, or accessor prev_hash
-  // exactly as the digest already drops it, in one place instead of a
-  // predicate per channel. computeHash above still reads the ORIGINAL
-  // message, not this projection: canonicalizeJcs's checkNoSpecialFloats
-  // guard (NaN/Infinity/-0/lossy-integer rejection) must see the caller's
-  // real values, and the round trip would silently coerce -0 to 0 and
-  // NaN/Infinity to null, turning a reject into a pass.
-  const views = transcript.map(
-    (message) => JSON.parse(JSON.stringify(message)) as Record<string, unknown>,
+  // The link-reading view is parsed from the SAME canonical bytes just
+  // hashed above, not from the caller's object and not from a fresh
+  // JSON.stringify of it. Must match the digest derivation immediately
+  // above: same bytes in, digest one way, view the other.
+  const views = canonicalBytes.map(
+    (bytes) => JSON.parse(bytes.toString('utf8')) as Record<string, unknown>,
   );
 
   const roots: number[] = [];

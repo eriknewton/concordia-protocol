@@ -1519,9 +1519,17 @@ function verifyMessageChainReceiptBinding(suiteBase, inputData, messages, contex
  * scripts/conformance/generate_vectors.py.
  */
 function reconstructSingleChain(messages) {
+  // One canonical byte string per message, computed once, feeds BOTH the
+  // digest below and the link-reading view further down. jcs walks only own
+  // enumerable string-keyed members (Object.keys, see the jcs() function
+  // above) and never invokes a toJSON method, own or inherited, unlike
+  // JSON.stringify. A member that reaches the view can therefore only be one
+  // the digest also covers. Must match attestation.ts and runner.py.
+  const canonicalBytes = messages.map((message) => jcsBytes(message));
+
   const byDigest = new Map();
   for (let index = 0; index < messages.length; index += 1) {
-    const digest = messageHash(messages[index]);
+    const digest = canonicalSha256(canonicalBytes[index]);
     if (byDigest.has(digest)) {
       reject("transcript presents the same message more than once");
     }
@@ -1531,24 +1539,13 @@ function reconstructSingleChain(messages) {
   const roots = [];
   const successorOf = new Map();
   for (let index = 0; index < messages.length; index += 1) {
-    const message = requireObject(messages[index], "transcript message");
-    // links are read from the same view messageHash covers (own enumerable
-    // string-keyed members, per jcs's Object.keys), never from the caller's
-    // object directly. This is a chokepoint, not another predicate:
-    // hasOwnProperty alone still accepts a non-enumerable own prev_hash,
-    // which jcs's Object.keys never sees, so a caller could attach a link
-    // the digest and signature never cover. JSON.stringify enumerates a
-    // value's members the same way Object.keys does, so one JSON round trip
-    // drops an inherited, non-enumerable, symbol-keyed, or accessor
-    // prev_hash exactly as messageHash already drops it. messageHash itself
-    // keeps hashing the ORIGINAL message: a round trip would silently coerce
-    // -0 to 0 and NaN/Infinity to null, which this reference runner does not
-    // need to reject explicitly (JSON.parse of real transcript bytes cannot
-    // produce NaN/Infinity, and -0 divergence is a JS-vs-Python SDK concern,
-    // not this runner's), but hashing the caller's real object rather than a
-    // silently-altered copy is the safer default regardless. Must match
-    // attestation.ts and runner.py.
-    const view = JSON.parse(JSON.stringify(message));
+    requireObject(messages[index], "transcript message");
+    // The view is parsed from the SAME canonical bytes just hashed above,
+    // not from the caller's object and not from a fresh JSON.stringify of
+    // it. Must match the digest derivation immediately above: same bytes
+    // in, digest one way, view the other. Must match attestation.ts and
+    // runner.py.
+    const view = JSON.parse(canonicalBytes[index].toString("utf8"));
     const hasPrevHash = Object.prototype.hasOwnProperty.call(view, "prev_hash");
     const prevHash = view.prev_hash;
     if (!hasPrevHash || prevHash === GENESIS_HASH) {

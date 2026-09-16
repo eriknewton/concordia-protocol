@@ -239,6 +239,98 @@ describe('chain reconstruction ignores the presented order', () => {
     expect(result.errors.some((e) => e.includes('root messages'))).toBe(true);
   });
 
+  it('does not consume a prev_hash injected by an own non-enumerable toJSON', () => {
+    // Same genesis-seeded construction as the two phantom-chain cases above,
+    // but the link is opened through a THIRD channel neither prior fix
+    // closed: a `toJSON` method. `JSON.stringify` invokes `toJSON`, own or
+    // inherited, before it ever reaches `Object.keys`; `computeHash`'s
+    // `stableStringify` never calls `toJSON` at all (it walks `Object.keys`
+    // directly). A projection built with `JSON.parse(JSON.stringify(...))`
+    // therefore reads a link the digest never covers, which is exactly what
+    // the digest-and-view-from-one-canonical-bytes fix closes (delta-3,
+    // 2026-09-16 Codex gate,
+    // Review/Concordia/PR243_Gate_2026-09-16/OUT_delta3_codex.txt).
+    const messages = base.messages!;
+    const root = messages.find((message) => message.prev_hash === GENESIS_HASH);
+    if (!root) throw new Error('fixture has no genesis-root message');
+    const rest = messages.filter((message) => message !== root);
+    const phantom: Msg[] = [{ ...root }];
+    for (const original of rest) {
+      const { prev_hash: _dropped, ...restFields } = original;
+      const predecessorDigest = computeHash(phantom[phantom.length - 1]!);
+      const linked: Msg = { ...restFields };
+      Object.defineProperty(linked, 'toJSON', {
+        value: () => ({ ...linked, prev_hash: predecessorDigest }),
+        enumerable: false,
+        configurable: true,
+      });
+      phantom.push(linked);
+    }
+    // Every non-root phantom message has no own ENUMERABLE prev_hash (a
+    // `JSON.stringify`-based projection is the only thing that ever sees
+    // one), and `JSON.stringify` genuinely surfaces the injected link -- both
+    // are the preconditions this construction depends on, not assertions
+    // about the code under test.
+    for (const message of phantom.slice(1)) {
+      expect(Object.prototype.hasOwnProperty.call(message, 'prev_hash')).toBe(false);
+      const stringified = JSON.parse(JSON.stringify(message)) as Msg;
+      expect(typeof stringified.prev_hash).toBe('string');
+    }
+    const receipt = {
+      ...base.receipt,
+      message_count: phantom.length,
+      chain_head: computeHash(phantom[phantom.length - 1]!),
+    };
+
+    // A JSON.stringify-round-trip projection reads this link, walks a chain
+    // that genuinely reconstructs, and returns "bound" -- the
+    // canonical-bytes fix must treat every non-root phantom message as a
+    // second root instead, exactly as it does for the two channels above.
+    const result = verifyReceiptSetBinding(receipt, phantom);
+    expect(result.state).not.toBe('bound');
+    expect(result.state).toBe('error');
+    expect(result.errors.some((e) => e.includes('root messages'))).toBe(true);
+  });
+
+  it('does not consume a prev_hash injected by a toJSON inherited through the prototype chain', () => {
+    // Combines the prototype-chain channel with the toJSON channel: the
+    // fabricated link is reachable only by looking up `toJSON` through the
+    // prototype AND calling it, which `JSON.stringify` does and
+    // `stableStringify`'s `Object.keys` walk never does either way.
+    const messages = base.messages!;
+    const root = messages.find((message) => message.prev_hash === GENESIS_HASH);
+    if (!root) throw new Error('fixture has no genesis-root message');
+    const rest = messages.filter((message) => message !== root);
+    const phantom: Msg[] = [{ ...root }];
+    for (const original of rest) {
+      const { prev_hash: _dropped, ...restFields } = original;
+      const predecessorDigest = computeHash(phantom[phantom.length - 1]!);
+      const proto = {
+        toJSON(this: Msg) {
+          return { ...this, prev_hash: predecessorDigest };
+        },
+      };
+      const linked = Object.assign(Object.create(proto) as Msg, restFields);
+      phantom.push(linked);
+    }
+    for (const message of phantom.slice(1)) {
+      expect(Object.prototype.hasOwnProperty.call(message, 'prev_hash')).toBe(false);
+      expect(Object.prototype.hasOwnProperty.call(message, 'toJSON')).toBe(false);
+      const stringified = JSON.parse(JSON.stringify(message)) as Msg;
+      expect(typeof stringified.prev_hash).toBe('string');
+    }
+    const receipt = {
+      ...base.receipt,
+      message_count: phantom.length,
+      chain_head: computeHash(phantom[phantom.length - 1]!),
+    };
+
+    const result = verifyReceiptSetBinding(receipt, phantom);
+    expect(result.state).not.toBe('bound');
+    expect(result.state).toBe('error');
+    expect(result.errors.some((e) => e.includes('root messages'))).toBe(true);
+  });
+
   it('rejects a set with no root message', () => {
     // The fixture is presented shuffled (not chain order), so the root is
     // wherever prev_hash === GENESIS_HASH lands, never necessarily index 0.

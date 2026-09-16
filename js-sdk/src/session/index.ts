@@ -1,4 +1,4 @@
-export { GENESIS_HASH, computeHash, validateChain } from './message.js';
+export { GENESIS_HASH, computeHash, hashCanonicalBytes, validateChain } from './message.js';
 export {
   Session,
   InvalidTransitionError,
