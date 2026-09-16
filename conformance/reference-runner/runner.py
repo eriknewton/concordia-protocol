@@ -1340,10 +1340,18 @@ def reconstruct_single_chain(messages: list[Json]) -> list[Json]:
     successor_of: dict[int, int] = {}
     for index, item in enumerate(messages):
         message = require_object(item, "transcript message")
+        has_prev_hash = "prev_hash" in message
         prev_hash = message.get("prev_hash")
-        if prev_hash is None or prev_hash == GENESIS_HASH:
+        if not has_prev_hash or prev_hash == GENESIS_HASH:
             roots.append(index)
             continue
+        if prev_hash is None:
+            # An absent key and an explicit JSON null both read back as None
+            # from .get(); the contract makes only the absent key a root, so
+            # a present-but-null prev_hash is a malformed link, not a second
+            # spelling of genesis. Must match attestation.py and
+            # attestation.ts.
+            raise Reject("transcript message has an explicit null prev_hash")
         if not isinstance(prev_hash, str):
             raise Reject("transcript message prev_hash is not a string")
         predecessor = by_digest.get(prev_hash)

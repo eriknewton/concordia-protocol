@@ -2,9 +2,9 @@
   "check_command": "python3 scripts/conformance/generate_vectors.py --check",
   "counts": {
     "canary": 5,
-    "diag_canonical_bytes": 1400,
+    "diag_canonical_bytes": 1401,
     "fixtures": 61,
-    "mutation": 1495,
+    "mutation": 1496,
     "positive": 54,
     "schemas": 14
   },
@@ -1383,6 +1383,7 @@
       "conformance/diag/canonical-bytes/mut-synthetic-receipt-set-reconstruction-0005.jcs",
       "conformance/diag/canonical-bytes/mut-synthetic-receipt-set-reconstruction-0006.jcs",
       "conformance/diag/canonical-bytes/mut-synthetic-receipt-set-reconstruction-0007.jcs",
+      "conformance/diag/canonical-bytes/mut-synthetic-receipt-set-reconstruction-0008.jcs",
       "conformance/diag/canonical-bytes/pos-1404-approval-receipt.jcs",
       "conformance/diag/canonical-bytes/pos-1404-capability-digest.jcs",
       "conformance/diag/canonical-bytes/pos-1404-cascade-deny.jcs",
@@ -2976,7 +2977,8 @@
       "conformance/vectors/mutation/mut-synthetic-receipt-set-reconstruction-0004.json",
       "conformance/vectors/mutation/mut-synthetic-receipt-set-reconstruction-0005.json",
       "conformance/vectors/mutation/mut-synthetic-receipt-set-reconstruction-0006.json",
-      "conformance/vectors/mutation/mut-synthetic-receipt-set-reconstruction-0007.json"
+      "conformance/vectors/mutation/mut-synthetic-receipt-set-reconstruction-0007.json",
+      "conformance/vectors/mutation/mut-synthetic-receipt-set-reconstruction-0008.json"
     ],
     "positive": [
       "conformance/vectors/positive/binding-1734-context-set-mismatch.json",
@@ -3271,10 +3273,10 @@
       "battery_name": "synthetic/longtail/receipt_set_binding_reconstruction.json",
       "object_name": "receipt_set_binding_reconstruction",
       "record_type": "message_chain",
-      "reject": 7,
-      "selection_note": "transcript-absent and chain-reconstruction attack vectors, each shaped so a final-digest-and-count comparison accepts it",
+      "reject": 8,
+      "selection_note": "vector 0001 exercises transcript-absent and has no presented set; vectors 0002 through 0008 each present a set whose length equals message_count and whose last presented message hashes to chain_head, so a digest-and-count verifier accepts them and chain reconstruction rejects them",
       "source_fixture": "synthetic/longtail/receipt_set_binding.json",
-      "total": 7,
+      "total": 8,
       "verification_profile": "receipt-set-binding-v1"
     },
     {

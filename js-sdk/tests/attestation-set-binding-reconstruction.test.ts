@@ -52,6 +52,7 @@ const RECONSTRUCTION_REJECT_IDS = [
   'mut-synthetic-receipt-set-reconstruction-0005',
   'mut-synthetic-receipt-set-reconstruction-0006',
   'mut-synthetic-receipt-set-reconstruction-0007',
+  'mut-synthetic-receipt-set-reconstruction-0008',
 ];
 
 describe('receipt set-binding over the shared conformance vectors', () => {
@@ -130,10 +131,38 @@ describe('chain reconstruction ignores the presented order', () => {
   });
 
   it('rejects a set with no root message', () => {
-    const result = verifyReceiptSetBinding(base.receipt, base.messages!.slice(1));
+    // The fixture is presented shuffled (not chain order), so the root is
+    // wherever prev_hash === GENESIS_HASH lands, never necessarily index 0.
+    const messages = base.messages!;
+    const withoutRoot = messages.filter((message) => message.prev_hash !== GENESIS_HASH);
+    expect(withoutRoot.length).toBe(messages.length - 1);
+    const result = verifyReceiptSetBinding(base.receipt, withoutRoot);
 
     expect(result.state).toBe('error');
     expect(result.errors.some((e) => e.includes('no root message'))).toBe(true);
+  });
+
+  it('rejects an explicit null prev_hash as a root', () => {
+    const messages = base.messages!;
+    const nullRoot = { ...messages[0]!, prev_hash: null };
+    const presented = [nullRoot, ...messages.slice(1)];
+    const result = verifyReceiptSetBinding(base.receipt, presented);
+
+    expect(result.state).toBe('error');
+    expect(result.errors.some((e) => e.includes('explicit null prev_hash'))).toBe(true);
+  });
+
+  it('binds a shuffled chain under a permutation distinct from the fixture order', () => {
+    const messages = base.messages!;
+    expect(messages.length).toBeGreaterThanOrEqual(3);
+    // Rotate by two rather than one, so this exercises a different
+    // permutation than the single-rotation case above.
+    const shuffled = [...messages.slice(2), ...messages.slice(0, 2)];
+
+    expect(verifyReceiptSetBinding(base.receipt, shuffled)).toEqual({
+      state: 'bound',
+      errors: [],
+    });
   });
 
   it('rejects a second root message', () => {

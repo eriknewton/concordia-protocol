@@ -1406,10 +1406,17 @@ def reconstruct_single_chain(
     roots: list[int] = []
     successor_of: dict[int, int] = {}
     for index, message in enumerate(messages):
+        has_prev_hash = "prev_hash" in message
         prev_hash = message.get("prev_hash")
-        if prev_hash is None or prev_hash == GENESIS_HASH:
+        if not has_prev_hash or prev_hash == GENESIS_HASH:
             roots.append(index)
             continue
+        if prev_hash is None:
+            # An absent key and an explicit JSON null both read back as None
+            # from .get(); the contract makes only the absent key a root, so
+            # a present-but-null prev_hash is a malformed link. Must match
+            # attestation.py, attestation.ts, runner.py, and runner.mjs.
+            return None
         if not isinstance(prev_hash, str):
             return None
         predecessor = by_digest.get(prev_hash)
@@ -1891,8 +1898,8 @@ RECEIPT_BUNDLE_VERSION_TOLERANCE_NOTE = (
 CHAIN_POSITION_RESIGNED_SPLICE_TOLERANCE_NOTE = (
     "tolerated-accept: per-message signatures authenticate links, not the complete message set"
 )
-EXPECTED_MUTATION_TOTAL = 1495
-EXPECTED_MUTATION_REJECTS = 1450
+EXPECTED_MUTATION_TOTAL = 1496
+EXPECTED_MUTATION_REJECTS = 1451
 EXPECTED_MUTATION_ACCEPTS = 45
 EXPECTED_CANARY_TOTAL = 5
 EXPECTED_RAW_TYPED_DIVERGENCES = (
@@ -1930,7 +1937,7 @@ EXPECTED_MUTATION_BATTERY_COUNTS: dict[str, tuple[int, int, int]] = {
     "synthetic/longtail/message_chain.json": (99, 99, 0),
     "synthetic/longtail/message_chain_position.json": (4, 3, 1),
     "synthetic/longtail/receipt_set_binding.json": (4, 4, 0),
-    "synthetic/longtail/receipt_set_binding_reconstruction.json": (7, 7, 0),
+    "synthetic/longtail/receipt_set_binding_reconstruction.json": (8, 8, 0),
     "synthetic/longtail/receipt_bundle.json": (256, 255, 1),
     "synthetic/mandate/delegated_mandate.json": (82, 82, 0),
     "synthetic/mandate/mandate.json": (51, 51, 0),
@@ -2964,14 +2971,41 @@ def receipt_set_binding_signature_stripped_links(
     return relinked
 
 
+def receipt_set_binding_null_root_transcript(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Re-sign a transcript whose root's ``prev_hash`` is explicit JSON ``null``.
+
+    Every non-root link is relinked under the correct SPEC 9.3 digest
+    convention, so the malformed root is the ONLY thing distinguishing this
+    transcript from a genuinely valid chain: the attack this proves is that an
+    explicit null root is not silently read as an absent one.
+    """
+    key_by_agent = receipt_set_binding_key_map()
+    root = copy.deepcopy(messages[0])
+    root["prev_hash"] = None
+    relinked: list[dict[str, Any]] = [
+        resign_chain_message(root, key_by_agent[root["from"]["agent_id"]])
+    ]
+    for message in messages[1:]:
+        variant = copy.deepcopy(message)
+        variant["prev_hash"] = compute_hash(relinked[-1])
+        relinked.append(
+            resign_chain_message(variant, key_by_agent[variant["from"]["agent_id"]])
+        )
+    return relinked
+
+
 def build_receipt_set_binding_reconstruction_vectors(
     synthetic: SyntheticFixtures,
 ) -> tuple[list[Vector], dict[str, Any]]:
     """Vectors for the SPEC 9.6.5b transcript requirement and chain reconstruction.
 
-    Every reject vector below presents a set whose length equals the receipt's
-    message_count and whose last presented message hashes to chain_head, so a
-    verifier that compares only a final digest and a count credits all of them.
+    Vector 0001 exercises transcript-absent and has no presented set at all.
+    Every other reject vector presents a set whose length equals the
+    receipt's message_count and whose last presented message hashes to
+    chain_head, so a verifier that compares only a final digest and a count
+    credits all of them.
     """
     base_pair = synthetic.longtail.receipt_set_binding
     base_receipt = base_pair["receipt"]
@@ -3048,6 +3082,15 @@ def build_receipt_set_binding_reconstruction_vectors(
         "receipt": receipt_with_resigned_snapshot(
             base_receipt,
             {"message_count": 6},
+        ),
+    }
+
+    null_root_messages = receipt_set_binding_null_root_transcript(base_messages)
+    null_root = {
+        "messages": null_root_messages,
+        "receipt": receipt_with_resigned_snapshot(
+            base_receipt,
+            {"chain_head": compute_hash(null_root_messages[-1]), "message_count": 5},
         ),
     }
 
@@ -3134,6 +3177,20 @@ def build_receipt_set_binding_reconstruction_vectors(
                 "reconstructed chain is one message shorter"
             ),
         ),
+        receipt_set_binding_reconstruction_vector(
+            vector_id="mut-synthetic-receipt-set-reconstruction-0008",
+            title="receipt_set_binding: root message carries an explicit null prev_hash",
+            input_data=null_root,
+            context=context,
+            expected_reason_class="binding",
+            notes=(
+                "an absent prev_hash key and an explicit JSON null both read "
+                "back as nothing from a permissive accessor, but the contract "
+                "makes only the absent key a root; every other link is "
+                "genuinely valid, so this is the malformed-root case in "
+                "isolation"
+            ),
+        ),
     ]
     summary = {
         "battery_name": "synthetic/longtail/receipt_set_binding_reconstruction.json",
@@ -3145,8 +3202,11 @@ def build_receipt_set_binding_reconstruction_vectors(
         "reject": sum(1 for vector in vectors if vector.expected == "reject"),
         "accept": sum(1 for vector in vectors if vector.expected == "accept"),
         "selection_note": (
-            "transcript-absent and chain-reconstruction attack vectors, each "
-            "shaped so a final-digest-and-count comparison accepts it"
+            "vector 0001 exercises transcript-absent and has no presented "
+            "set; vectors 0002 through 0008 each present a set whose length "
+            "equals message_count and whose last presented message hashes "
+            "to chain_head, so a digest-and-count verifier accepts them and "
+            "chain reconstruction rejects them"
         ),
     }
     return vectors, summary
@@ -4911,6 +4971,31 @@ def build_phase2_vectors(fixtures: SyntheticFixtures) -> list[Vector]:
         compute_hash(message)
         for message in fixtures.longtail.receipt_set_binding["messages"]
     ]
+    # Presented order (chain positions, root=0): message 2, then 0, then 4,
+    # then 1, then 3. A verifier that reconstructs only by walking the
+    # presented array in order, instead of by prev_hash links, would compute
+    # a head from the LAST presented element (chain position 3, the
+    # second-to-last real message) rather than the true chain head (position
+    # 4), and would fail this vector; reconstruction ignores presented order
+    # and must still bind.
+    receipt_set_binding_reconstruction_positive_order = [2, 0, 4, 1, 3]
+    receipt_set_binding_reconstruction_positive_messages = fixtures.longtail.receipt_set_binding[
+        "messages"
+    ]
+    if sorted(receipt_set_binding_reconstruction_positive_order) != list(
+        range(len(receipt_set_binding_reconstruction_positive_messages))
+    ):
+        raise GenerationError(
+            "receipt-set-binding-v1 positive vector permutation is not a "
+            "permutation of the transcript's message indices"
+        )
+    receipt_set_binding_reconstruction_positive = {
+        **fixtures.longtail.receipt_set_binding,
+        "messages": [
+            receipt_set_binding_reconstruction_positive_messages[index]
+            for index in receipt_set_binding_reconstruction_positive_order
+        ],
+    }
     longtail_agent_ids = fixtures.longtail.seed_manifest["agent_ids"]
 
     vectors: list[Vector] = [
@@ -5229,14 +5314,17 @@ def build_phase2_vectors(fixtures: SyntheticFixtures) -> list[Vector]:
             source_fixture=f"{SYNTHETIC_SOURCE_LONGTAIL}/receipt_set_binding.json",
             record_type="message_chain",
             verification_profile="receipt-set-binding-v1",
-            input_data=fixtures.longtail.receipt_set_binding,
+            input_data=receipt_set_binding_reconstruction_positive,
             context=receipt_set_binding_context(fixtures),
             notes=(
-                "the transcript is presented in order here, and the profile "
-                "still decides it by rebuilding the chain from prev_hash links "
-                "rather than by reading the presented sequence"
+                "the transcript is presented shuffled, in chain-position order "
+                "[2, 0, 4, 1, 3] rather than chain order [0, 1, 2, 3, 4], so "
+                "the last presented message is chain position 3, not the true "
+                "chain tail at position 4; the profile still decides it by "
+                "rebuilding the chain from prev_hash links, never by reading "
+                "the presented sequence, so it still binds"
             ),
-            canonical_preimage=canonical_json(fixtures.longtail.receipt_set_binding),
+            canonical_preimage=canonical_json(receipt_set_binding_reconstruction_positive),
         ),
     ]
 

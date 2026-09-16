@@ -13,6 +13,7 @@ import rfc8785
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_PATH = REPO_ROOT / "conformance" / "vectors" / "manifest.json"
+GENESIS_HASH = "sha256:" + ("0" * 64)
 
 EXPECTED_VECTORS = {
     "positive": {
@@ -31,6 +32,7 @@ EXPECTED_VECTORS = {
         "mut-synthetic-receipt-set-reconstruction-0005": "reject",
         "mut-synthetic-receipt-set-reconstruction-0006": "reject",
         "mut-synthetic-receipt-set-reconstruction-0007": "reject",
+        "mut-synthetic-receipt-set-reconstruction-0008": "reject",
     },
     "canary": {
         "canary-receipt-set-unchecked": "reject",
@@ -173,6 +175,35 @@ def reconstruction_pair(
     return receipt, messages
 
 
+def reconstruct_chain_tail(messages: list[dict[str, Any]]) -> dict[str, Any]:
+    """Find the reconstructed chain's last message by walking prev_hash links.
+
+    Must match ``_reconstruct_single_chain`` in concordia/attestation.py: a
+    message has no predecessor when its ``prev_hash`` key is absent or equals
+    GENESIS_HASH, an explicit null is malformed, and the chain's tail is the
+    one presented message no other message names as its predecessor. This
+    check exists because the positive vector below is deliberately presented
+    out of chain order, so the array's last element is NOT the chain tail;
+    reading ``messages[-1]`` here would silently re-introduce the very
+    order-dependent comparison the vector is meant to defeat.
+    """
+    by_digest = {message_hash(message): index for index, message in enumerate(messages)}
+    require(len(by_digest) == len(messages), "duplicate presented message")
+    has_successor = [False] * len(messages)
+    for message in messages:
+        prev_hash = message.get("prev_hash")
+        if "prev_hash" not in message or prev_hash == GENESIS_HASH:
+            continue
+        require(prev_hash is not None, "explicit null prev_hash is malformed")
+        predecessor = by_digest.get(prev_hash)
+        require(predecessor is not None, "orphan prev_hash in positive fixture")
+        assert predecessor is not None
+        has_successor[predecessor] = True
+    tails = [messages[i] for i, has in enumerate(has_successor) if not has]
+    require(len(tails) == 1, "reconstructed chain must have exactly one tail")
+    return tails[0]
+
+
 def check_reconstruction_positive(vector: dict[str, Any]) -> None:
     receipt, messages = reconstruction_pair(vector)
     require(vector.get("expected") == "accept", "positive vector must accept")
@@ -180,8 +211,14 @@ def check_reconstruction_positive(vector: dict[str, Any]) -> None:
     assert messages is not None
     require(receipt.get("message_count") == len(messages), "positive count mismatch")
     require(
-        receipt.get("chain_head") == message_hash(messages[-1]),
+        receipt.get("chain_head") == message_hash(reconstruct_chain_tail(messages)),
         "positive chain_head mismatch",
+    )
+    require(
+        message_hash(messages[-1]) != receipt.get("chain_head"),
+        "positive vector must be presented out of chain order: the last "
+        "presented message must NOT be the chain tail, or a verifier that "
+        "compares only a final digest and a count would still pass",
     )
 
 

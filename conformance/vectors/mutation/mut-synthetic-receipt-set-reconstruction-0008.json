@@ -5,36 +5,11 @@
       "did:concordia:agent:receipt-chain-responder": "xgl2oSl1XU6m7Otw_eHFkZuaTfw0F7R9ZfNFV6xGhDU="
     }
   },
-  "expected": "accept",
-  "expected_reason_class": null,
-  "id": "pos-synthetic-receipt-set-binding-reconstruction",
+  "expected": "reject",
+  "expected_reason_class": "binding",
+  "id": "mut-synthetic-receipt-set-reconstruction-0008",
   "input": {
     "messages": [
-      {
-        "body": {
-          "offer": {
-            "assurance": "standard",
-            "scope": "analysis-summary"
-          }
-        },
-        "concordia": "0.1.0",
-        "from": {
-          "agent_id": "did:concordia:agent:receipt-chain-initiator"
-        },
-        "id": "msg_conformance_receipt_binding_0003",
-        "in_reply_to": "msg_conformance_receipt_binding_0002",
-        "prev_hash": "sha256:ad62873ba37e31e82188687e162361687c3bcd445fb0255d1b69e3f1ad9818ea",
-        "reasoning": "First offer in the deterministic receipt-binding chain.",
-        "session_id": "sess_conformance_receipt_set_binding_0001",
-        "signature": "SR5xha4TQOxsfMEifAmn99sZh2QPTTdVUdWlLFQBDgoF9dyzgvHFseCjrCBhTgulNEDoi3tw4U4heMjzMnhxDg==",
-        "timestamp": "2026-05-10T16:02:00Z",
-        "to": [
-          {
-            "agent_id": "did:concordia:agent:receipt-chain-responder"
-          }
-        ],
-        "type": "negotiate.offer"
-      },
       {
         "body": {
           "proposal": {
@@ -47,10 +22,10 @@
           "agent_id": "did:concordia:agent:receipt-chain-initiator"
         },
         "id": "msg_conformance_receipt_binding_0001",
-        "prev_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "prev_hash": null,
         "reasoning": "Open deterministic receipt set-binding session.",
         "session_id": "sess_conformance_receipt_set_binding_0001",
-        "signature": "jzWOrtggbUqWeMI4-00RUslsv7vrLbxOPEpHELu7KiX9OhLx1RJUyfdVqt3Xtw8O42poYVPhMmyc5xFLtyBJBg==",
+        "signature": "qnp0UayXXU-jCdx-K7jTjWu5Kb-fozYqTJYMdTk0Fm_Gaf0oIavqMqi38H7xHg3MNLvFpKLyzcfx_sxDWbgDCg==",
         "timestamp": "2026-05-10T16:00:00Z",
         "to": [
           {
@@ -65,35 +40,13 @@
         },
         "concordia": "0.1.0",
         "from": {
-          "agent_id": "did:concordia:agent:receipt-chain-initiator"
-        },
-        "id": "msg_conformance_receipt_binding_0005",
-        "in_reply_to": "msg_conformance_receipt_binding_0003",
-        "prev_hash": "sha256:85a613ea4a028f3dd84a6471aaf71fa215b6957db3e284c46739e64e83eaa26e",
-        "reasoning": "Terminal agreement message for receipt set-binding.",
-        "session_id": "sess_conformance_receipt_set_binding_0001",
-        "signature": "KL-7bLR04MKAqvkr4sy1nAAMgvmmqjrqTpxzZQXRA5JUv413BEgS69FYhGlM8UpSC4da3VmCvg5-QTLJyAM1Dw==",
-        "timestamp": "2026-05-10T16:04:00Z",
-        "to": [
-          {
-            "agent_id": "did:concordia:agent:receipt-chain-responder"
-          }
-        ],
-        "type": "negotiate.accept_offer"
-      },
-      {
-        "body": {
-          "accepted": true
-        },
-        "concordia": "0.1.0",
-        "from": {
           "agent_id": "did:concordia:agent:receipt-chain-responder"
         },
         "id": "msg_conformance_receipt_binding_0002",
         "in_reply_to": "msg_conformance_receipt_binding_0001",
-        "prev_hash": "sha256:ecb8792255db9d193a3f06b2e63afd2b46974830384d8051b828dc72cffb752e",
+        "prev_hash": "sha256:b17c18464cfebc54217fee4ba01ac3571f7c6d3bfaea1fd91859808b5e678a7b",
         "session_id": "sess_conformance_receipt_set_binding_0001",
-        "signature": "_fjPJPaPEexzYyAOtH-tJjIl2wFBOWBqcjQLo2z2N_CHg31dUAxZ8aTLfp_wMu5CYQM94sZZxMXr5Q0E9UgYDw==",
+        "signature": "KaQFtRU3idtI7IqMFjh2fXcGOLsMfWfCUVX_b4cd6nwtqURtXfqTAurk8vnwXxdvPgPxeMA__yuqOqydIBr3Bw==",
         "timestamp": "2026-05-10T16:01:00Z",
         "to": [
           {
@@ -101,6 +54,31 @@
           }
         ],
         "type": "negotiate.accept_session"
+      },
+      {
+        "body": {
+          "offer": {
+            "assurance": "standard",
+            "scope": "analysis-summary"
+          }
+        },
+        "concordia": "0.1.0",
+        "from": {
+          "agent_id": "did:concordia:agent:receipt-chain-initiator"
+        },
+        "id": "msg_conformance_receipt_binding_0003",
+        "in_reply_to": "msg_conformance_receipt_binding_0002",
+        "prev_hash": "sha256:d1d792434b4087728f8cc680b3eb285908e7fd5b5186b6f40e5026907c692474",
+        "reasoning": "First offer in the deterministic receipt-binding chain.",
+        "session_id": "sess_conformance_receipt_set_binding_0001",
+        "signature": "32bRBM9u7T1gDKTLxV8aFoUQSOP0WYLlSilqSnu0WFtFm4L58fPcwHDzmJ9L4ZU4l3M6_F7MFhuFYprkb76tBg==",
+        "timestamp": "2026-05-10T16:02:00Z",
+        "to": [
+          {
+            "agent_id": "did:concordia:agent:receipt-chain-responder"
+          }
+        ],
+        "type": "negotiate.offer"
       },
       {
         "body": {
@@ -114,10 +92,10 @@
         },
         "id": "msg_conformance_receipt_binding_0004",
         "in_reply_to": "msg_conformance_receipt_binding_0003",
-        "prev_hash": "sha256:ed37af92a7bd705de52ad6a011e1c3137488ce03177a88fd4c8493c80da7cbee",
+        "prev_hash": "sha256:33fa7b37b2ed6f82cb1c1c0a797f53897a4d2cae49aad1dad9c7b88127f2f770",
         "reasoning": "Same-signer downstream message for splice coverage.",
         "session_id": "sess_conformance_receipt_set_binding_0001",
-        "signature": "kbQS7TdQzc6_M2RlRUd2l5dNwnNpXjxAfxexYkcb3IOCIrv_9fA42aWe8JKrNYa5EXPDd-fcCr_ddiGGKPZ2CA==",
+        "signature": "HZI9-FSTewrEgmJRA1Fk5RJvjvwhTIC0AVHtrf0IiProjgdLCl2JJTwYCMRVI2YEsUkc5L3xJtWtErDs22CiAA==",
         "timestamp": "2026-05-10T16:03:00Z",
         "to": [
           {
@@ -125,15 +103,37 @@
           }
         ],
         "type": "negotiate.inquire"
+      },
+      {
+        "body": {
+          "accepted": true
+        },
+        "concordia": "0.1.0",
+        "from": {
+          "agent_id": "did:concordia:agent:receipt-chain-initiator"
+        },
+        "id": "msg_conformance_receipt_binding_0005",
+        "in_reply_to": "msg_conformance_receipt_binding_0003",
+        "prev_hash": "sha256:a37be2095ddab2d4dce61c0b31161da84cb9ecc5fc224de74b864276ec9e3f09",
+        "reasoning": "Terminal agreement message for receipt set-binding.",
+        "session_id": "sess_conformance_receipt_set_binding_0001",
+        "signature": "BNvSKZJURkxJhAAMkHmtKydcvNHZsVZEQ-htnQB_EiRoJTX9dLIeaisuZnbtmrD_Qx7kz2gbGxdYrne1AnGMDg==",
+        "timestamp": "2026-05-10T16:04:00Z",
+        "to": [
+          {
+            "agent_id": "did:concordia:agent:receipt-chain-responder"
+          }
+        ],
+        "type": "negotiate.accept_offer"
       }
     ],
     "receipt": {
       "attestation_id": "att_conformance_receipt_set_binding_0001",
-      "chain_head": "sha256:5bea6ab535a41f45c21d6bc9a3989c536480a72ffe7cff7eb8b697aac7f6237f",
+      "chain_head": "sha256:c6b3bf9a61bea7c2b4fe147152f8990c07e7873ebe1ffd972107e0dcf7d1ecfb",
       "concordia_attestation": "0.3.0",
       "countersignatures": {
-        "did:concordia:agent:receipt-chain-initiator": "6IC1EKmcdIqdXNUGxALLFZzdmeGgvQ4m5lZkkk9T1kAi7Cawj8i046FX07-vP_tDSV39TydSVJnkNcl5vzHQCQ==",
-        "did:concordia:agent:receipt-chain-responder": "GZP8y-_XL0H-xuPFtoUbJZuL_4OYlOiozyzE7_-mXA-A4dKZ3byLqZyjfR0GGrxsnernjFaspFT-VFex8K-_CQ=="
+        "did:concordia:agent:receipt-chain-initiator": "nWD-Hhh5Z1DmiRJqGybDJNwWmq_dSemHYUBPt9tAwlvCESdopdQeRW0uH0PJarYnkOmMyIqG7Br8rq42sXBADw==",
+        "did:concordia:agent:receipt-chain-responder": "pD2SqImC58HxUaJOzjNqEL245HQX8ju2hueUC3NnCg-MrFas39Kze7X02H8SrBFt-6EKSZWh67r3pw6rzShLCw=="
       },
       "fulfillment": null,
       "message_count": 5,
@@ -190,10 +190,10 @@
       "transcript_hash": "sha256:9cd9edfe9d4bd688856a9cbe4c1f92563137b489e373c485adf5344a5725285b"
     }
   },
-  "notes": "the transcript is presented shuffled, in chain-position order [2, 0, 4, 1, 3] rather than chain order [0, 1, 2, 3, 4], so the last presented message is chain position 3, not the true chain tail at position 4; the profile still decides it by rebuilding the chain from prev_hash links, never by reading the presented sequence, so it still binds",
+  "notes": "an absent prev_hash key and an explicit JSON null both read back as nothing from a permissive accessor, but the contract makes only the absent key a root; every other link is genuinely valid, so this is the malformed-root case in isolation",
   "record_type": "message_chain",
   "schema_version": "concordia-conformance-vector/v1-draft",
   "source_fixture": "synthetic/longtail/receipt_set_binding.json",
-  "title": "Synthetic 0.3.0 receipt set-binds a transcript reconstructed from prev_hash links alone",
+  "title": "receipt_set_binding: root message carries an explicit null prev_hash",
   "verification_profile": "receipt-set-binding-v1"
 }

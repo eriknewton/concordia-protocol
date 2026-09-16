@@ -1532,10 +1532,19 @@ function reconstructSingleChain(messages) {
   const successorOf = new Map();
   for (let index = 0; index < messages.length; index += 1) {
     const message = requireObject(messages[index], "transcript message");
+    const hasPrevHash = Object.prototype.hasOwnProperty.call(message, "prev_hash");
     const prevHash = message.prev_hash;
-    if (prevHash === undefined || prevHash === null || prevHash === GENESIS_HASH) {
+    if (!hasPrevHash || prevHash === GENESIS_HASH) {
       roots.push(index);
       continue;
+    }
+    if (prevHash === null) {
+      // An absent key and an explicit JSON null both read back as undefined/
+      // null from `message.prev_hash`; the contract makes only the absent
+      // key a root, so a present-but-null prev_hash is a malformed link, not
+      // a second spelling of genesis. Must match runner.py and
+      // attestation.ts.
+      reject("transcript message has an explicit null prev_hash");
     }
     if (typeof prevHash !== "string") {
       reject("transcript message prev_hash is not a string");

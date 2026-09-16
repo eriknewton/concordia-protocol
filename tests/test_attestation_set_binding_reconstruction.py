@@ -145,6 +145,33 @@ class TestChainReconstruction:
         assert state == "error"
         assert any("no root message" in error for error in errors)
 
+    def test_explicit_null_prev_hash_is_not_a_root(self, agreed_receipt):
+        attestation, transcript, _keys = agreed_receipt
+        presented = copy.deepcopy(transcript)
+        presented[0]["prev_hash"] = None
+
+        state, errors = evaluate_receipt_set_binding(attestation, presented)
+
+        assert state == "error"
+        assert any("explicit null prev_hash" in error for error in errors)
+
+    def test_shuffled_valid_chain_still_binds(self, agreed_receipt):
+        """A valid chain presented out of order reconstructs and binds.
+
+        Reconstruction reads prev_hash links, never the array position, so
+        this must pass under any permutation of a genuinely valid chain, not
+        only the single rotation covered by
+        test_presented_order_does_not_decide_the_chain.
+        """
+        attestation, transcript, _keys = agreed_receipt
+        assert len(transcript) >= 3
+        permutation = [len(transcript) - 2, *range(len(transcript) - 2), len(transcript) - 1]
+        shuffled = [transcript[index] for index in permutation]
+
+        state, errors = evaluate_receipt_set_binding(attestation, shuffled)
+
+        assert state == "bound", errors
+
     def test_equal_size_substitution_is_rejected(self, agreed_receipt):
         attestation, transcript, _keys = agreed_receipt
         substitute = copy.deepcopy(transcript[1])
@@ -214,7 +241,7 @@ class TestSharedConformanceVectors:
 
     VECTORS = Path(__file__).resolve().parent.parent / "conformance" / "vectors"
     REJECT_IDS = tuple(
-        f"mut-synthetic-receipt-set-reconstruction-000{index}" for index in range(1, 8)
+        f"mut-synthetic-receipt-set-reconstruction-000{index}" for index in range(1, 9)
     )
 
     def _pair(

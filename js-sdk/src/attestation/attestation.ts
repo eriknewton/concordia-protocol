@@ -141,9 +141,22 @@ function reconstructSingleChain(transcript: Array<Record<string, unknown>>): {
   const roots: number[] = [];
   const successorOf = new Map<number, number>();
   for (let index = 0; index < transcript.length; index += 1) {
-    const prevHash = transcript[index]!.prev_hash;
-    if (prevHash === undefined || prevHash === null || prevHash === GENESIS_HASH) {
+    const message = transcript[index]!;
+    const hasPrevHash = 'prev_hash' in message;
+    const prevHash = message.prev_hash;
+    if (!hasPrevHash || prevHash === GENESIS_HASH) {
       roots.push(index);
+      continue;
+    }
+    if (prevHash === null) {
+      // An absent key and an explicit JSON null are indistinguishable once
+      // read through `.prev_hash` (both are `undefined`/`null`-ish); the
+      // contract makes only the absent key a root, so a present-but-null
+      // prev_hash is a malformed link, not a second spelling of genesis.
+      // The `in` check above is what keeps these two cases apart.
+      errors.push(
+        `transcript message ${index} has an explicit null prev_hash; only an absent prev_hash or ${JSON.stringify(GENESIS_HASH)} is a root`,
+      );
       continue;
     }
     if (typeof prevHash !== 'string') {

@@ -546,9 +546,21 @@ def _reconstruct_single_chain(
     roots: list[int] = []
     successor_of: dict[int, int] = {}
     for index, message in enumerate(transcript):
+        has_prev_hash = "prev_hash" in message
         prev_hash = message.get("prev_hash")
-        if prev_hash is None or prev_hash == GENESIS_HASH:
+        if not has_prev_hash or prev_hash == GENESIS_HASH:
             roots.append(index)
+            continue
+        if prev_hash is None:
+            # An absent key and an explicit JSON null both read back as None
+            # from .get(); the contract makes only the absent key a root, so
+            # a present-but-null prev_hash is a malformed link, not a second
+            # spelling of genesis. Read the check above this way, not as
+            # "either is fine."
+            errors.append(
+                f"transcript message {index} has an explicit null prev_hash; "
+                f"only an absent prev_hash or {GENESIS_HASH!r} is a root"
+            )
             continue
         if not isinstance(prev_hash, str):
             errors.append(f"transcript message {index} has a non-string prev_hash")

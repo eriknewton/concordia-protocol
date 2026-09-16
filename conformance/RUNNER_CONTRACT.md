@@ -970,11 +970,15 @@ Checks, in order:
    `JCS(message without top-level signature)`.
 6. Reconstruct one chain from `prev_hash` links alone. Reject with reason class
    `binding` unless exactly one presented message has no predecessor, meaning
-   its `prev_hash` is absent or equal to `GENESIS_HASH`; every other presented
-   message's `prev_hash` equals `MessageHash` of exactly one other presented
-   message; no presented message is claimed as predecessor twice; no message is
-   presented twice; and the walk from the single root visits every presented
-   message.
+   its `prev_hash` key is absent from the message or equal to `GENESIS_HASH`
+   (a message whose `prev_hash` key is present with an explicit JSON `null`
+   value is malformed, not a root: an absent key and an explicit `null` both
+   read back as "nothing" from a permissive accessor, so treating them alike
+   would credit a receipt whose root link was never actually omitted); every
+   other presented message's `prev_hash` equals `MessageHash` of exactly one
+   other presented message; no presented message is claimed as predecessor
+   twice; no message is presented twice; and the walk from the single root
+   visits every presented message.
 7. Compare `/message_count` to the length of the reconstructed chain.
 8. Compare `/chain_head` to `MessageHash` of the last message in the
    reconstructed chain.
@@ -987,11 +991,15 @@ signature-stripped form therefore reconstructs no chain and rejects.
 
 The presenter chooses the order in which messages are handed over, which is why
 step 6 ignores that order. A fork, an orphan, a second root, a re-linked
-substitution of equal size, and a duplicated message all survive a sequential
-walk whenever the last presented message still hashes to `chain_head`. The
-mutation vectors `mut-synthetic-receipt-set-reconstruction-0001` through
-`-0007` are each shaped so that a verifier comparing only a final digest and a
-count accepts them.
+substitution of equal size, a duplicated message, and an explicit-null root
+all survive a sequential walk whenever the last presented message still hashes
+to `chain_head`. Vector `mut-synthetic-receipt-set-reconstruction-0001`
+exercises transcript-absent (step 4) and has no presented set at all, so it is
+not an instance of this class. Vectors `-0002` through `-0008` each present a
+set whose length equals `message_count` and whose last presented message
+hashes to `chain_head`, so a verifier comparing only that final digest and
+that count accepts every one of them while chain reconstruction (step 6)
+rejects every one of them.
 
 ## Decisions
 
