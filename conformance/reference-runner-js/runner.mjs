@@ -186,82 +186,118 @@ function b64urlEncode(value) {
   return Buffer.from(value).toString("base64").replace(/\+/g, "-").replace(/\//g, "_");
 }
 
-// True when `owner`'s own property `key` is a getter/setter rather than a
-// plain data slot. getOwnPropertyDescriptor never invokes the accessor, so
-// this check does not itself read the value; it lets jcs() refuse an
-// accessor outright, every call, so it can never answer one read of a
-// message (building canonicalBytes) differently than a later, separate read
-// of the same original object (the chain_head comparison in
-// verifyReceiptSetBindingProfile). Must match isAccessorProperty in
-// js-sdk/src/canonical/canonicalize.ts (Codex P1/P2, 2026-09-16 delta-5
-// gate).
-function isAccessorProperty(owner, key) {
-  const descriptor = Object.getOwnPropertyDescriptor(owner, key);
-  return descriptor !== undefined && (descriptor.get !== undefined || descriptor.set !== undefined);
-}
-
-// jcs() walks an object via Object.keys and an array via index, which see
-// only OWN enumerable members -- never a member reachable solely through the
-// prototype chain (an inherited getter, an inherited toJSON). A plain
-// object literal or JSON.parse output has prototype Object.prototype;
-// Object.create(null) has prototype null; a plain array literal has
-// prototype Array.prototype. Anything else is refused rather than trusted.
-// Must match rejectForeignPrototype in
-// js-sdk/src/canonical/canonicalize.ts.
-function isPlainPrototype(value, kind) {
-  const proto = Object.getPrototypeOf(value);
-  return kind === "array" ? proto === Array.prototype : proto === Object.prototype || proto === null;
-}
-
-function jcs(value) {
+// Produce a realm-local, plain-data deep copy of `value` in a single
+// traversal, reading each member of the caller-supplied structure exactly
+// once. Mirrors snapshotPlainJson in js-sdk/src/canonical/canonicalize.ts;
+// must match it.
+//
+// Every own, enumerable, string-keyed DATA property is read through exactly
+// one call to Object.getOwnPropertyDescriptor and copied from that
+// descriptor's `value` field directly -- never through `value[key]` or
+// `value[index]`, which perform a SEPARATE [[Get]] a Proxy can answer
+// differently than the descriptor it just reported for the same member
+// (Grok finding 1, 2026-09-16 delta-6 gate: a Proxy `get` trap returning one
+// value to a signature check and a different one to chain reconstruction).
+// An accessor descriptor throws outright, and an array index with no own
+// descriptor -- a sparse hole, including one an inherited index getter
+// would otherwise answer -- throws too, instead of falling through to an
+// indexed read that would reach the prototype chain.
+//
+// Prototype identity is NOT checked: a plain object literal and a
+// `JSON.parse`d value from a different realm (a node:vm context) are
+// equally plain data despite different `Object.prototype` identities, and
+// rejecting the foreign one was itself a canonicalization regression (Codex
+// P2, 2026-09-16 delta-5 gate). `Object.keys`-style enumeration already
+// promises to see only own enumerable members regardless of prototype.
+function snapshotPlainJson(value) {
   if (value === null) {
-    return "null";
+    return null;
   }
-  if (typeof value === "number") {
-    // Runs on this exact read, the one that serializes the value below;
-    // there is no earlier pre-pass reading this number a second time.
+  const t = typeof value;
+  if (t === "boolean" || t === "string") {
+    return value;
+  }
+  if (t === "number") {
+    // Runs on this exact read, the one that copies the value into the
+    // snapshot; there is no earlier pre-pass reading this number a second
+    // time.
     if (!Number.isFinite(value)) {
       reject("JCS canonicalization failed");
     }
-    return JSON.stringify(value);
+    return value;
   }
-  if (typeof value === "string" || typeof value === "boolean") {
+  if (Array.isArray(value)) {
+    // `length` is read exactly once, right here; every index bound below
+    // derives from THIS number, never from a fresh `value.length` read, so
+    // a Proxy `length` trap answering one value during an early check and
+    // another during reconstruction cannot make this copy cover a
+    // different range than the one this loop actually visits (Codex P1,
+    // 2026-09-16 delta-6 gate: a transcript array reporting length 2 during
+    // validation and length 1 during reconstruction).
+    const length = value.length;
+    if (!Number.isSafeInteger(length) || length < 0) {
+      reject("JCS canonicalization failed");
+    }
+    const out = new Array(length);
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, index);
+      if (
+        descriptor === undefined ||
+        descriptor.get !== undefined ||
+        descriptor.set !== undefined
+      ) {
+        reject("JCS canonicalization failed");
+      }
+      out[index] = snapshotPlainJson(descriptor.value);
+    }
+    return out;
+  }
+  if (isObject(value)) {
+    const out = {};
+    // Object.keys enumerates own enumerable string keys without reading any
+    // member's value; the per-key descriptor read just below is the ONLY
+    // read of that member's value, taken from the descriptor itself rather
+    // than a follow-up `value[key]`.
+    for (const key of Object.keys(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (descriptor === undefined) continue; // raced deletion between the two calls; absent either way
+      if (descriptor.get !== undefined || descriptor.set !== undefined) {
+        reject("JCS canonicalization failed");
+      }
+      out[key] = snapshotPlainJson(descriptor.value);
+    }
+    return out;
+  }
+  reject("JCS canonicalization failed");
+}
+
+// Recursively serialize an ALREADY-SNAPSHOTTED plain value to RFC 8785
+// canonical JSON. Only `jcs` calls this, and only with snapshotPlainJson's
+// return value: a fresh, realm-local copy this module built itself, with no
+// accessor, no hole, and no foreign prototype. Reading `value[index]` or
+// `value[key]` here is therefore never a second read of anything the
+// CALLER controls -- the caller's own value was read exactly once, by
+// snapshotPlainJson, before this function ever ran.
+function stringifyPlain(value) {
+  if (value === null) {
+    return "null";
+  }
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "string") {
     return JSON.stringify(value);
   }
   if (Array.isArray(value)) {
-    if (!isPlainPrototype(value, "array")) {
-      reject("JCS canonicalization failed");
-    }
-    // A manual index loop, not `.map`: `.map` performs its own `Get` on each
-    // index to build the callback's `item` argument, which would invoke an
-    // accessor BEFORE the descriptor check below ever ran. Checking the
-    // descriptor first and reading `value[index]` only afterward keeps this
-    // the single read the accessor guard depends on, matching the object
-    // branch below. Must match canonicalize.ts.
-    const parts = [];
-    for (let index = 0; index < value.length; index += 1) {
-      if (isAccessorProperty(value, index)) {
-        reject("JCS canonicalization failed");
-      }
-      parts.push(jcs(value[index]));
-    }
-    return `[${parts.join(",")}]`;
+    return `[${value.map((item) => stringifyPlain(item)).join(",")}]`;
   }
-  if (isObject(value)) {
-    if (!isPlainPrototype(value, "object")) {
-      reject("JCS canonicalization failed");
-    }
-    return `{${Object.keys(value)
-      .sort()
-      .map((key) => {
-        if (isAccessorProperty(value, key)) {
-          reject("JCS canonicalization failed");
-        }
-        return `${JSON.stringify(key)}:${jcs(value[key])}`;
-      })
-      .join(",")}}`;
-  }
-  reject("JCS canonicalization failed");
+  // The only case left a snapshot can produce is a plain object built by
+  // snapshotPlainJson itself (own string-keyed data properties only).
+  return `{${Object.keys(value)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stringifyPlain(value[key])}`)
+    .join(",")}}`;
+}
+
+function jcs(value) {
+  return stringifyPlain(snapshotPlainJson(value));
 }
 
 function jcsBytes(value) {
@@ -1560,6 +1596,16 @@ function verifyMessageChainReceiptBinding(suiteBase, inputData, messages, contex
 /**
  * Rebuild one message order from prev_hash links alone (SPEC 9.6.5b).
  *
+ * `messages` here is ALREADY the boundary snapshot verifyReceiptSetBindingProfile
+ * (the only caller) produced from the caller's transcript -- a realm-local
+ * plain copy, not the caller's own array. This function reads
+ * `messages.length` and `messages[i]` freely below without reopening the
+ * class the snapshot exists to close: a Proxy transcript array that answers
+ * one length during the signature loop and a different one during
+ * reconstruction (Codex P1, 2026-09-16 delta-6 gate) cannot occur here,
+ * because there is no live reference back to the caller's array left to
+ * answer inconsistently.
+ *
  * Rejects when the presented set is not exactly one chain. The presented order
  * is never consulted, because the presenter chooses it: a fork, an orphan, a
  * second root, or a re-linked substitution of equal size all survive a
@@ -1576,12 +1622,13 @@ function reconstructSingleChain(messages) {
   // digest below and the link-reading view further down (and, via the
   // returned headDigest, the caller's chain_head comparison too -- see
   // verifyReceiptSetBindingProfile). jcs walks only own enumerable
-  // string-keyed members (Object.keys, see the jcs() function above),
-  // rejects any own accessor property outright, and never invokes a toJSON
-  // method, own or inherited, unlike JSON.stringify. A member that reaches
-  // the view can therefore only be one the digest also covers, and no
-  // message's fields are read a second time anywhere in this function or
-  // its caller. Must match attestation.ts and runner.py.
+  // string-keyed data properties (snapshotPlainJson, see the jcs() function
+  // above), rejects any accessor property outright, and never invokes a
+  // toJSON method, own or inherited, unlike JSON.stringify. `message` here
+  // is already an element of the boundary-snapshotted `messages`, not the
+  // caller's own object, so jcs's own internal snapshot copies data this
+  // function already owns rather than reading anything caller-controlled a
+  // second time. Must match attestation.ts and runner.py.
   const canonicalBytes = messages.map((message) => jcsBytes(message));
   const digests = canonicalBytes.map((bytes) => canonicalSha256(bytes));
 
@@ -1667,7 +1714,18 @@ function verifyReceiptSetBindingProfile(suiteBase, inputData, context) {
   if (inputKeys !== "receipt" && inputKeys !== "messages\u0000receipt") {
     reject("input must contain a receipt, optionally with messages");
   }
-  const receipt = requireObject(chainInput.receipt, "receipt");
+  // Boundary snapshot: the caller-supplied receipt is read here exactly
+  // once, into a realm-local plain copy. Every later read in this function
+  // -- the version gate, the chain_head/message_count format checks, the
+  // party and countersignature loops, the final chain_head/message_count
+  // comparison -- reads only this `receipt`, never chainInput.receipt
+  // again, so a getter or Proxy trap on the caller's receipt gets exactly
+  // one chance to answer (Grok finding 2, 2026-09-16 delta-6 gate:
+  // chain_head previously read at the format check, again inside the
+  // countersign snapshot, and again at the final comparison, with room for
+  // a getter to answer each differently). Must match verifyReceiptSetBinding
+  // in js-sdk/src/attestation/attestation.ts.
+  const receipt = snapshotPlainJson(requireObject(chainInput.receipt, "receipt"));
   validateSchema(suiteBase, "attestation.schema.json", receipt);
   if (!attestationVersionAtLeast(receipt.concordia_attestation, 0, 3)) {
     reject("receipt is legacy set-unbound");
@@ -1719,7 +1777,15 @@ function verifyReceiptSetBindingProfile(suiteBase, inputData, context) {
     // against nothing. Unestablished is never an accept.
     reject("set binding is unestablished without a transcript");
   }
-  const messages = chainInput.messages;
+  // Boundary snapshot: the caller-supplied transcript and every message in
+  // it are read here exactly once, into a realm-local plain copy. Neither
+  // the per-message signature loop just below nor reconstructSingleChain
+  // reads chainInput.messages or any of its elements again -- both read
+  // only this `messages`, so the two cannot be shown a different length or
+  // a different message than each other (Codex P1, Grok finding 1,
+  // 2026-09-16 delta-6 gate). Must match verifyReceiptSetBinding in
+  // js-sdk/src/attestation/attestation.ts.
+  const messages = snapshotPlainJson(chainInput.messages);
   if (!Array.isArray(messages) || messages.length === 0) {
     reject("transcript messages are missing");
   }

@@ -4,15 +4,24 @@ import { CanonicalizationError, checkLoneSurrogates, checkNoSpecialFloatValue } 
  * Canonicalize a JSON-serializable value per RFC 8785 (JCS).
  * Returns a Buffer of the canonical UTF-8 bytes.
  *
- * `stableStringify` is the ONLY traversal: it validates and serializes each
- * member on the same read (see its doc comment). A prior version ran
- * `checkNoSpecialFloats(value)` as a pre-pass ahead of this call, which read
- * every member of `value` twice before it produced any bytes -- exactly the
- * shape that let a getter answer the pre-pass one way and the serialization
- * pass another (Codex P1/P2, 2026-09-16 delta-5 gate).
+ * Two steps, not one traversal of the caller's value: `snapshotPlainJson`
+ * reads the caller's value exactly once, into a realm-local plain copy, and
+ * `stableStringify` then serializes ONLY that copy. A single traversal that
+ * both validated and serialized the caller's own value (the prior shape)
+ * still read each member through a descriptor check and then a separate
+ * `[[Get]]` (`obj[k]`, `value[index]`) -- two different reads a Proxy can
+ * answer differently, and the second one alone is what a signature check
+ * sees versus what a chain reconstruction sees when the SAME message is
+ * canonicalized twice by two different callers (Codex P1, Grok findings 1-2,
+ * 2026-09-16 delta-6 gate). Routing every caller-controlled read through
+ * `snapshotPlainJson` and letting every other traversal -- including a
+ * second, third, or Nth call to `canonicalizeJcs` on data that already IS a
+ * snapshot -- run only against the realm-local copy closes that class
+ * outright: nothing downstream can observe a second read of the caller's
+ * own object at all.
  */
 export function canonicalizeJcs(value: unknown): Buffer {
-  const str = stableStringify(value);
+  const str = stableStringify(snapshotPlainJson(value));
   return Buffer.from(str, 'utf8');
 }
 
@@ -64,116 +73,135 @@ export function canonicalCosignBytes(value: unknown): Buffer {
 }
 
 /**
- * True when `owner`'s own property `key` is a getter/setter rather than a
- * plain data slot.
+ * Produce a realm-local, plain-data deep copy of `value` in a single
+ * traversal, reading each member of the caller-supplied structure exactly
+ * once.
  *
- * `Object.getOwnPropertyDescriptor` never invokes the accessor -- it only
- * inspects the property's shape -- so calling this ahead of the one read
- * that serializes the value does not add a second read of the VALUE. What it
- * closes is the case a descriptor check can see and a value read cannot: an
- * accessor is refused outright, every time, so it can never return one
- * number to a guard and a different one to the digest (Codex P1/P2,
- * 2026-09-16 delta-5 gate: an enumerable `prev_hash` getter that answered
- * chain reconstruction and the final `chain_head` comparison differently, and
- * a numeric getter that passed a special-float guard and then serialized as
- * `NaN`/`Infinity`/`-0`).
- */
-function isAccessorProperty(owner: object, key: string | number): boolean {
-  const descriptor = Object.getOwnPropertyDescriptor(owner, key);
-  return descriptor !== undefined && (descriptor.get !== undefined || descriptor.set !== undefined);
-}
-
-/**
- * Reject an object or array whose prototype is not the plain shape this
- * traversal actually walks.
+ * Exported so a caller that must consult a large caller-supplied structure
+ * more than once -- once to verify a signature over a subset of it, again
+ * to reconstruct a chain from it -- can snapshot it ONE time at the
+ * boundary and have every later read touch only the returned copy, never
+ * the original (see `verifyReceiptSetBinding` in
+ * `js-sdk/src/attestation/attestation.ts` and the mirrored boundary
+ * snapshot in `conformance/reference-runner-js/runner.mjs`; must match
+ * both).
  *
- * `stableStringify` reads an object via `Object.keys` and an array via
- * index, which see only OWN enumerable members -- never a member reachable
- * solely through the prototype chain (an inherited getter, an inherited
- * `toJSON`). A `{...}` literal or `JSON.parse` output has prototype
- * `Object.prototype`; `Object.create(null)` has prototype `null`; both are
- * plain data and covered by this rule elsewhere in the SDK (see
- * `isPlainObject` in predicate/references.ts). A `{...}` or `[...]` array
- * literal has prototype `Array.prototype`. Any other prototype (a class
- * instance, a `Proxy`, a `toJSON`-bearing shape) is refused rather than
- * trusted, since canonicalization covers plain data only and cannot see
- * what such a prototype might add.
- */
-function rejectForeignPrototype(value: object, kind: 'object' | 'array'): void {
-  const proto = Object.getPrototypeOf(value);
-  const isPlain =
-    kind === 'array' ? proto === Array.prototype : proto === Object.prototype || proto === null;
-  if (!isPlain) {
-    throw new CanonicalizationError(
-      `Cannot canonicalize a plain ${kind} whose prototype has been replaced; ` +
-        `canonicalization covers plain data only.`,
-    );
-  }
-}
-
-/**
- * Recursively serialize `value` to RFC 8785 canonical JSON.
+ * Every own, enumerable, string-keyed DATA property is read through exactly
+ * one call to `Object.getOwnPropertyDescriptor` and copied from that
+ * descriptor's `value` field directly -- never through `obj[k]` or
+ * `value[index]`, which perform a SEPARATE `[[Get]]` a Proxy can answer
+ * differently than the descriptor it just reported for the same member
+ * (Grok finding 1, 2026-09-16 delta-6 gate: a Proxy `get` trap returning one
+ * value to a signature check and a different one to chain reconstruction).
+ * An accessor descriptor (`get`/`set`) throws outright, and an array index
+ * with no own descriptor -- a sparse hole, including one an inherited
+ * index getter would otherwise answer -- throws too, instead of falling
+ * through to an indexed read that would reach the prototype chain.
  *
- * This is the ONLY traversal `canonicalizeJcs` runs. Every check -- special
- * floats, lone surrogates, accessor properties, foreign prototypes -- fires
- * on the exact read that also produces the byte for that member, so there is
- * no earlier or later read of the same caller-controlled value that could
- * see something different (Codex P1/P2, 2026-09-16 delta-5 gate; must match
- * the equivalent single-traversal `jcs` in
- * conformance/reference-runner-js/runner.mjs).
+ * Prototype identity is NOT checked. A plain object literal, `JSON.parse`
+ * output in this realm, and `JSON.parse` output from a DIFFERENT realm (a
+ * `node:vm` context, a browser iframe) all have different `Object.prototype`
+ * identities but are equally plain JSON data; rejecting the foreign one was
+ * itself a cross-realm canonicalization regression (Codex P2, 2026-09-16
+ * delta-5 gate). `Object.keys`-style enumeration already promises to see
+ * only own enumerable members regardless of prototype, so reading a value
+ * through that same promise -- rather than layering a prototype-identity
+ * check on top of it -- closes the accessor/Proxy class without reopening
+ * the realm one.
  */
-function stableStringify(value: unknown): string {
-  if (value === null) return 'null';
+export function snapshotPlainJson(value: unknown): unknown {
+  if (value === null) return null;
   const t = typeof value;
-  if (t === 'boolean') return value ? 'true' : 'false';
+  if (t === 'boolean') return value;
   if (t === 'number') {
     checkNoSpecialFloatValue(value as number);
-    return JSON.stringify(value);
+    return value;
   }
   if (t === 'string') {
     checkLoneSurrogates(value as string);
-    return JSON.stringify(value as string);
+    return value;
   }
   if (Array.isArray(value)) {
-    rejectForeignPrototype(value, 'array');
-    // A manual index loop, not `.map`: `Array.prototype.map` performs its
-    // own `Get` on each index to build the callback's `item` argument, which
-    // would invoke an accessor BEFORE this function's own descriptor check
-    // ever ran. Checking the descriptor first and reading `value[index]`
-    // only afterward keeps this the single read the accessor guard depends
-    // on, exactly as the object branch below does for `obj[k]`.
-    const parts: string[] = [];
-    for (let index = 0; index < value.length; index += 1) {
-      if (isAccessorProperty(value, index)) {
+    // `length` is read exactly once, right here; every index bound below
+    // derives from THIS number, never from a fresh `value.length` read, so
+    // a Proxy `length` trap that answers 2 on one call and 1 on another
+    // cannot make this copy cover a shorter range than the one the loop
+    // below actually visits (Codex P1, 2026-09-16 delta-6 gate: a transcript
+    // array reporting length 2 during validation and length 1 during
+    // reconstruction).
+    const length = value.length;
+    if (!Number.isSafeInteger(length) || length < 0) {
+      throw new CanonicalizationError(
+        `Cannot canonicalize an array whose length is not a non-negative safe integer.`,
+      );
+    }
+    const out: unknown[] = new Array(length);
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, index);
+      if (descriptor === undefined) {
+        throw new CanonicalizationError(
+          `Cannot canonicalize array index ${index}: a sparse hole is not a plain element.`,
+        );
+      }
+      if (descriptor.get !== undefined || descriptor.set !== undefined) {
         throw new CanonicalizationError(
           `Cannot canonicalize array index ${index}: it is an accessor property, not a plain ` +
             `element.`,
         );
       }
-      parts.push(stableStringify(value[index]));
+      out[index] = snapshotPlainJson(descriptor.value);
     }
-    return '[' + parts.join(',') + ']';
+    return out;
   }
   if (t === 'object') {
-    const obj = value as Record<string, unknown>;
-    rejectForeignPrototype(obj, 'object');
-    const keys = Object.keys(obj).sort();
-    return (
-      '{' +
-      keys
-        .map((k) => {
-          if (isAccessorProperty(obj, k)) {
-            throw new CanonicalizationError(
-              `Cannot canonicalize property ${JSON.stringify(k)}: it is an accessor property ` +
-                `(getter/setter), not a plain data field.`,
-            );
-          }
-          checkLoneSurrogates(k);
-          return JSON.stringify(k) + ':' + stableStringify(obj[k]);
-        })
-        .join(',') +
-      '}'
-    );
+    const obj = value as object;
+    const out: Record<string, unknown> = {};
+    // `Object.keys` enumerates own enumerable string keys without reading
+    // any member's value; the per-key descriptor read just below is the
+    // ONLY read of that member's value, taken from the descriptor itself
+    // rather than a follow-up `obj[k]`.
+    for (const key of Object.keys(obj)) {
+      const descriptor = Object.getOwnPropertyDescriptor(obj, key);
+      if (descriptor === undefined) continue; // raced deletion between the two calls; absent either way
+      if (descriptor.get !== undefined || descriptor.set !== undefined) {
+        throw new CanonicalizationError(
+          `Cannot canonicalize property ${JSON.stringify(key)}: it is an accessor property ` +
+            `(getter/setter), not a plain data field.`,
+        );
+      }
+      checkLoneSurrogates(key);
+      out[key] = snapshotPlainJson(descriptor.value);
+    }
+    return out;
   }
   throw new CanonicalizationError(`Cannot canonicalize value of type ${t}`);
+}
+
+/**
+ * Recursively serialize an ALREADY-SNAPSHOTTED plain value to RFC 8785
+ * canonical JSON.
+ *
+ * Only `canonicalizeJcs` calls this, and only with `snapshotPlainJson`'s
+ * return value: a fresh, realm-local copy this module built itself, holding
+ * no accessor, no hole, and no foreign prototype. Reading `value[index]` or
+ * `obj[k]` here is therefore never a second read of anything the CALLER
+ * controls -- the caller's own object was read exactly once, by
+ * `snapshotPlainJson`, before this function ever ran; this function only
+ * ever reads data this module produced itself.
+ */
+function stableStringify(value: unknown): string {
+  if (value === null) return 'null';
+  const t = typeof value;
+  if (t === 'boolean') return value ? 'true' : 'false';
+  if (t === 'number') return JSON.stringify(value);
+  if (t === 'string') return JSON.stringify(value as string);
+  if (Array.isArray(value)) {
+    const parts = value.map((item) => stableStringify(item));
+    return '[' + parts.join(',') + ']';
+  }
+  // The only case left a snapshot can produce is a plain object built by
+  // `snapshotPlainJson` itself (own string-keyed data properties only).
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj).sort();
+  return '{' + keys.map((k) => JSON.stringify(k) + ':' + stableStringify(obj[k])).join(',') + '}';
 }

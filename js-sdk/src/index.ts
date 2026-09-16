@@ -38,6 +38,7 @@ export {
   canonicalizePredicate,
   stripSignatures,
   canonicalCosignBytes,
+  snapshotPlainJson,
 } from './canonical/canonicalize.js';
 export { CanonicalizationError, checkNoSpecialFloats } from './canonical/checks.js';
 export { parseJsonStrict } from './canonical/parse.js';

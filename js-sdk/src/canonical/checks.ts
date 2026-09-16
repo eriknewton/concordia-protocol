@@ -46,12 +46,14 @@ export function checkLoneSurrogates(s: string): void {
  * reference: non-finite, negative zero, or a plain-decimal integer beyond
  * `Number.MAX_SAFE_INTEGER`.
  *
- * Factored out of {@link checkNoSpecialFloats} so `stableStringify`
- * (canonicalize.ts) can call the exact same check on the exact same read that
- * serializes the number, instead of a separate pre-pass reading the value a
- * second time. Two reads of one caller-controlled number is what let an
- * accessor answer the guard and the digest differently (Codex P2, 2026-09-16
- * delta-5 gate); one function, called once per number, closes that gap.
+ * Factored out of {@link checkNoSpecialFloats} so `snapshotPlainJson`
+ * (canonicalize.ts) can call the exact same check on the exact same read
+ * that copies the number out of the caller's value, instead of a separate
+ * pre-pass reading the value a second time. Two reads of one
+ * caller-controlled number is what let an accessor answer the guard and the
+ * digest differently (Codex P2, 2026-09-16 delta-5 gate); one function,
+ * called once per number, on the single read that produces the snapshot,
+ * closes that gap.
  */
 export function checkNoSpecialFloatValue(value: number): void {
   if (!Number.isFinite(value)) {
@@ -109,11 +111,12 @@ export function checkNoSpecialFloatValue(value: number): void {
 /**
  * Recursive standalone special-float check, kept as public API for callers
  * outside the JCS canonicalizer. `canonicalizeJcs` no longer runs this as a
- * pre-pass ahead of `stableStringify`: two separate traversals of the same
+ * pre-pass ahead of serialization: two separate traversals of the same
  * caller-controlled object is exactly the shape that let an accessor return
  * one value here and a different one during serialization (Codex P2,
- * 2026-09-16 delta-5 gate). `stableStringify` performs the equivalent check
- * itself, inline, via {@link checkNoSpecialFloatValue}.
+ * 2026-09-16 delta-5 gate). `snapshotPlainJson` performs the equivalent
+ * check itself, inline, via {@link checkNoSpecialFloatValue}, on the same
+ * read that copies the number.
  */
 export function checkNoSpecialFloats(value: unknown): void {
   if (typeof value === 'number') {

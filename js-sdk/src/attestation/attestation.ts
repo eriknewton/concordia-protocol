@@ -55,7 +55,11 @@ import { createHash } from 'node:crypto';
 
 import { ed25519 } from '@noble/curves/ed25519.js';
 
-import { canonicalizeJcs, canonicalCosignBytes } from '../canonical/canonicalize.js';
+import {
+  canonicalizeJcs,
+  canonicalCosignBytes,
+  snapshotPlainJson,
+} from '../canonical/canonicalize.js';
 import { toBase64Url, fromBase64Url } from '../crypto/base64url.js';
 import { sign, KeyPair } from '../crypto/signing.js';
 import {
@@ -100,6 +104,15 @@ function attestationVersionAtLeast(version: unknown, major: number, minor: numbe
  * Rebuild one message order from `prev_hash` links alone (SPEC 9.6.5b),
  * byte-for-byte the same rule as Python `_reconstruct_single_chain`.
  *
+ * `transcript` here is ALREADY the boundary snapshot `verifyReceiptSetBinding`
+ * (the only caller) produced from the caller's argument -- a realm-local
+ * plain copy, not the caller's own array. This function therefore reads
+ * `transcript.length` and `transcript[i]` freely below without reopening the
+ * class the snapshot exists to close: a Proxy transcript array that answers
+ * one length during an early check and a different one during reconstruction
+ * (Codex P1, 2026-09-16 delta-6 gate) cannot occur here, because there is no
+ * live reference back to the caller's array left to answer inconsistently.
+ *
  * The presented order is never consulted: the presenter chooses it, so an
  * order read off the array would let a fork, an orphan, or a second root ride
  * through whenever the last presented element still hashes to `chain_head`.
@@ -132,16 +145,17 @@ function reconstructSingleChain(transcript: Array<Record<string, unknown>>): {
   // digest and the link-reading view below (and, via the returned
   // headDigest, the caller's final chain_head comparison too -- see
   // verifyReceiptSetBinding). canonicalizeJcs walks only own enumerable
-  // string-keyed members (stableStringify's Object.keys, see
-  // canonicalize.ts), rejects any own accessor property outright, and never
-  // invokes a toJSON method, own or inherited, unlike JSON.stringify. A
-  // member that reaches the view therefore always reaches the digest too:
-  // there is no second channel (a hidden toJSON, an inherited or
-  // non-enumerable own accessor) that could carry a prev_hash the digest
-  // never covers, and no second READ of this message's fields anywhere in
-  // this function or its caller -- canonicalizeJcs runs against each
-  // message's original object exactly once. canonicalizeJcs still rejects
-  // NaN, Infinity, -0, and lossy integers exactly as before.
+  // string-keyed data properties (snapshotPlainJson, see canonicalize.ts),
+  // rejects any accessor property outright, and never invokes a toJSON
+  // method, own or inherited, unlike JSON.stringify. A member that reaches
+  // the view therefore always reaches the digest too: there is no second
+  // channel (a hidden toJSON, an inherited or non-enumerable own accessor)
+  // that could carry a prev_hash the digest never covers. `message` here is
+  // already an element of the boundary-snapshotted `transcript`, not the
+  // caller's own object, so canonicalizeJcs's own internal snapshot copies
+  // data this function already owns rather than reading anything
+  // caller-controlled a second time. canonicalizeJcs still rejects NaN,
+  // Infinity, -0, and lossy integers exactly as before.
   const canonicalBytes = transcript.map((message) => canonicalizeJcs(message));
 
   const digests = canonicalBytes.map((bytes) => hashCanonicalBytes(bytes));
@@ -251,9 +265,26 @@ function reconstructSingleChain(transcript: Array<Record<string, unknown>>): {
 }
 
 export function verifyReceiptSetBinding(
-  attestation: Record<string, unknown>,
-  transcript: Array<Record<string, unknown>> | null = null,
+  callerAttestation: Record<string, unknown>,
+  callerTranscript: Array<Record<string, unknown>> | null = null,
 ): ReceiptSetBindingResult {
+  // Boundary snapshot: both caller-supplied inputs are read exactly once,
+  // right here, before either is inspected, into realm-local plain copies.
+  // Every line below this one reads only `attestation` and `transcript`;
+  // neither caller argument is read again anywhere in this function or in
+  // reconstructSingleChain. This is what keeps an early check (the version
+  // gate, the transcript length) and a later comparison (chain_head,
+  // message_count) looking at the SAME data: a getter or a Proxy trap on
+  // either caller argument gets exactly one chance to answer, so it cannot
+  // answer the two differently (Codex P1, Grok findings 1-2, 2026-09-16
+  // delta-6 gate). Must match the boundary snapshot in
+  // verifyReceiptSetBindingProfile, conformance/reference-runner-js/runner.mjs.
+  const attestation = snapshotPlainJson(callerAttestation) as Record<string, unknown>;
+  const transcript =
+    callerTranscript === null
+      ? null
+      : (snapshotPlainJson(callerTranscript) as Array<Record<string, unknown>>);
+
   const version = attestation.concordia_attestation;
   if (!attestationVersionAtLeast(version, SET_BINDING_MIN.major, SET_BINDING_MIN.minor)) {
     return { state: 'legacy_set_unbound', errors: [] };
