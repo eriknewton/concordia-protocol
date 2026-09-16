@@ -269,3 +269,61 @@ describe('snapshotPlainJson - plain-data prototype-chain test (Grok finding 2, 2
     expect(canonicalizeJcs(crossRealmArray).toString('utf8')).toBe('[3,1,2]');
   });
 });
+
+describe('snapshotPlainJson - "__proto__" is a JSON key, not a prototype (Grok/Codex verbatim, 2026-09-16 delta-7 gate, fix round 8)', () => {
+  // JSON.parse creates "__proto__" as an ordinary own enumerable data
+  // property (CreateDataProperty, per the JSON grammar), exactly like
+  // Python's json.loads -- it is only an object LITERAL's `{"__proto__": x}`
+  // syntax that is special-cased to set a prototype instead, and none of
+  // these four values go through that syntax. Expected bytes computed by
+  // hand (sorted by UTF-16 code unit: "_" is U+005F, "a" is U+0061, so
+  // "__proto__" always sorts before "a") and cross-checked once against
+  // Python's `concordia.signing.canonical_json` (see the fix-round report).
+  // Fail-before against 23439e2: `out[key] = ...` (a [[Set]]) let the
+  // inherited `Object.prototype.__proto__` accessor intercept this exact
+  // key on every one of the four cases below.
+
+  it('canonicalizes {"__proto__":1} storing the key (fail-before: canonicalized to "{}")', () => {
+    const value = JSON.parse('{"__proto__":1}');
+    expect(canonicalizeJcs(value).toString('utf8')).toBe('{"__proto__":1}');
+  });
+
+  it('canonicalizes {"__proto__":null,"a":1} keeping both keys (fail-before: canonicalized to "{}", with the copy\'s own prototype set to null)', () => {
+    const value = JSON.parse('{"__proto__":null,"a":1}');
+    expect(canonicalizeJcs(value).toString('utf8')).toBe('{"__proto__":null,"a":1}');
+  });
+
+  it('canonicalizes {"__proto__":{"x":1}} storing the object value (fail-before: canonicalized to "{}", with the copy\'s own prototype retargeted to {x:1})', () => {
+    const value = JSON.parse('{"__proto__":{"x":1}}');
+    expect(canonicalizeJcs(value).toString('utf8')).toBe('{"__proto__":{"x":1}}');
+  });
+
+  it('canonicalizes {"a":1,"__proto__":2} sorting "__proto__" before "a" (fail-before: canonicalized to "{"a":1}", silently dropping the second key)', () => {
+    const value = JSON.parse('{"a":1,"__proto__":2}');
+    expect(canonicalizeJcs(value).toString('utf8')).toBe('{"__proto__":2,"a":1}');
+  });
+});
+
+describe('snapshotPlainJson - brand check refuses a prototype-stripped builtin (Codex second probe, 2026-09-16 delta-7 gate, fix round 8)', () => {
+  // The prototype-hop guard alone would accept both constructions below --
+  // each precondition proves that -- because hop1 === null after
+  // Object.setPrototypeOf(v, null) satisfies hasPlainObjectPrototypeChain on
+  // its own. hasPlainObjectTag is the check that still rejects them: their
+  // Object.prototype.toString tag ("Date" / "Number") comes from an internal
+  // slot Object.setPrototypeOf cannot touch. Fail-before against 23439e2 (no
+  // brand check existed): both canonicalized to "{}" instead of throwing.
+
+  it('rejects a Date whose prototype was nulled to pass the hop count (fail-before: canonicalized to "{}")', () => {
+    const brandedDate = new Date(0);
+    Object.setPrototypeOf(brandedDate, null);
+    expect(Object.getPrototypeOf(brandedDate)).toBeNull(); // precondition: hop count alone would accept this
+    expect(() => canonicalizeJcs({ t: brandedDate })).toThrow(CanonicalizationError);
+  });
+
+  it('rejects a null-prototype boxed Number (fail-before: canonicalized to "{}")', () => {
+    const brandedNumber = new Number(1);
+    Object.setPrototypeOf(brandedNumber, null);
+    expect(Object.getPrototypeOf(brandedNumber)).toBeNull(); // precondition: hop count alone would accept this
+    expect(() => canonicalizeJcs({ n: brandedNumber })).toThrow(CanonicalizationError);
+  });
+});

@@ -218,6 +218,40 @@ function hasPlainArrayPrototypeChain(value) {
   return Object.getPrototypeOf(hop2) === null;
 }
 
+// Internal-slot brand test, not a prototype-chain test: true when `value`'s
+// Object.prototype.toString tag is the plain "Object" tag. A Date, RegExp,
+// Error, boxed primitive, or Arguments object carries its tag on an
+// internal slot the spec sets at construction; unlike [[Prototype]], that
+// slot cannot be retargeted by Object.setPrototypeOf, so this catches the
+// bypass the hop-count helpers above cannot: shortening or nulling such a
+// value's prototype chain to pass the hop count while its tag still reads
+// e.g. "Date" (Codex's second probe, 2026-09-16 delta-7 gate: "the
+// prototype-hop guard can be bypassed by shortening a branded object's or
+// class instance's prototype chain"). Bounded residual, stated once here
+// for both this helper and its array counterpart below: a value whose
+// prototype chain AND tag have BOTH been reduced to plain (for example a
+// Map with its own prototype set to null) is observationally identical to
+// a plain object holding the same own enumerable data properties, and no
+// such value can ever be produced by JSON.parse or Python's json.loads.
+// Mirrors hasPlainObjectTag in js-sdk/src/canonical/canonicalize.ts; must
+// match it.
+function hasPlainObjectTag(value) {
+  return Object.prototype.toString.call(value) === "[object Object]";
+}
+
+// Array counterpart of hasPlainObjectTag: true when `value` tags as
+// "[object Array]". IsArray (what this tag is keyed on) reflects the
+// exotic Array internal behaviour, not [[Prototype]], so a real Array or
+// Array-subclass instance keeps this tag regardless of prototype
+// tampering -- the same bounded residual applies: an Array subclass
+// instance with no own properties beyond its indices and length, and a
+// shortened prototype chain, canonicalizes identically to a plain array of
+// the same elements. Mirrors hasPlainArrayTag in
+// js-sdk/src/canonical/canonicalize.ts; must match it.
+function hasPlainArrayTag(value) {
+  return Object.prototype.toString.call(value) === "[object Array]";
+}
+
 // Produce a realm-local, plain-data deep copy of `value` in a single
 // traversal, reading each member of the caller-supplied structure exactly
 // once. Mirrors snapshotPlainJson in js-sdk/src/canonical/canonicalize.ts;
@@ -243,8 +277,19 @@ function hasPlainArrayPrototypeChain(value) {
 // to an indexed read that would reach the prototype chain.
 //
 // Prototype IDENTITY is not checked -- that regressed cross-realm JSON (see
-// hasPlainObjectPrototypeChain above) -- but prototype SHAPE is: see the two
-// hop-count helpers above.
+// hasPlainObjectPrototypeChain above) -- but prototype SHAPE is (the two
+// hop-count helpers above) and internal-slot BRAND is (hasPlainObjectTag,
+// hasPlainArrayTag): shape alone accepts a builtin whose [[Prototype]] was
+// retargeted to pass the hop count, and brand alone accepts a cross-realm
+// array a hop-count-only test would reject, so a value must pass both to
+// snapshot.
+//
+// The copy this function returns is built with Object.create(null) (for an
+// object) or [] (for an array) and populated ONLY through
+// Object.defineProperty, never [[Set]] (`out[key] = ...` /
+// `out[index] = ...`): this is what makes the JSON key "__proto__" an
+// ordinary own data property on the copy instead of a trigger for the
+// inherited Object.prototype __proto__ accessor.
 function snapshotPlainJson(value) {
   if (value === null) {
     return null;
@@ -263,7 +308,7 @@ function snapshotPlainJson(value) {
     return value;
   }
   if (Array.isArray(value)) {
-    if (!hasPlainArrayPrototypeChain(value)) {
+    if (!hasPlainArrayPrototypeChain(value) || !hasPlainArrayTag(value)) {
       reject("JCS canonicalization failed");
     }
     // One call observes every index AND `length` together; there is no
@@ -283,7 +328,12 @@ function snapshotPlainJson(value) {
       reject("JCS canonicalization failed");
     }
     const length = lengthDescriptor.value;
-    const out = new Array(length);
+    // Built as [] and populated by defineProperty per index, never
+    // `out[index] = ...` (a [[Set]]): must match the object branch below
+    // and js-sdk/src/canonical/canonicalize.ts's array branch. Array's
+    // exotic [[DefineOwnProperty]] still updates `length` to the highest
+    // index defined, exactly as an array literal would.
+    const out = [];
     for (let index = 0; index < length; index += 1) {
       const descriptor = descriptors[String(index)];
       if (
@@ -293,15 +343,30 @@ function snapshotPlainJson(value) {
       ) {
         reject("JCS canonicalization failed");
       }
-      out[index] = snapshotPlainJson(descriptor.value);
+      Object.defineProperty(out, index, {
+        value: snapshotPlainJson(descriptor.value),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
     }
     return out;
   }
   if (isObject(value)) {
-    if (!hasPlainObjectPrototypeChain(value)) {
+    if (!hasPlainObjectPrototypeChain(value) || !hasPlainObjectTag(value)) {
       reject("JCS canonicalization failed");
     }
-    const out = {};
+    // Object.create(null), never {}: a {} copy inherits Object.prototype,
+    // whose OWN __proto__ property is an ACCESSOR (get/set), not a plain
+    // data property. Populating such a copy with `out[key] = value` (a
+    // [[Set]]) for the JSON key "__proto__" does not create an own
+    // property at all -- it invokes that inherited setter, which retargets
+    // the copy's OWN prototype to the JSON value instead of storing it
+    // (Grok and Codex verbatim, 2026-09-16 delta-7 gate). A null-prototype
+    // copy has no inherited accessor at any key, so there is nothing left
+    // to intercept. Must match the object branch in
+    // js-sdk/src/canonical/canonicalize.ts.
+    const out = Object.create(null);
     // The ONE call: every own key of `value` is observed here, once. A key
     // absent from `value` never appears in `descriptors` at all
     // (getOwnPropertyDescriptors omits it outright, rather than two calls
@@ -318,7 +383,17 @@ function snapshotPlainJson(value) {
       if (descriptor.get !== undefined || descriptor.set !== undefined) {
         reject("JCS canonicalization failed");
       }
-      out[key] = snapshotPlainJson(descriptor.value);
+      // defineProperty, never `out[key] = ...`: see the invariant comment
+      // on Object.create(null) above. "__proto__" is stored and later
+      // emitted as the ordinary JSON key RFC 8785 and the Python
+      // implementation both treat it as -- never as this copy's
+      // prototype.
+      Object.defineProperty(out, key, {
+        value: snapshotPlainJson(descriptor.value),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
     }
     return out;
   }
@@ -332,6 +407,14 @@ function snapshotPlainJson(value) {
 // `value[key]` here is therefore never a second read of anything the
 // CALLER controls -- the caller's own value was read exactly once, by
 // snapshotPlainJson, before this function ever ran.
+//
+// Object.keys(value) and value[key] are safe here specifically because
+// `value` is one of snapshotPlainJson's null-prototype object copies (or a
+// plain [] array copy): with no prototype to inherit from, value[key] for
+// ANY key -- including "__proto__" -- is an ordinary own-property [[Get]],
+// never a hop onto an inherited accessor. "__proto__" sorts into the key
+// list as an ordinary string, exactly as Python's _stable_stringify treats
+// it.
 function stringifyPlain(value) {
   if (value === null) {
     return "null";

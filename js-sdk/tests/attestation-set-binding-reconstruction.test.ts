@@ -707,3 +707,48 @@ describe('the caller-supplied transcript is snapshotted once, at the boundary (C
     });
   });
 });
+
+describe('"__proto__" survives the double snapshot (boundary snapshot, then canonicalizeJcs\'s own snapshot inside reconstructSingleChain) (Grok/Codex verbatim, 2026-09-16 delta-7 gate, fix round 8)', () => {
+  it('binds a transcript whose message carries a JSON "__proto__" key exactly as the same transcript without it', () => {
+    // JSON.parse creates "__proto__" as an ordinary own enumerable data
+    // property, exactly as any caller handing this SDK a parsed request
+    // body would produce it. `verifyReceiptSetBinding` snapshots
+    // `callerTranscript` once at its own boundary; `reconstructSingleChain`
+    // then calls `canonicalizeJcs` on each element of THAT snapshot, which
+    // snapshots it a second time -- this is the "second snapshot inside
+    // set-binding" the fix must also cover, not just a single top-level
+    // canonicalizeJcs call. Fail-before against 23439e2: the first
+    // snapshot's `out[key] = ...` already dropped/retargeted on
+    // "__proto__", so this path never reached a second snapshot carrying
+    // the key at all.
+    const withProto = JSON.parse(
+      `{"from":{"agent_id":"alice"},"prev_hash":${JSON.stringify(GENESIS_HASH)},"__proto__":{"x":1}}`,
+    ) as Msg;
+    const withoutProto: Msg = { from: { agent_id: 'alice' }, prev_hash: GENESIS_HASH };
+
+    const receiptWithProto = {
+      concordia_attestation: '0.5.0',
+      message_count: 1,
+      chain_head: computeHash(withProto),
+    };
+    const receiptWithoutProto = {
+      concordia_attestation: '0.5.0',
+      message_count: 1,
+      chain_head: computeHash(withoutProto),
+    };
+
+    expect(verifyReceiptSetBinding(receiptWithProto, [withProto])).toEqual({
+      state: 'bound',
+      errors: [],
+    });
+    expect(verifyReceiptSetBinding(receiptWithoutProto, [withoutProto])).toEqual({
+      state: 'bound',
+      errors: [],
+    });
+    // The two messages canonicalize to different bytes ("__proto__" is real
+    // JSON content, not a discarded artifact), so their digests must
+    // differ -- proving the key was actually stored and hashed, not merely
+    // "did not throw."
+    expect(computeHash(withProto)).not.toBe(computeHash(withoutProto));
+  });
+});
