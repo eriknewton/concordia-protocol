@@ -932,6 +932,67 @@ the re-signed deletion splice vector in the chain-position class remains a
 tolerated accept: the remaining messages form a self-consistent signed chain,
 but the deleted message is not recoverable from per-message signatures alone.
 
+### `receipt-set-binding-v1`
+
+Inputs:
+
+- `input.receipt`: a v0.3.0 or later Reputation Attestation receipt.
+- `input.messages`: optional array of the session envelope messages the receipt
+  claims to bind.
+- `context.public_keys_b64url`: object mapping each receipt party `agent_id`
+  and each message sender `agent_id` to that principal's Ed25519 public key.
+
+This profile decides SPEC.md Section 9.6.5b on its own terms. `message-chain-v1`
+walks a transcript in the order it was presented and treats the receipt as an
+optional extra check. This profile treats the receipt as the subject, requires a
+transcript before it will credit set binding at all, and rebuilds the message
+order from `prev_hash` links rather than reading the presented sequence.
+
+Checks, in order:
+
+1. Require the input object to contain `receipt`, optionally with `messages`.
+2. Validate `input.receipt` against `attestation.schema.json`, require
+   `/concordia_attestation >= "0.3.0"` by semver major/minor comparison,
+   require `/chain_head` to match `^sha256:[a-f0-9]{64}$`, and require
+   `/message_count` to be an integer greater than or equal to 1.
+3. For every receipt party, resolve `/agent_id` in
+   `context.public_keys_b64url`, verify the party signature over
+   `JCS(party without top-level signature)`, then verify that party's
+   `/countersignatures/{agent_id}` over
+   `JCS(StripSignaturesRecursive(receipt without top-level countersignatures))`.
+4. If `input.messages` is absent, reject with reason class `binding`. The
+   receipt's `chain_head` and `message_count` are the issuer's own claim about
+   a transcript, so a verdict reached without one has checked that claim
+   against nothing. Set binding is unestablished, and unestablished is never an
+   accept.
+5. For each presented message, resolve `/from/agent_id` in
+   `context.public_keys_b64url` and verify Ed25519 over
+   `JCS(message without top-level signature)`.
+6. Reconstruct one chain from `prev_hash` links alone. Reject with reason class
+   `binding` unless exactly one presented message has no predecessor, meaning
+   its `prev_hash` is absent or equal to `GENESIS_HASH`; every other presented
+   message's `prev_hash` equals `MessageHash` of exactly one other presented
+   message; no presented message is claimed as predecessor twice; no message is
+   presented twice; and the walk from the single root visits every presented
+   message.
+7. Compare `/message_count` to the length of the reconstructed chain.
+8. Compare `/chain_head` to `MessageHash` of the last message in the
+   reconstructed chain.
+9. Accept only if all checks pass.
+
+`MessageHash(m)` here is the same digest the rest of this contract uses:
+`sha256:` plus lowercase hex SHA-256 over `JCS(m)` including the message's
+`signature` field. A transcript whose links were computed over the
+signature-stripped form therefore reconstructs no chain and rejects.
+
+The presenter chooses the order in which messages are handed over, which is why
+step 6 ignores that order. A fork, an orphan, a second root, a re-linked
+substitution of equal size, and a duplicated message all survive a sequential
+walk whenever the last presented message still hashes to `chain_head`. The
+mutation vectors `mut-synthetic-receipt-set-reconstruction-0001` through
+`-0007` are each shaped so that a verifier comparing only a final digest and a
+count accepts them.
+
 ## Decisions
 
 ### D1: Normativize Raw Verification

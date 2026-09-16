@@ -205,6 +205,7 @@ PROFILES = (
     "competence-proof-v1",
     "receipt-bundle-v1",
     "message-chain-v1",
+    "receipt-set-binding-v1",
 )
 RECORD_TYPES = (
     "decision_object",
@@ -1381,6 +1382,162 @@ def evaluate_message_chain_receipt_binding(
     return Evaluation(True)
 
 
+def reconstruct_single_chain(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]] | None:
+    """Rebuild one message order from ``prev_hash`` links alone (SPEC 9.6.5b).
+
+    Returns the reconstructed chain, or ``None`` when the presented set is not
+    exactly one chain. The presented order is never consulted, because the
+    presenter chooses it: a fork, an orphan, a second root, or a re-linked
+    substitution of equal size all survive a sequential walk whenever the last
+    presented message still hashes to ``chain_head``. The digest compared
+    against ``prev_hash`` is the SPEC 9.3 digest over the complete canonical
+    form INCLUDING the signature, so a transcript whose links were computed
+    over the signature-stripped form does not reconstruct.
+    """
+    digests = [compute_hash(message) for message in messages]
+    by_digest: dict[str, int] = {}
+    for index, digest in enumerate(digests):
+        if digest in by_digest:
+            return None
+        by_digest[digest] = index
+
+    roots: list[int] = []
+    successor_of: dict[int, int] = {}
+    for index, message in enumerate(messages):
+        prev_hash = message.get("prev_hash")
+        if prev_hash is None or prev_hash == GENESIS_HASH:
+            roots.append(index)
+            continue
+        if not isinstance(prev_hash, str):
+            return None
+        predecessor = by_digest.get(prev_hash)
+        if predecessor is None:
+            return None
+        if predecessor in successor_of:
+            return None
+        successor_of[predecessor] = index
+
+    if len(roots) != 1:
+        return None
+
+    chain: list[dict[str, Any]] = []
+    cursor: int | None = roots[0]
+    while cursor is not None:
+        chain.append(messages[cursor])
+        cursor = successor_of.get(cursor)
+    if len(chain) != len(messages):
+        return None
+    return chain
+
+
+def evaluate_receipt_set_binding_profile(vector: Vector) -> Evaluation:
+    """Decide the receipt-set-binding-v1 profile (SPEC 9.6.5b).
+
+    Must match ``verify_receipt_set_binding_profile`` in
+    conformance/reference-runner/runner.py and
+    ``verifyReceiptSetBindingProfile`` in
+    conformance/reference-runner-js/runner.mjs.
+    """
+    input_data = vector.input_data
+    context = vector.context
+    if set(input_data) not in ({"receipt"}, {"receipt", "messages"}):
+        return Evaluation(False, "schema")
+    receipt = input_data.get("receipt")
+    if not isinstance(receipt, dict):
+        return Evaluation(False, "schema")
+
+    schema = load_json(SCHEMA_COPIES["attestation.schema.json"])
+    if not schema_is_valid(schema, receipt):
+        return Evaluation(False, "schema")
+    if not attestation_version_at_least(receipt.get("concordia_attestation"), 0, 3):
+        return Evaluation(False, "binding")
+    chain_head = receipt.get("chain_head")
+    message_count = receipt.get("message_count")
+    if not isinstance(chain_head, str) or not SHA256_HEX_RE.match(chain_head):
+        return Evaluation(False, "binding")
+    if (
+        not isinstance(message_count, int)
+        or isinstance(message_count, bool)
+        or message_count < 1
+    ):
+        return Evaluation(False, "binding")
+
+    public_keys = context.get("public_keys_b64url")
+    parties = receipt.get("parties")
+    countersignatures = receipt.get("countersignatures")
+    if (
+        not isinstance(public_keys, dict)
+        or not isinstance(parties, list)
+        or not isinstance(countersignatures, dict)
+    ):
+        return Evaluation(False, "signature")
+    countersign_payload = attestation_countersign_payload(receipt)
+    for party in parties:
+        if not isinstance(party, dict):
+            return Evaluation(False, "schema")
+        agent_id = party.get("agent_id")
+        signature = party.get("signature")
+        if not isinstance(agent_id, str) or not isinstance(signature, str):
+            return Evaluation(False, "signature")
+        public_key_b64 = public_keys.get(agent_id)
+        if not isinstance(public_key_b64, str):
+            return Evaluation(False, "signature")
+        if not verify_ed25519_signature(
+            public_key_b64,
+            signature,
+            canonical_json(without_signature(party)),
+        ):
+            return Evaluation(False, "signature")
+        countersignature = countersignatures.get(agent_id)
+        if not isinstance(countersignature, str):
+            return Evaluation(False, "signature")
+        if not verify_ed25519_signature(
+            public_key_b64,
+            countersignature,
+            countersign_payload,
+        ):
+            return Evaluation(False, "signature")
+
+    if "messages" not in input_data:
+        # No transcript was supplied, so chain_head and message_count are the
+        # issuer's own unchecked claim. Unestablished is reported as a reject
+        # of the set-binding credit, never as an accept.
+        return Evaluation(False, "binding")
+    messages = input_data.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return Evaluation(False, "schema")
+    for message in messages:
+        if not isinstance(message, dict):
+            return Evaluation(False, "schema")
+        sender = message.get("from")
+        if not isinstance(sender, dict):
+            return Evaluation(False, "schema")
+        agent_id = sender.get("agent_id")
+        signature = message.get("signature")
+        if not isinstance(agent_id, str) or not isinstance(signature, str):
+            return Evaluation(False, "signature")
+        public_key_b64 = public_keys.get(agent_id)
+        if not isinstance(public_key_b64, str):
+            return Evaluation(False, "signature")
+        if not verify_ed25519_signature(
+            public_key_b64,
+            signature,
+            canonical_json(without_signature(message)),
+        ):
+            return Evaluation(False, "signature")
+
+    chain = reconstruct_single_chain(messages)
+    if chain is None:
+        return Evaluation(False, "binding")
+    if message_count != len(chain):
+        return Evaluation(False, "binding")
+    if chain_head != compute_hash(chain[-1]):
+        return Evaluation(False, "binding")
+    return Evaluation(True)
+
+
 def evaluate_message_chain_profile(
     vector: Vector,
     *,
@@ -1447,6 +1604,9 @@ def evaluate_vector(vector: Vector) -> Evaluation:
         if sha256_jcs(input_data) != context["expected_decision_id"]:
             return Evaluation(False, "digest")
         return Evaluation(True)
+
+    if profile == "receipt-set-binding-v1":
+        return evaluate_receipt_set_binding_profile(vector)
 
     if profile == "offer-binding-v1":
         for check in context["checks"]:
@@ -1731,8 +1891,8 @@ RECEIPT_BUNDLE_VERSION_TOLERANCE_NOTE = (
 CHAIN_POSITION_RESIGNED_SPLICE_TOLERANCE_NOTE = (
     "tolerated-accept: per-message signatures authenticate links, not the complete message set"
 )
-EXPECTED_MUTATION_TOTAL = 1488
-EXPECTED_MUTATION_REJECTS = 1443
+EXPECTED_MUTATION_TOTAL = 1495
+EXPECTED_MUTATION_REJECTS = 1450
 EXPECTED_MUTATION_ACCEPTS = 45
 EXPECTED_CANARY_TOTAL = 5
 EXPECTED_RAW_TYPED_DIVERGENCES = (
@@ -1770,6 +1930,7 @@ EXPECTED_MUTATION_BATTERY_COUNTS: dict[str, tuple[int, int, int]] = {
     "synthetic/longtail/message_chain.json": (99, 99, 0),
     "synthetic/longtail/message_chain_position.json": (4, 3, 1),
     "synthetic/longtail/receipt_set_binding.json": (4, 4, 0),
+    "synthetic/longtail/receipt_set_binding_reconstruction.json": (7, 7, 0),
     "synthetic/longtail/receipt_bundle.json": (256, 255, 1),
     "synthetic/mandate/delegated_mandate.json": (82, 82, 0),
     "synthetic/mandate/mandate.json": (51, 51, 0),
@@ -2723,6 +2884,274 @@ def build_receipt_set_binding_mutation_vectors(
     return vectors, summary
 
 
+def receipt_set_binding_reconstruction_vector(
+    *,
+    vector_id: str,
+    title: str,
+    input_data: dict[str, Any],
+    context: dict[str, Any],
+    expected_reason_class: ReasonClass | None = None,
+    notes: str = "",
+) -> Vector:
+    probe = Vector(
+        vector_id=vector_id,
+        title=title,
+        source_fixture=f"{SYNTHETIC_SOURCE_LONGTAIL}/receipt_set_binding.json",
+        record_type="message_chain",
+        verification_profile="receipt-set-binding-v1",
+        input_data=input_data,
+        context=copy.deepcopy(context),
+    )
+    evaluation = evaluate_vector(probe)
+    if not evaluation.accepted and evaluation.reason_class is None:
+        raise GenerationError(f"{vector_id}: reject missing expected_reason_class")
+    return Vector(
+        vector_id=vector_id,
+        title=title,
+        source_fixture=probe.source_fixture,
+        record_type=probe.record_type,
+        verification_profile=probe.verification_profile,
+        input_data=input_data,
+        context=probe.context,
+        expected=outcome_name(evaluation.accepted),
+        expected_reason_class=(
+            None
+            if evaluation.accepted
+            else expected_reason_class or evaluation.reason_class
+        ),
+        notes=notes,
+        canonical_preimage=canonical_json(input_data),
+    )
+
+
+def receipt_set_binding_variant_message(
+    message: dict[str, Any],
+    *,
+    message_id: str,
+    prev_hash: str,
+) -> dict[str, Any]:
+    """Copy a transcript message under a new id and link, then re-sign it.
+
+    The copy is a genuine signed message from the same party, so every vector
+    built from it defeats per-message signature verification and can only be
+    refused by the set-level rule.
+    """
+    key_by_agent = receipt_set_binding_key_map()
+    variant = copy.deepcopy(message)
+    variant["id"] = message_id
+    variant["prev_hash"] = prev_hash
+    return resign_chain_message(variant, key_by_agent[variant["from"]["agent_id"]])
+
+
+def receipt_set_binding_signature_stripped_links(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Relink a transcript under the WRONG digest convention and re-sign it.
+
+    Each prev_hash becomes the SHA-256 of the predecessor's canonical form with
+    the signature removed, rather than the SPEC 9.3 digest over the complete
+    message. Every message still verifies under its own key, so only a verifier
+    that reconstructs under the stated convention refuses the set.
+    """
+    key_by_agent = receipt_set_binding_key_map()
+    relinked: list[dict[str, Any]] = [copy.deepcopy(messages[0])]
+    for message in messages[1:]:
+        variant = copy.deepcopy(message)
+        variant["prev_hash"] = sha256_jcs(without_signature(relinked[-1]))
+        relinked.append(
+            resign_chain_message(variant, key_by_agent[variant["from"]["agent_id"]])
+        )
+    return relinked
+
+
+def build_receipt_set_binding_reconstruction_vectors(
+    synthetic: SyntheticFixtures,
+) -> tuple[list[Vector], dict[str, Any]]:
+    """Vectors for the SPEC 9.6.5b transcript requirement and chain reconstruction.
+
+    Every reject vector below presents a set whose length equals the receipt's
+    message_count and whose last presented message hashes to chain_head, so a
+    verifier that compares only a final digest and a count credits all of them.
+    """
+    base_pair = synthetic.longtail.receipt_set_binding
+    base_receipt = base_pair["receipt"]
+    base_messages = base_pair["messages"]
+    context = receipt_set_binding_context(synthetic)
+    if len(base_messages) != 5:
+        raise GenerationError("receipt set-binding transcript must have five messages")
+    msg1, msg2, msg3, msg4, msg5 = [
+        copy.deepcopy(message) for message in base_messages
+    ]
+
+    transcript_absent = {"receipt": copy.deepcopy(base_receipt)}
+
+    sibling = receipt_set_binding_variant_message(
+        msg2,
+        message_id="msg_conformance_receipt_binding_0002_fork",
+        prev_hash=compute_hash(msg1),
+    )
+    forked = {
+        "messages": [msg1, msg2, sibling, msg3, msg4, msg5],
+        "receipt": receipt_with_resigned_snapshot(
+            base_receipt,
+            {"message_count": 6},
+        ),
+    }
+
+    orphan = receipt_set_binding_variant_message(
+        msg4,
+        message_id="msg_conformance_receipt_binding_0004_orphan",
+        prev_hash="sha256:" + ("ab" * 32),
+    )
+    orphaned = {
+        "messages": [msg1, msg2, orphan, msg3, msg4, msg5],
+        "receipt": receipt_with_resigned_snapshot(
+            base_receipt,
+            {"message_count": 6},
+        ),
+    }
+
+    second_root = receipt_set_binding_variant_message(
+        msg1,
+        message_id="msg_conformance_receipt_binding_0001_second_root",
+        prev_hash=GENESIS_HASH,
+    )
+    two_roots = {
+        "messages": [msg1, second_root, msg2, msg3, msg4, msg5],
+        "receipt": receipt_with_resigned_snapshot(
+            base_receipt,
+            {"message_count": 6},
+        ),
+    }
+
+    substitute = receipt_set_binding_variant_message(
+        msg3,
+        message_id="msg_conformance_receipt_binding_0003_substitute",
+        prev_hash=compute_hash(msg2),
+    )
+    substituted = {
+        "messages": [msg1, msg2, substitute, msg4, msg5],
+        "receipt": copy.deepcopy(base_receipt),
+    }
+
+    relinked = receipt_set_binding_signature_stripped_links(base_messages)
+    wrong_convention = {
+        "messages": relinked,
+        "receipt": receipt_with_resigned_snapshot(
+            base_receipt,
+            {"chain_head": compute_hash(relinked[-1]), "message_count": 5},
+        ),
+    }
+
+    duplicated = {
+        "messages": [msg1, msg2, msg3, copy.deepcopy(msg3), msg4, msg5],
+        "receipt": receipt_with_resigned_snapshot(
+            base_receipt,
+            {"message_count": 6},
+        ),
+    }
+
+    vectors = [
+        receipt_set_binding_reconstruction_vector(
+            vector_id="mut-synthetic-receipt-set-reconstruction-0001",
+            title=(
+                "receipt_set_binding: receipt presented with no transcript is not "
+                "set-bound"
+            ),
+            input_data=transcript_absent,
+            context=context,
+            expected_reason_class="binding",
+            notes=(
+                "chain_head and message_count are the issuer's own claim about a "
+                "transcript, so set binding is unestablished until a transcript "
+                "is supplied"
+            ),
+        ),
+        receipt_set_binding_reconstruction_vector(
+            vector_id="mut-synthetic-receipt-set-reconstruction-0002",
+            title="receipt_set_binding: two presented messages claim one predecessor",
+            input_data=forked,
+            context=context,
+            expected_reason_class="binding",
+            notes="the set forks at the opening message and is not one chain",
+        ),
+        receipt_set_binding_reconstruction_vector(
+            vector_id="mut-synthetic-receipt-set-reconstruction-0003",
+            title="receipt_set_binding: an orphan message links to nothing presented",
+            input_data=orphaned,
+            context=context,
+            expected_reason_class="binding",
+            notes="the orphan is counted by message_count and reached by no link",
+        ),
+        receipt_set_binding_reconstruction_vector(
+            vector_id="mut-synthetic-receipt-set-reconstruction-0004",
+            title="receipt_set_binding: two presented messages have no predecessor",
+            input_data=two_roots,
+            context=context,
+            expected_reason_class="binding",
+            notes="a chain has exactly one message without prev_hash",
+        ),
+        receipt_set_binding_reconstruction_vector(
+            vector_id="mut-synthetic-receipt-set-reconstruction-0005",
+            title=(
+                "receipt_set_binding: equal-size substitution keeps the count and "
+                "the final hash"
+            ),
+            input_data=substituted,
+            context=context,
+            expected_reason_class="binding",
+            notes=(
+                "one interior message is replaced by a re-linked message of the "
+                "same party, so the count and the final digest both still match"
+            ),
+        ),
+        receipt_set_binding_reconstruction_vector(
+            vector_id="mut-synthetic-receipt-set-reconstruction-0006",
+            title=(
+                "receipt_set_binding: transcript links computed over the "
+                "signature-stripped form"
+            ),
+            input_data=wrong_convention,
+            context=context,
+            expected_reason_class="binding",
+            notes=(
+                "the SPEC 9.3 digest covers the complete message including its "
+                "signature, so links under the stripped convention reconstruct "
+                "no chain"
+            ),
+        ),
+        receipt_set_binding_reconstruction_vector(
+            vector_id="mut-synthetic-receipt-set-reconstruction-0007",
+            title=(
+                "receipt_set_binding: message_count counts a duplicate the chain "
+                "visits once"
+            ),
+            input_data=duplicated,
+            context=context,
+            expected_reason_class="binding",
+            notes=(
+                "the presented set length equals message_count while the "
+                "reconstructed chain is one message shorter"
+            ),
+        ),
+    ]
+    summary = {
+        "battery_name": "synthetic/longtail/receipt_set_binding_reconstruction.json",
+        "source_fixture": f"{SYNTHETIC_SOURCE_LONGTAIL}/receipt_set_binding.json",
+        "object_name": "receipt_set_binding_reconstruction",
+        "record_type": "message_chain",
+        "verification_profile": "receipt-set-binding-v1",
+        "total": len(vectors),
+        "reject": sum(1 for vector in vectors if vector.expected == "reject"),
+        "accept": sum(1 for vector in vectors if vector.expected == "accept"),
+        "selection_note": (
+            "transcript-absent and chain-reconstruction attack vectors, each "
+            "shaped so a final-digest-and-count comparison accepts it"
+        ),
+    }
+    return vectors, summary
+
+
 def build_attestation_v05_validity_mutation_vectors(
     synthetic: SyntheticFixtures,
 ) -> tuple[list[Vector], dict[str, Any]]:
@@ -2964,6 +3393,12 @@ def build_mutation_battery(
     )
     vectors.extend(receipt_vectors)
     battery_summaries.append(receipt_summary)
+
+    reconstruction_vectors, reconstruction_summary = (
+        build_receipt_set_binding_reconstruction_vectors(synthetic)
+    )
+    vectors.extend(reconstruction_vectors)
+    battery_summaries.append(reconstruction_summary)
 
     validity_vectors, validity_summary = (
         build_attestation_v05_validity_mutation_vectors(synthetic)
@@ -4785,6 +5220,21 @@ def build_phase2_vectors(fixtures: SyntheticFixtures) -> list[Vector]:
                 "receipt set-binding checks the transcript links and signatures, "
                 "then verifies the 0.3.0 receipt countersignatures and compares "
                 "chain_head/message_count to the presented transcript"
+            ),
+            canonical_preimage=canonical_json(fixtures.longtail.receipt_set_binding),
+        ),
+        Vector(
+            vector_id="pos-synthetic-receipt-set-binding-reconstruction",
+            title="Synthetic 0.3.0 receipt set-binds a transcript reconstructed from prev_hash links alone",
+            source_fixture=f"{SYNTHETIC_SOURCE_LONGTAIL}/receipt_set_binding.json",
+            record_type="message_chain",
+            verification_profile="receipt-set-binding-v1",
+            input_data=fixtures.longtail.receipt_set_binding,
+            context=receipt_set_binding_context(fixtures),
+            notes=(
+                "the transcript is presented in order here, and the profile "
+                "still decides it by rebuilding the chain from prev_hash links "
+                "rather than by reading the presented sequence"
             ),
             canonical_preimage=canonical_json(fixtures.longtail.receipt_set_binding),
         ),

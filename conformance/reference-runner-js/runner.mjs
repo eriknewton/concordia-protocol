@@ -35,6 +35,7 @@ const PROFILE_ORDER = new Set([
   "competence-proof-v1",
   "receipt-bundle-v1",
   "message-chain-v1",
+  "receipt-set-binding-v1",
 ]);
 const RECORD_TYPES = new Set([
   "decision_object",
@@ -1503,6 +1504,161 @@ function verifyMessageChainReceiptBinding(suiteBase, inputData, messages, contex
   }
 }
 
+/**
+ * Rebuild one message order from prev_hash links alone (SPEC 9.6.5b).
+ *
+ * Rejects when the presented set is not exactly one chain. The presented order
+ * is never consulted, because the presenter chooses it: a fork, an orphan, a
+ * second root, or a re-linked substitution of equal size all survive a
+ * sequential walk whenever the last presented message still hashes to
+ * chain_head. The digest compared against prev_hash is the SPEC 9.3 digest over
+ * the complete canonical form INCLUDING the signature, so a transcript whose
+ * links were computed over the signature-stripped form does not reconstruct.
+ * Must match reconstruct_single_chain in
+ * conformance/reference-runner/runner.py and in
+ * scripts/conformance/generate_vectors.py.
+ */
+function reconstructSingleChain(messages) {
+  const byDigest = new Map();
+  for (let index = 0; index < messages.length; index += 1) {
+    const digest = messageHash(messages[index]);
+    if (byDigest.has(digest)) {
+      reject("transcript presents the same message more than once");
+    }
+    byDigest.set(digest, index);
+  }
+
+  const roots = [];
+  const successorOf = new Map();
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = requireObject(messages[index], "transcript message");
+    const prevHash = message.prev_hash;
+    if (prevHash === undefined || prevHash === null || prevHash === GENESIS_HASH) {
+      roots.push(index);
+      continue;
+    }
+    if (typeof prevHash !== "string") {
+      reject("transcript message prev_hash is not a string");
+    }
+    const predecessor = byDigest.get(prevHash);
+    if (predecessor === undefined) {
+      reject("transcript message is an orphan");
+    }
+    if (successorOf.has(predecessor)) {
+      reject("transcript forks: two messages claim one predecessor");
+    }
+    successorOf.set(predecessor, index);
+  }
+
+  if (roots.length !== 1) {
+    reject("a chain has exactly one message without prev_hash");
+  }
+
+  const chain = [];
+  let cursor = roots[0];
+  while (cursor !== undefined) {
+    chain.push(messages[cursor]);
+    cursor = successorOf.get(cursor);
+  }
+  if (chain.length !== messages.length) {
+    reject("transcript does not form a single chain");
+  }
+  return chain;
+}
+
+/**
+ * Decide receipt set binding under SPEC 9.6.5b.
+ *
+ * Distinct from message-chain-v1: that profile walks a transcript in the order
+ * it was presented, while this one credits set binding only from a chain
+ * rebuilt out of prev_hash links, and only when a transcript is supplied at
+ * all.
+ */
+function verifyReceiptSetBindingProfile(suiteBase, inputData, context) {
+  const chainInput = requireObject(inputData, "receipt set binding input");
+  const inputKeys = Object.keys(chainInput).sort().join("\u0000");
+  if (inputKeys !== "receipt" && inputKeys !== "messages\u0000receipt") {
+    reject("input must contain a receipt, optionally with messages");
+  }
+  const receipt = requireObject(chainInput.receipt, "receipt");
+  validateSchema(suiteBase, "attestation.schema.json", receipt);
+  if (!attestationVersionAtLeast(receipt.concordia_attestation, 0, 3)) {
+    reject("receipt is legacy set-unbound");
+  }
+  if (typeof receipt.chain_head !== "string" || !SHA256_HEX_RE.test(receipt.chain_head)) {
+    reject("receipt chain_head is malformed");
+  }
+  if (
+    !Number.isInteger(receipt.message_count) ||
+    typeof receipt.message_count === "boolean" ||
+    receipt.message_count < 1
+  ) {
+    reject("receipt message_count is malformed");
+  }
+  if (!isObject(context.public_keys_b64url)) {
+    reject("receipt public key map is missing");
+  }
+  if (!Array.isArray(receipt.parties)) {
+    reject("receipt parties are missing");
+  }
+  if (!isObject(receipt.countersignatures)) {
+    reject("receipt countersignatures are missing");
+  }
+  const countersignPayload = countersignPreimage(receipt);
+  for (const partyItem of receipt.parties) {
+    const party = requireObject(partyItem, "receipt party");
+    if (typeof party.agent_id !== "string" || party.agent_id === "") {
+      reject("receipt party agent_id is missing");
+    }
+    const publicKey = context.public_keys_b64url[party.agent_id];
+    if (typeof publicKey !== "string") {
+      reject("receipt party public key is missing");
+    }
+    verifyEd25519(
+      publicKey,
+      bareSignature(party),
+      jcsBytes(withoutTopLevel(party, new Set(["signature"]))),
+    );
+    const countersignature = receipt.countersignatures[party.agent_id];
+    if (typeof countersignature !== "string") {
+      reject("receipt countersignature is missing");
+    }
+    verifyEd25519(publicKey, countersignature, countersignPayload);
+  }
+
+  if (!Object.hasOwn(chainInput, "messages")) {
+    // chain_head and message_count are the issuer's own claim about a
+    // transcript, so a verdict reached without one has checked that claim
+    // against nothing. Unestablished is never an accept.
+    reject("set binding is unestablished without a transcript");
+  }
+  const messages = chainInput.messages;
+  if (!Array.isArray(messages) || messages.length === 0) {
+    reject("transcript messages are missing");
+  }
+  for (const item of messages) {
+    const message = requireObject(item, "transcript message");
+    const sender = requireObject(message.from, "transcript sender");
+    if (typeof sender.agent_id !== "string") {
+      reject("transcript sender agent_id is missing");
+    }
+    const publicKey = context.public_keys_b64url[sender.agent_id];
+    verifyEd25519(
+      publicKey,
+      message.signature,
+      jcsBytes(withoutTopLevel(message, new Set(["signature"]))),
+    );
+  }
+
+  const chain = reconstructSingleChain(messages);
+  if (receipt.message_count !== chain.length) {
+    reject("receipt message_count mismatch");
+  }
+  if (receipt.chain_head !== messageHash(chain[chain.length - 1])) {
+    reject("receipt chain_head mismatch");
+  }
+}
+
 function verifyMessageChain(suiteBase, inputData, context, regression) {
   const chain = requireObject(inputData, "message chain");
   const chainKeys = Object.keys(chain).sort().join("\u0000");
@@ -1604,6 +1760,8 @@ function verifyProfile(suiteBase, profile, inputData, context, regression) {
     verifyReceiptBundle(suiteBase, inputData, context);
   } else if (profile === "message-chain-v1") {
     verifyMessageChain(suiteBase, inputData, context, regression);
+  } else if (profile === "receipt-set-binding-v1") {
+    verifyReceiptSetBindingProfile(suiteBase, inputData, context);
   } else {
     reject("unknown verification profile");
   }

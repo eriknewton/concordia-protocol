@@ -563,10 +563,16 @@ def verify_bundle(
             errors.append(f"Attestation {i}: {reason}")
             outcome_unbound_attestations.append(att_id)
 
+        # A bundle carries receipts, never the transcripts behind them, so this
+        # call can only ever reach the unestablished state: crediting
+        # ``set_bound_count`` here would report the receipt's own claim about a
+        # transcript this verifier has not seen. The ``bound`` arm is kept
+        # because a future bundle shape may carry transcripts; it is not
+        # reachable from the shape verified today.
         set_state, set_errors = evaluate_receipt_set_binding(att)
         if set_state == "bound":
             set_bound_count += 1
-        elif set_state == "legacy_set_unbound":
+        elif set_state in ("legacy_set_unbound", "fields_present_unverified"):
             set_unbound_attestations.append(att_id)
         else:
             errors.extend(f"Attestation {i}: {err}" for err in set_errors)

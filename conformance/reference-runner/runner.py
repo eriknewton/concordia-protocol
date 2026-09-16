@@ -65,6 +65,7 @@ PROFILE_ORDER = (
     "competence-proof-v1",
     "receipt-bundle-v1",
     "message-chain-v1",
+    "receipt-set-binding-v1",
 )
 RECORD_TYPES = {
     "decision_object",
@@ -1314,6 +1315,139 @@ def verify_message_chain_receipt_binding(
         raise Reject("receipt chain_head mismatch")
 
 
+def reconstruct_single_chain(messages: list[Json]) -> list[Json]:
+    """Rebuild one message order from prev_hash links alone (SPEC 9.6.5b).
+
+    Raises Reject when the presented set is not exactly one chain. The
+    presented order is never consulted, because the presenter chooses it: a
+    fork, an orphan, a second root, or a re-linked substitution of equal size
+    all survive a sequential walk whenever the last presented message still
+    hashes to chain_head. The digest compared against prev_hash is the SPEC 9.3
+    digest over the complete canonical form INCLUDING the signature, so a
+    transcript whose links were computed over the signature-stripped form does
+    not reconstruct. Must match reconstruct_single_chain in
+    scripts/conformance/generate_vectors.py and reconstructSingleChain in
+    conformance/reference-runner-js/runner.mjs.
+    """
+    by_digest: dict[str, int] = {}
+    for index, item in enumerate(messages):
+        digest = message_hash(item)
+        if digest in by_digest:
+            raise Reject("transcript presents the same message more than once")
+        by_digest[digest] = index
+
+    roots: list[int] = []
+    successor_of: dict[int, int] = {}
+    for index, item in enumerate(messages):
+        message = require_object(item, "transcript message")
+        prev_hash = message.get("prev_hash")
+        if prev_hash is None or prev_hash == GENESIS_HASH:
+            roots.append(index)
+            continue
+        if not isinstance(prev_hash, str):
+            raise Reject("transcript message prev_hash is not a string")
+        predecessor = by_digest.get(prev_hash)
+        if predecessor is None:
+            raise Reject("transcript message is an orphan")
+        if predecessor in successor_of:
+            raise Reject("transcript forks: two messages claim one predecessor")
+        successor_of[predecessor] = index
+
+    if len(roots) != 1:
+        raise Reject("a chain has exactly one message without prev_hash")
+
+    chain: list[Json] = []
+    cursor: int | None = roots[0]
+    while cursor is not None:
+        chain.append(messages[cursor])
+        cursor = successor_of.get(cursor)
+    if len(chain) != len(messages):
+        raise Reject("transcript does not form a single chain")
+    return chain
+
+
+def verify_receipt_set_binding_profile(
+    suite_base: Path,
+    input_data: Json,
+    context: dict[str, Json],
+) -> None:
+    """Decide receipt set binding under SPEC 9.6.5b.
+
+    Distinct from message-chain-v1: that profile walks a transcript in the
+    order it was presented, while this one credits set binding only from a
+    chain rebuilt out of prev_hash links, and only when a transcript is
+    supplied at all.
+    """
+    chain_input = require_object(input_data, "receipt set binding input")
+    if set(chain_input) not in ({"receipt"}, {"receipt", "messages"}):
+        raise Reject("input must contain a receipt, optionally with messages")
+    receipt = require_object(chain_input.get("receipt"), "receipt")
+    validate_schema(suite_base, "attestation.schema.json", receipt)
+    if not attestation_version_at_least(receipt.get("concordia_attestation"), 0, 3):
+        raise Reject("receipt is legacy set-unbound")
+    chain_head = receipt.get("chain_head")
+    message_count = receipt.get("message_count")
+    if not isinstance(chain_head, str) or SHA256_HEX_RE.match(chain_head) is None:
+        raise Reject("receipt chain_head is malformed")
+    if not isinstance(message_count, int) or isinstance(message_count, bool) or message_count < 1:
+        raise Reject("receipt message_count is malformed")
+
+    public_keys = context.get("public_keys_b64url")
+    parties = receipt.get("parties")
+    countersignatures = receipt.get("countersignatures")
+    if not isinstance(public_keys, dict):
+        raise Reject("receipt public key map is missing")
+    if not isinstance(parties, list):
+        raise Reject("receipt parties are missing")
+    if not isinstance(countersignatures, dict):
+        raise Reject("receipt countersignatures are missing")
+    countersign_payload = countersign_preimage(receipt)
+    for party_item in parties:
+        party = require_object(party_item, "receipt party")
+        agent_id = party.get("agent_id")
+        if not isinstance(agent_id, str) or not agent_id:
+            raise Reject("receipt party agent_id is missing")
+        public_key = public_keys.get(agent_id)
+        if not isinstance(public_key, str):
+            raise Reject("receipt party public key is missing")
+        verify_ed25519(
+            public_key,
+            bare_signature(party),
+            jcs_bytes(without_top_level(party, {"signature"})),
+        )
+        countersignature = countersignatures.get(agent_id)
+        if not isinstance(countersignature, str):
+            raise Reject("receipt countersignature is missing")
+        verify_ed25519(public_key, countersignature, countersign_payload)
+
+    if "messages" not in chain_input:
+        # chain_head and message_count are the issuer's own claim about a
+        # transcript, so a verdict reached without one has checked that claim
+        # against nothing. Unestablished is never an accept.
+        raise Reject("set binding is unestablished without a transcript")
+    messages = chain_input.get("messages")
+    if not isinstance(messages, list) or not messages:
+        raise Reject("transcript messages are missing")
+    for item in messages:
+        message = require_object(item, "transcript message")
+        sender = require_object(message.get("from"), "transcript sender")
+        agent_id = sender.get("agent_id")
+        if not isinstance(agent_id, str):
+            raise Reject("transcript sender agent_id is missing")
+        public_key = public_keys.get(agent_id)
+        verify_ed25519(
+            public_key,
+            message.get("signature"),
+            jcs_bytes(without_top_level(message, {"signature"})),
+        )
+
+    chain = reconstruct_single_chain(messages)
+    if message_count != len(chain):
+        raise Reject("receipt message_count mismatch")
+    if chain_head != message_hash(chain[-1]):
+        raise Reject("receipt chain_head mismatch")
+
+
 def verify_message_chain(
     input_data: Json,
     suite_base: Path,
@@ -1426,6 +1560,8 @@ def verify_profile(
         verify_receipt_bundle(suite_base, input_data, context)
     elif profile == "message-chain-v1":
         verify_message_chain(input_data, suite_base, context, regression)
+    elif profile == "receipt-set-binding-v1":
+        verify_receipt_set_binding_profile(suite_base, input_data, context)
     else:
         raise Reject("unknown verification profile")
 

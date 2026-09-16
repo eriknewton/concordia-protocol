@@ -17,17 +17,26 @@ MANIFEST_PATH = REPO_ROOT / "conformance" / "vectors" / "manifest.json"
 EXPECTED_VECTORS = {
     "positive": {
         "pos-synthetic-receipt-set-binding": "accept",
+        "pos-synthetic-receipt-set-binding-reconstruction": "accept",
     },
     "mutation": {
         "mut-synthetic-receipt-set-binding-0001": "reject",
         "mut-synthetic-receipt-set-binding-0002": "reject",
         "mut-synthetic-receipt-set-binding-0003": "reject",
         "mut-synthetic-receipt-set-binding-0004": "reject",
+        "mut-synthetic-receipt-set-reconstruction-0001": "reject",
+        "mut-synthetic-receipt-set-reconstruction-0002": "reject",
+        "mut-synthetic-receipt-set-reconstruction-0003": "reject",
+        "mut-synthetic-receipt-set-reconstruction-0004": "reject",
+        "mut-synthetic-receipt-set-reconstruction-0005": "reject",
+        "mut-synthetic-receipt-set-reconstruction-0006": "reject",
+        "mut-synthetic-receipt-set-reconstruction-0007": "reject",
     },
     "canary": {
         "canary-receipt-set-unchecked": "reject",
     },
 }
+RECONSTRUCTION_PREFIX = "mut-synthetic-receipt-set-reconstruction-"
 
 
 class CheckError(RuntimeError):
@@ -141,11 +150,88 @@ def check_reject(vector: dict[str, Any], vector_id: str) -> None:
         require(not head_matches and not count_matches, "0004 must splice the transcript")
 
 
+def reconstruction_pair(
+    vector: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]] | None]:
+    require(
+        vector.get("verification_profile") == "receipt-set-binding-v1",
+        "wrong profile",
+    )
+    require(vector.get("record_type") == "message_chain", "wrong record_type")
+    input_data = vector.get("input")
+    require(isinstance(input_data, dict), "vector input is not an object")
+    receipt = input_data.get("receipt")
+    require(isinstance(receipt, dict), "receipt is missing from vector input")
+    if "messages" not in input_data:
+        return receipt, None
+    messages = input_data.get("messages")
+    require(isinstance(messages, list) and messages, "messages are missing")
+    require(
+        all(isinstance(message, dict) for message in messages),
+        "message is not an object",
+    )
+    return receipt, messages
+
+
+def check_reconstruction_positive(vector: dict[str, Any]) -> None:
+    receipt, messages = reconstruction_pair(vector)
+    require(vector.get("expected") == "accept", "positive vector must accept")
+    require(messages is not None, "the positive vector must supply a transcript")
+    assert messages is not None
+    require(receipt.get("message_count") == len(messages), "positive count mismatch")
+    require(
+        receipt.get("chain_head") == message_hash(messages[-1]),
+        "positive chain_head mismatch",
+    )
+
+
+def check_reconstruction_reject(vector: dict[str, Any], vector_id: str) -> None:
+    """Every reconstruction reject must be one a weak verifier would accept.
+
+    The guard these vectors defend is the difference between reconstructing a
+    chain and comparing a final digest to a count. A vector that a
+    digest-and-count comparison already refuses would prove nothing about that
+    difference, so each one is required here to be indistinguishable from a
+    genuine set under the weak comparison.
+    """
+    receipt, messages = reconstruction_pair(vector)
+    require(vector.get("expected") == "reject", f"{vector_id} must reject")
+    require(
+        vector.get("expected_reason_class") == "binding",
+        f"{vector_id} must reject as binding",
+    )
+    if messages is None:
+        require(
+            vector_id.endswith("0001"),
+            "only 0001 presents a receipt with no transcript",
+        )
+        require(
+            isinstance(receipt.get("chain_head"), str)
+            and isinstance(receipt.get("message_count"), int),
+            "0001 must carry well-formed set-binding fields",
+        )
+        return
+    require(
+        receipt.get("chain_head") == message_hash(messages[-1]),
+        f"{vector_id} must keep the final presented hash matching chain_head",
+    )
+    require(
+        receipt.get("message_count") == len(messages),
+        f"{vector_id} must keep message_count matching the presented length",
+    )
+
+
 def main() -> int:
     try:
         vectors = load_expected_vectors()
         check_positive(vectors["positive"]["pos-synthetic-receipt-set-binding"])
+        check_reconstruction_positive(
+            vectors["positive"]["pos-synthetic-receipt-set-binding-reconstruction"]
+        )
         for vector_id, vector in sorted(vectors["mutation"].items()):
+            if vector_id.startswith(RECONSTRUCTION_PREFIX):
+                check_reconstruction_reject(vector, vector_id)
+                continue
             check_reject(vector, vector_id)
         canary = vectors["canary"]["canary-receipt-set-unchecked"]
         check_reject(canary, "canary-receipt-set-unchecked")

@@ -20,7 +20,7 @@ node conformance/reference-runner-js/runner.mjs conformance/vectors | tail -1
 ```
 
 Expected summary for both:
-`[SUMMARY] positive=53 mutation=1488 canary=5 ok=1546 fail=0`
+`[SUMMARY] positive=54 mutation=1495 canary=5 ok=1554 fail=0`
 
 Contract: [`conformance/RUNNER_CONTRACT.md`](conformance/RUNNER_CONTRACT.md). Profiles: [`conformance/PROFILES.md`](conformance/PROFILES.md). Registry: [`conformance/IMPLEMENTATIONS.md`](conformance/IMPLEMENTATIONS.md).
 

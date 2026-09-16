@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from .cosign import canonical_cosign_bytes
-from .message import compute_hash
+from .message import GENESIS_HASH, compute_hash
 from .signing import KeyPair, canonical_json, sign_message, verify_signature
 from .types import (
     OutcomeStatus,
@@ -498,6 +498,107 @@ def _attestation_version_at_least(ver: str, major: int, minor: int) -> bool:
     return (int(parts[0]), int(parts[1])) >= (major, minor)
 
 
+def _reconstruct_single_chain(
+    transcript: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Rebuild one message order from ``prev_hash`` links alone (SPEC §9.6.5b).
+
+    The presented order is never consulted: the presenter chooses it, so an
+    order read off the list would let a fork, an orphan, or a second root ride
+    through whenever the last presented element still hashes to ``chain_head``.
+    Reconstruction is therefore the only ordering evidence, and it must be
+    total: exactly one message has no predecessor, every other message's
+    ``prev_hash`` is the §9.3 digest of exactly one presented message, no
+    message has two successors, and the walk from the single root visits every
+    presented message.
+
+    The digest compared against ``prev_hash`` is ``compute_hash``, the SHA-256
+    of the complete canonical form of a message INCLUDING its signature. A
+    reconstruction that hashed the signature-stripped form would accept a
+    transcript whose links were computed under the wrong convention, so the
+    convention is part of the check rather than an assumption about it.
+
+    Returns ``(chain, errors)``. Fail-closed: whenever ``errors`` is non-empty
+    the chain is empty, so no caller can read a partial reconstruction as an
+    order.
+    """
+    errors: list[str] = []
+    for index, message in enumerate(transcript):
+        if not isinstance(message, Mapping):
+            errors.append(f"transcript message {index} is not a JSON object")
+    if errors:
+        return [], errors
+
+    digests: list[str] = [compute_hash(message) for message in transcript]
+    by_digest: dict[str, int] = {}
+    for index, digest in enumerate(digests):
+        if digest in by_digest:
+            # Two byte-identical messages have one digest, so "exactly one
+            # presented message" is already false and a count taken from the
+            # presented list would over-count the chain.
+            errors.append(
+                "transcript presents the same message more than once; a chain "
+                "visits each message once"
+            )
+            return [], errors
+        by_digest[digest] = index
+
+    roots: list[int] = []
+    successor_of: dict[int, int] = {}
+    for index, message in enumerate(transcript):
+        prev_hash = message.get("prev_hash")
+        if prev_hash is None or prev_hash == GENESIS_HASH:
+            roots.append(index)
+            continue
+        if not isinstance(prev_hash, str):
+            errors.append(f"transcript message {index} has a non-string prev_hash")
+            continue
+        predecessor = by_digest.get(prev_hash)
+        if predecessor is None:
+            errors.append(
+                f"transcript message {index} is an orphan: its prev_hash "
+                f"matches no presented message"
+            )
+            continue
+        if predecessor in successor_of:
+            errors.append(
+                f"transcript forks at message {predecessor}: two presented "
+                f"messages claim it as predecessor"
+            )
+            continue
+        successor_of[predecessor] = index
+
+    if not roots:
+        errors.append(
+            "transcript has no root message: a chain has exactly one message "
+            "without prev_hash"
+        )
+    elif len(roots) > 1:
+        errors.append(
+            f"transcript has {len(roots)} root messages without prev_hash; a "
+            f"chain has exactly one"
+        )
+
+    if errors:
+        return [], errors
+
+    chain: list[dict[str, Any]] = []
+    cursor: int | None = roots[0]
+    while cursor is not None:
+        chain.append(transcript[cursor])
+        cursor = successor_of.get(cursor)
+    if len(chain) != len(transcript):
+        # Closing invariant: a walk shorter than the presented set means part
+        # of the set is disconnected from the root, which is set substitution
+        # however the individual links verify.
+        errors.append(
+            f"transcript does not form a single chain: the walk from the root "
+            f"visits {len(chain)} of {len(transcript)} presented messages"
+        )
+        return [], errors
+    return chain, []
+
+
 def evaluate_receipt_set_binding(
     attestation: dict[str, Any],
     transcript: list[dict[str, Any]] | None = None,
@@ -505,8 +606,13 @@ def evaluate_receipt_set_binding(
     """Validate the v0.3.0 receipt set-binding fields.
 
     Returns ``(state, errors)`` where ``state`` is one of:
-      - ``"bound"``: >=0.3.0 fields are present, well-formed, and, when a
-        transcript was supplied, match its final message hash and length.
+      - ``"bound"``: >=0.3.0 fields are present and well-formed, a transcript
+        was supplied, it reconstructs to one chain from its ``prev_hash``
+        links, and that chain's head and length match the receipt.
+      - ``"fields_present_unverified"``: >=0.3.0 fields are present and
+        well-formed but NO transcript was supplied, so set binding is
+        unestablished. This is reported, not an error, and must not be
+        credited as set-bound.
       - ``"legacy_set_unbound"``: <0.3.0 or malformed version. This is
         reported, not an error, and must not be credited as set-bound.
       - ``"error"``: >=0.3.0 but required fields are missing, malformed, or do
@@ -531,14 +637,30 @@ def evaluate_receipt_set_binding(
     ):
         errors.append(f"version {ver} requires message_count as an integer >= 1")
 
-    if transcript is not None:
-        if not isinstance(transcript, list):
-            errors.append("transcript must be a list when verifying set binding")
-        elif not transcript:
-            errors.append("transcript must contain at least one message")
+    if transcript is None:
+        # A "bound" verdict reached without ever seeing a transcript is the
+        # fail-open this state closes: the two fields are the receipt's own
+        # claim about a transcript, so checking them against nothing verifies
+        # nothing. Absence reads as unestablished, never as bound.
+        if errors:
+            return "error", errors
+        return "fields_present_unverified", []
+
+    if not isinstance(transcript, list):
+        errors.append("transcript must be a list when verifying set binding")
+    elif not transcript:
+        errors.append("transcript must contain at least one message")
+    else:
+        chain, chain_errors = _reconstruct_single_chain(transcript)
+        if chain_errors:
+            errors.extend(chain_errors)
         else:
-            expected_count = len(transcript)
-            expected_head = compute_hash(transcript[-1])
+            # Both comparisons read the RECONSTRUCTED chain, never the
+            # presented list: a count taken from the list would credit a set
+            # the root cannot reach, which is the substitution set binding
+            # exists to refuse.
+            expected_count = len(chain)
+            expected_head = compute_hash(chain[-1])
             if (
                 isinstance(message_count, int)
                 and not isinstance(message_count, bool)
@@ -735,6 +857,16 @@ def verify_attestation(
             warnings.append(
                 "attestation is legacy set-unbound (<0.3.0); chain_head and "
                 "message_count are not credited as bound"
+            )
+        elif set_binding_state == "fields_present_unverified":
+            # A caller that reads a valid result as "set-bound" would be
+            # crediting the receipt's own claim about a transcript nobody
+            # supplied, so the unestablished state is surfaced here rather
+            # than left to be inferred from ``valid``.
+            warnings.append(
+                "no transcript was supplied, so set binding is unestablished; "
+                "chain_head and message_count are present but not credited as "
+                "bound"
             )
 
         errors = [*schema_errors, *signature_errors, *set_binding_errors]

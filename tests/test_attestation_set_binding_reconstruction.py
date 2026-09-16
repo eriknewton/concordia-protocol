@@ -1,0 +1,258 @@
+"""Set-binding verification over a reconstructed transcript chain (SPEC §9.6.5b).
+
+A receipt's ``chain_head`` and ``message_count`` describe a transcript. This
+module covers the two conditions under which a verifier may credit that
+description: a transcript has to be supplied at all, and the supplied messages
+have to rebuild into exactly one chain from their ``prev_hash`` links, whatever
+order the presenter chose for them.
+"""
+
+from __future__ import annotations
+
+import copy
+import hashlib
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from concordia import Agent, BasicOffer, generate_attestation, verify_attestation
+from concordia.attestation import evaluate_receipt_set_binding
+from concordia.message import GENESIS_HASH, compute_hash
+from concordia.signing import canonical_json
+
+
+@pytest.fixture
+def agreed_receipt() -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+    """An agreed session's attestation, its transcript, and its public keys."""
+    seller = Agent("seller_setbinding")
+    buyer = Agent("buyer_setbinding")
+    terms = {"price": {"value": 150.00, "currency": "USD"}}
+    session = seller.open_session(counterparty=buyer.identity, terms=terms)
+    buyer.join_session(session)
+    buyer.accept_session()
+    seller.send_offer(
+        BasicOffer(terms={"price": {"value": 135.00, "currency": "USD"}}),
+        reasoning="Fair price for the condition",
+    )
+    buyer.accept_offer(reasoning="Looks good")
+
+    key_pairs = {
+        seller.identity.agent_id: seller.key_pair,
+        buyer.identity.agent_id: buyer.key_pair,
+    }
+    attestation = generate_attestation(session, key_pairs)
+    public_keys = {
+        agent_id: key_pair.public_key for agent_id, key_pair in key_pairs.items()
+    }
+    return attestation, list(session.transcript), public_keys
+
+
+class TestTranscriptIsRequired:
+    def test_no_transcript_is_unestablished_not_bound(self, agreed_receipt):
+        attestation, _transcript, _keys = agreed_receipt
+
+        state, errors = evaluate_receipt_set_binding(attestation)
+
+        assert state == "fields_present_unverified"
+        assert errors == []
+
+    def test_no_transcript_still_verifies_and_warns(self, agreed_receipt):
+        attestation, _transcript, public_keys = agreed_receipt
+
+        result = verify_attestation(attestation, public_keys)
+
+        assert result.valid is True
+        assert result.set_binding_state == "fields_present_unverified"
+        assert any("set binding is unestablished" in w for w in result.warnings)
+
+    def test_malformed_fields_without_a_transcript_still_error(self, agreed_receipt):
+        attestation, _transcript, _keys = agreed_receipt
+        attestation = copy.deepcopy(attestation)
+        attestation["chain_head"] = "sha256:NOTLOWERHEX"
+
+        state, errors = evaluate_receipt_set_binding(attestation)
+
+        assert state == "error"
+        assert any("requires chain_head" in error for error in errors)
+
+    def test_supplied_transcript_binds(self, agreed_receipt):
+        attestation, transcript, _keys = agreed_receipt
+
+        state, errors = evaluate_receipt_set_binding(attestation, transcript)
+
+        assert state == "bound"
+        assert errors == []
+
+
+class TestChainReconstruction:
+    def test_presented_order_does_not_decide_the_chain(self, agreed_receipt):
+        attestation, transcript, _keys = agreed_receipt
+        shuffled = [transcript[-1], *transcript[:-1]]
+
+        state, errors = evaluate_receipt_set_binding(attestation, shuffled)
+
+        assert state == "bound", errors
+
+    def test_fork_is_rejected(self, agreed_receipt):
+        attestation, transcript, _keys = agreed_receipt
+        attestation = copy.deepcopy(attestation)
+        sibling = copy.deepcopy(transcript[1])
+        sibling["id"] = f"{sibling['id']}_fork"
+        sibling["prev_hash"] = compute_hash(transcript[0])
+        presented = [*transcript, sibling]
+        attestation["message_count"] = len(presented)
+
+        state, errors = evaluate_receipt_set_binding(attestation, presented)
+
+        assert state == "error"
+        assert any("forks" in error for error in errors)
+
+    def test_orphan_is_rejected(self, agreed_receipt):
+        attestation, transcript, _keys = agreed_receipt
+        attestation = copy.deepcopy(attestation)
+        orphan = copy.deepcopy(transcript[1])
+        orphan["id"] = f"{orphan['id']}_orphan"
+        orphan["prev_hash"] = "sha256:" + ("ab" * 32)
+        presented = [transcript[0], orphan, *transcript[1:]]
+        attestation["message_count"] = len(presented)
+
+        state, errors = evaluate_receipt_set_binding(attestation, presented)
+
+        assert state == "error"
+        assert any("orphan" in error for error in errors)
+
+    def test_two_messages_without_prev_hash_are_rejected(self, agreed_receipt):
+        attestation, transcript, _keys = agreed_receipt
+        attestation = copy.deepcopy(attestation)
+        second_root = copy.deepcopy(transcript[0])
+        second_root["id"] = f"{second_root['id']}_root"
+        second_root["prev_hash"] = GENESIS_HASH
+        presented = [transcript[0], second_root, *transcript[1:]]
+        attestation["message_count"] = len(presented)
+
+        state, errors = evaluate_receipt_set_binding(attestation, presented)
+
+        assert state == "error"
+        assert any("root messages" in error for error in errors)
+
+    def test_no_root_is_rejected(self, agreed_receipt):
+        attestation, transcript, _keys = agreed_receipt
+
+        state, errors = evaluate_receipt_set_binding(attestation, transcript[1:])
+
+        assert state == "error"
+        assert any("no root message" in error for error in errors)
+
+    def test_equal_size_substitution_is_rejected(self, agreed_receipt):
+        attestation, transcript, _keys = agreed_receipt
+        substitute = copy.deepcopy(transcript[1])
+        substitute["id"] = f"{substitute['id']}_substitute"
+        presented = [transcript[0], substitute, *transcript[2:]]
+
+        assert len(presented) == attestation["message_count"]
+        assert compute_hash(presented[-1]) == attestation["chain_head"]
+        state, errors = evaluate_receipt_set_binding(attestation, presented)
+
+        assert state == "error"
+        assert errors
+
+    def test_duplicate_message_is_rejected(self, agreed_receipt):
+        attestation, transcript, _keys = agreed_receipt
+        attestation = copy.deepcopy(attestation)
+        presented = [transcript[0], copy.deepcopy(transcript[0]), *transcript[1:]]
+        attestation["message_count"] = len(presented)
+
+        state, errors = evaluate_receipt_set_binding(attestation, presented)
+
+        assert state == "error"
+        assert any("more than once" in error for error in errors)
+
+    def test_links_under_the_signature_stripped_convention_are_rejected(
+        self, agreed_receipt
+    ):
+        attestation, transcript, _keys = agreed_receipt
+        attestation = copy.deepcopy(attestation)
+        relinked = [copy.deepcopy(transcript[0])]
+        for message in transcript[1:]:
+            variant = copy.deepcopy(message)
+            stripped = {
+                key: value
+                for key, value in relinked[-1].items()
+                if key != "signature"
+            }
+            digest = hashlib.sha256(canonical_json(stripped)).hexdigest()
+            variant["prev_hash"] = f"sha256:{digest}"
+            relinked.append(variant)
+        attestation["chain_head"] = compute_hash(relinked[-1])
+
+        assert len(relinked) == attestation["message_count"]
+        state, errors = evaluate_receipt_set_binding(attestation, relinked)
+
+        assert state == "error"
+        assert any("orphan" in error for error in errors)
+
+    def test_message_that_is_not_an_object_fails_closed(self, agreed_receipt):
+        attestation, transcript, _keys = agreed_receipt
+
+        state, errors = evaluate_receipt_set_binding(
+            attestation, [*transcript[:-1], "not-a-message"]
+        )
+
+        assert state == "error"
+        assert any("not a JSON object" in error for error in errors)
+
+
+class TestSharedConformanceVectors:
+    """The Python verifier's verdict on the vectors the JS SDK also executes.
+
+    The same file is read by js-sdk/tests/attestation-set-binding-reconstruction
+    .test.ts, so a divergence between the two SDKs shows up as one of these
+    assertions failing on one side only.
+    """
+
+    VECTORS = Path(__file__).resolve().parent.parent / "conformance" / "vectors"
+    REJECT_IDS = tuple(
+        f"mut-synthetic-receipt-set-reconstruction-000{index}" for index in range(1, 8)
+    )
+
+    def _pair(
+        self, section: str, vector_id: str
+    ) -> tuple[dict[str, Any], list[dict[str, Any]] | None]:
+        path = self.VECTORS / section / f"{vector_id}.json"
+        vector = json.loads(path.read_text(encoding="utf-8"))
+        return vector["input"]["receipt"], vector["input"].get("messages")
+
+    def test_positive_vector_binds(self):
+        receipt, messages = self._pair(
+            "positive", "pos-synthetic-receipt-set-binding-reconstruction"
+        )
+
+        assert evaluate_receipt_set_binding(receipt, messages) == ("bound", [])
+
+    @pytest.mark.parametrize("vector_id", REJECT_IDS)
+    def test_reject_vector_is_not_bound(self, vector_id):
+        receipt, messages = self._pair("mutation", vector_id)
+
+        state, _errors = evaluate_receipt_set_binding(receipt, messages)
+
+        assert state != "bound"
+        if messages is None:
+            assert state == "fields_present_unverified"
+        else:
+            assert state == "error"
+
+    @pytest.mark.parametrize("vector_id", REJECT_IDS)
+    def test_reject_vector_defeats_a_digest_and_count_comparison(self, vector_id):
+        """Each reject vector must be one a weak verifier would have accepted.
+
+        A vector a digest-and-count comparison already refuses proves nothing
+        about reconstruction, so the guard would be untested by it.
+        """
+        receipt, messages = self._pair("mutation", vector_id)
+        if messages is None:
+            return
+
+        assert receipt["message_count"] == len(messages)
+        assert receipt["chain_head"] == compute_hash(messages[-1])

@@ -69,7 +69,7 @@ import {
   behaviorRecordToDict,
 } from '../types/index.js';
 import { validateReference } from '../predicate/references.js';
-import { computeHash, type Session } from '../session/index.js';
+import { GENESIS_HASH, computeHash, type Session } from '../session/index.js';
 
 /** Attestation schema version, byte-identical to Python `ATTESTATION_VERSION`. */
 export const ATTESTATION_VERSION = '0.5.0';
@@ -80,7 +80,8 @@ const SET_BINDING_MIN = { major: 0, minor: 3 } as const;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+$/;
 const SHA256_HEX_PATTERN = /^sha256:[a-f0-9]{64}$/;
 
-export type ReceiptSetBindingState = 'bound' | 'legacy_set_unbound' | 'error';
+export type ReceiptSetBindingState =
+  'bound' | 'fields_present_unverified' | 'legacy_set_unbound' | 'error';
 
 export interface ReceiptSetBindingResult {
   state: ReceiptSetBindingState;
@@ -93,6 +94,106 @@ function attestationVersionAtLeast(version: unknown, major: number, minor: numbe
   const gotMajor = Number.parseInt(parts[0] ?? '0', 10);
   const gotMinor = Number.parseInt(parts[1] ?? '0', 10);
   return gotMajor > major || (gotMajor === major && gotMinor >= minor);
+}
+
+/**
+ * Rebuild one message order from `prev_hash` links alone (SPEC 9.6.5b),
+ * byte-for-byte the same rule as Python `_reconstruct_single_chain`.
+ *
+ * The presented order is never consulted: the presenter chooses it, so an
+ * order read off the array would let a fork, an orphan, or a second root ride
+ * through whenever the last presented element still hashes to `chain_head`.
+ * The digest compared against `prev_hash` is `computeHash`, the SHA-256 of the
+ * complete canonical form of a message INCLUDING its signature, so a
+ * transcript whose links were computed over the signature-stripped form does
+ * not reconstruct. Fail-closed: whenever `errors` is non-empty the returned
+ * chain is empty, so no caller can read a partial reconstruction as an order.
+ */
+function reconstructSingleChain(transcript: Array<Record<string, unknown>>): {
+  chain: Array<Record<string, unknown>>;
+  errors: string[];
+} {
+  const errors: string[] = [];
+  for (let index = 0; index < transcript.length; index += 1) {
+    const message = transcript[index];
+    if (typeof message !== 'object' || message === null || Array.isArray(message)) {
+      errors.push(`transcript message ${index} is not a JSON object`);
+    }
+  }
+  if (errors.length > 0) return { chain: [], errors };
+
+  const digests = transcript.map((message) => computeHash(message));
+  const byDigest = new Map<string, number>();
+  for (let index = 0; index < digests.length; index += 1) {
+    const digest = digests[index]!;
+    if (byDigest.has(digest)) {
+      // Two byte-identical messages have one digest, so "exactly one presented
+      // message" is already false and a count taken from the presented array
+      // would over-count the chain.
+      errors.push(
+        'transcript presents the same message more than once; a chain visits each message once',
+      );
+      return { chain: [], errors };
+    }
+    byDigest.set(digest, index);
+  }
+
+  const roots: number[] = [];
+  const successorOf = new Map<number, number>();
+  for (let index = 0; index < transcript.length; index += 1) {
+    const prevHash = transcript[index]!.prev_hash;
+    if (prevHash === undefined || prevHash === null || prevHash === GENESIS_HASH) {
+      roots.push(index);
+      continue;
+    }
+    if (typeof prevHash !== 'string') {
+      errors.push(`transcript message ${index} has a non-string prev_hash`);
+      continue;
+    }
+    const predecessor = byDigest.get(prevHash);
+    if (predecessor === undefined) {
+      errors.push(
+        `transcript message ${index} is an orphan: its prev_hash matches no presented message`,
+      );
+      continue;
+    }
+    if (successorOf.has(predecessor)) {
+      errors.push(
+        `transcript forks at message ${predecessor}: two presented messages claim it as predecessor`,
+      );
+      continue;
+    }
+    successorOf.set(predecessor, index);
+  }
+
+  if (roots.length === 0) {
+    errors.push(
+      'transcript has no root message: a chain has exactly one message without prev_hash',
+    );
+  } else if (roots.length > 1) {
+    errors.push(
+      `transcript has ${roots.length} root messages without prev_hash; a chain has exactly one`,
+    );
+  }
+
+  if (errors.length > 0) return { chain: [], errors };
+
+  const chain: Array<Record<string, unknown>> = [];
+  let cursor: number | undefined = roots[0];
+  while (cursor !== undefined) {
+    chain.push(transcript[cursor]!);
+    cursor = successorOf.get(cursor);
+  }
+  if (chain.length !== transcript.length) {
+    // Closing invariant: a walk shorter than the presented set means part of
+    // the set is disconnected from the root, which is set substitution however
+    // the individual links verify.
+    errors.push(
+      `transcript does not form a single chain: the walk from the root visits ${chain.length} of ${transcript.length} presented messages`,
+    );
+    return { chain: [], errors };
+  }
+  return { chain, errors: [] };
 }
 
 export function verifyReceiptSetBinding(
@@ -114,14 +215,31 @@ export function verifyReceiptSetBinding(
     errors.push(`version ${String(version)} requires message_count as an integer >= 1`);
   }
 
-  if (transcript !== null) {
-    if (!Array.isArray(transcript)) {
-      errors.push('transcript must be a list when verifying set binding');
-    } else if (transcript.length === 0) {
-      errors.push('transcript must contain at least one message');
+  if (transcript === null) {
+    // A 'bound' verdict reached without ever seeing a transcript is the
+    // fail-open this state closes: the two fields are the receipt's own claim
+    // about a transcript, so checking them against nothing verifies nothing.
+    // Absence reads as unestablished, never as bound.
+    if (errors.length > 0) {
+      return { state: 'error', errors };
+    }
+    return { state: 'fields_present_unverified', errors: [] };
+  }
+
+  if (!Array.isArray(transcript)) {
+    errors.push('transcript must be a list when verifying set binding');
+  } else if (transcript.length === 0) {
+    errors.push('transcript must contain at least one message');
+  } else {
+    const { chain, errors: chainErrors } = reconstructSingleChain(transcript);
+    if (chainErrors.length > 0) {
+      errors.push(...chainErrors);
     } else {
-      const expectedCount = transcript.length;
-      const expectedHead = computeHash(transcript[transcript.length - 1]!);
+      // Both comparisons read the RECONSTRUCTED chain, never the presented
+      // array: a count taken from the array would credit a set the root cannot
+      // reach, which is the substitution set binding exists to refuse.
+      const expectedCount = chain.length;
+      const expectedHead = computeHash(chain[chain.length - 1]!);
       if (
         typeof messageCount === 'number' &&
         Number.isInteger(messageCount) &&
