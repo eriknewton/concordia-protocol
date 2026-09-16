@@ -111,6 +111,12 @@ function attestationVersionAtLeast(version: unknown, major: number, minor: numbe
  */
 function reconstructSingleChain(transcript: Array<Record<string, unknown>>): {
   chain: Array<Record<string, unknown>>;
+  // The chain's terminal message's digest, taken from the SAME `digests`
+  // array the walk below is built from -- never recomputed later by
+  // rehashing the original object a second time. Set exactly when errors is
+  // empty; see the caller (`verifyReceiptSetBinding`), which is the only
+  // consumer and only reads it in that case.
+  headDigest: string | undefined;
   errors: string[];
 } {
   const errors: string[] = [];
@@ -120,18 +126,22 @@ function reconstructSingleChain(transcript: Array<Record<string, unknown>>): {
       errors.push(`transcript message ${index} is not a JSON object`);
     }
   }
-  if (errors.length > 0) return { chain: [], errors };
+  if (errors.length > 0) return { chain: [], headDigest: undefined, errors };
 
   // One canonical byte string per message, computed once, feeds BOTH the
-  // digest and the link-reading view below. canonicalizeJcs walks only own
-  // enumerable string-keyed members (stableStringify's Object.keys, see
-  // canonicalize.ts) and never invokes a toJSON method, own or inherited,
-  // unlike JSON.stringify. A member that reaches the view therefore always
-  // reaches the digest too: there is no second channel (a hidden toJSON, an
-  // inherited or non-enumerable own accessor) that could carry a prev_hash
-  // the digest never covers. canonicalizeJcs still runs against the
-  // caller's original message object, so checkNoSpecialFloats keeps
-  // rejecting NaN, Infinity, -0, and lossy integers exactly as before.
+  // digest and the link-reading view below (and, via the returned
+  // headDigest, the caller's final chain_head comparison too -- see
+  // verifyReceiptSetBinding). canonicalizeJcs walks only own enumerable
+  // string-keyed members (stableStringify's Object.keys, see
+  // canonicalize.ts), rejects any own accessor property outright, and never
+  // invokes a toJSON method, own or inherited, unlike JSON.stringify. A
+  // member that reaches the view therefore always reaches the digest too:
+  // there is no second channel (a hidden toJSON, an inherited or
+  // non-enumerable own accessor) that could carry a prev_hash the digest
+  // never covers, and no second READ of this message's fields anywhere in
+  // this function or its caller -- canonicalizeJcs runs against each
+  // message's original object exactly once. canonicalizeJcs still rejects
+  // NaN, Infinity, -0, and lossy integers exactly as before.
   const canonicalBytes = transcript.map((message) => canonicalizeJcs(message));
 
   const digests = canonicalBytes.map((bytes) => hashCanonicalBytes(bytes));
@@ -145,7 +155,7 @@ function reconstructSingleChain(transcript: Array<Record<string, unknown>>): {
       errors.push(
         'transcript presents the same message more than once; a chain visits each message once',
       );
-      return { chain: [], errors };
+      return { chain: [], headDigest: undefined, errors };
     }
     byDigest.set(digest, index);
   }
@@ -211,12 +221,18 @@ function reconstructSingleChain(transcript: Array<Record<string, unknown>>): {
     );
   }
 
-  if (errors.length > 0) return { chain: [], errors };
+  if (errors.length > 0) return { chain: [], headDigest: undefined, errors };
 
   const chain: Array<Record<string, unknown>> = [];
   let cursor: number | undefined = roots[0];
+  // Tracks the ORIGINAL transcript index of the last message pushed, so the
+  // terminal digest below can be read out of `digests` -- the array already
+  // hashed above -- instead of rehashing `chain[chain.length - 1]` (the
+  // caller's original object) a second time.
+  let terminalIndex: number | undefined;
   while (cursor !== undefined) {
     chain.push(transcript[cursor]!);
+    terminalIndex = cursor;
     cursor = successorOf.get(cursor);
   }
   if (chain.length !== transcript.length) {
@@ -226,9 +242,12 @@ function reconstructSingleChain(transcript: Array<Record<string, unknown>>): {
     errors.push(
       `transcript does not form a single chain: the walk from the root visits ${chain.length} of ${transcript.length} presented messages`,
     );
-    return { chain: [], errors };
+    return { chain: [], headDigest: undefined, errors };
   }
-  return { chain, errors: [] };
+  // chain.length === transcript.length and transcript.length > 0 (the caller
+  // rejects an empty transcript before calling this function), so the walk
+  // above ran at least once and terminalIndex is set.
+  return { chain, headDigest: digests[terminalIndex!], errors: [] };
 }
 
 export function verifyReceiptSetBinding(
@@ -266,15 +285,25 @@ export function verifyReceiptSetBinding(
   } else if (transcript.length === 0) {
     errors.push('transcript must contain at least one message');
   } else {
-    const { chain, errors: chainErrors } = reconstructSingleChain(transcript);
+    const { chain, headDigest, errors: chainErrors } = reconstructSingleChain(transcript);
     if (chainErrors.length > 0) {
       errors.push(...chainErrors);
     } else {
       // Both comparisons read the RECONSTRUCTED chain, never the presented
       // array: a count taken from the array would credit a set the root cannot
       // reach, which is the substitution set binding exists to refuse.
+      //
+      // expectedHead reuses headDigest -- the digest reconstructSingleChain
+      // already computed, once, from the same canonicalBytes the chain walk
+      // itself reads links from. It is NOT computeHash(chain[chain.length -
+      // 1]), which would canonicalize the terminal message's ORIGINAL object
+      // a second time: a getter could then answer that second read
+      // differently than the first, passing reconstruction with one value
+      // and this comparison with another (Codex P1, 2026-09-16 delta-5
+      // gate). chainErrors is empty here, which is exactly when
+      // reconstructSingleChain guarantees headDigest is set.
       const expectedCount = chain.length;
-      const expectedHead = computeHash(chain[chain.length - 1]!);
+      const expectedHead = headDigest!;
       if (
         typeof messageCount === 'number' &&
         Number.isInteger(messageCount) &&

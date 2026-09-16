@@ -186,11 +186,40 @@ function b64urlEncode(value) {
   return Buffer.from(value).toString("base64").replace(/\+/g, "-").replace(/\//g, "_");
 }
 
+// True when `owner`'s own property `key` is a getter/setter rather than a
+// plain data slot. getOwnPropertyDescriptor never invokes the accessor, so
+// this check does not itself read the value; it lets jcs() refuse an
+// accessor outright, every call, so it can never answer one read of a
+// message (building canonicalBytes) differently than a later, separate read
+// of the same original object (the chain_head comparison in
+// verifyReceiptSetBindingProfile). Must match isAccessorProperty in
+// js-sdk/src/canonical/canonicalize.ts (Codex P1/P2, 2026-09-16 delta-5
+// gate).
+function isAccessorProperty(owner, key) {
+  const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+  return descriptor !== undefined && (descriptor.get !== undefined || descriptor.set !== undefined);
+}
+
+// jcs() walks an object via Object.keys and an array via index, which see
+// only OWN enumerable members -- never a member reachable solely through the
+// prototype chain (an inherited getter, an inherited toJSON). A plain
+// object literal or JSON.parse output has prototype Object.prototype;
+// Object.create(null) has prototype null; a plain array literal has
+// prototype Array.prototype. Anything else is refused rather than trusted.
+// Must match rejectForeignPrototype in
+// js-sdk/src/canonical/canonicalize.ts.
+function isPlainPrototype(value, kind) {
+  const proto = Object.getPrototypeOf(value);
+  return kind === "array" ? proto === Array.prototype : proto === Object.prototype || proto === null;
+}
+
 function jcs(value) {
   if (value === null) {
     return "null";
   }
   if (typeof value === "number") {
+    // Runs on this exact read, the one that serializes the value below;
+    // there is no earlier pre-pass reading this number a second time.
     if (!Number.isFinite(value)) {
       reject("JCS canonicalization failed");
     }
@@ -200,12 +229,36 @@ function jcs(value) {
     return JSON.stringify(value);
   }
   if (Array.isArray(value)) {
-    return `[${value.map((item) => jcs(item)).join(",")}]`;
+    if (!isPlainPrototype(value, "array")) {
+      reject("JCS canonicalization failed");
+    }
+    // A manual index loop, not `.map`: `.map` performs its own `Get` on each
+    // index to build the callback's `item` argument, which would invoke an
+    // accessor BEFORE the descriptor check below ever ran. Checking the
+    // descriptor first and reading `value[index]` only afterward keeps this
+    // the single read the accessor guard depends on, matching the object
+    // branch below. Must match canonicalize.ts.
+    const parts = [];
+    for (let index = 0; index < value.length; index += 1) {
+      if (isAccessorProperty(value, index)) {
+        reject("JCS canonicalization failed");
+      }
+      parts.push(jcs(value[index]));
+    }
+    return `[${parts.join(",")}]`;
   }
   if (isObject(value)) {
+    if (!isPlainPrototype(value, "object")) {
+      reject("JCS canonicalization failed");
+    }
     return `{${Object.keys(value)
       .sort()
-      .map((key) => `${JSON.stringify(key)}:${jcs(value[key])}`)
+      .map((key) => {
+        if (isAccessorProperty(value, key)) {
+          reject("JCS canonicalization failed");
+        }
+        return `${JSON.stringify(key)}:${jcs(value[key])}`;
+      })
       .join(",")}}`;
   }
   reject("JCS canonicalization failed");
@@ -1520,16 +1573,21 @@ function verifyMessageChainReceiptBinding(suiteBase, inputData, messages, contex
  */
 function reconstructSingleChain(messages) {
   // One canonical byte string per message, computed once, feeds BOTH the
-  // digest below and the link-reading view further down. jcs walks only own
-  // enumerable string-keyed members (Object.keys, see the jcs() function
-  // above) and never invokes a toJSON method, own or inherited, unlike
-  // JSON.stringify. A member that reaches the view can therefore only be one
-  // the digest also covers. Must match attestation.ts and runner.py.
+  // digest below and the link-reading view further down (and, via the
+  // returned headDigest, the caller's chain_head comparison too -- see
+  // verifyReceiptSetBindingProfile). jcs walks only own enumerable
+  // string-keyed members (Object.keys, see the jcs() function above),
+  // rejects any own accessor property outright, and never invokes a toJSON
+  // method, own or inherited, unlike JSON.stringify. A member that reaches
+  // the view can therefore only be one the digest also covers, and no
+  // message's fields are read a second time anywhere in this function or
+  // its caller. Must match attestation.ts and runner.py.
   const canonicalBytes = messages.map((message) => jcsBytes(message));
+  const digests = canonicalBytes.map((bytes) => canonicalSha256(bytes));
 
   const byDigest = new Map();
   for (let index = 0; index < messages.length; index += 1) {
-    const digest = canonicalSha256(canonicalBytes[index]);
+    const digest = digests[index];
     if (byDigest.has(digest)) {
       reject("transcript presents the same message more than once");
     }
@@ -1579,14 +1637,20 @@ function reconstructSingleChain(messages) {
 
   const chain = [];
   let cursor = roots[0];
+  // Tracks the ORIGINAL messages-array index of the last message pushed, so
+  // the terminal digest below reads out of `digests` -- already hashed
+  // above -- instead of rehashing `chain[chain.length - 1]` (the caller's
+  // original object) a second time.
+  let terminalIndex;
   while (cursor !== undefined) {
     chain.push(messages[cursor]);
+    terminalIndex = cursor;
     cursor = successorOf.get(cursor);
   }
   if (chain.length !== messages.length) {
     reject("transcript does not form a single chain");
   }
-  return chain;
+  return { chain, headDigest: digests[terminalIndex] };
 }
 
 /**
@@ -1673,11 +1737,17 @@ function verifyReceiptSetBindingProfile(suiteBase, inputData, context) {
     );
   }
 
-  const chain = reconstructSingleChain(messages);
+  const { chain, headDigest } = reconstructSingleChain(messages);
   if (receipt.message_count !== chain.length) {
     reject("receipt message_count mismatch");
   }
-  if (receipt.chain_head !== messageHash(chain[chain.length - 1])) {
+  // headDigest reuses the digest reconstructSingleChain already computed,
+  // once, from the same canonicalBytes the chain walk reads links from. It
+  // is NOT messageHash(chain[chain.length - 1]), which would canonicalize
+  // the terminal message's ORIGINAL object a second time and let a getter
+  // answer that second read differently than the first (Codex P1,
+  // 2026-09-16 delta-5 gate). Must match attestation.ts.
+  if (receipt.chain_head !== headDigest) {
     reject("receipt chain_head mismatch");
   }
 }
