@@ -132,19 +132,51 @@ describe('chain reconstruction ignores the presented order', () => {
 
   it('does not consume a prev_hash inherited through the prototype chain', () => {
     const messages = base.messages!;
-    // Every non-root message keeps its signed body but loses its own
-    // prev_hash; the link is offered only through the prototype. No signed
-    // or canonical form carries an inherited member, so reconstruction must
-    // treat these as messages with no predecessor, never as a bound chain.
-    const inherited = messages.map((message) => {
-      if (!Object.prototype.hasOwnProperty.call(message, 'prev_hash') || message.prev_hash === GENESIS_HASH) {
-        return message;
-      }
-      const { prev_hash: link, ...rest } = message;
-      return Object.assign(Object.create({ prev_hash: link }) as Msg, rest);
-    });
-    const result = verifyReceiptSetBinding(base.receipt, inherited);
+    // Rebuild the chain from scratch rather than reusing the fixture's own
+    // links: computeHash only ever sees OWN enumerable properties (see
+    // `canonicalizeJcs` -> `stableStringify`, which walks `Object.keys`), so
+    // dropping a message's own `prev_hash` while leaving its other fields
+    // untouched changes that message's digest -- an `in`-based reconstruction
+    // would then orphan on the very first hop, passing this test whether or
+    // not the vulnerable check is fixed (this is why the original version of
+    // this test could not distinguish the two implementations). To isolate
+    // root detection as the only variable, each non-root message here is
+    // reconstructed with no own `prev_hash` at all, and the link is offered
+    // solely through the prototype, set to the CORRECTLY recomputed hash of
+    // the preceding phantom message -- so the chain is internally
+    // self-consistent and only the root/no-root determination differs.
+    // Mirrors the reproduction probe from the 2026-09-16 Codex delta gate
+    // (Review/Concordia/PR243_Gate_2026-09-16/OUT_delta_codex.txt).
+    const phantom: Msg[] = [{ ...messages[0]! }];
+    for (const original of messages.slice(1)) {
+      const { prev_hash: _dropped, ...rest } = original;
+      const linked = Object.assign(
+        Object.create({ prev_hash: computeHash(phantom[phantom.length - 1]!) }) as Msg,
+        rest,
+      );
+      phantom.push(linked);
+    }
+    // Every non-root phantom message truly has no own prev_hash: this is the
+    // precondition the whole construction depends on, not an assertion about
+    // the code under test.
+    for (const message of phantom.slice(1)) {
+      expect(Object.prototype.hasOwnProperty.call(message, 'prev_hash')).toBe(false);
+      expect(message.prev_hash).toBeDefined();
+    }
+    const receipt = {
+      ...base.receipt,
+      message_count: phantom.length,
+      chain_head: computeHash(phantom[phantom.length - 1]!),
+    };
+
+    // An `in`-based check reads the inherited link, walks a chain that
+    // genuinely reconstructs (every digest matches), and returns "bound" --
+    // a real fail-open, not a cosmetic one. The own-property check must
+    // treat every non-root phantom message as a second root instead.
+    const result = verifyReceiptSetBinding(receipt, phantom);
     expect(result.state).not.toBe('bound');
+    expect(result.state).toBe('error');
+    expect(result.errors.some((e) => e.includes('root messages'))).toBe(true);
   });
 
   it('rejects a set with no root message', () => {
