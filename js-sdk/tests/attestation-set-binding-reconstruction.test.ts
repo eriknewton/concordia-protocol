@@ -132,6 +132,18 @@ describe('chain reconstruction ignores the presented order', () => {
 
   it('does not consume a prev_hash inherited through the prototype chain', () => {
     const messages = base.messages!;
+    // The fixture is presented shuffled (SPEC 9.6.5b requires the verifier to
+    // ignore presented order; see 'rejects a set with no root message'
+    // below), so the genesis root is wherever prev_hash === GENESIS_HASH
+    // actually lands, never assumed to be index 0. Seeding a phantom chain
+    // from the wrong message made an earlier version of this test fail for
+    // the wrong reason: an orphan/no-root error from a broken chain, not the
+    // own-vs-inherited distinction the test claims to isolate (2026-09-16
+    // Codex delta gate P2,
+    // Review/Concordia/PR243_Gate_2026-09-16/OUT_delta2_codex.txt).
+    const root = messages.find((message) => message.prev_hash === GENESIS_HASH);
+    if (!root) throw new Error('fixture has no genesis-root message');
+    const rest = messages.filter((message) => message !== root);
     // Rebuild the chain from scratch rather than reusing the fixture's own
     // links: computeHash only ever sees OWN enumerable properties (see
     // `canonicalizeJcs` -> `stableStringify`, which walks `Object.keys`), so
@@ -147,12 +159,12 @@ describe('chain reconstruction ignores the presented order', () => {
     // self-consistent and only the root/no-root determination differs.
     // Mirrors the reproduction probe from the 2026-09-16 Codex delta gate
     // (Review/Concordia/PR243_Gate_2026-09-16/OUT_delta_codex.txt).
-    const phantom: Msg[] = [{ ...messages[0]! }];
-    for (const original of messages.slice(1)) {
-      const { prev_hash: _dropped, ...rest } = original;
+    const phantom: Msg[] = [{ ...root }];
+    for (const original of rest) {
+      const { prev_hash: _dropped, ...restFields } = original;
       const linked = Object.assign(
         Object.create({ prev_hash: computeHash(phantom[phantom.length - 1]!) }) as Msg,
-        rest,
+        restFields,
       );
       phantom.push(linked);
     }
@@ -173,6 +185,54 @@ describe('chain reconstruction ignores the presented order', () => {
     // genuinely reconstructs (every digest matches), and returns "bound" --
     // a real fail-open, not a cosmetic one. The own-property check must
     // treat every non-root phantom message as a second root instead.
+    const result = verifyReceiptSetBinding(receipt, phantom);
+    expect(result.state).not.toBe('bound');
+    expect(result.state).toBe('error');
+    expect(result.errors.some((e) => e.includes('root messages'))).toBe(true);
+  });
+
+  it('does not consume a prev_hash defined as a non-enumerable own property', () => {
+    const messages = base.messages!;
+    // Same genesis-seeded construction as the prototype-chain case above, but
+    // the link this time is an OWN property: `hasOwnProperty` is true for it,
+    // it is merely non-enumerable, which is exactly the gap `Object.keys`
+    // (and so `computeHash`'s `stableStringify`) leaves open. A prior fix
+    // that swapped `in` for `hasOwnProperty` already rejects the inherited
+    // case above, but still accepted this one and returned `bound` (P1,
+    // 2026-09-16 Codex delta gate,
+    // Review/Concordia/PR243_Gate_2026-09-16/OUT_delta2_codex.txt).
+    const root = messages.find((message) => message.prev_hash === GENESIS_HASH);
+    if (!root) throw new Error('fixture has no genesis-root message');
+    const rest = messages.filter((message) => message !== root);
+    const phantom: Msg[] = [{ ...root }];
+    for (const original of rest) {
+      const { prev_hash: _dropped, ...restFields } = original;
+      const linked: Msg = { ...restFields };
+      Object.defineProperty(linked, 'prev_hash', {
+        value: computeHash(phantom[phantom.length - 1]!),
+        enumerable: false,
+        configurable: true,
+      });
+      phantom.push(linked);
+    }
+    // Every non-root phantom message truly has an OWN, non-enumerable
+    // prev_hash: this is the precondition the whole construction depends on,
+    // not an assertion about the code under test.
+    for (const message of phantom.slice(1)) {
+      expect(Object.prototype.hasOwnProperty.call(message, 'prev_hash')).toBe(true);
+      expect(Object.prototype.propertyIsEnumerable.call(message, 'prev_hash')).toBe(false);
+    }
+    const receipt = {
+      ...base.receipt,
+      message_count: phantom.length,
+      chain_head: computeHash(phantom[phantom.length - 1]!),
+    };
+
+    // A `hasOwnProperty`-only check (no enumerability, no projection) reads
+    // this link, walks a chain that genuinely reconstructs, and returns
+    // "bound" -- the projection fix must treat every non-root phantom
+    // message as a second root instead, exactly as it does for the
+    // inherited case above.
     const result = verifyReceiptSetBinding(receipt, phantom);
     expect(result.state).not.toBe('bound');
     expect(result.state).toBe('error');

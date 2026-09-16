@@ -138,15 +138,33 @@ function reconstructSingleChain(transcript: Array<Record<string, unknown>>): {
     byDigest.set(digest, index);
   }
 
+  // Read every prev_hash through the exact view computeHash hashes (own
+  // enumerable string-keyed members, per stableStringify's Object.keys, see
+  // canonicalize.ts), never from the caller's object directly. This is a
+  // chokepoint, not another predicate: hasOwnProperty alone still accepts a
+  // non-enumerable own prev_hash, which stableStringify's Object.keys never
+  // sees, so a caller could attach a link the digest and signature never
+  // cover. JSON.stringify enumerates a value's members the same way
+  // Object.keys does, so a single JSON.parse(JSON.stringify(...)) round trip
+  // drops an inherited, non-enumerable, symbol-keyed, or accessor prev_hash
+  // exactly as the digest already drops it, in one place instead of a
+  // predicate per channel. computeHash above still reads the ORIGINAL
+  // message, not this projection: canonicalizeJcs's checkNoSpecialFloats
+  // guard (NaN/Infinity/-0/lossy-integer rejection) must see the caller's
+  // real values, and the round trip would silently coerce -0 to 0 and
+  // NaN/Infinity to null, turning a reject into a pass.
+  const views = transcript.map(
+    (message) => JSON.parse(JSON.stringify(message)) as Record<string, unknown>,
+  );
+
   const roots: number[] = [];
   const successorOf = new Map<number, number>();
   for (let index = 0; index < transcript.length; index += 1) {
-    const message = transcript[index]!;
-    // Own property only: `in` also finds a prev_hash inherited through the
-    // prototype chain, which no canonical or signed form carries, so an
-    // inherited link would let reconstruction consume a value nobody signed.
-    const hasPrevHash = Object.prototype.hasOwnProperty.call(message, 'prev_hash');
-    const prevHash = message.prev_hash;
+    const view = views[index]!;
+    // links are read from the same view the digest covers; a member the
+    // digest does not cover cannot form a link.
+    const hasPrevHash = Object.prototype.hasOwnProperty.call(view, 'prev_hash');
+    const prevHash = view.prev_hash;
     if (!hasPrevHash || prevHash === GENESIS_HASH) {
       roots.push(index);
       continue;
@@ -156,7 +174,7 @@ function reconstructSingleChain(transcript: Array<Record<string, unknown>>): {
       // read through `.prev_hash` (both are `undefined`/`null`-ish); the
       // contract makes only the absent key a root, so a present-but-null
       // prev_hash is a malformed link, not a second spelling of genesis.
-      // The `in` check above is what keeps these two cases apart.
+      // The `hasOwnProperty` check above is what keeps these two cases apart.
       errors.push(
         `transcript message ${index} has an explicit null prev_hash; only an absent prev_hash or ${JSON.stringify(GENESIS_HASH)} is a root`,
       );
