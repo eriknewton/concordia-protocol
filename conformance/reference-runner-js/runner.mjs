@@ -218,53 +218,113 @@ function hasPlainArrayPrototypeChain(value) {
   return Object.getPrototypeOf(hop2) === null;
 }
 
-// Internal-slot brand test, not a prototype-chain test: true when `value`'s
-// Object.prototype.toString tag is the plain "Object" tag. A Date, RegExp,
-// Error, boxed primitive, or Arguments object carries its tag on an
-// internal slot the spec sets at construction; unlike [[Prototype]], that
-// slot cannot be retargeted by Object.setPrototypeOf, so this catches the
-// bypass the hop-count helpers above cannot: shortening or nulling such a
-// value's prototype chain to pass the hop count while its tag still reads
-// e.g. "Date" (Codex's second probe, 2026-09-16 delta-7 gate: "the
-// prototype-hop guard can be bypassed by shortening a branded object's or
-// class instance's prototype chain"). This tag itself reads an internal
-// slot, but the READ that exposes it -- Object.prototype.toString.call --
-// consults value[Symbol.toStringTag] first when present, so a value that
-// owns that symbol key directly, or whose one-hop prototype does, can make
-// this very function report "Object" for a Date or a boxed Number without
-// moving a single string key or changing the prototype-chain hop count
-// (Codex P1, 2026-09-16 delta-8 gate: a prototype-stripped Date or boxed
-// Number with an own Symbol.toStringTag = "Object" passed both existing
-// guards and canonicalized as {}). hasDisallowedSymbolKey below closes
-// that by refusing any value, or its prototype, that owns a symbol key the
-// plain-data shape does not, and every call site below runs it before
-// trusting this function's answer.
+// The internal-slot brand probes used by hasBuiltinInternalSlot: one per
+// built-in whose internal slot the spec sets at construction and a native
+// accessor/method reads directly with no property [[Get]] on the probed
+// value or its prototype chain. Each probe throws a TypeError when `value`
+// lacks the slot it checks, so "did not throw" means `value` carries that
+// slot and is not plain data.
 //
-// Bounded residual, stated once here for both this helper and its array
-// counterpart below, now exact with the symbol-key guard in place: an
-// object whose prototype chain, tag, AND own-and-prototype symbol keys have
-// ALL been reduced to plain data (for example a Map with its own prototype
-// set to null and no symbol key on itself or that null prototype) is
-// indistinguishable from a plain object holding the same own enumerable
-// data properties, and no such value can ever be produced by JSON.parse or
-// Python's json.loads. Mirrors hasPlainObjectTag in
-// js-sdk/src/canonical/canonicalize.ts; must match it.
-function hasPlainObjectTag(value) {
-  return Object.prototype.toString.call(value) === "[object Object]";
-}
+// This replaces the earlier Object.prototype.toString.call(value) brand
+// test, which itself performs a [[Get]] of Symbol.toStringTag up value's
+// FULL prototype chain (Get(O, @@toStringTag), ECMA-262 25.3.3.2) and can
+// therefore run caller-controlled code: a Proxy used AS a prototype can
+// answer that [[Get]] with a `get` trap while its `ownKeys` trap hides the
+// very key hasDisallowedSymbolKey looks for, so the two guards were
+// reading the same chain through two different operations and the Proxy
+// could lie to one while staying invisible to the other (Grok's "related
+// construction", 2026-09-16 delta-9 gate: a one-hop Proxy prototype with
+// ownKeys: () => [] and a get trap for Symbol.toStringTag restored the
+// delta-7 Date -> {} accept). None of the probes below is defined in
+// terms of a property lookup on `value`: each borrows a native method or
+// accessor from the real built-in's prototype and invokes it with `value`
+// as `this`; the spec defines every one of them to consult an internal
+// slot directly and throw when it is absent, with no step that reads a
+// property of `value` or walks value's [[Prototype]], so a hostile
+// prototype has nothing to answer.
+//
+// Promise is deliberately absent: the only way to probe it is
+// Promise.prototype.then, which schedules a caller-observable job instead
+// of reading a slot, so it is not a safe probe. A real Promise instance
+// does not need one anyway: Promise.prototype owns Symbol.toStringTag as a
+// plain data property (spec-defined, not a getter), so
+// hasDisallowedSymbolKey's one-hop check on the object branch already
+// refuses it before this function ever runs.
+//
+// Must match BUILTIN_BRAND_PROBES in js-sdk/src/canonical/canonicalize.ts.
+const BUILTIN_BRAND_PROBES = [
+  (v) => {
+    Date.prototype.getTime.call(v);
+  },
+  (v) => {
+    Number.prototype.valueOf.call(v);
+  },
+  (v) => {
+    String.prototype.valueOf.call(v);
+  },
+  (v) => {
+    Boolean.prototype.valueOf.call(v);
+  },
+  (v) => {
+    BigInt.prototype.valueOf.call(v);
+  },
+  (v) => {
+    Symbol.prototype.valueOf.call(v);
+  },
+  (v) => {
+    Object.getOwnPropertyDescriptor(RegExp.prototype, "source").get.call(v);
+  },
+  (v) => {
+    Object.getOwnPropertyDescriptor(Map.prototype, "size").get.call(v);
+  },
+  (v) => {
+    Object.getOwnPropertyDescriptor(Set.prototype, "size").get.call(v);
+  },
+  (v) => {
+    WeakMap.prototype.has.call(v, {});
+  },
+  (v) => {
+    WeakSet.prototype.has.call(v, {});
+  },
+  (v) => {
+    Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "byteLength").get.call(v);
+  },
+];
 
-// Array counterpart of hasPlainObjectTag: true when `value` tags as
-// "[object Array]". IsArray (what this tag is keyed on) reflects the
-// exotic Array internal behaviour, not [[Prototype]], so a real Array or
-// Array-subclass instance keeps this tag regardless of prototype
-// tampering -- the same bounded residual applies, and so does its
-// symbol-key guard: an Array subclass instance with no own properties
-// beyond its indices and length, a shortened prototype chain, and no
-// disallowed symbol key, canonicalizes identically to a plain array of the
-// same elements. Mirrors hasPlainArrayTag in
-// js-sdk/src/canonical/canonicalize.ts; must match it.
-function hasPlainArrayTag(value) {
-  return Object.prototype.toString.call(value) === "[object Array]";
+// True when `value` carries a built-in internal slot: a Date, RegExp,
+// boxed Number/String/Boolean/BigInt/Symbol primitive, Map, Set, WeakMap,
+// WeakSet, ArrayBuffer, or any typed array/DataView view over one. Run on
+// the object branch of snapshotPlainJson in place of a toString-based
+// brand test; see BUILTIN_BRAND_PROBES above for why. Because every probe
+// reads an internal slot rather than a property, this closes a residual
+// the old toString-based test left open: a Map or Set with its own
+// [[Prototype]] set to null used to tag as "[object Object]" (its brand
+// comes from a Symbol.toStringTag *property* on Map.prototype/Set.prototype,
+// unreachable once the prototype link is cut) and canonicalized as an
+// indistinguishable plain object; Map.prototype's and Set.prototype's size
+// getters read [[MapData]]/[[SetData]] directly and still throw for a
+// value that never had that slot, so a null-prototype Map or Set is
+// refused here regardless of its [[Prototype]].
+//
+// Arrays never reach this function: Array.isArray(value), already
+// evaluated to enter snapshotPlainJson's array branch, IS the exotic-Array
+// internal check, reads no property of `value` either, and cannot be
+// retargeted by a crafted prototype, so no separate array brand probe is
+// needed.
+//
+// Must match hasBuiltinInternalSlot in
+// js-sdk/src/canonical/canonicalize.ts.
+function hasBuiltinInternalSlot(value) {
+  if (ArrayBuffer.isView(value)) return true;
+  for (const probe of BUILTIN_BRAND_PROBES) {
+    try {
+      probe(value);
+      return true;
+    } catch {
+      // `value` does not carry that slot; try the next probe.
+    }
+  }
+  return false;
 }
 
 // The own symbol keys a plain array's prototype (Array.prototype, in any
@@ -276,31 +336,54 @@ function hasPlainArrayTag(value) {
 // js-sdk/src/canonical/canonicalize.ts.
 const ARRAY_PROTOTYPE_ALLOWED_SYMBOLS = [Symbol.iterator, Symbol.unscopables];
 
-// True when `value` itself owns a symbol-keyed property, or when its
-// prototype (when not null) owns a symbol-keyed property outside
-// `allowedPrototypeSymbols`. Run before the brand test above at every
-// snapshotPlainJson call site: Symbol.toStringTag is a symbol key, and
-// hasPlainObjectTag / hasPlainArrayTag read it through
-// Object.prototype.toString, so a value that owns one itself, or whose
-// one-hop prototype does, retargets the brand test's answer without moving
-// any string key or shortening the prototype chain (Codex P1, 2026-09-16
-// delta-8 gate).
+// True when `value`, or any prototype hop up to `chainAllowedSymbols`'s
+// length, owns a symbol-keyed property outside that hop's allowed set.
+// Index 0 (`value` itself) is always empty: JSON.parse never produces an
+// own symbol key, and neither does a plain object or array literal. Index
+// 1 is non-empty only for the array chain, whose one-hop prototype is
+// Array.prototype (see ARRAY_PROTOTYPE_ALLOWED_SYMBOLS above); every other
+// checked hop -- an object's one-hop prototype, and an array's two-hop
+// prototype -- is Object.prototype or null, which legitimately owns no
+// symbol key, so callers pass an empty array there.
 //
-// `value` itself never legitimately owns a symbol key for JSON data --
-// JSON.parse never produces one, and a plain object or array literal owns
-// none of its own -- so the allowed set applies ONLY to the prototype, and
-// only because a plain array's prototype is Array.prototype, which is not
-// itself plain data and does own two (see ARRAY_PROTOTYPE_ALLOWED_SYMBOLS
-// above). A plain object's prototype (Object.prototype, or null for a
-// null-prototype object) owns no symbol key at all, so callers pass an
-// empty array there. Mirrors hasDisallowedSymbolKey in
-// js-sdk/src/canonical/canonicalize.ts; must match it.
-function hasDisallowedSymbolKey(value, allowedPrototypeSymbols) {
-  if (Object.getOwnPropertySymbols(value).length !== 0) return true;
-  const proto = Object.getPrototypeOf(value);
-  if (proto === null) return false;
-  const protoSymbols = Object.getOwnPropertySymbols(proto);
-  return protoSymbols.some((s) => !allowedPrototypeSymbols.includes(s));
+// Walks the array chain's SECOND hop too, not just the first: listing
+// symbols on `value` and its one-hop prototype only left a crafted
+// two-hop prototype (value -> hop1 -> hop2 -> null) carrying an own
+// Symbol.toStringTag on hop2 unenumerated (Grok finding 1, 2026-09-16
+// delta-9 gate). That specific symbol no longer retargets anything --
+// hasBuiltinInternalSlot and Array.isArray replaced the toString-based
+// brand test this guard used to protect -- but a value owning an
+// unexpected symbol key at any checked hop (that one, Symbol.toPrimitive,
+// or any other) is independently not plain JSON-shaped data, so this
+// function keeps refusing it there regardless of whether anything
+// downstream would ever read that symbol.
+//
+// Bounded by construction, not by walking to null: getPrototypeOf is
+// called at most chainAllowedSymbols.length - 1 times, matching the hop
+// count hasPlainObjectPrototypeChain / hasPlainArrayPrototypeChain
+// independently enforce, so a chain with MORE hops than the bound is
+// rejected by those hop-count tests regardless of what this function
+// finds at the hops it does walk.
+//
+// A Proxy anywhere in the chain is outside this function's contract: its
+// ownKeys trap can report zero symbol keys while a get trap on the same
+// object answers a symbol-keyed access differently, and this function --
+// like the rest of snapshotPlainJson -- performs no [[Get]], only the
+// structural [[OwnPropertyKeys]] / [[GetPrototypeOf]] operations, so it
+// cannot observe that difference. See snapshotPlainJson's comment below
+// for the resulting contract.
+//
+// Must match hasDisallowedSymbolKey in
+// js-sdk/src/canonical/canonicalize.ts.
+function hasDisallowedSymbolKey(value, chainAllowedSymbols) {
+  let current = value;
+  for (const allowed of chainAllowedSymbols) {
+    if (current === null) break;
+    const ownSymbols = Object.getOwnPropertySymbols(current);
+    if (ownSymbols.some((s) => !allowed.includes(s))) return true;
+    current = Object.getPrototypeOf(current);
+  }
+  return false;
 }
 
 // Produce a realm-local, plain-data deep copy of `value` in a single
@@ -329,14 +412,28 @@ function hasDisallowedSymbolKey(value, allowedPrototypeSymbols) {
 //
 // Prototype IDENTITY is not checked -- that regressed cross-realm JSON (see
 // hasPlainObjectPrototypeChain above) -- but prototype SHAPE is (the two
-// hop-count helpers above), internal-slot BRAND is (hasPlainObjectTag,
-// hasPlainArrayTag), and the absence of a disallowed SYMBOL KEY on the
-// value or its prototype is (hasDisallowedSymbolKey): shape alone accepts a
-// builtin whose [[Prototype]] was retargeted to pass the hop count, brand
-// alone accepts a cross-realm array whose [[Prototype]] a hop-count-only
-// test would reject, and brand alone is itself spoofable by an own or
-// one-hop-prototype Symbol.toStringTag (Codex P1, 2026-09-16 delta-8 gate),
-// so a value must pass all three to snapshot.
+// hop-count helpers above), internal-slot BRAND is (hasBuiltinInternalSlot
+// for objects; Array.isArray, already evaluated to enter the array branch,
+// for arrays), and the absence of a disallowed SYMBOL KEY at any checked
+// hop is (hasDisallowedSymbolKey): shape alone accepts a builtin whose
+// [[Prototype]] was retargeted to pass the hop count; brand alone accepts
+// a cross-realm array whose [[Prototype]] a hop-count-only test would
+// reject; and neither shape nor brand says anything about a symbol key a
+// plain object or array literal never owns, so a value must pass all
+// three to snapshot.
+//
+// Every one of these checks -- getPrototypeOf for shape,
+// getOwnPropertySymbols for the symbol-key guard, and a probe borrowed
+// from a real built-in's prototype for brand -- performs a structural
+// operation or an internal-slot read, never a property [[Get]], on the
+// caller's value or its prototype chain (see BUILTIN_BRAND_PROBES above
+// for why that distinction is the actual fix, not a style choice). That is
+// this function's contract: it accepts values producible by JSON.parse in
+// any realm, and a caller holding untrusted JavaScript objects -- ones
+// that might place a Proxy anywhere in their own prototype chain -- must
+// hand this runner already-parsed JSON rather than the live object graph.
+// A Proxy prototype is outside that contract and is not detected: nothing
+// here promises to catch one, because nothing here reads through one.
 //
 // The copy this function returns is built with Object.create(null) (for an
 // object) or [] (for an array) and populated ONLY through
@@ -362,14 +459,17 @@ function snapshotPlainJson(value) {
     return value;
   }
   if (Array.isArray(value)) {
-    // Before the brand check below: a Symbol.toStringTag owned by `value`
-    // itself, or by its one-hop prototype, would make hasPlainArrayTag
-    // read whatever tag that symbol names instead of the real internal
-    // slot (Codex P1, 2026-09-16 delta-8 gate).
-    if (hasDisallowedSymbolKey(value, ARRAY_PROTOTYPE_ALLOWED_SYMBOLS)) {
+    // Array.isArray(value) above already establishes arrayness -- it IS
+    // the exotic-Array internal check, performs no property [[Get]] on
+    // `value` or a prototype, and cannot be fooled by a crafted prototype
+    // hop, so there is no separate array brand test left to run here
+    // (Grok's "related construction", 2026-09-16 delta-9 gate: the old
+    // toString-based brand test this replaced could be retargeted through
+    // a Proxy prototype's get trap).
+    if (hasDisallowedSymbolKey(value, [[], ARRAY_PROTOTYPE_ALLOWED_SYMBOLS, []])) {
       reject("JCS canonicalization failed");
     }
-    if (!hasPlainArrayPrototypeChain(value) || !hasPlainArrayTag(value)) {
+    if (!hasPlainArrayPrototypeChain(value)) {
       reject("JCS canonicalization failed");
     }
     // One call observes every index AND `length` together; there is no
@@ -414,18 +514,18 @@ function snapshotPlainJson(value) {
     return out;
   }
   if (isObject(value)) {
-    // Before the brand check below, and for the same reason as the array
-    // branch above: an own or one-hop-prototype Symbol.toStringTag would
-    // make hasPlainObjectTag read a spoofed tag (Codex P1, 2026-09-16
-    // delta-8 gate: a prototype-stripped Date or null-prototype boxed
-    // Number carrying Symbol.toStringTag = "Object" passed both existing
-    // guards and canonicalized as {}). A plain object's prototype
-    // legitimately owns no symbol key at all, so the allowed set here is
-    // empty (contrast the array branch's two well-known symbols).
-    if (hasDisallowedSymbolKey(value, [])) {
+    // A plain object's prototype legitimately owns no symbol key at all,
+    // so the allowed set here is empty at both checked hops (contrast the
+    // array branch's two well-known symbols at hop 1).
+    if (hasDisallowedSymbolKey(value, [[], []])) {
       reject("JCS canonicalization failed");
     }
-    if (!hasPlainObjectPrototypeChain(value) || !hasPlainObjectTag(value)) {
+    // hasBuiltinInternalSlot replaces a toString-based brand test here
+    // (Grok's "related construction", 2026-09-16 delta-9 gate: that test
+    // could be retargeted through a Proxy prototype's get trap for
+    // Symbol.toStringTag); see its comment above for why probing internal
+    // slots directly is immune to that.
+    if (!hasPlainObjectPrototypeChain(value) || hasBuiltinInternalSlot(value)) {
       reject("JCS canonicalization failed");
     }
     // Object.create(null), never {}: a {} copy inherits Object.prototype,

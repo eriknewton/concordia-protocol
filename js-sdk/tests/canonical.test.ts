@@ -390,3 +390,120 @@ describe('snapshotPlainJson - symbol-keyed Symbol.toStringTag spoof (Codex P1, 2
     expect(canonicalizeJcs(crossRealmArray).toString('utf8')).toBe('[3,1,2]');
   });
 });
+
+describe('snapshotPlainJson - array hop-2 and Proxy-prototype brand bypass (Grok, 2026-09-16 delta-9 gate, fix round 10)', () => {
+  // Round 9's symbol-key guard listed own symbols on `value` and its
+  // ONE-hop prototype only. A plain array is allowed a three-hop chain
+  // (value -> Array.prototype -> Object.prototype -> null), so a symbol
+  // owned by the SECOND hop was never enumerated, and the round-9 brand
+  // test (Object.prototype.toString.call(value)) performs a [[Get]] of
+  // Symbol.toStringTag up the WHOLE chain regardless of what the guard
+  // saw. Separately, that same [[Get]] can be answered by a `get` trap on
+  // a Proxy used as a one-hop prototype while the Proxy's `ownKeys` trap
+  // reports zero symbols to the guard, so the guard and the brand test
+  // disagreed about the same object. Fail-before against 0781ef7 (before
+  // this round): the array case canonicalized to `[42,2,3]` with its
+  // getter invoked, and the Proxy-prototype Date case canonicalized to
+  // `{}` with its `get` trap fired.
+  //
+  // The fix replaces the toString-based brand test with internal-slot
+  // probes (Date.prototype.getTime, Map.prototype size getter, etc.,
+  // borrowed and called with the candidate as `this`) that read no
+  // property of the candidate or its prototype chain, so a hostile
+  // prototype -- Proxy or plain object -- has nothing to answer; and it
+  // extends the symbol-key guard to the array chain's second hop as an
+  // independent structural check.
+
+  it('rejects an array whose crafted second prototype hop owns Symbol.toStringTag via a getter (fail-before against 0781ef7: canonicalized to "[42,2,3]" with the getter invoked)', () => {
+    let invoked = false;
+    const hop2: Record<PropertyKey, unknown> = Object.create(null);
+    const arr: unknown[] = [1, 2, 3];
+    Object.defineProperty(hop2, Symbol.toStringTag, {
+      get() {
+        invoked = true;
+        Object.defineProperty(arr, '0', {
+          value: 42,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+        return 'Array';
+      },
+      configurable: true,
+    });
+    Object.setPrototypeOf(arr, Object.create(hop2));
+    // Preconditions: three-hop chain (arr -> hop1 -> hop2 -> null), so the
+    // hop-count test alone accepts this; hop2 is exactly the hop the
+    // round-9 guard never enumerated.
+    expect(Object.getPrototypeOf(Object.getPrototypeOf(Object.getPrototypeOf(arr)))).toBeNull();
+    expect(Object.getOwnPropertySymbols(Object.getPrototypeOf(arr)).length).toBe(0);
+    expect(() => canonicalizeJcs(arr)).toThrow(CanonicalizationError);
+    expect(invoked).toBe(false);
+  });
+
+  it('rejects a plain object whose null-terminated one-hop prototype owns a disallowed symbol key (round-9 case, still refused)', () => {
+    const hop1: Record<PropertyKey, unknown> = Object.create(null);
+    hop1[Symbol.toPrimitive] = () => 5;
+    const value: Record<string, unknown> = Object.create(hop1);
+    value.a = 1;
+    expect(Object.getPrototypeOf(hop1)).toBeNull();
+    expect(() => canonicalizeJcs(value)).toThrow(CanonicalizationError);
+  });
+
+  it('rejects a Date whose Proxy-as-prototype hides Symbol.toStringTag from ownKeys but answers it via a get trap (fail-before against 0781ef7: canonicalized to "{}" with the trap fired)', () => {
+    const date = new Date(0);
+    let getTrapFired = false;
+    const proxyProto = new Proxy(Object.create(null), {
+      ownKeys() {
+        return [];
+      },
+      getOwnPropertyDescriptor() {
+        return undefined;
+      },
+      get(_target, prop) {
+        if (prop === Symbol.toStringTag) {
+          getTrapFired = true;
+          return 'Object';
+        }
+        return undefined;
+      },
+      has() {
+        return false;
+      },
+    });
+    Object.setPrototypeOf(date, proxyProto);
+    // Preconditions: two-hop chain (date -> proxyProto -> null) passes the
+    // hop-count test, and the guard's ownKeys-based symbol check sees no
+    // symbol at all -- only a real internal-slot probe catches this.
+    expect(Object.getPrototypeOf(proxyProto)).toBeNull();
+    expect(Object.getOwnPropertySymbols(proxyProto).length).toBe(0);
+    expect(() => canonicalizeJcs(date)).toThrow(CanonicalizationError);
+    expect(getTrapFired).toBe(false);
+  });
+
+  it('rejects a Map with its own prototype set to null (residual closed: internal-slot probes ignore [[Prototype]])', () => {
+    const map = new Map([['a', 1]]);
+    Object.setPrototypeOf(map, null);
+    expect(Object.getPrototypeOf(map)).toBeNull(); // precondition: hop count alone would accept this
+    expect(() => canonicalizeJcs(map)).toThrow(CanonicalizationError);
+  });
+
+  it('rejects a Set with its own prototype set to null (same residual, Set counterpart)', () => {
+    const set = new Set([1, 2]);
+    Object.setPrototypeOf(set, null);
+    expect(Object.getPrototypeOf(set)).toBeNull();
+    expect(() => canonicalizeJcs(set)).toThrow(CanonicalizationError);
+  });
+
+  it('still accepts a cross-realm plain object (no regression from the internal-slot brand probes)', () => {
+    const crossRealmObject = runInNewContext('({ a: 1, b: 2 })', {}) as Record<string, unknown>;
+    expect(Object.getPrototypeOf(crossRealmObject)).not.toBe(Object.prototype);
+    expect(canonicalizeJcs(crossRealmObject).toString('utf8')).toBe('{"a":1,"b":2}');
+  });
+
+  it('still accepts a cross-realm array (no regression from the array hop-2 symbol check)', () => {
+    const crossRealmArray = runInNewContext('[1, 2, 3]', {}) as unknown[];
+    expect(Object.getPrototypeOf(crossRealmArray)).not.toBe(Array.prototype);
+    expect(canonicalizeJcs(crossRealmArray).toString('utf8')).toBe('[1,2,3]');
+  });
+});
