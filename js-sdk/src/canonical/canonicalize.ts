@@ -208,7 +208,16 @@ function isPlainArrayPrototype(value: object): boolean {
  * `Object.getOwnPropertyDescriptors`, keeping only enumerable, non-accessor,
  * string-keyed data (array elements under `length`, object keys otherwise):
  * a symbol key is silently omitted (never read, never rejected), an
- * accessor property throws, and a sparse array hole throws.
+ * accessor property throws, and a sparse array hole throws. ONE rule for
+ * both branches: a member is canonicalized iff it is an own enumerable data
+ * descriptor. An object key that fails it is omitted (JSON.stringify's own
+ * behaviour); an array index below `length` that fails it cannot be omitted
+ * without shifting every later element, so it throws instead: a hole, an
+ * accessor, and a NON-ENUMERABLE index all throw (Codex P2 and both Grok
+ * lenses, 2026-09-17 delta-13 gate: the array branch checked presence and
+ * accessor status only, so `Object.defineProperty([1], "0", {value: 1,
+ * enumerable: false})` canonicalized as `[1]` while the README said every
+ * index must be enumerable).
  *
  * The predicate reads ONLY prototype identity (never a hop count, a
  * `toString`/internal-slot brand, or a symbol key) and the descriptor map
@@ -327,6 +336,17 @@ export function snapshotPlainJson(value: unknown): unknown {
         throw new CanonicalizationError(
           `Cannot canonicalize array index ${index}: it is an accessor property, not a plain ` +
             `element.`,
+        );
+      }
+      if (!descriptor.enumerable) {
+        // Same predicate as the object branch (own enumerable data
+        // descriptors only), but an array cannot skip an index the way the
+        // object branch skips a key: dropping it would renumber every later
+        // element, so the index is refused, like a hole. Must match the
+        // mirrored array branch in conformance/reference-runner-js/runner.mjs.
+        throw new CanonicalizationError(
+          `Cannot canonicalize array index ${index}: it is a non-enumerable property, not a ` +
+            `plain element.`,
         );
       }
       Object.defineProperty(out, index, {

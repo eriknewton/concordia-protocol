@@ -22,6 +22,7 @@ import {
   MAX_ATTESTATION_VALIDITY_SECONDS,
   type GenerateAttestationOptions,
 } from '../src/attestation/index.js';
+import { setOperationObserverForTests } from '../src/attestation/attestation.js';
 import { PartyRole, ResolutionMechanism, SessionState } from '../src/types/index.js';
 import { KeyPair, verify } from '../src/crypto/signing.js';
 
@@ -701,29 +702,55 @@ describe('pyIntCoerce strips surrounding whitespace without ReDoS (CodeQL js/pol
     });
   }
 
-  it('rejects the adversarial input the regex backtracked on in time linear in its length', () => {
-    // A long interior whitespace run flanked by non-ws chars: the old
-    // `/[\s]+$/` alternative retried from every ws position (O(n^2)); the
-    // linear scan is O(n). Asserted as an n-versus-2n RATIO (about 2 for a
-    // linear scan, about 4 for the old quadratic one; bound 3), never as a
-    // millisecond ceiling, which encodes one machine's speed and fails on a
-    // slower CI runner with no regression anywhere (2026-09-16 delta-12
-    // gate). Each timing is the minimum of five runs so timer and GC noise
-    // at this scale cannot move the ratio.
-    function minRejectMs(tabs: number): number {
-      const adversarial = 'x' + '\t'.repeat(tabs) + 'y';
-      let best = Number.POSITIVE_INFINITY;
-      for (let i = 0; i < 5; i += 1) {
-        const t0 = performance.now();
-        expect(() => isValidNow(relAtt(adversarial), NOW_MS)).toThrow(AttestationError);
-        best = Math.min(best, performance.now() - t0);
+  it('scans a duration string in at most length + 2 visits, so the adversarial whitespace inputs cost linear work', () => {
+    // The old `^\s+|\s+$` regex retried its trailing alternative from every
+    // whitespace position of a long interior run (O(n^2), the CodeQL
+    // polynomial-redos finding). The scan that replaced it reports every
+    // code-unit visit to the test-only observer, so its cost is asserted as
+    // an exact COUNT, never as wall-clock time (a millisecond ceiling failed
+    // on the slower CI runners in round 12; a wall-clock n-versus-2n ratio
+    // is still a flaky oracle under JIT warm-up, contention and GC; Codex
+    // P2, 2026-09-17 delta-13 gate). Bound: each code unit is visited at
+    // most once per phase (leading run, trailing run, digits), the three
+    // phases cover disjoint ranges except for the two terminating visits
+    // that stop the leading and trailing runs, hence length + 2.
+    const VISIT_SLACK = 2;
+    const DOUBLING_BOUND = 2.5;
+    function countVisits(duration: string, expectRejected: boolean): number {
+      let visits = 0;
+      setOperationObserverForTests((operation) => {
+        if (operation === 'int_coerce_scan_visit') visits += 1;
+      });
+      try {
+        if (expectRejected) {
+          expect(() => isValidNow(relAtt(duration), NOW_MS)).toThrow(AttestationError);
+        } else {
+          isValidNow(relAtt(duration), NOW_MS);
+        }
+      } finally {
+        setOperationObserverForTests(undefined);
       }
-      return best;
+      return visits;
     }
-    const length = 4_000_000;
-    const small = minRejectMs(length);
-    const large = minRejectMs(2 * length);
-    expect(large / small).toBeLessThan(3);
+    const n = 4_000_000;
+    const shapes: Array<{ build: (run: number) => string; rejected: boolean }> = [
+      // The historical adversarial input: interior run flanked by non-ws.
+      { build: (run) => 'x' + '\t'.repeat(run) + 'y', rejected: true },
+      // Whitespace-heavy inputs in every position the scan has a phase for.
+      { build: (run) => '\t'.repeat(run) + 'y', rejected: true },
+      { build: (run) => 'y' + '\t'.repeat(run), rejected: true },
+      { build: (run) => '\t'.repeat(run), rejected: true },
+      { build: (run) => ' '.repeat(run) + '3600' + ' '.repeat(run), rejected: false },
+    ];
+    for (const { build, rejected } of shapes) {
+      const small = build(n);
+      const large = build(2 * n);
+      const smallVisits = countVisits(small, rejected);
+      const largeVisits = countVisits(large, rejected);
+      expect(smallVisits).toBeLessThanOrEqual(small.length + VISIT_SLACK);
+      expect(largeVisits).toBeLessThanOrEqual(large.length + VISIT_SLACK);
+      expect(largeVisits).toBeLessThanOrEqual(DOUBLING_BOUND * smallVisits);
+    }
   });
 });
 

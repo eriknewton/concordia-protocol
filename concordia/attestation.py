@@ -10,7 +10,7 @@ from __future__ import annotations
 import base64
 import re
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
@@ -81,6 +81,18 @@ _SHA256_HEX_RE = re.compile(r"^sha256:[a-f0-9]{64}\Z")
 # tests/fixtures/set_binding_limits.json by a test in each SDK suite, so a
 # one-sided edit fails CI in both languages.
 MAX_SET_BINDING_TRANSCRIPT_MESSAGES = 200_000
+
+# Test-only observation hook for the adversarial-complexity tests (AGENTS.md
+# rule 8). ``None`` in production, where the hot paths below pay one identity
+# check per visited element and nothing else. A test installs a counter and
+# asserts an OPERATION COUNT (visits per presented message), never a
+# wall-clock ceiling or a wall-clock n-versus-2n ratio: both encode one
+# machine's speed and scheduling (JIT warm-up, contention, GC) and were the
+# CI red of round 12 and the flake-in-waiting of round 13 (Codex P2,
+# 2026-09-17 delta-13 gate), while a count of visits is the same integer on
+# every machine. Must match setOperationObserverForTests in
+# js-sdk/src/attestation/attestation.ts (same operation names).
+_operation_observer: Callable[[str], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -581,6 +593,8 @@ def _find_cycle(predecessor_of: dict[int, int]) -> list[int] | None:
         position: dict[int, int] = {}  # node -> its index within `path`
         node = start
         while True:
+            if _operation_observer is not None:
+                _operation_observer("cycle_finder_visit")
             if state.get(node) == 1:
                 break  # already resolved by an earlier walk; nothing new here
             if node not in predecessor_of:
@@ -731,7 +745,12 @@ def _reconstruct_single_chain(
         chain.append(transcript[cursor])
         visited_indices.add(cursor)
         cursor = successor_of.get(cursor)
-    if len(chain) != len(transcript):
+    # ``presented`` is the digest list's length: one digest per presented
+    # message, built above by iterating the list, so no second ``__len__``
+    # read of the caller's list happens here (the caller read it exactly
+    # once for the cap; see evaluate_receipt_set_binding).
+    presented = len(digests)
+    if len(chain) != presented:
         # Closing invariant: a walk shorter than the presented set means part
         # of the set is disconnected from the root, which is set substitution
         # however the individual links verify. The disconnected remainder
@@ -752,12 +771,12 @@ def _reconstruct_single_chain(
                 f"transcript contains a prev_hash cycle through messages "
                 f"{_format_cycle_message(cycle)} beside the reconstructed "
                 f"chain: the walk from the root visits {len(chain)} of "
-                f"{len(transcript)} presented messages"
+                f"{presented} presented messages"
             )
         else:
             errors.append(
                 f"transcript does not form a single chain: the walk from the root "
-                f"visits {len(chain)} of {len(transcript)} presented messages"
+                f"visits {len(chain)} of {presented} presented messages"
             )
         return [], errors
     return chain, []
@@ -812,50 +831,62 @@ def evaluate_receipt_set_binding(
 
     if not isinstance(transcript, list):
         errors.append("transcript must be a list when verifying set binding")
-    elif not transcript:
-        errors.append("transcript must contain at least one message")
-    elif (presented_length := len(transcript)) > MAX_SET_BINDING_TRANSCRIPT_MESSAGES:
-        # Named rejection of the length the caller's list presents, read
-        # once, BEFORE any per-message work: no element of an over-cap
-        # transcript is ever inspected, hashed, or copied (Python has no
-        # boundary snapshot to run first, so "before the snapshot" in the JS
-        # SDK is "before _reconstruct_single_chain" here; Codex P1, 2026-09-16
-        # delta-12 gate). Pinned by TestTranscriptSizeCap's cap-before-any-
-        # element-read test. Must match the same ordering in
-        # verifyReceiptSetBinding, js-sdk/src/attestation/attestation.ts.
-        errors.append(
-            f"transcript has {presented_length} messages, exceeding the "
-            f"maximum of {MAX_SET_BINDING_TRANSCRIPT_MESSAGES}"
-        )
     else:
-        chain, chain_errors = _reconstruct_single_chain(transcript)
-        if chain_errors:
-            errors.extend(chain_errors)
+        # The ONE read of the caller's length, before any other use of the
+        # list: the emptiness check and the cap below both read this local,
+        # never the list again, and _reconstruct_single_chain counts from
+        # the digest list it builds itself. A ``not transcript`` truthiness
+        # test is a second ``__len__`` call (list defines no ``__bool__``), so
+        # a list subclass could answer the two reads differently and pass a
+        # cap decided on one length while the walk ran on another (Codex P1,
+        # 2026-09-17 delta-13 gate). Pinned by TestTranscriptSizeCap's
+        # ``__len__``-counting tests. Must match the single ``length`` read
+        # in verifyReceiptSetBinding, js-sdk/src/attestation/attestation.ts.
+        presented_length = len(transcript)
+        if presented_length == 0:
+            errors.append("transcript must contain at least one message")
+        elif presented_length > MAX_SET_BINDING_TRANSCRIPT_MESSAGES:
+            # Named rejection of the length the caller's list presents,
+            # BEFORE any per-message work: no element of an over-cap
+            # transcript is ever inspected, hashed, or copied (Python has no
+            # boundary snapshot to run first, so "before the snapshot" in
+            # the JS SDK is "before _reconstruct_single_chain" here; Codex
+            # P1, 2026-09-16 delta-12 gate). Pinned by TestTranscriptSizeCap's
+            # cap-before-any-element-read test. Must match the same ordering
+            # in verifyReceiptSetBinding, js-sdk/src/attestation/attestation.ts.
+            errors.append(
+                f"transcript has {presented_length} messages, exceeding the "
+                f"maximum of {MAX_SET_BINDING_TRANSCRIPT_MESSAGES}"
+            )
         else:
-            # Both comparisons read the RECONSTRUCTED chain, never the
-            # presented list: a count taken from the list would credit a set
-            # the root cannot reach, which is the substitution set binding
-            # exists to refuse.
-            expected_count = len(chain)
-            expected_head = compute_hash(chain[-1])
-            if (
-                isinstance(message_count, int)
-                and not isinstance(message_count, bool)
-                and message_count != expected_count
-            ):
-                errors.append(
-                    f"message_count mismatch: attestation has {message_count}, "
-                    f"transcript has {expected_count}"
-                )
-            if (
-                isinstance(chain_head, str)
-                and _SHA256_HEX_RE.match(chain_head)
-                and chain_head != expected_head
-            ):
-                errors.append(
-                    "chain_head mismatch: attestation does not match transcript "
-                    "final message hash"
-                )
+            chain, chain_errors = _reconstruct_single_chain(transcript)
+            if chain_errors:
+                errors.extend(chain_errors)
+            else:
+                # Both comparisons read the RECONSTRUCTED chain, never the
+                # presented list: a count taken from the list would credit a
+                # set the root cannot reach, which is the substitution set
+                # binding exists to refuse.
+                expected_count = len(chain)
+                expected_head = compute_hash(chain[-1])
+                if (
+                    isinstance(message_count, int)
+                    and not isinstance(message_count, bool)
+                    and message_count != expected_count
+                ):
+                    errors.append(
+                        f"message_count mismatch: attestation has {message_count}, "
+                        f"transcript has {expected_count}"
+                    )
+                if (
+                    isinstance(chain_head, str)
+                    and _SHA256_HEX_RE.match(chain_head)
+                    and chain_head != expected_head
+                ):
+                    errors.append(
+                        "chain_head mismatch: attestation does not match transcript "
+                        "final message hash"
+                    )
 
     if errors:
         return "error", errors

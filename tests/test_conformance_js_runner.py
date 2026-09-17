@@ -13,9 +13,13 @@ from typing import Any, cast
 import pytest
 
 from tests.conformance_runner_checks import (
+    ACCEPTED_PROBE_IDS,
     EXPECTED_INTEGER_RULE_SUMMARY,
-    UNUSED_METADATA_PROBE_ID,
+    EXPECTED_OVER_CAP_SUMMARY,
+    OVER_CAP_EXPLAIN_LINE,
+    OVER_CAP_PROBE_ID,
     write_integer_rule_suite,
+    write_over_cap_suite,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -46,6 +50,7 @@ def run_runner(
     suite: Path,
     *,
     extra_env: dict[str, str] | None = None,
+    extra_args: list[str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = {
         "PATH": os.environ.get("PATH", ""),
@@ -53,7 +58,7 @@ def run_runner(
     if extra_env is not None:
         env.update(extra_env)
     return subprocess.run(
-        [cast(str, NODE), str(RUNNER), str(suite)],
+        [cast(str, NODE), str(RUNNER), *(extra_args or []), str(suite)],
         cwd=REPO_ROOT,
         env=env,
         capture_output=True,
@@ -105,21 +110,50 @@ def test_js_reference_runner_accepts_real_suite() -> None:
 
 def test_js_reference_runner_applies_the_shared_integer_rejection_rule(tmp_path: Path) -> None:
     """Both halves of the INTEGER-REJECTION RULE, verdict-identical to
-    tests/test_conformance_reference_runner.py's twin: the unsafe integer
-    under ``input`` is rejected (expected=reject, scored [OK]), the same
-    integer in an unused ``context`` member is not (the vector stays
-    accepted). Round 12 rejected the whole file in readJson before its own
-    ``expected`` could be read, scoring it ``expected=<unreadable>``; round
-    13 scopes the rule to ``input`` and decides it inside evaluateVector, so
-    the line is scored like any other verdict."""
+    tests/test_conformance_reference_runner.py's twin: the unsafe integer a
+    profile canonicalizes is rejected (expected=reject, scored [OK]); the
+    same integer anywhere no profile canonicalizes (an unused ``context``
+    member, an unused ``input`` member of the transition profile, an extra
+    key agent-profile-v1 drops from trust_signals or a reputation assertion)
+    is not, so those vectors stay accepted. Round 12 rejected the whole file
+    at ingest; round 13 rejected anything under ``input``; round 14 parses
+    the vector keeping the literal as a BigInt and rejects it only when it
+    reaches canonicalization, the Python runner's own mechanism."""
     suite = write_integer_rule_suite(tmp_path)
 
     result = run_runner(suite)
 
     assert result.returncode == 0, result.stderr + result.stdout
-    assert f"[OK] {UNUSED_METADATA_PROBE_ID}" in result.stdout, result.stdout
+    for probe_id in ACCEPTED_PROBE_IDS:
+        assert f"[OK] {probe_id}" in result.stdout, result.stdout
     assert "[OK] check-unsafe-integer-ingest" in result.stdout, result.stdout
     assert EXPECTED_INTEGER_RULE_SUMMARY in result.stdout, result.stdout
+
+
+def test_js_reference_runner_rejects_an_over_cap_transcript_by_the_cap_itself(
+    tmp_path: Path,
+) -> None:
+    """Twin of test_reference_runner_rejects_an_over_cap_transcript_by_the_cap_itself:
+    the over-cap vector is rejected, and ``--explain`` names the cap as the
+    reason on stderr while stdout stays verdict-only."""
+    suite = write_over_cap_suite(tmp_path)
+
+    result = run_runner(suite, extra_args=["--explain"])
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"[OK] {OVER_CAP_PROBE_ID}" in result.stdout, result.stdout
+    assert EXPECTED_OVER_CAP_SUMMARY in result.stdout, result.stdout
+    assert OVER_CAP_EXPLAIN_LINE in result.stderr.splitlines(), result.stderr
+    assert "[EXPLAIN]" not in result.stdout, result.stdout
+
+
+def test_js_reference_runner_prints_no_reason_without_explain(tmp_path: Path) -> None:
+    suite = write_over_cap_suite(tmp_path)
+
+    result = run_runner(suite)
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "[EXPLAIN]" not in result.stdout + result.stderr, result.stderr
 
 
 def test_js_canary_regression_discrimination(tmp_path: Path) -> None:

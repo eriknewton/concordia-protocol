@@ -249,6 +249,36 @@ describe('snapshotPlainJson - the descriptor-map Proxy class (Codex P2, Grok fin
   });
 });
 
+describe('snapshotPlainJson - a non-enumerable array index is refused like a hole (Codex P2 and both Grok lenses, 2026-09-17 delta-13 gate)', () => {
+  // One rule for both branches: a member is canonicalized iff it is an own
+  // enumerable data descriptor. An object key that fails it is omitted; an
+  // array index below `length` that fails it cannot be omitted without
+  // renumbering the later elements, so it throws, exactly as a hole does.
+  // Before this round the array branch checked presence and accessor status
+  // only, so this value canonicalized as `[1]` while the README said every
+  // index must be enumerable.
+  it('throws on Object.defineProperty([1], "0", {value: 1, enumerable: false})', () => {
+    const arr = [1];
+    Object.defineProperty(arr, '0', { value: 1, enumerable: false });
+    expect(() => canonicalizeJcs(arr)).toThrow(CanonicalizationError);
+    expect(() => canonicalizeJcs(arr)).toThrow(/array index 0: it is a non-enumerable property/);
+    expect(() => canonicalizeJcs({ wrapped: arr })).toThrow(CanonicalizationError);
+  });
+
+  it('still accepts the same array once the index is enumerable again', () => {
+    const arr = [1];
+    Object.defineProperty(arr, '0', { value: 1, enumerable: false });
+    Object.defineProperty(arr, '0', { value: 1, enumerable: true });
+    expect(canonicalizeJcs(arr).toString('utf8')).toBe('[1]');
+  });
+
+  it('omits a non-enumerable OBJECT key rather than throwing (the branches differ only in what failing the rule does)', () => {
+    const obj: Record<string, unknown> = { a: 1 };
+    Object.defineProperty(obj, 'hidden', { value: 2, enumerable: false });
+    expect(canonicalizeJcs(obj).toString('utf8')).toBe('{"a":1}');
+  });
+});
+
 describe('snapshotPlainJson - same-realm prototype-identity refusals (2026-09-16 fix round 11)', () => {
   // Each construction below has its OWN, natural prototype (Date.prototype,
   // Map.prototype, ...), never `Object.prototype` or `null`, so the single

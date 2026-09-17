@@ -114,6 +114,28 @@ const SHA256_HEX_PATTERN = /^sha256:[a-f0-9]{64}$/;
 // one-sided edit fails CI in both languages.
 export const MAX_SET_BINDING_TRANSCRIPT_MESSAGES = 200_000;
 
+/**
+ * Test-only observation hook for the adversarial-complexity tests (AGENTS.md
+ * rule 8). `undefined` in production, where the hot paths below pay one
+ * identity check per visited element and nothing else. A test installs a
+ * counter and asserts an OPERATION COUNT (visits per presented message or
+ * per scanned character), never a wall-clock ceiling or a wall-clock
+ * n-versus-2n ratio: both encode one machine's speed and scheduling (JIT
+ * warm-up, contention, GC) and were the CI red of round 12 and the
+ * flake-in-waiting of round 13 (Codex P2, 2026-09-17 delta-13 gate), while a
+ * count of visits is the same integer on every machine. Not re-exported from
+ * the package barrel (`./index.ts`); tests import it from this module. Must
+ * match `_operation_observer` in `concordia/attestation.py` (same operation
+ * names).
+ */
+export type OperationName = 'cycle_finder_visit' | 'int_coerce_scan_visit';
+let operationObserver: ((operation: OperationName) => void) | undefined;
+export function setOperationObserverForTests(
+  observer: ((operation: OperationName) => void) | undefined,
+): void {
+  operationObserver = observer;
+}
+
 export type ReceiptSetBindingState =
   'bound' | 'fields_present_unverified' | 'legacy_set_unbound' | 'error';
 
@@ -203,6 +225,7 @@ function findCycle(predecessorOf: Map<number, number>): number[] | undefined {
     const position = new Map<number, number>(); // node -> its index within `path`
     let node: number | undefined = start;
     while (node !== undefined) {
+      if (operationObserver !== undefined) operationObserver('cycle_finder_visit');
       if (state.get(node) === 1) break; // resolved by an earlier walk
       if (!predecessorOf.has(node)) break; // reaches a root: nothing cyclic
       const seenAt = position.get(node);
@@ -906,6 +929,26 @@ function pyTruthy(value: unknown): boolean {
  * where Python's `int(...)` would raise -- never silently coerced (the prior
  * `Number(...)` accepted `"1.5"` -> `1.5` and `NaN` where Python raises).
  */
+const ASCII_PLUS = 0x2b; // '+'
+const ASCII_MINUS = 0x2d; // '-'
+const ASCII_ZERO = 0x30; // '0'
+const ASCII_NINE = 0x39; // '9'
+
+// One visit of `value[index]`, reported to the test-only observer. The
+// whitespace question is delegated to `trim()` on that single code unit so
+// the set stripped here is by definition the set `String.prototype.trim`
+// strips (see pyIntCoerce).
+function isWhitespaceCodeUnit(value: string, index: number): boolean {
+  if (operationObserver !== undefined) operationObserver('int_coerce_scan_visit');
+  return value.charAt(index).trim() === '';
+}
+
+function isAsciiDigitCodeUnit(value: string, index: number): boolean {
+  if (operationObserver !== undefined) operationObserver('int_coerce_scan_visit');
+  const code = value.charCodeAt(index);
+  return code >= ASCII_ZERO && code <= ASCII_NINE;
+}
+
 function pyIntCoerce(value: unknown): number {
   if (typeof value === 'boolean') return value ? 1 : 0;
   if (typeof value === 'number') {
@@ -922,17 +965,34 @@ function pyIntCoerce(value: unknown): number {
   }
   if (typeof value === 'string') {
     // Python strips surrounding whitespace, then requires an optional sign +
-    // digits. `String.prototype.trim()` is a linear intrinsic that strips the
-    // same leading and trailing whitespace run the regex `^\s+|\s+$` did, but
-    // without that regex's O(n^2) backtracking on adversarial input (a long
-    // whitespace run NOT at a string boundary forced the trailing-`\s+$`
-    // alternative to retry from every position) -- the CodeQL
-    // `js/polynomial-redos` finding. The accepted/rejected string set is
-    // byte-for-byte unchanged: `trim()` removes exactly the ECMAScript
-    // WhiteSpace + LineTerminator set the `\s` character class matched.
-    const stripped = value.trim();
-    if (/^[+-]?\d+$/.test(stripped)) {
-      return parseInt(stripped, 10);
+    // digits. This is a single hand-written pass with no regex at all: the
+    // original `^\s+|\s+$` regex backtracked in O(n^2) on a long whitespace
+    // run NOT at a string boundary (the CodeQL `js/polynomial-redos`
+    // finding), and its `trim()` replacement, while linear, is an intrinsic
+    // whose work cannot be counted, so its linearity could only be asserted
+    // by wall-clock timing, a flaky oracle (Codex P2, 2026-09-17 delta-13
+    // gate). Here every code unit is visited at most once per phase
+    // (leading run, trailing run, digits) and each visit reports to the
+    // test-only observer, so the adversarial-complexity test asserts an
+    // exact visit bound instead. The accepted/rejected string set is
+    // byte-for-byte unchanged: "is this one code unit whitespace" is decided
+    // by `trim()` itself on that code unit, so the stripped set is exactly
+    // the ECMAScript WhiteSpace + LineTerminator set the `\s` class matched
+    // (no whitespace code point is a surrogate, so per-code-unit is exact),
+    // and the digits phase accepts exactly `^[+-]?[0-9]+$`.
+    const length = value.length;
+    let start = 0;
+    while (start < length && isWhitespaceCodeUnit(value, start)) start += 1;
+    let end = length;
+    while (end > start && isWhitespaceCodeUnit(value, end - 1)) end -= 1;
+    let i = start;
+    if (i < end && (value.charCodeAt(i) === ASCII_PLUS || value.charCodeAt(i) === ASCII_MINUS)) {
+      i += 1;
+    }
+    const digitsStart = i;
+    while (i < end && isAsciiDigitCodeUnit(value, i)) i += 1;
+    if (i === end && i > digitsStart) {
+      return parseInt(value.slice(start, end), 10);
     }
     throw new AttestationError(`invalid literal for int() with base 10: ${jsRepr(value)}`);
   }

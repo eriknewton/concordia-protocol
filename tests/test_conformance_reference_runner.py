@@ -13,9 +13,13 @@ from pathlib import Path
 from typing import Any, cast
 
 from tests.conformance_runner_checks import (
+    ACCEPTED_PROBE_IDS,
     EXPECTED_INTEGER_RULE_SUMMARY,
-    UNUSED_METADATA_PROBE_ID,
+    EXPECTED_OVER_CAP_SUMMARY,
+    OVER_CAP_EXPLAIN_LINE,
+    OVER_CAP_PROBE_ID,
     write_integer_rule_suite,
+    write_over_cap_suite,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -59,6 +63,7 @@ def run_runner(
     suite: Path,
     *,
     extra_env: dict[str, str] | None = None,
+    extra_args: list[str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     clean_site = clean_site_packages(tmp_path)
     env = {
@@ -69,7 +74,7 @@ def run_runner(
     if extra_env is not None:
         env.update(extra_env)
     return subprocess.run(
-        [sys.executable, "-S", str(RUNNER), str(suite)],
+        [sys.executable, "-S", str(RUNNER), *(extra_args or []), str(suite)],
         cwd=REPO_ROOT,
         env=env,
         capture_output=True,
@@ -146,9 +151,37 @@ def test_reference_runner_applies_the_shared_integer_rejection_rule(tmp_path: Pa
     result = run_runner(tmp_path / "run", suite)
 
     assert result.returncode == 0, result.stderr + result.stdout
-    assert f"[OK] {UNUSED_METADATA_PROBE_ID}" in result.stdout, result.stdout
+    for probe_id in ACCEPTED_PROBE_IDS:
+        assert f"[OK] {probe_id}" in result.stdout, result.stdout
     assert "[OK] check-unsafe-integer-ingest" in result.stdout, result.stdout
     assert EXPECTED_INTEGER_RULE_SUMMARY in result.stdout, result.stdout
+
+
+def test_reference_runner_rejects_an_over_cap_transcript_by_the_cap_itself(
+    tmp_path: Path,
+) -> None:
+    """The over-cap vector is rejected, and ``--explain`` names the cap as
+    the reason on stderr while stdout stays verdict-only (Grok lens A,
+    2026-09-17 delta-13 gate: the cap's literal was cross-pinned but nothing
+    fed an over-cap vector through either runner)."""
+    suite = write_over_cap_suite(tmp_path)
+
+    result = run_runner(tmp_path / "run", suite, extra_args=["--explain"])
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"[OK] {OVER_CAP_PROBE_ID}" in result.stdout, result.stdout
+    assert EXPECTED_OVER_CAP_SUMMARY in result.stdout, result.stdout
+    assert OVER_CAP_EXPLAIN_LINE in result.stderr.splitlines(), result.stderr
+    assert "[EXPLAIN]" not in result.stdout, result.stdout
+
+
+def test_reference_runner_prints_no_reason_without_explain(tmp_path: Path) -> None:
+    suite = write_over_cap_suite(tmp_path)
+
+    result = run_runner(tmp_path / "run", suite)
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "[EXPLAIN]" not in result.stdout + result.stderr, result.stderr
 
 
 def test_reference_runner_rejects_tampered_vector(tmp_path: Path) -> None:

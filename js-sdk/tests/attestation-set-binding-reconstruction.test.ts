@@ -22,6 +22,7 @@ import {
   verifyReceiptSetBinding,
   MAX_SET_BINDING_TRANSCRIPT_MESSAGES,
 } from '../src/attestation/index.js';
+import { setOperationObserverForTests } from '../src/attestation/attestation.js';
 import { canonicalizeJcs } from '../src/canonical/canonicalize.js';
 import { CanonicalizationError } from '../src/canonical/checks.js';
 
@@ -36,6 +37,7 @@ import { CanonicalizationError } from '../src/canonical/checks.js';
 // new coverage.
 afterEach(() => {
   vi.restoreAllMocks();
+  setOperationObserverForTests(undefined);
 });
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -909,13 +911,16 @@ describe('a cycle among prev_hash links is named "cycle", not "no root message" 
 });
 
 describe('cycle detection is linear, not quadratic (AGENTS.md rule 8, 2026-09-16 delta-11 and delta-12 gates)', () => {
-  // Cost is asserted as a RATIO between n and 2n, never as a millisecond
-  // ceiling: a ceiling encodes one machine's speed (round 12's 1000 ms
-  // ceiling held at 540 ms on the MacBook and failed at 1858 and 2224 ms on
-  // the CI runners with no regression anywhere), while the n-to-2n ratio of
-  // a linear walk is about 2 on every machine and about 4 for a quadratic
-  // one. The bound is 3, halfway between. Each timing is the minimum of
-  // REPEATS back-to-back runs so a single GC pause cannot move the ratio.
+  // Cost is asserted as an OPERATION COUNT, never as wall-clock time in any
+  // form: a millisecond ceiling encodes one machine's speed (round 12's
+  // 1000 ms ceiling held at 540 ms on the MacBook and failed at 1858 and
+  // 2224 ms on the CI runners with no regression anywhere), and a wall-clock
+  // n-versus-2n ratio of two separately scheduled minima is still a flaky
+  // oracle (JIT warm-up, contention, throttling and GC can push a linear
+  // ratio past 3 or hide a quadratic term; Codex P2, 2026-09-17 delta-13
+  // gate). A count of visits is the same integer on every machine, so the
+  // assertions here are exact bounds, read through the test-only observer
+  // hook setOperationObserverForTests and a call-counting spy on the digest.
   //
   // Two shapes, because they reach different code (Codex P2, delta-12 gate:
   // the round-12 test built only the orphan shape, whose rejection is
@@ -929,23 +934,26 @@ describe('cycle detection is linear, not quadratic (AGENTS.md rule 8, 2026-09-16
   //     names every index in walk order, which is the proof it ran.
   //   - the rootless reverse-ordered chain ending in ONE orphan, with real
   //     hashing: the exact input that drove the old O(n^2) finder (Codex P1,
-  //     delta-11 gate), now rejected on the orphan alone before findCycle.
+  //     delta-11 gate), now rejected on the orphan alone before findCycle,
+  //     whose cost is one digest per presented message.
   // Sizes: the cycle shape runs to 2n = 128_000, the range the cap's
   // derivation cites (MAX_SET_BINDING_TRANSCRIPT_MESSAGES in attestation.ts).
+  // Mirrors TestCycleDetectionIsLinearNotQuadratic in
+  // tests/test_attestation_set_binding_reconstruction.py.
 
-  const RATIO_BOUND = 3; // between linear (about 2) and quadratic (about 4)
-  const REPEATS = 2;
+  // Upper bound on finder visits per presented message, from the finder's
+  // own structure: every node is appended to exactly one walk's `path` (a
+  // later walk stops at a node an earlier walk resolved), which is n visits,
+  // and every walk ends in exactly one terminating visit (a resolved node, a
+  // root, or the revisit that closes a cycle); a walk appends at least its
+  // own start node, so there are at most n walks, hence at most n more
+  // terminating visits: 2n in all.
+  const VISITS_PER_MESSAGE = 2;
+  // The count for 2n against the count for n: exactly 2 for a linear finder,
+  // about 4 for the old quadratic one. 2.5 leaves room for the constant
+  // terminating visit(s) without admitting a quadratic term.
+  const DOUBLING_BOUND = 2.5;
   const LONG_TEST_TIMEOUT_MS = 180_000;
-
-  function minElapsedMs(run: () => void): number {
-    let best = Number.POSITIVE_INFINITY;
-    for (let i = 0; i < REPEATS; i += 1) {
-      const t0 = performance.now();
-      run();
-      best = Math.min(best, performance.now() - t0);
-    }
-    return best;
-  }
 
   // Digest of message `c<i>`: i + 1 in 64 hex digits (offset by one so that
   // index 0's digest is not the all-zero GENESIS_HASH, which would make its
@@ -956,8 +964,8 @@ describe('cycle detection is linear, not quadratic (AGENTS.md rule 8, 2026-09-16
     return `sha256:${(i + 1).toString(16).padStart(64, '0')}`;
   }
 
-  function installCycleFakeHash(): void {
-    vi.spyOn(sessionModule, 'hashCanonicalBytes').mockImplementation((bytes: Buffer) => {
+  function installCycleFakeHash(): ReturnType<typeof vi.spyOn> {
+    return vi.spyOn(sessionModule, 'hashCanonicalBytes').mockImplementation((bytes: Buffer) => {
       const match = /"id":"c(\d+)"/.exec(bytes.toString('utf8'));
       if (match === null) throw new Error('installCycleFakeHash: no c<i> id in canonical bytes');
       return cycleDigest(Number(match[1]));
@@ -987,36 +995,49 @@ describe('cycle detection is linear, not quadratic (AGENTS.md rule 8, 2026-09-16
     );
   }
 
-  function timeVerify(transcript: Array<Record<string, unknown>>): {
-    elapsedMs: number;
-    errors: string[];
-  } {
+  // Verify once and return the finder's visit count (through the observer
+  // hook), the digest count (calls on `hashSpy` during this verification
+  // only), and the errors. Both counters are exact integers, not timings.
+  function countVerify(
+    transcript: Array<Record<string, unknown>>,
+    hashSpy: { mock: { calls: unknown[] }; mockClear: () => void },
+  ): { finderVisits: number; digests: number; errors: string[] } {
     const receipt = {
       concordia_attestation: '0.5.0',
       chain_head: GENESIS_HASH,
       message_count: transcript.length,
     };
-    let errors: string[] = [];
-    const elapsedMs = minElapsedMs(() => {
-      errors = verifyReceiptSetBinding(receipt, transcript).errors;
+    let finderVisits = 0;
+    setOperationObserverForTests((operation) => {
+      if (operation === 'cycle_finder_visit') finderVisits += 1;
     });
-    return { elapsedMs, errors };
+    hashSpy.mockClear();
+    const errors = verifyReceiptSetBinding(receipt, transcript).errors;
+    setOperationObserverForTests(undefined);
+    return { finderVisits, digests: hashSpy.mock.calls.length, errors };
   }
 
   it(
-    'walks a genuine 128k-message prev_hash cycle through findCycle in time linear in n (n-versus-2n ratio below 3)',
+    'walks a genuine 128k-message prev_hash cycle through findCycle in visits linear in n (at most 2n, and 2n costs at most 2.5x n)',
     { timeout: LONG_TEST_TIMEOUT_MS },
     () => {
-      installCycleFakeHash();
+      const hashSpy = installCycleFakeHash();
       const n = 64_000;
-      const small = timeVerify(buildGenuineCycle(n));
-      const large = timeVerify(buildGenuineCycle(2 * n));
+      const small = countVerify(buildGenuineCycle(n), hashSpy);
+      const large = countVerify(buildGenuineCycle(2 * n), hashSpy);
 
       // The finder ran, over the WHOLE cycle, in both sizes: only findCycle
       // produces this diagnosis, and it names every index.
       expect(small.errors).toEqual([expectedCycleDiagnosis(n)]);
       expect(large.errors).toEqual([expectedCycleDiagnosis(2 * n)]);
-      expect(large.elapsedMs / small.elapsedMs).toBeLessThan(RATIO_BOUND);
+      // One digest per presented message on the way in.
+      expect([small.digests, large.digests]).toEqual([n, 2 * n]);
+      // The finder's cost, as visits: linear in n by the bound derived
+      // above, and doubling with n, never quadrupling.
+      expect(small.finderVisits).toBeGreaterThan(0);
+      expect(small.finderVisits).toBeLessThanOrEqual(VISITS_PER_MESSAGE * n);
+      expect(large.finderVisits).toBeLessThanOrEqual(VISITS_PER_MESSAGE * 2 * n);
+      expect(large.finderVisits).toBeLessThanOrEqual(DOUBLING_BOUND * small.finderVisits);
     },
   );
 
@@ -1032,22 +1053,31 @@ describe('cycle detection is linear, not quadratic (AGENTS.md rule 8, 2026-09-16
   }
 
   it(
-    'rejects a rootless reverse-ordered orphan chain on the orphan alone, in time linear in n (n-versus-2n ratio below 3)',
+    'rejects a rootless reverse-ordered orphan chain on the orphan alone, at one digest per message and zero finder visits',
     { timeout: LONG_TEST_TIMEOUT_MS },
     () => {
       const n = 32_000;
-      const small = timeVerify(buildRootlessReverseChain(n));
-      const large = timeVerify(buildRootlessReverseChain(2 * n));
+      // Built BEFORE the spy is installed, so construction's own computeHash
+      // calls are not counted; the spy passes every call through to the real
+      // digest.
+      const smallChain = buildRootlessReverseChain(n);
+      const largeChain = buildRootlessReverseChain(2 * n);
+      const hashSpy = vi.spyOn(sessionModule, 'hashCanonicalBytes');
+      const small = countVerify(smallChain, hashSpy);
+      const large = countVerify(largeChain, hashSpy);
 
       // The orphan alone explains the rejection; findCycle never runs for
-      // this shape, so the diagnosis is the plain orphan error at both sizes.
+      // this shape, so the diagnosis is the plain orphan error at both sizes
+      // and the finder's visit count is zero.
       expect(small.errors).toEqual([
         `transcript message ${n - 1} is an orphan: its prev_hash matches no presented message`,
       ]);
       expect(large.errors).toEqual([
         `transcript message ${2 * n - 1} is an orphan: its prev_hash matches no presented message`,
       ]);
-      expect(large.elapsedMs / small.elapsedMs).toBeLessThan(RATIO_BOUND);
+      expect([small.finderVisits, large.finderVisits]).toEqual([0, 0]);
+      // The whole cost of this shape is one digest per presented message.
+      expect([small.digests, large.digests]).toEqual([n, 2 * n]);
     },
   );
 });
@@ -1165,6 +1195,33 @@ describe('MAX_SET_BINDING_TRANSCRIPT_MESSAGES (2026-09-16 delta-11 gate, Codex P
     ]);
     expect(lengthReads).toBe(1);
     expect(ownKeysReads).toBe(0);
+  });
+
+  it('reads the caller array length exactly once on the accept path too (the snapshot observes the descriptor map, never `length` again)', () => {
+    // Codex P1, 2026-09-17 delta-13 gate: the Python SDK read the length
+    // twice (a truthiness test, then the cap); its fix and this test pin ONE
+    // read in both languages, on the path that goes on to bind.
+    const vector = loadVector('positive', 'pos-synthetic-receipt-set-binding-reconstruction');
+    const { receipt, messages } = vectorPair(vector);
+    let lengthReads = 0;
+    let ownKeysReads = 0;
+    const proxied = new Proxy(messages!, {
+      get(t, property, receiver) {
+        if (property === 'length') lengthReads += 1;
+        return Reflect.get(t, property, receiver);
+      },
+      ownKeys(t) {
+        ownKeysReads += 1;
+        return Reflect.ownKeys(t);
+      },
+    });
+
+    const result = verifyReceiptSetBinding(receipt, proxied);
+
+    expect(result).toEqual({ state: 'bound', errors: [] });
+    expect(lengthReads).toBe(1);
+    // Exactly one descriptor-map observation: the boundary snapshot.
+    expect(ownKeysReads).toBe(1);
   });
 });
 

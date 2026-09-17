@@ -125,8 +125,8 @@ every nesting level, one of the following holds:
 - an **Array** (`Array.isArray`) whose own prototype is exactly this realm's
   `Array.prototype`, AND whose own property descriptors, observed once
   through `Object.getOwnPropertyDescriptors`, hold an enumerable data
-  descriptor at every index below `length`: an accessor element throws, and
-  a sparse hole throws;
+  descriptor at every index below `length`: an accessor element throws, a
+  sparse hole throws, and a non-enumerable index throws;
 - an **object** (checked only when `Array.isArray` is false, never as a
   fallback pair) whose own prototype is exactly `null` or exactly this
   realm's `Object.prototype`, AND whose own string-keyed properties,
@@ -139,7 +139,12 @@ with an enumerable accessor, or a sparse array, satisfies the prototype test
 and still throws. Nothing else is inspected: not a hop count, not
 `Object.prototype.toString`, not the value's construction history. An
 accepted value is snapshotted once, keeping only its own enumerable,
-non-accessor, string-keyed data.
+non-accessor, string-keyed data. Arrays and objects share that one rule (a
+member is kept iff it is an own enumerable data descriptor); they differ
+only in what happens to a member that fails it, because an object key can
+be omitted while an array index below `length` cannot be omitted without
+renumbering every later element: an object's non-enumerable key is left
+out, an array's non-enumerable index throws.
 
 Because the check is a prototype-identity test and nothing more, it is
 satisfied by values `JSON.parse` cannot itself produce. **Proxies are not

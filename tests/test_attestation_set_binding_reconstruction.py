@@ -12,7 +12,6 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-import time
 from pathlib import Path
 from typing import Any
 
@@ -383,18 +382,21 @@ class TestCycleDetectionAndTheClosingInvariant:
 
 
 class TestCycleDetectionIsLinearNotQuadratic:
-    """AGENTS.md rule 8 (adversarial-complexity), asserted as a RATIO between
-    n and 2n, never as a wall-clock ceiling: a ceiling encodes one machine's
-    speed (the JS sibling's round-12 ceiling failed on the CI runners with no
-    regression anywhere), while the n-to-2n ratio of a linear walk is about
-    2 on every machine and about 4 for a quadratic one. The bound is 3,
-    halfway between. Each timing is the minimum of REPEATS back-to-back runs
-    so a single GC pause cannot move the ratio.
+    """AGENTS.md rule 8 (adversarial-complexity), asserted as an OPERATION
+    COUNT, never as wall-clock time in any form: a millisecond ceiling
+    encodes one machine's speed (the JS sibling's round-12 ceiling failed on
+    the CI runners with no regression anywhere), and a wall-clock n-versus-2n
+    ratio of two separately scheduled minima is still a flaky oracle (JIT
+    warm-up, contention, throttling and GC can push a linear ratio past 3 or
+    hide a quadratic term; Codex P2, 2026-09-17 delta-13 gate). A count of
+    visits is the same integer on every machine, so the assertions here are
+    exact bounds, read through the test-only observer hook
+    ``concordia.attestation._operation_observer``.
 
     Two shapes, because they reach different code (Codex P2, 2026-09-16
     delta-12 gate: the round-12 test built only the orphan shape, whose
     rejection is explained before ``_find_cycle`` runs, so the finder itself
-    was never exercised at scale; this class now counts its calls):
+    was never exercised at scale):
       - a genuine n-message prev_hash CYCLE, built with a monkeypatched
         ``compute_hash`` (the technique of TestCycleDetectionAndTheClosing
         Invariant, since a real cycle is a SHA-256 preimage search): no root,
@@ -403,22 +405,24 @@ class TestCycleDetectionIsLinearNotQuadratic:
         finder walks the whole cycle;
       - the rootless reverse-ordered chain ending in ONE orphan, with real
         hashing: the exact input that drove the old O(n^2) finder (Codex P1,
-        delta-11 gate), now rejected on the orphan alone before the finder.
+        delta-11 gate), now rejected on the orphan alone before the finder,
+        whose cost is one digest per presented message.
     Mirrors the describe block of the same name in
     js-sdk/tests/attestation-set-binding-reconstruction.test.ts.
     """
 
-    RATIO_BOUND = 3  # between linear (about 2) and quadratic (about 4)
-    REPEATS = 2
-
-    @classmethod
-    def _min_elapsed(cls, run: Any) -> float:
-        best = float("inf")
-        for _ in range(cls.REPEATS):
-            start = time.perf_counter()
-            run()
-            best = min(best, time.perf_counter() - start)
-        return best
+    # Upper bound on finder visits per presented message, from the finder's
+    # own structure: every node is appended to exactly one walk's ``path``
+    # (a later walk stops at a node an earlier walk resolved), which is n
+    # visits, and every walk ends in exactly one terminating visit (a resolved
+    # node, a root, or the revisit that closes a cycle); a walk appends at
+    # least its own start node, so there are at most n walks, hence at most
+    # n more terminating visits: 2n in all.
+    VISITS_PER_MESSAGE = 2
+    # The count for 2n against the count for n: exactly 2 for a linear
+    # finder, about 4 for the old quadratic one. 2.5 leaves room for the
+    # constant terminating visit(s) without admitting a quadratic term.
+    DOUBLING_BOUND = 2.5
 
     @staticmethod
     def _cycle_digest(index: int) -> str:
@@ -471,69 +475,82 @@ class TestCycleDetectionIsLinearNotQuadratic:
             )
         return list(reversed(messages))
 
-    @classmethod
-    def _time_verify(cls, transcript: list[dict[str, Any]]) -> tuple[float, list[str]]:
+    @staticmethod
+    def _count_verify(
+        monkeypatch: pytest.MonkeyPatch, transcript: list[dict[str, Any]]
+    ) -> tuple[int, int, list[str]]:
+        """Verify once and return ``(finder_visits, digests, errors)``: finder
+        visits through the observer hook, digests by wrapping whatever
+        ``compute_hash`` the module currently holds (the real one, or the
+        cycle fake a test installed first); both wrappers delegate, so the
+        verdict is unchanged."""
+        import concordia.attestation as attestation_module
+
+        finder_visits = 0
+        digests = 0
+
+        def observe(operation: str) -> None:
+            nonlocal finder_visits
+            if operation == "cycle_finder_visit":
+                finder_visits += 1
+
+        inner_hash = attestation_module.compute_hash
+
+        def counting_hash(message: dict[str, Any]) -> str:
+            nonlocal digests
+            digests += 1
+            return inner_hash(message)
+
+        monkeypatch.setattr("concordia.attestation._operation_observer", observe)
+        monkeypatch.setattr("concordia.attestation.compute_hash", counting_hash)
         receipt = {
             "concordia_attestation": "0.5.0",
             "chain_head": GENESIS_HASH,
             "message_count": len(transcript),
         }
-        errors: list[str] = []
+        _state, errors = evaluate_receipt_set_binding(receipt, transcript)
+        return finder_visits, digests, errors
 
-        def run() -> None:
-            nonlocal errors
-            _state, errors = evaluate_receipt_set_binding(receipt, transcript)
-
-        return cls._min_elapsed(run), errors
-
-    @staticmethod
-    def _count_find_cycle_calls(monkeypatch: pytest.MonkeyPatch) -> list[int]:
-        """Wrap the real ``_find_cycle`` so each call records how many edges
-        it was handed; the wrapper delegates, so verdicts are unchanged."""
-        import concordia.attestation as attestation_module
-
-        real_find_cycle = attestation_module._find_cycle
-        calls: list[int] = []
-
-        def counting(predecessor_of: dict[int, int]) -> list[int] | None:
-            calls.append(len(predecessor_of))
-            return real_find_cycle(predecessor_of)
-
-        monkeypatch.setattr("concordia.attestation._find_cycle", counting)
-        return calls
-
-    def test_genuine_cycle_reaches_find_cycle_and_walks_it_linearly(
+    def test_genuine_cycle_reaches_find_cycle_and_walks_it_in_linear_visits(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr("concordia.attestation.compute_hash", self._cycle_fake_hash)
-        calls = self._count_find_cycle_calls(monkeypatch)
         n = 32_000
 
-        small_elapsed, small_errors = self._time_verify(self._build_genuine_cycle(n))
-        large_elapsed, large_errors = self._time_verify(self._build_genuine_cycle(2 * n))
+        small_visits, small_digests, small_errors = self._count_verify(
+            monkeypatch, self._build_genuine_cycle(n)
+        )
+        large_visits, large_digests, large_errors = self._count_verify(
+            monkeypatch, self._build_genuine_cycle(2 * n)
+        )
 
-        # The finder ran once per verification, handed EVERY message's edge.
-        assert calls == [n] * self.REPEATS + [2 * n] * self.REPEATS
-        # And it walked the whole cycle: only _find_cycle produces this
+        # The finder walked the whole cycle: only _find_cycle produces this
         # diagnosis, and it names every index.
         assert small_errors == [self._expected_cycle_diagnosis(n)]
         assert large_errors == [self._expected_cycle_diagnosis(2 * n)]
-        assert large_elapsed / small_elapsed < self.RATIO_BOUND, (small_elapsed, large_elapsed)
+        # One digest per presented message on the way in.
+        assert (small_digests, large_digests) == (n, 2 * n)
+        # The finder's cost, as visits: linear in n by the bound derived
+        # above, and doubling with n, never quadrupling.
+        assert 0 < small_visits <= self.VISITS_PER_MESSAGE * n, small_visits
+        assert 0 < large_visits <= self.VISITS_PER_MESSAGE * 2 * n, large_visits
+        assert large_visits <= self.DOUBLING_BOUND * small_visits, (small_visits, large_visits)
 
-    def test_orphan_chain_never_reaches_find_cycle_and_verifies_linearly(
+    def test_orphan_chain_never_reaches_find_cycle_and_costs_one_digest_per_message(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        calls = self._count_find_cycle_calls(monkeypatch)
         n = 16_000
 
-        small_elapsed, small_errors = self._time_verify(self._build_rootless_reverse_chain(n))
-        large_elapsed, large_errors = self._time_verify(
-            self._build_rootless_reverse_chain(2 * n)
+        small_visits, small_digests, small_errors = self._count_verify(
+            monkeypatch, self._build_rootless_reverse_chain(n)
+        )
+        large_visits, large_digests, large_errors = self._count_verify(
+            monkeypatch, self._build_rootless_reverse_chain(2 * n)
         )
 
         # The orphan alone explains the rejection; the gate keeps the finder
-        # out of it entirely.
-        assert calls == []
+        # out of it entirely, so its visit count is zero at both sizes.
+        assert (small_visits, large_visits) == (0, 0)
         assert small_errors == [
             f"transcript message {n - 1} is an orphan: its prev_hash matches no presented message"
         ]
@@ -541,7 +558,8 @@ class TestCycleDetectionIsLinearNotQuadratic:
             f"transcript message {2 * n - 1} is an orphan: its prev_hash matches no "
             f"presented message"
         ]
-        assert large_elapsed / small_elapsed < self.RATIO_BOUND, (small_elapsed, large_elapsed)
+        # The whole cost of this shape is one digest per presented message.
+        assert (small_digests, large_digests) == (n, 2 * n)
 
 
 class TestTranscriptSizeCap:
@@ -616,6 +634,48 @@ class TestTranscriptSizeCap:
 
         with pytest.raises(TypeError):
             evaluate_receipt_set_binding(receipt, self._transcript_with_poison_at_zero(n))
+
+
+    # Exactly ONE ``__len__`` read of the caller's list (Codex P1, 2026-09-17
+    # delta-13 gate: ``not transcript`` was a first ``__len__`` call and the
+    # cap's ``len(transcript)`` a second, so a list subclass could answer
+    # the two differently). The JS sibling pins the same single read with a
+    # Proxy counting ``length`` gets.
+    class _LenCountingList(list):  # type: ignore[type-arg]
+        def __init__(self, items: list[dict[str, Any]]) -> None:
+            # list.__init__ extends from the plain list's items without
+            # calling THIS class's __len__; the counter starts after it.
+            super().__init__(items)
+            self.len_calls = 0
+
+        def __len__(self) -> int:
+            self.len_calls += 1
+            return super().__len__()
+
+    def test_over_cap_path_reads_the_length_exactly_once(self) -> None:
+        n = MAX_SET_BINDING_TRANSCRIPT_MESSAGES + 1
+        transcript = self._LenCountingList([{"id": f"m{i}"} for i in range(n)])
+        receipt = {"concordia_attestation": "0.5.0", "chain_head": GENESIS_HASH, "message_count": n}
+
+        state, errors = evaluate_receipt_set_binding(receipt, transcript)
+
+        assert state == "error"
+        assert errors == [
+            f"transcript has {n} messages, exceeding the maximum of "
+            f"{MAX_SET_BINDING_TRANSCRIPT_MESSAGES}"
+        ]
+        assert transcript.len_calls == 1
+
+    def test_accept_path_reads_the_length_exactly_once(
+        self, agreed_receipt: tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]
+    ) -> None:
+        attestation, transcript, _public_keys = agreed_receipt
+        counting = self._LenCountingList(transcript)
+
+        state, errors = evaluate_receipt_set_binding(attestation, counting)
+
+        assert (state, errors) == ("bound", [])
+        assert counting.len_calls == 1
 
 
 class TestTranscriptCapIsCrossPinned:

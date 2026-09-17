@@ -139,20 +139,26 @@ MAX_SET_BINDING_TRANSCRIPT_MESSAGES = 200_000
 
 
 # INTEGER-REJECTION RULE (shared by both reference runners; must match the
-# same paragraph above unsafeIntegerReachesCanonicalization in
+# same paragraph above parseVectorJson in
 # conformance/reference-runner-js/runner.mjs): an integer outside
-# +/-(2**53 - 1) is rejected iff it reaches canonicalization, which for a
-# vector means it lies under the vector's `input`, the subtree every
-# verification profile canonicalizes (minus string-valued signature fields).
-# An unsafe integer anywhere else (the manifest, a schema, `context`,
-# `notes`, any other vector member) is not a rejection, because nothing
-# there is canonicalized; the SDKs' parseJsonStrict likewise scans only the
-# document it is about to canonicalize. This runner enforces the rule for
-# free: json.loads keeps arbitrary precision, and rfc8785.dumps raises
-# IntegerDomainError only when the integer reaches jcs_bytes, which is the
-# exact moment the rule names. The JS runner cannot, because JSON.parse has
-# already collapsed the literal into a lossy double by then, so it enforces
-# the same rule at ingest by scanning the source text of `input` only.
+# +/-(2**53 - 1) is rejected iff it reaches canonicalization, by the SAME
+# mechanism in both runners. This runner: json.loads keeps every integer at
+# arbitrary precision, and rfc8785.dumps raises IntegerDomainError at the
+# exact moment such an integer reaches jcs_bytes; an unsafe integer a
+# profile never canonicalizes (an unused `input` member, an extra key
+# profile_subdict drops, anything under `context` or `notes`) is never
+# rejected. The JS runner: parseVectorJson keeps an unsafe plain-decimal
+# integer literal as a BigInt (its lossless, distinguishable analogue of
+# this int), and snapshotPlainJson, the one chokepoint every
+# canonicalization runs through there, rejects a BigInt at the moment it
+# reaches canonicalization; its schema validation is shown the number
+# jsonschema sees here. Nothing is decided at ingest and nothing is
+# approximated by document position: round 13's "reject if it lies under
+# `input`" scan diverged from this runner on an unsafe integer in an unused
+# `input` member of chain-session-transition-v1 and on an extra key under
+# agent-profile-v1's trust_signals or a reputation assertion (Codex P1 and
+# Grok lens A, 2026-09-17 delta-13 gate); both are pinned by
+# tests/conformance_runner_checks.py.
 def reject_json_constant(value: str) -> None:
     raise ValueError(f"non-finite JSON value is not allowed: {value}")
 
@@ -1612,13 +1618,17 @@ def evaluate_vector(
     suite_base: Path,
     vector: Json,
     regression: Regression | None,
-) -> Outcome:
+) -> tuple[Outcome, str | None]:
+    """The verdict and, for a reject, its reason (the Reject message). The
+    reason never reaches stdout; run_suite prints it to stderr only under
+    --explain, so the verdict-only stdout contract is unchanged. Must match
+    evaluateVector in conformance/reference-runner-js/runner.mjs."""
     try:
         _, input_data, context, profile = require_vector_shape(vector)
         verify_profile(suite_base, profile, input_data, context, regression)
-    except Reject:
-        return "reject"
-    return "accept"
+    except Reject as exc:
+        return "reject", str(exc)
+    return "accept", None
 
 
 def suite_base_from_root(suite_root: Path) -> Path:
@@ -1662,7 +1672,7 @@ def active_regression() -> Regression | None:
     return raw  # type: ignore[return-value]
 
 
-def run_suite(suite_arg: str, regression: Regression | None) -> int:
+def run_suite(suite_arg: str, regression: Regression | None, explain: bool = False) -> int:
     manifest_path, suite_base = manifest_path_from_arg(suite_arg)
     manifest = load_json(manifest_path)
     if not isinstance(manifest, dict):
@@ -1686,6 +1696,7 @@ def run_suite(suite_arg: str, regression: Regression | None) -> int:
             vector_id = str(rel_path)
             expected: Json = "<unreadable>"
             got: Outcome = "reject"
+            reason: str | None = None
             try:
                 if not isinstance(rel_path, str):
                     raise Reject("manifest path is not a string")
@@ -1694,9 +1705,15 @@ def run_suite(suite_arg: str, regression: Regression | None) -> int:
                 if isinstance(vector, dict) and isinstance(vector.get("id"), str):
                     vector_id = vector["id"]
                     expected = vector.get("expected", "<missing>")
-                got = evaluate_vector(suite_base, vector, regression)
-            except Exception:
+                got, reason = evaluate_vector(suite_base, vector, regression)
+            except Exception as exc:
                 got = "reject"
+                reason = str(exc) if isinstance(exc, Reject) else f"error: {exc}"
+            if explain and got == "reject":
+                # stderr, never stdout: the [OK]/[FAIL]/[SUMMARY] contract
+                # stays verdict-only. Line format must match runSuite in
+                # conformance/reference-runner-js/runner.mjs.
+                print(f"[EXPLAIN] {vector_id} reject: {reason}", file=sys.stderr)
             if expected == got:
                 print(f"[OK] {vector_id}")
             else:
@@ -1718,12 +1735,17 @@ def run_suite(suite_arg: str, regression: Regression | None) -> int:
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("suite", help="path to conformance/vectors/ or manifest.json")
+    parser.add_argument(
+        "--explain",
+        action="store_true",
+        help="print each rejected vector's reason to stderr (stdout is unchanged)",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
-    return run_suite(args.suite, active_regression())
+    return run_suite(args.suite, active_regression(), explain=args.explain)
 
 
 if __name__ == "__main__":

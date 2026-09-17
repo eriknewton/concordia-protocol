@@ -170,13 +170,14 @@ function reject(message) {
   throw new Reject(message);
 }
 
-// The single ingest chokepoint for every schema, manifest, and vector this
-// runner reads: grammar only (a malformed file throws SyntaxError here).
-// The unsafe-integer rule is NOT applied here any more: it is scoped to the
-// vector's `input` (see unsafeIntegerReachesCanonicalization and the
-// INTEGER-REJECTION RULE above it), and a vector's source text is kept by
-// runSuite for exactly that check. Round 12 scanned the whole document
-// here, which rejected an unsafe integer in the manifest, a schema, or an
+// The ingest chokepoint for every schema and manifest this runner reads:
+// grammar only (a malformed file throws SyntaxError here). Vector documents
+// go through parseVectorJson instead (see the INTEGER-REJECTION RULE), so
+// an unsafe integer literal in a vector survives parsing as a BigInt and is
+// rejected only if it reaches canonicalization; nothing in a manifest or a
+// schema is ever canonicalized, so the native parser is exact for them.
+// Round 12 scanned the whole document here, which rejected an unsafe
+// integer in the manifest, a schema, or an
 // unused vector member the Python runner accepts (Codex P1, 2026-09-16
 // delta-12 gate).
 function readJson(filePath) {
@@ -307,7 +308,6 @@ const SCAN_SPACE = 0x20;
 const SCAN_TAB = 0x09;
 const SCAN_LF = 0x0a;
 const SCAN_CR = 0x0d;
-const VECTOR_CANONICALIZED_MEMBER = "input";
 
 function isJsonWhitespace(code) {
   return code === SCAN_SPACE || code === SCAN_TAB || code === SCAN_LF || code === SCAN_CR;
@@ -316,103 +316,190 @@ function isJsonWhitespace(code) {
 // INTEGER-REJECTION RULE (shared by both reference runners; must match the
 // same paragraph above reject_json_constant in
 // conformance/reference-runner/runner.py): an integer outside
-// +/-(2^53 - 1) is rejected iff it reaches canonicalization, which for a
-// vector means it lies under the vector's `input`, the subtree every
-// verification profile canonicalizes (minus string-valued signature fields).
-// An unsafe integer anywhere else (the manifest, a schema, `context`,
-// `notes`, any other vector member) is not a rejection, because nothing
-// there is canonicalized; the SDKs' parseJsonStrict likewise scans only the
-// document it is about to canonicalize. The Python runner gets the rule for
-// free (json.loads keeps arbitrary precision; rfc8785.dumps raises
-// IntegerDomainError at canonicalization). This runner cannot: once
-// JSON.parse has run, a plain-decimal integer at the >= 1e21 magnitude is
-// the same lossy double as a legitimate `1e+21` float literal (fixture
-// vector_08's 1e30 predicate limit lives in that band and must stay
-// accepted), and the post-parse checkNoSpecialFloatValue exemption for
-// exponential strings cannot tell them apart -- so the ONLY place the
-// literal form survives is the source text, before parsing. This single
-// left-to-right pass therefore tracks just enough structure to know which
-// top-level member it is inside (container depth, and the key of the
-// top-level member currently being read) and reports true for the first
-// integer-form literal outside Number.isSafeInteger's range that lies
-// under `input`. Strings are skipped whole (a big integer carried as a
-// JSON string is never a number token); fraction and exponent literals are
-// exempt exactly as in parseJsonStrict (js-sdk/src/canonical/parse.ts),
-// whose tokenization this mirrors.
-function unsafeIntegerReachesCanonicalization(text) {
-  const n = text.length;
-  let i = 0;
-  let depth = 0; // 1 = directly inside the top-level container
-  let topLevelKey; // the top-level member being read, once its key has been seen
-  while (i < n) {
-    const ch = text.charCodeAt(i);
-    if (ch === UNSAFE_INT_QUOTE) {
-      const start = i;
-      i += 1;
-      while (i < n) {
-        const c = text.charCodeAt(i);
-        if (c === UNSAFE_INT_BACKSLASH) {
-          i += 2;
-          continue;
-        }
-        i += 1;
-        if (c === UNSAFE_INT_QUOTE) break;
-      }
-      if (depth === 1) {
-        // A string directly inside the top-level object is a KEY exactly
-        // when the next non-whitespace character is ':'; otherwise it is a
-        // value and the current key stands.
-        let j = i;
-        while (j < n && isJsonWhitespace(text.charCodeAt(j))) j += 1;
-        if (text.charCodeAt(j) === SCAN_COLON) topLevelKey = JSON.parse(text.slice(start, i));
-      }
-      continue;
+// +/-(2^53 - 1) is rejected iff it reaches canonicalization, by the SAME
+// mechanism in both runners. The Python runner: json.loads keeps every
+// integer at arbitrary precision, and rfc8785.dumps raises
+// IntegerDomainError at the exact moment such an integer reaches jcs_bytes;
+// an unsafe integer a profile never canonicalizes (an unused `input`
+// member, an extra key profile_subdict drops, anything under `context` or
+// `notes`) is never rejected. This runner: parseVectorJson below keeps an
+// unsafe plain-decimal integer literal as a BigInt (the JavaScript value
+// that, like Python's int, holds it without loss and is distinguishable
+// from a legitimate `1e+21` float literal), and snapshotPlainJson, the one
+// chokepoint every canonicalization runs through, rejects a BigInt at the
+// exact moment it reaches canonicalization. Nothing is decided at ingest
+// and nothing is approximated by document position: round 13's "reject if
+// it lies under `input`" scan diverged from Python on an unsafe integer in
+// an unused `input` member of chain-session-transition-v1 and on an extra
+// key under agent-profile-v1's trust_signals or a reputation assertion
+// (Codex P1 and Grok lens A, 2026-09-17 delta-13 gate); both are pinned by
+// tests/conformance_runner_checks.py. Schema validation sees the BigInt as
+// the number Python's jsonschema sees (schemaView below), so a schema
+// verdict cannot diverge either. JSON.parse cannot do any of this: once it
+// has run, a plain-decimal integer at the >= 1e21 magnitude is the same
+// lossy double as a `1e+21` float literal (fixture vector_08's 1e30
+// predicate limit lives in that band and must stay accepted), so the only
+// place the literal form survives is the source text, which is why the
+// vector document is parsed by hand. Strings are decoded by JSON.parse on
+// the string token (a big integer carried as a JSON string is never a
+// number token); fraction and exponent literals stay floats exactly as in
+// parseJsonStrict (js-sdk/src/canonical/parse.ts), whose number
+// tokenization this mirrors.
+const LITERAL_TRUE = "true";
+const LITERAL_FALSE = "false";
+const LITERAL_NULL = "null";
+
+function parseVectorJson(text) {
+  // Grammar first, with the native parser: a malformed document throws
+  // SyntaxError here, so the descent below only ever sees well-formed JSON
+  // and needs no error recovery of its own. Its value is discarded; the
+  // tree returned is the one built below.
+  JSON.parse(text);
+  const cursor = { text, i: 0 };
+  skipJsonWhitespace(cursor);
+  return parseJsonValue(cursor);
+}
+
+function skipJsonWhitespace(cursor) {
+  while (cursor.i < cursor.text.length && isJsonWhitespace(cursor.text.charCodeAt(cursor.i))) {
+    cursor.i += 1;
+  }
+}
+
+function parseJsonValue(cursor) {
+  const ch = cursor.text.charCodeAt(cursor.i);
+  if (ch === SCAN_LBRACE) return parseJsonObject(cursor);
+  if (ch === SCAN_LBRACKET) return parseJsonArray(cursor);
+  if (ch === UNSAFE_INT_QUOTE) return parseJsonString(cursor);
+  for (const literal of [LITERAL_TRUE, LITERAL_FALSE, LITERAL_NULL]) {
+    if (cursor.text.startsWith(literal, cursor.i)) {
+      cursor.i += literal.length;
+      return JSON.parse(literal);
     }
-    if (ch === SCAN_LBRACE || ch === SCAN_LBRACKET) {
-      depth += 1;
-      i += 1;
-      continue;
-    }
-    if (ch === SCAN_RBRACE || ch === SCAN_RBRACKET) {
-      depth -= 1;
-      if (depth < 1) topLevelKey = undefined;
-      i += 1;
-      continue;
-    }
-    if (ch === SCAN_COMMA && depth === 1) {
-      topLevelKey = undefined;
-      i += 1;
-      continue;
-    }
-    if (ch === UNSAFE_INT_MINUS || (ch >= UNSAFE_INT_ZERO && ch <= UNSAFE_INT_NINE)) {
-      const start = i;
-      let integerForm = true; // until a '.' or an exponent marker appears
-      i += 1;
-      while (i < n) {
-        const c = text.charCodeAt(i);
-        if (c >= UNSAFE_INT_ZERO && c <= UNSAFE_INT_NINE) {
-          i += 1;
-        } else if (c === UNSAFE_INT_DOT || c === UNSAFE_INT_LOWER_E || c === UNSAFE_INT_UPPER_E) {
-          integerForm = false;
-          i += 1;
-        } else if (c === UNSAFE_INT_PLUS || c === UNSAFE_INT_MINUS) {
-          i += 1;
-        } else {
-          break;
-        }
-      }
-      if (
-        integerForm &&
-        topLevelKey === VECTOR_CANONICALIZED_MEMBER &&
-        !Number.isSafeInteger(Number(text.slice(start, i)))
-      ) {
-        return true;
-      }
+  }
+  return parseJsonNumber(cursor);
+}
+
+function parseJsonString(cursor) {
+  const text = cursor.text;
+  const start = cursor.i;
+  let i = start + 1;
+  while (i < text.length) {
+    const c = text.charCodeAt(i);
+    if (c === UNSAFE_INT_BACKSLASH) {
+      i += 2; // the escape and the escaped character together
       continue;
     }
     i += 1;
+    if (c === UNSAFE_INT_QUOTE) break;
   }
-  return false;
+  cursor.i = i;
+  return JSON.parse(text.slice(start, i));
+}
+
+// The number tokenization of parseJsonStrict (js-sdk/src/canonical/parse.ts):
+// a token is in INTEGER form until a '.' or an exponent marker appears.
+function parseJsonNumber(cursor) {
+  const text = cursor.text;
+  const start = cursor.i;
+  let integerForm = true;
+  let i = start + 1; // the first character is '-' or a digit in well-formed JSON
+  while (i < text.length) {
+    const c = text.charCodeAt(i);
+    if (c >= UNSAFE_INT_ZERO && c <= UNSAFE_INT_NINE) {
+      i += 1;
+    } else if (c === UNSAFE_INT_DOT || c === UNSAFE_INT_LOWER_E || c === UNSAFE_INT_UPPER_E) {
+      integerForm = false;
+      i += 1;
+    } else if (c === UNSAFE_INT_PLUS || c === UNSAFE_INT_MINUS) {
+      i += 1; // only follows an exponent marker in well-formed JSON
+    } else {
+      break;
+    }
+  }
+  cursor.i = i;
+  const token = text.slice(start, i);
+  if (integerForm && !Number.isSafeInteger(Number(token))) {
+    return BigInt(token);
+  }
+  return JSON.parse(token);
+}
+
+function parseJsonArray(cursor) {
+  const out = [];
+  cursor.i += 1; // '['
+  skipJsonWhitespace(cursor);
+  if (cursor.text.charCodeAt(cursor.i) === SCAN_RBRACKET) {
+    cursor.i += 1;
+    return out;
+  }
+  for (;;) {
+    skipJsonWhitespace(cursor);
+    out.push(parseJsonValue(cursor));
+    skipJsonWhitespace(cursor);
+    const c = cursor.text.charCodeAt(cursor.i);
+    cursor.i += 1;
+    if (c === SCAN_RBRACKET) return out;
+    // otherwise ',' in well-formed JSON
+  }
+}
+
+function parseJsonObject(cursor) {
+  // A {} object populated by defineProperty, never `out[key] = value`: this
+  // is what JSON.parse itself does (CreateDataProperty), so a "__proto__"
+  // key becomes an own data property and a duplicate key is last-wins,
+  // exactly as the native tree would have them.
+  const out = {};
+  cursor.i += 1; // '{'
+  skipJsonWhitespace(cursor);
+  if (cursor.text.charCodeAt(cursor.i) === SCAN_RBRACE) {
+    cursor.i += 1;
+    return out;
+  }
+  for (;;) {
+    skipJsonWhitespace(cursor);
+    const key = parseJsonString(cursor);
+    skipJsonWhitespace(cursor);
+    cursor.i += 1; // ':'
+    skipJsonWhitespace(cursor);
+    const value = parseJsonValue(cursor);
+    Object.defineProperty(out, key, {
+      value,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+    skipJsonWhitespace(cursor);
+    const c = cursor.text.charCodeAt(cursor.i);
+    cursor.i += 1;
+    if (c === SCAN_RBRACE) return out;
+    // otherwise ',' in well-formed JSON
+  }
+}
+
+// What schema validation is shown: the same tree with every BigInt replaced
+// by the lossy double JSON.parse would have produced. Python's jsonschema
+// validates an arbitrary-precision int as an ordinary integer; ajv would
+// call a BigInt neither "number" nor "integer", and that would be a verdict
+// reached by a different mechanism than Python's. The view is used for
+// validation only; the value canonicalization sees is the original tree,
+// BigInt included.
+function schemaView(value) {
+  if (typeof value === "bigint") return Number(value);
+  if (Array.isArray(value)) return value.map((item) => schemaView(item));
+  if (isObject(value)) {
+    const out = {};
+    for (const [key, item] of Object.entries(value)) {
+      Object.defineProperty(out, key, {
+        value: schemaView(item),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+    }
+    return out;
+  }
+  return value;
 }
 
 // Produce a realm-local, plain-data deep copy of `value` in a single
@@ -478,6 +565,15 @@ function snapshotPlainJson(value) {
     return null;
   }
   const t = typeof value;
+  if (t === "bigint") {
+    // The INTEGER-REJECTION RULE's one enforcement point: a BigInt is what
+    // parseVectorJson made of a plain-decimal integer literal outside
+    // +/-(2^53 - 1), and this is the moment it reaches canonicalization,
+    // the same moment rfc8785.dumps raises IntegerDomainError inside the
+    // Python runner's jcs_bytes. Reason text must match the Python runner's
+    // jcs_bytes rejection for the same input.
+    reject("JCS canonicalization failed: unsafe integer reaches canonicalization");
+  }
   if (t === "boolean") {
     return value;
   }
@@ -524,12 +620,20 @@ function snapshotPlainJson(value) {
     const out = [];
     for (let index = 0; index < length; index += 1) {
       const descriptor = descriptors[String(index)];
+      // Hole, accessor, or non-enumerable: one rule with the object branch
+      // (own enumerable data descriptors only), except that an array index
+      // cannot be skipped without renumbering the later elements, so it is
+      // refused rather than omitted. Must match the array branch of
+      // snapshotPlainJson in js-sdk/src/canonical/canonicalize.ts.
       if (
         descriptor === undefined ||
         descriptor.get !== undefined ||
-        descriptor.set !== undefined
+        descriptor.set !== undefined ||
+        !descriptor.enumerable
       ) {
-        reject(`JCS canonicalization failed: array index ${index} is a hole or an accessor`);
+        reject(
+          `JCS canonicalization failed: array index ${index} is a hole, an accessor, or non-enumerable`,
+        );
       }
       Object.defineProperty(out, index, {
         value: snapshotPlainJson(descriptor.value),
@@ -778,7 +882,7 @@ function validateSchema(suiteBase, schemaName, data) {
     }
     context.validators.set(schemaName, validate);
   }
-  if (!validate(data)) {
+  if (!validate(schemaView(data))) {
     reject("schema validation failed");
   }
 }
@@ -808,7 +912,7 @@ function validateAction(schema, action) {
   validateJsonSchemaObject(schema);
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const validate = ajv.compile(schema);
-  if (!validate(action)) {
+  if (!validate(schemaView(action))) {
     reject("action violates constraints");
   }
 }
@@ -2271,23 +2375,24 @@ function verifyProfile(suiteBase, profile, inputData, context, regression) {
   }
 }
 
-function evaluateVector(suiteBase, vector, regression, vectorText) {
+// Returns the verdict and, for a reject, its reason: the Reject message, or
+// `error: <message>` for any other exception (still a reject). The reason
+// never reaches stdout; runSuite prints it to stderr only under --explain,
+// so the verdict-only stdout contract is unchanged. Must match
+// evaluate_vector in conformance/reference-runner/runner.py.
+function evaluateVector(suiteBase, vector, regression) {
   try {
     const [, inputData, context, profile] = requireVectorShape(vector);
-    if (unsafeIntegerReachesCanonicalization(vectorText)) {
-      // The rule's one JS-side enforcement point (see the INTEGER-REJECTION
-      // RULE comment): decided once the vector's own `expected` has been
-      // read, so the outcome line is scored like any other reject.
-      reject("unsafe integer reaches canonicalization");
-    }
     verifyProfile(suiteBase, profile, inputData, context, regression);
   } catch (error) {
-    if (error instanceof Reject) {
-      return "reject";
-    }
-    return "reject";
+    return { outcome: "reject", reason: rejectReason(error) };
   }
-  return "accept";
+  return { outcome: "accept", reason: null };
+}
+
+function rejectReason(error) {
+  if (error instanceof Reject) return error.message;
+  return `error: ${error instanceof Error ? error.message : String(error)}`;
 }
 
 function suiteBaseFromRoot(suiteRoot) {
@@ -2336,7 +2441,7 @@ function activeRegression() {
   return raw;
 }
 
-function runSuite(suiteArg, regression) {
+function runSuite(suiteArg, regression, explain) {
   const [manifestPath, suiteBase] = manifestPathFromArg(suiteArg);
   const manifest = readJson(manifestPath);
   if (!isObject(manifest)) {
@@ -2361,19 +2466,27 @@ function runSuite(suiteArg, regression) {
       let vectorId = String(relPath);
       let expected = "<unreadable>";
       let got = "reject";
+      let reason = null;
       try {
         if (typeof relPath !== "string") {
           reject("manifest path is not a string");
         }
         const vectorText = fs.readFileSync(resolveManifestFile(suiteBase, relPath), "utf8");
-        const vector = JSON.parse(vectorText);
+        const vector = parseVectorJson(vectorText);
         if (isObject(vector) && typeof vector.id === "string") {
           vectorId = vector.id;
           expected = vector.expected ?? "<missing>";
         }
-        got = evaluateVector(suiteBase, vector, regression, vectorText);
+        ({ outcome: got, reason } = evaluateVector(suiteBase, vector, regression));
       } catch (error) {
         got = "reject";
+        reason = rejectReason(error);
+      }
+      if (explain && got === "reject") {
+        // stderr, never stdout: the [OK]/[FAIL]/[SUMMARY] contract stays
+        // verdict-only. Line format must match run_suite in
+        // conformance/reference-runner/runner.py.
+        console.error(`[EXPLAIN] ${vectorId} reject: ${reason}`);
       }
       if (expected === got) {
         console.log(`[OK] ${vectorId}`);
@@ -2397,11 +2510,13 @@ function runSuite(suiteArg, regression) {
 }
 
 function main(argv) {
-  if (argv.length !== 1) {
-    console.error("usage: runner.mjs <path to conformance/vectors/ or manifest.json>");
+  const explain = argv.includes("--explain");
+  const positional = argv.filter((arg) => arg !== "--explain");
+  if (positional.length !== 1) {
+    console.error("usage: runner.mjs [--explain] <path to conformance/vectors/ or manifest.json>");
     return 2;
   }
-  return runSuite(argv[0], activeRegression());
+  return runSuite(positional[0], activeRegression(), explain);
 }
 
 try {
