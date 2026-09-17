@@ -159,8 +159,20 @@ function reject(message) {
   throw new Reject(message);
 }
 
+// The single ingest chokepoint: every schema, manifest, vector, and
+// (because a transcript is just a nested field of a vector, not a
+// separately-read document) transcript this runner ever reads passes
+// through here. Grammar is validated by the native parser FIRST (a
+// malformed file throws SyntaxError before the scan runs), then the source
+// text is scanned for a bare unsafe integer literal ANYWHERE in the
+// document, at any nesting depth, before the caller ever sees the
+// (possibly already-lossy) parsed value. Must match parseJsonStrict in
+// js-sdk/src/canonical/parse.ts.
 function readJson(filePath) {
-  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  const text = fs.readFileSync(filePath, "utf8");
+  const parsed = JSON.parse(text);
+  rejectUnsafeIntegerLiterals(text);
+  return parsed;
 }
 
 function b64urlDecode(value) {
@@ -267,6 +279,96 @@ function checkLoneSurrogates(s) {
   }
 }
 
+const UNSAFE_INT_QUOTE = 0x22; // "
+const UNSAFE_INT_BACKSLASH = 0x5c; // \
+const UNSAFE_INT_MINUS = 0x2d; // -
+const UNSAFE_INT_PLUS = 0x2b; // +
+const UNSAFE_INT_DOT = 0x2e; // .
+const UNSAFE_INT_LOWER_E = 0x65; // e
+const UNSAFE_INT_UPPER_E = 0x45; // E
+const UNSAFE_INT_ZERO = 0x30; // 0
+const UNSAFE_INT_NINE = 0x39; // 9
+
+// Single left-to-right pass over well-formed JSON SOURCE TEXT that rejects
+// the first bare integer literal outside Number.isSafeInteger's range,
+// reading the literal from the source before JSON.parse can collapse it
+// into a lossy double. Runner ingest-boundary fix (2026-09-16 delta-11 gate,
+// Codex P1): readJson previously ran a bare `JSON.parse` with no scan at
+// all, so a plain-decimal integer at the >= 1e21 magnitude -- where
+// `String(JSON.parse(literal))` itself switches to exponential form (e.g.
+// `1000000000000000000000` parses to the double that prints as `1e+21`) --
+// slipped past the post-parse checkNoSpecialFloatValue guard too, because
+// that guard's own `!/[eE]/.test(String(value))` exemption (added for the
+// legitimate exponential-literal case) matches the exponential STRING form
+// of this exact lossy double. The runner then emitted `1e+21` while the SDK
+// (fromJsonText/parseJsonStrict) and the Python reference runner
+// (rfc8785.dumps, whose IntegerDomainError bounds a bare int to
+// +/-(2**53 - 1)) both reject the same source literal -- a real
+// cross-language canonical-bytes divergence, not merely a runner quirk.
+// Reading the SOURCE text is the only way to catch this: once parsed, a
+// lossy double is indistinguishable from a legitimate large float (the
+// 1e30 predicate-limit case in fixture vector_08 lives in the same
+// exponential band and must still be accepted). Must match
+// rejectUnsafeIntegerLiterals in js-sdk/src/canonical/parse.ts.
+function rejectUnsafeIntegerLiterals(text) {
+  const n = text.length;
+  let i = 0;
+  while (i < n) {
+    const ch = text.charCodeAt(i);
+    if (ch === UNSAFE_INT_QUOTE) {
+      // Skip the whole string literal, honoring backslash escapes, so a
+      // big integer carried as a JSON string ("123...901") is never
+      // inspected as a number token.
+      i += 1;
+      while (i < n) {
+        const c = text.charCodeAt(i);
+        if (c === UNSAFE_INT_BACKSLASH) {
+          i += 2;
+          continue;
+        }
+        i += 1;
+        if (c === UNSAFE_INT_QUOTE) break;
+      }
+      continue;
+    }
+    if (ch === UNSAFE_INT_MINUS || (ch >= UNSAFE_INT_ZERO && ch <= UNSAFE_INT_NINE)) {
+      const start = i;
+      let integerForm = true; // until a '.' or an exponent marker appears
+      i += 1;
+      while (i < n) {
+        const c = text.charCodeAt(i);
+        if (c >= UNSAFE_INT_ZERO && c <= UNSAFE_INT_NINE) {
+          i += 1;
+        } else if (c === UNSAFE_INT_DOT || c === UNSAFE_INT_LOWER_E || c === UNSAFE_INT_UPPER_E) {
+          // Fraction or exponent -> a float literal, parity-safe across
+          // languages; exempt from the integer check (same carve-out as
+          // parseJsonStrict).
+          integerForm = false;
+          i += 1;
+        } else if (c === UNSAFE_INT_PLUS || c === UNSAFE_INT_MINUS) {
+          i += 1;
+        } else {
+          break;
+        }
+      }
+      if (integerForm) {
+        const literal = text.slice(start, i);
+        if (!Number.isSafeInteger(Number(literal))) {
+          reject(
+            `Cannot ingest unsafe integer literal ${literal}: bare integers beyond ` +
+              `Number.MAX_SAFE_INTEGER (2^53 - 1) lose precision when parsed into a ` +
+              `JavaScript number and would diverge from the Python reference's canonical ` +
+              `bytes. Carry large integers as JSON strings ("${literal}") to canonicalize ` +
+              `identically across languages.`,
+          );
+        }
+      }
+      continue;
+    }
+    i += 1;
+  }
+}
+
 // Produce a realm-local, plain-data deep copy of `value` in a single
 // traversal, reading each member of the caller-supplied structure exactly
 // once. Mirrors snapshotPlainJson in js-sdk/src/canonical/canonicalize.ts;
@@ -288,21 +390,36 @@ function checkLoneSurrogates(s) {
 // otherwise answer -- throws too, instead of falling through to an indexed
 // read that would reach the prototype chain.
 //
-// THE CONTRACT (2026-09-16 fix round 11 -- a subtraction; see
-// isPlainObjectPrototype's comment above for why every earlier hop-count /
-// brand / symbol-key layer is gone rather than patched again): this
-// function accepts plain data -- values whose prototype is null, this
-// realm's Object.prototype, or this realm's Array.prototype, with own
-// enumerable string-keyed data properties, as JSON.parse produces them in
-// this realm. A value from another realm has no re-parse helper in this
-// standalone runner and is simply refused; a caller driving this runner
-// re-parses cross-realm JSON before handing it in. Any other object,
-// including class instances, builtins, Proxies, and objects whose prototype
-// chain has been altered, is refused or, when its prototype has been set to
-// null, is treated as the plain data of its own enumerable properties. This
-// runner does not defend against replacement of this realm's builtins; a
-// hostile same-realm environment is outside every JavaScript library's
-// contract.
+// THE CONTRACT (2026-09-16 fix round 12 -- restated to name exactly the
+// predicate below, matching js-sdk/src/canonical/canonicalize.ts's own
+// restatement after Grok lens A's delta-11 finding that the fix-round-11
+// wording said Proxies and retargeted class instances are refused, when
+// the identity tests below cannot tell them apart from an ordinary object
+// or array and accept them): this function accepts a value iff it is an
+// Array (Array.isArray) whose own prototype is exactly this realm's
+// Array.prototype, or -- checked only when that is false, never as a
+// fallback pair -- its own prototype is exactly null or exactly this
+// realm's Object.prototype. Nothing else is inspected: not a hop count,
+// not a toString/internal-slot brand, not a symbol key. A value from
+// another realm has no re-parse helper in this standalone runner and is
+// simply refused (a cross-realm Object.prototype/Array.prototype is a
+// distinct object and fails the same identity test); a caller driving
+// this runner re-parses cross-realm JSON before handing it in.
+//
+// Because the predicate reads only prototype identity and the descriptor
+// map, it accepts values JSON.parse cannot itself produce -- documented
+// residuals, not a probe gap: a Proxy whose getPrototypeOf and
+// getOwnPropertyDescriptors traps present a same-realm plain object or
+// Array is snapshotted as the plain data those traps returned, once (this
+// runner does not attempt to detect Proxies); a builtin or class instance
+// is refused as constructed but accepted once its own prototype has been
+// retargeted to null or this realm's Object.prototype, snapshotted as
+// whatever own enumerable data it then carries; a null-prototype object
+// with own data canonicalizes as that data; an arguments object
+// canonicalizes as its own enumerable indices only, because its OWN
+// prototype genuinely IS this realm's Object.prototype. This runner does
+// not defend against replacement of this realm's builtins; a hostile
+// same-realm environment is outside every JavaScript library's contract.
 //
 // The copy this function returns is built with Object.create(null) (for an
 // object) or [] (for an array) and populated ONLY through

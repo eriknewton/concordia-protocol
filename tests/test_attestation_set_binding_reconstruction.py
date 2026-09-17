@@ -12,13 +12,17 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import time
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from concordia import Agent, BasicOffer, generate_attestation, verify_attestation
-from concordia.attestation import evaluate_receipt_set_binding
+from concordia.attestation import (
+    MAX_SET_BINDING_TRANSCRIPT_MESSAGES,
+    evaluate_receipt_set_binding,
+)
 from concordia.message import GENESIS_HASH, compute_hash
 from concordia.signing import canonical_json
 
@@ -137,13 +141,28 @@ class TestChainReconstruction:
         assert state == "error"
         assert any("root messages" in error for error in errors)
 
-    def test_no_root_is_rejected(self, agreed_receipt):
+    def test_no_root_is_rejected_as_the_orphan_it_actually_is(self, agreed_receipt):
+        """Dropping the root does not exercise the bare "no root message"
+        fallback: the message that pointed at the dropped root becomes an
+        ORPHAN (its prev_hash now matches no presented message), and that
+        orphan error is recorded before the rootless check ever runs. Cycle
+        detection now runs only when it can change the diagnosis (2026-09-16
+        delta-11 gate, Codex P1): with the orphan error already present,
+        _find_cycle is skipped and the generic "no root message" text is
+        never appended alongside it, so the orphan is the ONLY, and the
+        more specific, reported reason. (Fail-before against 5176dfc: the
+        old code ran _find_cycle and appended "no root message" as a second,
+        redundant error unconditionally; this test used to assert on that
+        redundant text instead of the primary orphan diagnosis.)
+        """
         attestation, transcript, _keys = agreed_receipt
 
         state, errors = evaluate_receipt_set_binding(attestation, transcript[1:])
 
         assert state == "error"
-        assert any("no root message" in error for error in errors)
+        assert errors == [
+            "transcript message 0 is an orphan: its prev_hash matches no presented message"
+        ]
 
     def test_explicit_null_prev_hash_is_not_a_root(self, agreed_receipt):
         attestation, transcript, _keys = agreed_receipt
@@ -297,7 +316,16 @@ class TestCycleDetectionAndTheClosingInvariant:
         state, errors = evaluate_receipt_set_binding(receipt, [cycle_a, cycle_b])
 
         assert state == "error"
-        assert any("cycle" in error for error in errors), errors
+        # Exact string, not just "contains 'cycle'" (Codex P2, 2026-09-16
+        # delta-11 gate): cycle_a is transcript index 0, cycle_b is index 1;
+        # cycle_a's prev_hash points at cycle_b and cycle_b's prev_hash
+        # points back at cycle_a, so _find_cycle's walk from index 0 visits
+        # [0, 1] and closes back on 0 -- named "0, 1, 0" in walk order.
+        assert errors == [
+            "transcript contains a prev_hash cycle through messages 0, 1, 0: "
+            "prev_hash links point to each other with no root; a chain has "
+            "exactly one message without prev_hash"
+        ]
         # Not the generic wording: the whole point of naming the cycle is
         # that a reader (or a caller matching on substring) can tell this
         # apart from an ordinary rootless malformed transcript.
@@ -343,7 +371,127 @@ class TestCycleDetectionAndTheClosingInvariant:
         state, errors = evaluate_receipt_set_binding(receipt, transcript)
 
         assert state == "error"
-        assert any("cycle" in error for error in errors), errors
+        # Exact string (Codex P2, 2026-09-16 delta-11 gate): the walk from
+        # the root (chain_1..chain_5) visits indices 0-4 and stops, leaving
+        # cycle_a (index 5) and cycle_b (index 6) as the leftover; the
+        # leftover walk starts at 5, visits [5, 6], and closes back on 5.
+        assert errors == [
+            "transcript contains a prev_hash cycle through messages 5, 6, 5 "
+            "beside the reconstructed chain: the walk from the root visits "
+            "5 of 7 presented messages"
+        ]
+
+
+class TestCycleDetectionIsLinearNotQuadratic:
+    """AGENTS.md rule 8 (adversarial-complexity): a rootless, reverse-ordered
+    chain ending in ONE orphan drives ``_reconstruct_single_chain`` into the
+    ``not roots`` branch without any real hash cycle, and it is exactly this
+    shape -- not a cycle -- that the OLD ``_find_cycle`` (``node in path`` /
+    ``path.index(node)``, each an O(len(path)) scan) walked in O(n^2) before
+    finally hitting the ``node not in predecessor_of`` break (Codex P1,
+    2026-09-16 delta-11 gate). Measured against HEAD 5176dfc with real
+    ``compute_hash`` (no mocking): 8k/16k/32k messages took 0.16s/0.54s/
+    1.95s -- consistent with quadratic growth (~4x per doubling), not
+    linear. Post-fix (position-map ``_find_cycle`` PLUS the gate that skips
+    calling it at all once the orphan error already explains the
+    rejection): 0.06s/0.12s/0.24s -- consistent with linear growth (~2x per
+    doubling).
+    """
+
+    @staticmethod
+    def _build_rootless_reverse_chain(n: int) -> list[dict[str, Any]]:
+        """Build ``n`` real, hash-linked messages M_0..M_{n-1} where M_0's
+        prev_hash is garbage (an orphan: matches no presented digest) and
+        M_i (i>=1) legitimately links to M_{i-1} via the REAL compute_hash --
+        no monkeypatched digest lookup, so this exercises the exact
+        production hashing path, not a topology stand-in. The returned
+        transcript presents them in REVERSE (M_{n-1} first, M_0 last): this
+        is what makes predecessor_of's insertion order put the ENTIRE
+        (n-1)-length chain behind the very first outer-loop `start`, so one
+        walk pays for the whole thing instead of the cost being spread
+        (and mostly skipped by the `state`-resolved short-circuit) across
+        many short walks.
+        """
+        messages: list[dict[str, Any]] = [
+            {"id": "m0", "from": {"agent_id": "adversary"}, "prev_hash": f"sha256:{'f' * 64}"}
+        ]
+        for i in range(1, n):
+            prev_digest = compute_hash(messages[i - 1])
+            messages.append(
+                {"id": f"m{i}", "from": {"agent_id": "adversary"}, "prev_hash": prev_digest}
+            )
+        return list(reversed(messages))
+
+    def test_32k_rootless_reverse_orphan_chain_verifies_linearly(self) -> None:
+        n = 32_000
+        transcript = self._build_rootless_reverse_chain(n)
+        receipt = {
+            "concordia_attestation": "0.5.0",
+            "chain_head": GENESIS_HASH,
+            "message_count": n,
+        }
+
+        start = time.perf_counter()
+        state, errors = evaluate_receipt_set_binding(receipt, transcript)
+        elapsed = time.perf_counter() - start
+
+        assert state == "error"
+        # The gate (this round's second half of item 2) means the orphan
+        # alone explains the rejection; _find_cycle never runs for this
+        # shape, so this is the SAME diagnosis a caller got before the fix,
+        # just without the wasted O(n^2) (now-moot, since skipped) walk.
+        assert errors == [
+            f"transcript message {n - 1} is an orphan: its prev_hash matches no presented message"
+        ]
+        # Ceiling = 1.0s: comfortably above the measured post-fix linear
+        # runtime (~0.24s at n=32000, itself already >4x headroom over a
+        # slower CI box) while well below the measured pre-fix quadratic
+        # runtime (~1.95s at n=32000, this class's own docstring) -- a
+        # regression back to O(n^2) trips this, ordinary CI variance does
+        # not.
+        assert elapsed < 1.0, f"expected linear-time verification, took {elapsed:.3f}s"
+
+
+class TestTranscriptSizeCap:
+    """MAX_SET_BINDING_TRANSCRIPT_MESSAGES (2026-09-16 delta-11 gate, Codex
+    P1's second half): a transcript longer than any transcript a Concordia
+    relay session could ever legitimately produce is rejected by name
+    before any per-message hashing or chain-walking work runs.
+    """
+
+    def test_transcript_over_the_cap_is_rejected_by_name_before_any_walk(self) -> None:
+        # Each element only needs to be a dict for the length check to fire
+        # before reconstruction ever inspects one -- no real prev_hash
+        # chain, and no compute_hash call, is needed to prove the cap runs
+        # first.
+        n = MAX_SET_BINDING_TRANSCRIPT_MESSAGES + 1
+        transcript = [{"id": f"m{i}"} for i in range(n)]
+        receipt = {"concordia_attestation": "0.5.0", "chain_head": GENESIS_HASH, "message_count": n}
+
+        state, errors = evaluate_receipt_set_binding(receipt, transcript)
+
+        assert state == "error"
+        assert errors == [
+            f"transcript has {n} messages, exceeding the maximum of "
+            f"{MAX_SET_BINDING_TRANSCRIPT_MESSAGES}"
+        ]
+
+    def test_transcript_at_the_cap_is_not_rejected_for_size(self, agreed_receipt) -> None:
+        # At exactly the cap, the size check must not fire; whatever this
+        # transcript is rejected for (it is far too short to be a real
+        # message_count-matching chain) has to be a DIFFERENT reason.
+        _attestation, transcript, _keys = agreed_receipt
+        padded = transcript + [{"id": f"pad{i}"} for i in range(MAX_SET_BINDING_TRANSCRIPT_MESSAGES - len(transcript))]
+        receipt = {
+            "concordia_attestation": "0.5.0",
+            "chain_head": GENESIS_HASH,
+            "message_count": len(padded),
+        }
+
+        state, errors = evaluate_receipt_set_binding(receipt, padded)
+
+        assert state == "error"
+        assert not any("exceeding the maximum" in error for error in errors)
 
 
 class TestSharedConformanceVectors:

@@ -10,7 +10,7 @@
  * same verdict on the same bytes.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
@@ -18,9 +18,25 @@ import { fileURLToPath } from 'url';
 
 import * as sessionModule from '../src/session/index.js';
 import { GENESIS_HASH, computeHash } from '../src/session/index.js';
-import { verifyReceiptSetBinding } from '../src/attestation/index.js';
+import {
+  verifyReceiptSetBinding,
+  MAX_SET_BINDING_TRANSCRIPT_MESSAGES,
+} from '../src/attestation/index.js';
 import { canonicalizeJcs } from '../src/canonical/canonicalize.js';
 import { CanonicalizationError } from '../src/canonical/checks.js';
+
+// The cycle-detection describe block below installs a `vi.spyOn` on
+// `sessionModule.hashCanonicalBytes` inside individual `it`s, with no
+// restore of its own -- so, with no file-level cleanup, that mock leaked
+// into every test that ran AFTER it in file order, including the real
+// (non-mocked) `computeHash` calls this file's adversarial-complexity
+// block makes. Restoring after every test is what makes test order not
+// matter; add coverage below the cycle-detection block, not above it,
+// without this and it fails for a reason that has nothing to do with the
+// new coverage.
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const VECTORS = join(__dirname, '..', '..', 'conformance', 'vectors');
@@ -315,16 +331,32 @@ describe('chain reconstruction ignores the presented order', () => {
     expect(() => verifyReceiptSetBinding(receipt, [root, linked])).toThrow(CanonicalizationError);
   });
 
-  it('rejects a set with no root message', () => {
+  it('rejects a set with no root message as the orphan it actually is', () => {
     // The fixture is presented shuffled (not chain order), so the root is
     // wherever prev_hash === GENESIS_HASH lands, never necessarily index 0.
+    // Dropping the root does not exercise the bare "no root message"
+    // fallback: the message that pointed at the dropped root becomes an
+    // ORPHAN (its prev_hash now matches no presented message), and that
+    // orphan error is recorded before the rootless check ever runs. Cycle
+    // detection now runs only when it can change the diagnosis (2026-09-16
+    // delta-11 gate, Codex P1): with the orphan error already present,
+    // findCycle is skipped and the generic "no root message" text is
+    // never appended alongside it, so the orphan is the ONLY, and the more
+    // specific, reported reason. (Fail-before against 5176dfc: the old
+    // code ran findCycle and appended "no root message" as a second,
+    // redundant error unconditionally; this test used to assert on that
+    // redundant text instead of the primary orphan diagnosis.) Must match
+    // test_no_root_is_rejected_as_the_orphan_it_actually_is in
+    // tests/test_attestation_set_binding_reconstruction.py.
     const messages = base.messages!;
     const withoutRoot = messages.filter((message) => message.prev_hash !== GENESIS_HASH);
     expect(withoutRoot.length).toBe(messages.length - 1);
     const result = verifyReceiptSetBinding(base.receipt, withoutRoot);
 
     expect(result.state).toBe('error');
-    expect(result.errors.some((e) => e.includes('no root message'))).toBe(true);
+    expect(result.errors).toEqual([
+      'transcript message 2 is an orphan: its prev_hash matches no presented message',
+    ]);
   });
 
   it('rejects an explicit null prev_hash as a root', () => {
@@ -821,7 +853,17 @@ describe('a cycle among prev_hash links is named "cycle", not "no root message" 
     const result = verifyReceiptSetBinding(receipt, [cycleA, cycleB]);
 
     expect(result.state).toBe('error');
-    expect(result.errors.some((e) => e.includes('cycle'))).toBe(true);
+    // Exact string, not just "contains 'cycle'" (Codex P2, 2026-09-16
+    // delta-11 gate): cycleA is transcript index 0, cycleB is index 1;
+    // cycleA's prev_hash points at cycleB and cycleB's prev_hash points
+    // back at cycleA, so findCycle's walk from index 0 visits [0, 1] and
+    // closes back on 0 -- named "0, 1, 0" in walk order. Must match
+    // test_pure_two_cycle_is_rejected_and_named in
+    // tests/test_attestation_set_binding_reconstruction.py.
+    expect(result.errors).toEqual([
+      'transcript contains a prev_hash cycle through messages 0, 1, 0: prev_hash links point ' +
+        'to each other with no root; a chain has exactly one message without prev_hash',
+    ]);
     expect(result.errors).not.toContain(
       'transcript has no root message: a chain has exactly one message without prev_hash',
     );
@@ -853,6 +895,110 @@ describe('a cycle among prev_hash links is named "cycle", not "no root message" 
     const result = verifyReceiptSetBinding(receipt, transcript);
 
     expect(result.state).toBe('error');
-    expect(result.errors.some((e) => e.includes('cycle'))).toBe(true);
+    // Exact string (Codex P2, 2026-09-16 delta-11 gate): the walk from the
+    // root (chain_1..chain_5) visits indices 0-4 and stops, leaving cycleA
+    // (index 5) and cycleB (index 6) as the leftover; the leftover walk
+    // starts at 5, visits [5, 6], and closes back on 5. Must match
+    // test_cycle_beside_a_real_chain_is_rejected_and_named in
+    // tests/test_attestation_set_binding_reconstruction.py.
+    expect(result.errors).toEqual([
+      'transcript contains a prev_hash cycle through messages 5, 6, 5 beside the ' +
+        'reconstructed chain: the walk from the root visits 5 of 7 presented messages',
+    ]);
+  });
+});
+
+describe('cycle detection is linear, not quadratic (AGENTS.md rule 8, 2026-09-16 delta-11 gate)', () => {
+  // A rootless, reverse-ordered chain ending in ONE orphan drives
+  // reconstructSingleChain into the `roots.length === 0` branch without any
+  // real hash cycle, and it is exactly this shape -- not a cycle -- that the
+  // OLD findCycle (`path.indexOf(node)`, an O(len(path)) scan per step)
+  // walked in O(n^2) before finally hitting the `!predecessorOf.has(node)`
+  // break (Codex P1). Measured against HEAD 5176dfc with the real
+  // computeHash (no mocking): at n=32000/64000/128000, 0.21s/0.55s/1.69s --
+  // consistent with quadratic growth becoming dominant as n grows (V8's
+  // native Array/Map scanning stays fast enough that the O(n) hashing cost
+  // dominates at 32000 alone -- unlike Python, whose interpreter overhead
+  // makes the O(n^2) term dominant already at 32000; see
+  // TestCycleDetectionIsLinearNotQuadratic in
+  // tests/test_attestation_set_binding_reconstruction.py for that
+  // measurement). Post-fix (position-map findCycle PLUS the gate that
+  // skips calling it at all once the orphan error already explains the
+  // rejection): 0.13s/0.27s/0.54s -- consistent with linear growth (~2x per
+  // doubling) at every scale measured. n=128000 is used here (rather than
+  // Python's 32000) so the ceiling below is tight enough to actually catch
+  // a regression to O(n^2) on THIS runtime, not merely so on Python's.
+
+  function buildRootlessReverseChain(n: number): Array<Record<string, unknown>> {
+    const messages: Array<Record<string, unknown>> = [
+      { id: 'm0', from: { agent_id: 'adversary' }, prev_hash: `sha256:${'f'.repeat(64)}` },
+    ];
+    for (let i = 1; i < n; i += 1) {
+      const prevDigest = computeHash(messages[i - 1]!);
+      messages.push({ id: `m${i}`, from: { agent_id: 'adversary' }, prev_hash: prevDigest });
+    }
+    return [...messages].reverse();
+  }
+
+  it('verifies a 128k rootless reverse-ordered orphan chain in linear time', () => {
+    const n = 128_000;
+    const transcript = buildRootlessReverseChain(n);
+    const receipt = { concordia_attestation: '0.5.0', chain_head: GENESIS_HASH, message_count: n };
+
+    const t0 = performance.now();
+    const result = verifyReceiptSetBinding(receipt, transcript);
+    const elapsedMs = performance.now() - t0;
+
+    expect(result.state).toBe('error');
+    // The gate (this round's second half of item 2) means the orphan alone
+    // explains the rejection; findCycle never runs for this shape, so this
+    // is the SAME diagnosis a caller got before the fix, just without the
+    // wasted O(n^2) (now-moot, since skipped) walk.
+    expect(result.errors).toEqual([
+      `transcript message ${n - 1} is an orphan: its prev_hash matches no presented message`,
+    ]);
+    // Ceiling = 1.0s: comfortably above the measured post-fix linear
+    // runtime (~0.54s at n=128000, itself already ~2x headroom over a
+    // slower CI box) while well below the measured pre-fix quadratic
+    // runtime (~1.69s at n=128000, this block's own comment) -- a
+    // regression back to O(n^2) trips this, ordinary CI variance does not.
+    expect(elapsedMs).toBeLessThan(1000);
+  });
+});
+
+describe('MAX_SET_BINDING_TRANSCRIPT_MESSAGES (2026-09-16 delta-11 gate, Codex P1 second half)', () => {
+  // A transcript longer than any transcript a Concordia relay session could
+  // ever legitimately produce is rejected by name before any per-message
+  // hashing or chain-walking work runs.
+
+  it('rejects a transcript over the cap by name before any walk', () => {
+    // Each element only needs to be an object for the length check to fire
+    // before reconstruction ever inspects one -- no real prev_hash chain,
+    // and no computeHash call, is needed to prove the cap runs first.
+    const n = MAX_SET_BINDING_TRANSCRIPT_MESSAGES + 1;
+    const transcript = Array.from({ length: n }, (_, i) => ({ id: `m${i}` }));
+    const receipt = { concordia_attestation: '0.5.0', chain_head: GENESIS_HASH, message_count: n };
+
+    const result = verifyReceiptSetBinding(receipt, transcript);
+
+    expect(result.state).toBe('error');
+    expect(result.errors).toEqual([
+      `transcript has ${n} messages, exceeding the maximum of ` +
+        `${MAX_SET_BINDING_TRANSCRIPT_MESSAGES}`,
+    ]);
+  });
+
+  it('does not reject a transcript at the cap for size', () => {
+    // At exactly the cap, the size check must not fire; whatever this
+    // transcript is rejected for (every element is rootless padding, so
+    // multiple roots is the actual reason) has to be a DIFFERENT reason.
+    const n = MAX_SET_BINDING_TRANSCRIPT_MESSAGES;
+    const transcript = Array.from({ length: n }, (_, i) => ({ id: `m${i}` }));
+    const receipt = { concordia_attestation: '0.5.0', chain_head: GENESIS_HASH, message_count: n };
+
+    const result = verifyReceiptSetBinding(receipt, transcript);
+
+    expect(result.state).toBe('error');
+    expect(result.errors.some((e) => e.includes('exceeding the maximum'))).toBe(false);
   });
 });

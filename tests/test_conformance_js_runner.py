@@ -97,6 +97,99 @@ def test_js_reference_runner_accepts_real_suite() -> None:
     assert EXPECTED_FULL_SUMMARY in result.stdout
 
 
+# Ingest-boundary regression (2026-09-16 delta-11 gate, Codex P1): a plain
+# decimal at the 1e21 magnitude is where `String(JSON.parse(literal))` first
+# becomes exponential ("1e+21"), which is exactly the shape the runner's old
+# `checkNoSpecialFloatValue` `!/[eE]/` exemption let through -- readJson's
+# bare `JSON.parse` never scanned the SOURCE text at all. This lives entirely
+# under `conformance/reference-runner-js/`, generator-excluded
+# (GENERATED_CHECK_EXCLUDED_DIRS in scripts/conformance/generate_vectors.py),
+# so it never touches the generated, drift-checked vector corpus; it never
+# reaches Ajv schema validation or signature verification either, because
+# readJson's own parse throws first -- rejection is proven at the exact
+# ingest boundary parseJsonStrict guards in the SDK.
+UNSAFE_INTEGER_VECTOR: dict[str, Any] = {
+    "schema_version": "concordia-conformance-vector/v1-draft",
+    "id": "check-unsafe-integer-ingest",
+    "title": (
+        "A bare plain-decimal integer at the 1e21 magnitude -- where "
+        "String(JSON.parse(literal)) becomes exponential -- is rejected at "
+        "the runner's ingest boundary, matching fromJsonText/parseJsonStrict "
+        "and the Python reference runner's rfc8785.IntegerDomainError bound."
+    ),
+    "source_fixture": "delta-11 gate, Codex P1 (2026-09-16 fix round 12)",
+    "record_type": "message_chain",
+    "verification_profile": "message-chain-v1",
+    "expected": "reject",
+    "expected_reason_class": "ingest",
+    "context": {},
+    "input": {
+        "messages": [
+            {
+                "concordia": "0.1.0",
+                "id": "msg_check_unsafe_integer_ingest_0001",
+                "session_id": "sess_check_unsafe_integer_ingest_0001",
+                "type": "negotiate.open",
+                "from": {"agent_id": "did:concordia:agent:unsafe-integer-initiator"},
+                "to": [{"agent_id": "did:concordia:agent:unsafe-integer-responder"}],
+                "timestamp": "2026-09-16T00:00:00Z",
+                "prev_hash": f"sha256:{'0' * 64}",
+                "body": {"terms": {"quantity": 1000000000000000000000}},
+                "reasoning": (
+                    "Ingest-boundary canary: quantity is a bare plain-decimal "
+                    "integer beyond Number.MAX_SAFE_INTEGER (2^53 - 1), at the "
+                    "1e21 magnitude where JS Number#toString switches to "
+                    "exponential notation and can defeat a post-parse-only "
+                    "unsafe-integer guard. Never reaches signature "
+                    "verification: the ingest scan rejects it first."
+                ),
+                "signature": "not-a-real-signature-ingest-must-reject-before-verification-runs",
+            }
+        ]
+    },
+}
+
+
+def write_unsafe_integer_suite(tmp_path: Path) -> Path:
+    tmp_root = tmp_path / "suite"
+    vector_rel = "conformance/vectors/mutation/check-unsafe-integer-ingest.json"
+    vector_path = tmp_root / vector_rel
+    vector_path.parent.mkdir(parents=True, exist_ok=True)
+    vector_path.write_text(json.dumps(UNSAFE_INTEGER_VECTOR, indent=2) + "\n", encoding="utf-8")
+
+    manifest = {
+        "counts": {"positive": 0, "mutation": 1, "canary": 0, "diag_canonical_bytes": 0},
+        "files": {"positive": [], "mutation": [vector_rel], "canary": [], "diag_canonical_bytes": []},
+    }
+    manifest_path = tmp_root / "conformance" / "vectors" / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return tmp_root / "conformance" / "vectors"
+
+
+def test_js_reference_runner_rejects_unsafe_integer_at_ingest(tmp_path: Path) -> None:
+    suite = write_unsafe_integer_suite(tmp_path)
+
+    result = run_runner(suite)
+
+    # readJson throws on this file (that IS the fix under test), before the
+    # harness loop ever reads the vector's OWN `expected` field back out of
+    # it -- a file the runner cannot parse can never report what it, once
+    # parsed, would have claimed to expect. So `vectorId`/`expected` stay
+    # the manifest path / "<unreadable>" placeholder, "<unreadable>" !=
+    # "reject" by the harness's plain string comparison, and this vector is
+    # scored [FAIL] even though the underlying behavior -- reject the
+    # unsafe integer at ingest -- is exactly right. Assert on that FAIL
+    # line and the reject verb, not on a green summary: an [OK] here would
+    # mean the file parsed far enough to read its own `expected`, which
+    # means the fix did NOT reject at the ingest boundary.
+    assert result.returncode == 1, result.stderr + result.stdout
+    assert (
+        "[FAIL] conformance/vectors/mutation/check-unsafe-integer-ingest.json "
+        "expected=<unreadable> got=reject" in result.stdout
+    ), result.stdout
+    assert "[SUMMARY] positive=0 mutation=1 canary=0 ok=0 fail=1" in result.stdout
+
+
 def test_js_canary_regression_discrimination(tmp_path: Path) -> None:
     for canary_id, regression in CANARY_REGRESSIONS.items():
         suite = write_minimal_suite(tmp_path / canary_id, canary_id)

@@ -111,17 +111,31 @@ const b = canonicalizeJcs({ a: 1, b: 2 });
 console.log(a.equals(b)); // true
 ```
 
-**Accepted input.** `canonicalizeJcs` accepts plain data: values whose
-prototype is `null`, this realm's `Object.prototype`, or this realm's
-`Array.prototype`, with own enumerable string-keyed data properties, as
-`JSON.parse` produces them in this realm. Values from another realm (an
-iframe, a `node:vm` context) must be re-parsed here (`fromJsonText(text)` is
-provided). Any other object, including class instances, builtins, Proxies,
-and objects whose prototype chain has been altered, is refused or, when its
-prototype has been set to `null`, is treated as the plain data of its own
-enumerable properties. The library does not defend against replacement of
-this realm's builtins; a hostile same-realm environment is outside every
-JavaScript library's contract.
+**Accepted input.** `canonicalizeJcs` accepts a value iff it is an Array
+(`Array.isArray`) whose own prototype is exactly this realm's
+`Array.prototype`, or -- checked only when that is false, never as a
+fallback pair -- its own prototype is exactly `null` or exactly this
+realm's `Object.prototype`. Nothing else is inspected: not a hop count, not
+`Object.prototype.toString`, not a symbol key, not the value's construction
+history. An accepted value is snapshotted once, keeping only its own
+enumerable, non-accessor, string-keyed data.
+
+Because the check is a prototype-identity test and nothing more, it is
+satisfied by values `JSON.parse` cannot itself produce. **Proxies are not
+detected:** a Proxy whose `getPrototypeOf` and `getOwnPropertyDescriptors`
+traps present a same-realm plain object or Array is snapshotted as the
+plain data those traps returned, once; the SDK does not attempt to detect
+Proxies. A builtin or class instance (`Date`, `Map`, `new Foo()`) is
+refused as constructed, but is accepted once its own prototype has been
+retargeted to `null` or this realm's `Object.prototype`, and is then
+snapshotted as whatever own enumerable data it carries -- the check cannot
+see, and does not claim to see, what the value used to be. Values from
+another realm (an iframe, a `node:vm` context) fail the same identity test
+-- a cross-realm `Object.prototype` is a distinct object -- and must be
+re-parsed here (`fromJsonText(text)` is provided) rather than retargeted by
+hand. The library does not defend against replacement of this realm's
+builtins; a hostile same-realm environment is outside every JavaScript
+library's contract.
 
 ```ts
 import { fromJsonText, canonicalizeJcs } from '@concordia-protocol/sdk';

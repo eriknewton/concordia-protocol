@@ -84,6 +84,31 @@ const SET_BINDING_MIN = { major: 0, minor: 3 } as const;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+$/;
 const SHA256_HEX_PATTERN = /^sha256:[a-f0-9]{64}$/;
 
+// Ceiling on the transcript length verifyReceiptSetBinding will walk
+// (2026-09-16 delta-11 gate, Codex P1: "if none exists, add one derived from
+// the existing per-message ceilings"), rejected by name before
+// reconstructSingleChain spends any per-message hashing or O(n) walking on
+// it. Derivation: Python's NegotiationRelay.MAX_TRANSCRIPT_SIZE
+// (concordia/relay.py) = 10_000 already bounds how long a transcript a
+// Concordia relay session can ever legitimately produce -- but this
+// verifier's transcript parameter is not required to have come from that
+// relay at all (SPEC 9.6.5b takes a plain array of message objects), so
+// bounding it AT the relay's own number would assume relay-mediated origin
+// this verifier does not require. Instead the ceiling is set above the
+// largest n this suite's own adversarial-complexity test already measures
+// and asserts linear-time on with real hashing (128_000, in the "cycle
+// detection is linear, not quadratic" describe block below): anything at or
+// below that range is proven O(n) by that test, so the cap must not fall
+// inside the range it already covers, or it would silently convert an
+// already-proven-safe input into an untested one; 200_000 is a round number
+// with roughly 1.5x headroom above that proven range. Anything beyond
+// 200_000 has no timing evidence behind it and is refused outright rather
+// than processed on faith. Must also match
+// MAX_SET_BINDING_TRANSCRIPT_MESSAGES in concordia/attestation.py (the two
+// are independent literals, not a shared import, but must carry the same
+// value and the same reasoning).
+export const MAX_SET_BINDING_TRANSCRIPT_MESSAGES = 200_000;
+
 export type ReceiptSetBindingState =
   'bound' | 'fields_present_unverified' | 'legacy_set_unbound' | 'error';
 
@@ -123,8 +148,20 @@ function attestationVersionAtLeast(version: unknown, major: number, minor: numbe
  * chain is empty, so no caller can read a partial reconstruction as an order.
  */
 /**
- * Return one cycle's message indices if `predecessorOf` has one, else
- * `undefined`.
+ * Render a cycle's message indices in WALK order, closing the loop by
+ * repeating the first index at the end (`[3, 4] -> "3, 4, 3"`), so the
+ * string alone shows which link closes back on which -- not just the set
+ * of indices `findCycle` names. Deterministic: `cycle` is already
+ * walk-ordered by `findCycle`, so nothing here sorts or set-converts it.
+ * Must match `_format_cycle_message` in `concordia/attestation.py`.
+ */
+function formatCycle(cycle: number[]): string {
+  return [...cycle, cycle[0]].join(', ');
+}
+
+/**
+ * Return one cycle's message indices, in walk order, if `predecessorOf` has
+ * one, else `undefined`.
  *
  * `predecessorOf` maps a non-root message's index to the index of the ONE
  * presented message it names as its predecessor -- populated by
@@ -139,18 +176,33 @@ function attestationVersionAtLeast(version: unknown, major: number, minor: numbe
  * has already failed to visit every message, so this runs on the
  * genuinely disconnected remainder, never on the reconstructed chain
  * itself. Must match `_find_cycle` in `concordia/attestation.py`.
+ *
+ * O(n) total, not O(n^2): `position` maps a node already on the CURRENT
+ * walk to its index within `path`, so "is this node already on this walk,
+ * and if so where" is one Map lookup, not a linear `path.indexOf` scan
+ * repeated at every step (Codex P1, 2026-09-16 delta-11 gate: the prior
+ * `path.indexOf(node)` was O(len(path)) per step, so a single walk of
+ * length n cost O(n^2) -- and callers reach that one long walk not only on
+ * a real cycle but on a rootless, reverse-ordered chain ending in ONE
+ * orphan, which is acyclic and still walks its entire length before the
+ * `!predecessorOf.has(node)` break). Each node is added to exactly one
+ * walk's `path` (a later walk skips any node `state` already marked
+ * resolved), so the position maps and path arrays across all walks hold at
+ * most n entries combined.
  */
 function findCycle(predecessorOf: Map<number, number>): number[] | undefined {
   const state = new Map<number, 0 | 1>(); // 0 = on the current walk, 1 = resolved
   for (const start of predecessorOf.keys()) {
     if (state.get(start) === 1) continue;
     const path: number[] = [];
+    const position = new Map<number, number>(); // node -> its index within `path`
     let node: number | undefined = start;
     while (node !== undefined) {
       if (state.get(node) === 1) break; // resolved by an earlier walk
       if (!predecessorOf.has(node)) break; // reaches a root: nothing cyclic
-      const seenAt = path.indexOf(node);
-      if (seenAt !== -1) return path.slice(seenAt);
+      const seenAt = position.get(node);
+      if (seenAt !== undefined) return path.slice(seenAt);
+      position.set(node, path.length);
       path.push(node);
       node = predecessorOf.get(node);
     }
@@ -269,25 +321,36 @@ function reconstructSingleChain(transcript: Array<Record<string, unknown>>): {
   }
 
   if (roots.length === 0) {
-    // Cycle detection runs FIRST: by construction, every message that
-    // reaches this point already cleared the fork/orphan/duplicate/
-    // null-prev_hash checks above, so if there is also no root, every
-    // remaining message's predecessor edge stays inside the presented set
-    // with nowhere to terminate -- which findCycle's own comment shows is
-    // possible only when the set decomposes into cycles. Name the cycle
-    // when one is found; keep the plain wording as a fallback for a
-    // construction this reasoning does not cover. Must match the mirrored
-    // ordering in concordia/attestation.py.
-    const cycle = findCycle(predecessorOf);
-    if (cycle !== undefined) {
-      errors.push(
-        `transcript contains a cycle at messages ${JSON.stringify(cycle)}: prev_hash links ` +
-          `point to each other with no root; a chain has exactly one message without prev_hash`,
-      );
-    } else {
-      errors.push(
-        'transcript has no root message: a chain has exactly one message without prev_hash',
-      );
+    // Cycle detection runs only when it can CHANGE the diagnosis: if the
+    // loop above already recorded an orphan, fork, non-string-prev_hash, or
+    // duplicate error, rejection is already explained by a reason
+    // independent of any cycle, and walking predecessorOf to name one
+    // underneath it adds no information the caller doesn't already have
+    // (Codex P1, 2026-09-16 delta-11 gate: this branch ran findCycle
+    // unconditionally, so a rootless, reverse-ordered chain ending in ONE
+    // real orphan -- no hash cycle anywhere -- still paid for the full walk
+    // beside an orphan error that alone already explains the rejection).
+    // Only when errors is empty here can naming a cycle (or its
+    // plain-wording fallback) be the diagnosis, so only then do we run it:
+    // by construction, every message that reaches this point already
+    // cleared those checks, so if there is also no root, every remaining
+    // message's predecessor edge stays inside the presented set with
+    // nowhere to terminate -- which findCycle's own comment shows is
+    // possible only when the set decomposes into cycles. Must match the
+    // mirrored ordering in concordia/attestation.py.
+    if (errors.length === 0) {
+      const cycle = findCycle(predecessorOf);
+      if (cycle !== undefined) {
+        errors.push(
+          `transcript contains a prev_hash cycle through messages ${formatCycle(cycle)}: ` +
+            `prev_hash links point to each other with no root; a chain has exactly one ` +
+            `message without prev_hash`,
+        );
+      } else {
+        errors.push(
+          'transcript has no root message: a chain has exactly one message without prev_hash',
+        );
+      }
     }
   } else if (roots.length > 1) {
     errors.push(
@@ -327,8 +390,8 @@ function reconstructSingleChain(transcript: Array<Record<string, unknown>>): {
     const cycle = findCycle(leftoverPredecessorOf);
     if (cycle !== undefined) {
       errors.push(
-        `transcript contains a cycle at messages ${JSON.stringify(cycle)} beside the ` +
-          `reconstructed chain: the walk from the root visits ${chain.length} of ` +
+        `transcript contains a prev_hash cycle through messages ${formatCycle(cycle)} beside ` +
+          `the reconstructed chain: the walk from the root visits ${chain.length} of ` +
           `${transcript.length} presented messages`,
       );
     } else {
@@ -395,6 +458,13 @@ export function verifyReceiptSetBinding(
     errors.push('transcript must be a list when verifying set binding');
   } else if (transcript.length === 0) {
     errors.push('transcript must contain at least one message');
+  } else if (transcript.length > MAX_SET_BINDING_TRANSCRIPT_MESSAGES) {
+    // Named rejection before any per-message hashing or walking work runs
+    // (see MAX_SET_BINDING_TRANSCRIPT_MESSAGES's derivation above).
+    errors.push(
+      `transcript has ${transcript.length} messages, exceeding the maximum of ` +
+        `${MAX_SET_BINDING_TRANSCRIPT_MESSAGES}`,
+    );
   } else {
     const { chain, headDigest, errors: chainErrors } = reconstructSingleChain(transcript);
     if (chainErrors.length > 0) {

@@ -52,6 +52,31 @@ _SET_BINDING_MIN = (0, 3)
 _SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+\Z")
 _SHA256_HEX_RE = re.compile(r"^sha256:[a-f0-9]{64}\Z")
 
+# Ceiling on the transcript length evaluate_receipt_set_binding will walk
+# (2026-09-16 delta-11 gate, Codex P1: "if none exists, add one derived from
+# the existing per-message ceilings"), rejected by name before
+# _reconstruct_single_chain spends any per-message hashing or O(n) walking on
+# it. Derivation: NegotiationRelay.MAX_TRANSCRIPT_SIZE (concordia/relay.py) =
+# 10_000 already bounds how long a transcript a Concordia relay session can
+# ever legitimately produce -- but this verifier's transcript parameter is
+# not required to have come from that relay at all (SPEC 9.6.5b takes a
+# plain list of message dicts), so bounding it AT the relay's own number
+# would assume relay-mediated origin this verifier does not require. Instead
+# the ceiling is set above the largest n this suite's own adversarial-
+# complexity tests already measure and assert linear-time on with real
+# hashing (128_000, in TestCycleDetectionIsLinearNotQuadratic's JS sibling;
+# see js-sdk/tests/attestation-set-binding-reconstruction.test.ts) --
+# anything at or below that range is proven O(n) by those tests, so the cap
+# must not fall inside the range they already cover, or it would silently
+# convert an already-proven-safe input into an untested one; 200_000 is a
+# round number with roughly 1.5x headroom above that proven range. Anything
+# beyond 200_000 has no timing evidence behind it and is refused outright
+# rather than processed on faith. Must also match
+# MAX_SET_BINDING_TRANSCRIPT_MESSAGES in js-sdk/src/attestation/attestation.ts
+# (the two are independent literals, not a shared import, but must carry the
+# same value and the same reasoning).
+MAX_SET_BINDING_TRANSCRIPT_MESSAGES = 200_000
+
 
 @dataclass(frozen=True)
 class AttestationVerifyResult:
@@ -498,8 +523,22 @@ def _attestation_version_at_least(ver: str, major: int, minor: int) -> bool:
     return (int(parts[0]), int(parts[1])) >= (major, minor)
 
 
+def _format_cycle_message(cycle: list[int]) -> str:
+    """Render a cycle's message indices in WALK order, closing the loop by
+    repeating the first index at the end (``[3, 4] -> "3, 4, 3"``), so the
+    string alone shows which link closes back on which -- not just the set
+    of indices ``_find_cycle`` names. Deterministic: ``cycle`` is already
+    walk-ordered by ``_find_cycle``, so no sorting or set conversion happens
+    here that could scramble it. Must match ``formatCycle`` in
+    ``js-sdk/src/attestation/attestation.ts``.
+    """
+    closed = [*cycle, cycle[0]]
+    return ", ".join(str(index) for index in closed)
+
+
 def _find_cycle(predecessor_of: dict[int, int]) -> list[int] | None:
-    """Return one cycle's message indices if ``predecessor_of`` has one, else ``None``.
+    """Return one cycle's message indices, in walk order, if ``predecessor_of``
+    has one, else ``None``.
 
     ``predecessor_of`` maps a non-root message's index to the index of the
     ONE presented message it names as its predecessor -- populated by
@@ -514,20 +553,37 @@ def _find_cycle(predecessor_of: dict[int, int]) -> list[int] | None:
     root(s) has already failed to visit every message, so this is reached
     on the genuinely disconnected remainder, never on the reconstructed
     chain itself.
+
+    O(n) total, not O(n^2): ``position`` maps a node already on the CURRENT
+    walk to its index within ``path``, so "is this node already on this
+    walk, and if so where" is one dict lookup, not a linear scan of ``path``
+    repeated at every step (Codex P1, 2026-09-16 delta-11 gate: the prior
+    ``node in path`` / ``path.index(node)`` pair was O(len(path)) per step,
+    so a single walk of length n cost O(n^2) -- and callers reach that one
+    long walk not only on a real cycle but on a rootless, reverse-ordered
+    chain ending in ONE orphan, which is acyclic and still walks its entire
+    length before the ``node not in predecessor_of`` break; measured 8k/16k/
+    32k messages at 0.16s/0.54s/1.94s, consistent with quadratic growth).
+    Each node is added to exactly one walk's ``path`` (a later walk skips
+    any node ``state`` already marked resolved), so the position maps and
+    path lists across all walks hold at most n entries combined.
     """
     state: dict[int, int] = {}  # 0 = on the current walk, 1 = resolved (acyclic or on a found cycle)
     for start in predecessor_of:
         if state.get(start) == 1:
             continue
         path: list[int] = []
+        position: dict[int, int] = {}  # node -> its index within `path`
         node = start
         while True:
             if state.get(node) == 1:
                 break  # already resolved by an earlier walk; nothing new here
             if node not in predecessor_of:
                 break  # this walk reaches a root: nothing on it is cyclic
-            if node in path:
-                return path[path.index(node) :]
+            seen_at = position.get(node)
+            if seen_at is not None:
+                return path[seen_at:]
+            position[node] = len(path)
             path.append(node)
             node = predecessor_of[node]
         for visited in path:
@@ -624,26 +680,36 @@ def _reconstruct_single_chain(
         predecessor_of[index] = predecessor
 
     if not roots:
-        # Cycle detection runs FIRST: by construction, every message that
-        # reaches this point already cleared the fork/orphan/duplicate/
-        # null-prev_hash checks above, so if there is also no root, every
+        # Cycle detection runs only when it can CHANGE the diagnosis: if the
+        # loop above already recorded an orphan, fork, non-string-prev_hash,
+        # or duplicate error, rejection is already explained by a reason
+        # independent of any cycle, and walking predecessor_of to name one
+        # underneath it adds no information the caller doesn't already have
+        # (Codex P1, 2026-09-16 delta-11 gate: this branch ran _find_cycle
+        # unconditionally, so a rootless, reverse-ordered chain ending in
+        # ONE real orphan -- no hash cycle anywhere -- still paid for the
+        # full walk beside an orphan error that alone already explains the
+        # rejection). Only when errors is empty here can naming a cycle (or
+        # its plain-wording fallback) be the diagnosis, so only then do we
+        # run it: by construction, every message that reaches this point
+        # already cleared those checks, so if there is also no root, every
         # remaining message's predecessor edge stays inside the presented
         # set with nowhere to terminate -- which _find_cycle's own docstring
-        # shows is possible only when the set decomposes into cycles. Name
-        # the cycle when one is found; keep the plain wording as a fallback
-        # for a shape this reasoning does not cover.
-        cycle = _find_cycle(predecessor_of)
-        if cycle is not None:
-            errors.append(
-                f"transcript contains a cycle at messages {cycle}: prev_hash "
-                f"links point to each other with no root; a chain has "
-                f"exactly one message without prev_hash"
-            )
-        else:
-            errors.append(
-                "transcript has no root message: a chain has exactly one message "
-                "without prev_hash"
-            )
+        # shows is possible only when the set decomposes into cycles.
+        if not errors:
+            cycle = _find_cycle(predecessor_of)
+            if cycle is not None:
+                errors.append(
+                    f"transcript contains a prev_hash cycle through messages "
+                    f"{_format_cycle_message(cycle)}: prev_hash links point to "
+                    f"each other with no root; a chain has exactly one message "
+                    f"without prev_hash"
+                )
+            else:
+                errors.append(
+                    "transcript has no root message: a chain has exactly one message "
+                    "without prev_hash"
+                )
     elif len(roots) > 1:
         errors.append(
             f"transcript has {len(roots)} root messages without prev_hash; a "
@@ -678,9 +744,10 @@ def _reconstruct_single_chain(
         cycle = _find_cycle(leftover_predecessor_of)
         if cycle is not None:
             errors.append(
-                f"transcript contains a cycle at messages {cycle} beside the "
-                f"reconstructed chain: the walk from the root visits "
-                f"{len(chain)} of {len(transcript)} presented messages"
+                f"transcript contains a prev_hash cycle through messages "
+                f"{_format_cycle_message(cycle)} beside the reconstructed "
+                f"chain: the walk from the root visits {len(chain)} of "
+                f"{len(transcript)} presented messages"
             )
         else:
             errors.append(
@@ -742,6 +809,13 @@ def evaluate_receipt_set_binding(
         errors.append("transcript must be a list when verifying set binding")
     elif not transcript:
         errors.append("transcript must contain at least one message")
+    elif len(transcript) > MAX_SET_BINDING_TRANSCRIPT_MESSAGES:
+        # Named rejection before any per-message hashing or walking work
+        # runs (see MAX_SET_BINDING_TRANSCRIPT_MESSAGES's derivation above).
+        errors.append(
+            f"transcript has {len(transcript)} messages, exceeding the "
+            f"maximum of {MAX_SET_BINDING_TRANSCRIPT_MESSAGES}"
+        )
     else:
         chain, chain_errors = _reconstruct_single_chain(transcript)
         if chain_errors:

@@ -180,25 +180,70 @@ function isPlainArrayPrototype(value: object): boolean {
  * does not appear in the snapshot, the same way `JSON.parse` never produces
  * one.
  *
- * THE CONTRACT (2026-09-16 fix round 11 -- a subtraction, not an addition;
- * it replaces every earlier attempt at detecting a non-plain value by hop
- * count, internal-slot brand, or symbol key, because a probe built from
- * this realm's own builtins cannot be trusted against a caller who can
- * replace those very builtins; see {@link isPlainObjectPrototype}'s comment
- * for why, and the git history of this file for what each removed layer
- * tried and where the next round's gate broke it):
+ * THE CONTRACT (2026-09-16 fix round 12 -- restated to name exactly the
+ * predicate the code below evaluates, after Grok lens A's delta-11 finding
+ * that the fix-round-11 wording above described a DIFFERENT, broader
+ * function than this one: it said Proxies and retargeted class instances
+ * are refused, when the identity tests below cannot tell them apart from
+ * an ordinary object or array and accept them. This paragraph is aligned to
+ * the code, per that finding's own instruction, because the code is right
+ * -- an identity comparison against `Object.prototype`/`Array.prototype`
+ * is the one probe a hostile same-realm caller cannot intercept; see
+ * {@link isPlainObjectPrototype}'s comment for why, and the git history of
+ * this file for what each earlier, broader-sounding probe tried and where
+ * the next round's gate broke it):
  *
- * `canonicalizeJcs` accepts plain data: values whose prototype is `null`,
- * this realm's `Object.prototype`, or this realm's `Array.prototype`, with
- * own enumerable string-keyed data properties, as `JSON.parse` produces
- * them in this realm. Values from another realm (an iframe, a `node:vm`
- * context) must be re-parsed here (`fromJsonText(text)` is provided). Any
- * other object, including class instances, builtins, Proxies, and objects
- * whose prototype chain has been altered, is refused or, when its
- * prototype has been set to `null`, is treated as the plain data of its
- * own enumerable properties. The library does not defend against
- * replacement of this realm's builtins; a hostile same-realm environment is
- * outside every JavaScript library's contract.
+ * `canonicalizeJcs` accepts a value iff exactly one of:
+ *   - it is an Array (`Array.isArray`) whose own prototype is exactly this
+ *     realm's `Array.prototype`; or
+ *   - (checked only when the first test is false, never as a fallback pair)
+ *     its own prototype is exactly `null` or exactly this realm's
+ *     `Object.prototype`.
+ * A non-Array whose prototype happens to be `Array.prototype` (for example
+ * `Object.create(Array.prototype)`) is refused, and an Array whose
+ * prototype has been set to `null` (for example
+ * `Object.setPrototypeOf([1], null)`) is refused too -- `Array.isArray`
+ * gates which single branch runs; it is not a hint that lets a value try
+ * the other branch. An accepted value is snapshotted once through
+ * `Object.getOwnPropertyDescriptors`, keeping only enumerable, non-accessor,
+ * string-keyed data (array elements under `length`, object keys otherwise):
+ * a symbol key is silently omitted (never read, never rejected), an
+ * accessor property throws, and a sparse array hole throws.
+ *
+ * The predicate reads ONLY prototype identity (never a hop count, a
+ * `toString`/internal-slot brand, or a symbol key) and the descriptor map
+ * (never the value's construction history), so it is satisfied by values
+ * `JSON.parse` cannot itself produce -- four DOCUMENTED residuals, each
+ * covered by a test in canonical.test.ts, not a probe gap:
+ *   - Proxies are not detected: a Proxy whose `getPrototypeOf` and
+ *     `getOwnPropertyDescriptors` traps present a same-realm plain object
+ *     or Array satisfies the same predicate and is snapshotted as the
+ *     plain data those traps returned, once; the SDK does not attempt to
+ *     detect Proxies.
+ *   - a builtin or class instance (`Date`, `Map`, a boxed primitive, a
+ *     `new Foo()`) is refused as constructed, but is ACCEPTED once its own
+ *     prototype has been retargeted (by the caller, before this call) to
+ *     `null` or this realm's `Object.prototype` -- it is then snapshotted
+ *     as whatever own enumerable data it carries (none for a retargeted
+ *     `Date`; `{"x":1}` for a retargeted `class Foo { x = 1 }` instance),
+ *     because the predicate cannot see, and does not claim to see, what
+ *     the value used to be.
+ *   - a null-prototype object with own data (`Object.assign(Object.create(
+ *     null), {a: 1})`) canonicalizes as that data: indistinguishable from
+ *     `JSON.parse('{"a":1}')` by any check that does not read through the
+ *     very prototype link the check exists to interrogate.
+ *   - an `arguments` object canonicalizes as its own enumerable indices
+ *     only: its OWN prototype genuinely IS this realm's `Object.prototype`
+ *     per ECMA-262, so no identity comparison, at any round, could refuse
+ *     it without also refusing an ordinary object.
+ *
+ * Values from another realm (an iframe, a `node:vm` context) are refused by
+ * the same identity test -- a cross-realm `Object.prototype` or
+ * `Array.prototype` is a distinct object -- and the supported path is to
+ * re-parse the source text here (`fromJsonText(text)` is provided), not to
+ * retarget the foreign value's prototype by hand. The library does not
+ * defend against replacement of this realm's builtins; a hostile
+ * same-realm environment is outside every JavaScript library's contract.
  *
  * The copy this function returns is built with `Object.create(null)` (for
  * an object) or `[]` (for an array) and populated ONLY through
