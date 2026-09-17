@@ -12,6 +12,12 @@ import sysconfig
 from pathlib import Path
 from typing import Any, cast
 
+from tests.conformance_runner_checks import (
+    EXPECTED_INTEGER_RULE_SUMMARY,
+    UNUSED_METADATA_PROBE_ID,
+    write_integer_rule_suite,
+)
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNNER = REPO_ROOT / "conformance" / "reference-runner" / "runner.py"
 FULL_SUITE = REPO_ROOT / "conformance" / "vectors"
@@ -129,6 +135,20 @@ def test_canary_regression_discrimination(tmp_path: Path) -> None:
         assert f"[FAIL] {canary_id} expected=reject got=accept" in result.stdout
         assert "[OK] pos-1404-decision-id" in result.stdout
         assert "[SUMMARY] positive=1 mutation=0 canary=1 ok=1 fail=1" in result.stdout
+
+
+def test_reference_runner_applies_the_shared_integer_rejection_rule(tmp_path: Path) -> None:
+    """Twin of test_js_reference_runner_applies_the_shared_integer_rejection_rule
+    in tests/test_conformance_js_runner.py: same suite, same two verdicts,
+    same summary line."""
+    suite = write_integer_rule_suite(tmp_path)
+
+    result = run_runner(tmp_path / "run", suite)
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"[OK] {UNUSED_METADATA_PROBE_ID}" in result.stdout, result.stdout
+    assert "[OK] check-unsafe-integer-ingest" in result.stdout, result.stdout
+    assert EXPECTED_INTEGER_RULE_SUMMARY in result.stdout, result.stdout
 
 
 def test_reference_runner_rejects_tampered_vector(tmp_path: Path) -> None:

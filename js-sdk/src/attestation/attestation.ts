@@ -96,17 +96,22 @@ const SHA256_HEX_PATTERN = /^sha256:[a-f0-9]{64}$/;
 // bounding it AT the relay's own number would assume relay-mediated origin
 // this verifier does not require. Instead the ceiling is set above the
 // largest n this suite's own adversarial-complexity test already measures
-// and asserts linear-time on with real hashing (128_000, in the "cycle
-// detection is linear, not quadratic" describe block below): anything at or
-// below that range is proven O(n) by that test, so the cap must not fall
-// inside the range it already covers, or it would silently convert an
+// and asserts linear growth on (2n = 128_000 in the "cycle detection is
+// linear, not quadratic" n-versus-2n ratio tests in
+// js-sdk/tests/attestation-set-binding-reconstruction.test.ts, which drive
+// the cycle finder over a genuine 128_000-message cycle): anything at or
+// below that range is proven O(n) by those tests, so the cap must not fall
+// inside the range they already cover, or it would silently convert an
 // already-proven-safe input into an untested one; 200_000 is a round number
 // with roughly 1.5x headroom above that proven range. Anything beyond
-// 200_000 has no timing evidence behind it and is refused outright rather
-// than processed on faith. Must also match
-// MAX_SET_BINDING_TRANSCRIPT_MESSAGES in concordia/attestation.py (the two
-// are independent literals, not a shared import, but must carry the same
-// value and the same reasoning).
+// 200_000 has no complexity evidence behind it and is refused outright
+// rather than processed on faith. Four independent literals carry this
+// value (this one; MAX_SET_BINDING_TRANSCRIPT_MESSAGES in
+// concordia/attestation.py; and the same name in both conformance
+// reference runners, conformance/reference-runner-js/runner.mjs and
+// conformance/reference-runner/runner.py), all pinned to
+// tests/fixtures/set_binding_limits.json by a test in each SDK suite, so a
+// one-sided edit fails CI in both languages.
 export const MAX_SET_BINDING_TRANSCRIPT_MESSAGES = 200_000;
 
 export type ReceiptSetBindingState =
@@ -412,7 +417,9 @@ export function verifyReceiptSetBinding(
   callerTranscript: Array<Record<string, unknown>> | null = null,
 ): ReceiptSetBindingResult {
   // Boundary snapshot: both caller-supplied inputs are read exactly once,
-  // right here, before either is inspected, into realm-local plain copies.
+  // right here, before either is inspected, into realm-local plain copies
+  // (the one exception is the single `length` read for the transcript cap
+  // just below, which happens BEFORE the snapshot and is explained there).
   // Every line below this one reads only `attestation` and `transcript`;
   // neither caller argument is read again anywhere in this function or in
   // reconstructSingleChain. This is what keeps an early check (the version
@@ -423,8 +430,31 @@ export function verifyReceiptSetBinding(
   // delta-6 gate). Must match the boundary snapshot in
   // verifyReceiptSetBindingProfile, conformance/reference-runner-js/runner.mjs.
   const attestation = snapshotPlainJson(callerAttestation) as Record<string, unknown>;
+  // The transcript cap is checked on the CALLER's array length, read exactly
+  // once here, BEFORE the snapshot copies anything. The snapshot is itself an
+  // O(n) traversal of every element that throws on the first accessor it
+  // meets, so a cap applied only to the snapshotted copy let an over-cap
+  // transcript be fully walked and copied first, and reported a
+  // CanonicalizationError from element 0 instead of the named cap error
+  // (Codex P1, 2026-09-16 delta-12 gate). An over-cap array is never
+  // snapshotted at all; `overCapLength` carries the length it presented to
+  // the named rejection below. This is the only read of the caller's
+  // transcript outside the snapshot. A Proxy that answers a small `length`
+  // here and a larger descriptor map to the snapshot has paid for its own
+  // copy, and the second cap check on the snapshotted copy below still
+  // refuses to walk it, so reconstruction never sees more than the cap
+  // either way. Must match the same ordering in evaluate_receipt_set_binding
+  // (concordia/attestation.py) and in verifyReceiptSetBindingProfile
+  // (conformance/reference-runner-js/runner.mjs); pinned by the
+  // "cap before snapshot" tests in
+  // js-sdk/tests/attestation-set-binding-reconstruction.test.ts.
+  let overCapLength: number | undefined;
+  if (Array.isArray(callerTranscript)) {
+    const presentedLength: number = callerTranscript.length;
+    if (presentedLength > MAX_SET_BINDING_TRANSCRIPT_MESSAGES) overCapLength = presentedLength;
+  }
   const transcript =
-    callerTranscript === null
+    callerTranscript === null || overCapLength !== undefined
       ? null
       : (snapshotPlainJson(callerTranscript) as Array<Record<string, unknown>>);
 
@@ -443,7 +473,7 @@ export function verifyReceiptSetBinding(
     errors.push(`version ${String(version)} requires message_count as an integer >= 1`);
   }
 
-  if (transcript === null) {
+  if (transcript === null && overCapLength === undefined) {
     // A 'bound' verdict reached without ever seeing a transcript is the
     // fail-open this state closes: the two fields are the receipt's own claim
     // about a transcript, so checking them against nothing verifies nothing.
@@ -454,13 +484,23 @@ export function verifyReceiptSetBinding(
     return { state: 'fields_present_unverified', errors: [] };
   }
 
-  if (!Array.isArray(transcript)) {
+  if (overCapLength !== undefined) {
+    // Named rejection of the length the caller's array presented, decided
+    // above before the snapshot ran (see MAX_SET_BINDING_TRANSCRIPT_MESSAGES's
+    // derivation above).
+    errors.push(
+      `transcript has ${overCapLength} messages, exceeding the maximum of ` +
+        `${MAX_SET_BINDING_TRANSCRIPT_MESSAGES}`,
+    );
+  } else if (!Array.isArray(transcript)) {
     errors.push('transcript must be a list when verifying set binding');
   } else if (transcript.length === 0) {
     errors.push('transcript must contain at least one message');
   } else if (transcript.length > MAX_SET_BINDING_TRANSCRIPT_MESSAGES) {
-    // Named rejection before any per-message hashing or walking work runs
-    // (see MAX_SET_BINDING_TRANSCRIPT_MESSAGES's derivation above).
+    // Second cap check, on the snapshotted copy: reachable only when the
+    // caller's `length` read above and the descriptor map the snapshot
+    // walked disagree (a Proxy), and it is what keeps reconstruction below
+    // the cap in that case too.
     errors.push(
       `transcript has ${transcript.length} messages, exceeding the maximum of ` +
         `${MAX_SET_BINDING_TRANSCRIPT_MESSAGES}`,

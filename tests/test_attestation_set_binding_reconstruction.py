@@ -383,20 +383,72 @@ class TestCycleDetectionAndTheClosingInvariant:
 
 
 class TestCycleDetectionIsLinearNotQuadratic:
-    """AGENTS.md rule 8 (adversarial-complexity): a rootless, reverse-ordered
-    chain ending in ONE orphan drives ``_reconstruct_single_chain`` into the
-    ``not roots`` branch without any real hash cycle, and it is exactly this
-    shape -- not a cycle -- that the OLD ``_find_cycle`` (``node in path`` /
-    ``path.index(node)``, each an O(len(path)) scan) walked in O(n^2) before
-    finally hitting the ``node not in predecessor_of`` break (Codex P1,
-    2026-09-16 delta-11 gate). Measured against HEAD 5176dfc with real
-    ``compute_hash`` (no mocking): 8k/16k/32k messages took 0.16s/0.54s/
-    1.95s -- consistent with quadratic growth (~4x per doubling), not
-    linear. Post-fix (position-map ``_find_cycle`` PLUS the gate that skips
-    calling it at all once the orphan error already explains the
-    rejection): 0.06s/0.12s/0.24s -- consistent with linear growth (~2x per
-    doubling).
+    """AGENTS.md rule 8 (adversarial-complexity), asserted as a RATIO between
+    n and 2n, never as a wall-clock ceiling: a ceiling encodes one machine's
+    speed (the JS sibling's round-12 ceiling failed on the CI runners with no
+    regression anywhere), while the n-to-2n ratio of a linear walk is about
+    2 on every machine and about 4 for a quadratic one. The bound is 3,
+    halfway between. Each timing is the minimum of REPEATS back-to-back runs
+    so a single GC pause cannot move the ratio.
+
+    Two shapes, because they reach different code (Codex P2, 2026-09-16
+    delta-12 gate: the round-12 test built only the orphan shape, whose
+    rejection is explained before ``_find_cycle`` runs, so the finder itself
+    was never exercised at scale; this class now counts its calls):
+      - a genuine n-message prev_hash CYCLE, built with a monkeypatched
+        ``compute_hash`` (the technique of TestCycleDetectionAndTheClosing
+        Invariant, since a real cycle is a SHA-256 preimage search): no root,
+        no orphan, no fork, so ``_reconstruct_single_chain`` reaches
+        ``_find_cycle`` with every message in ``predecessor_of`` and the
+        finder walks the whole cycle;
+      - the rootless reverse-ordered chain ending in ONE orphan, with real
+        hashing: the exact input that drove the old O(n^2) finder (Codex P1,
+        delta-11 gate), now rejected on the orphan alone before the finder.
+    Mirrors the describe block of the same name in
+    js-sdk/tests/attestation-set-binding-reconstruction.test.ts.
     """
+
+    RATIO_BOUND = 3  # between linear (about 2) and quadratic (about 4)
+    REPEATS = 2
+
+    @classmethod
+    def _min_elapsed(cls, run: Any) -> float:
+        best = float("inf")
+        for _ in range(cls.REPEATS):
+            start = time.perf_counter()
+            run()
+            best = min(best, time.perf_counter() - start)
+        return best
+
+    @staticmethod
+    def _cycle_digest(index: int) -> str:
+        # index + 1, so index 0's digest is not the all-zero GENESIS_HASH
+        # (which would make its successor a root). Must match cycleDigest in
+        # the JS sibling.
+        return f"sha256:{index + 1:064x}"
+
+    @classmethod
+    def _cycle_fake_hash(cls, message: dict[str, Any]) -> str:
+        return cls._cycle_digest(int(str(message["id"])[1:]))
+
+    @classmethod
+    def _build_genuine_cycle(cls, n: int) -> list[dict[str, Any]]:
+        """c_i links to c_{i-1} and c_0 links to c_{n-1}: one n-cycle, no root."""
+        return [{"id": f"c{i}", "prev_hash": cls._cycle_digest((i - 1) % n)} for i in range(n)]
+
+    @staticmethod
+    def _expected_cycle_diagnosis(n: int) -> str:
+        # _find_cycle iterates predecessor_of in insertion (transcript index)
+        # order, so the walk starts at index 0 and follows prev_hash:
+        # 0, n-1, n-2, ..., 1, then closes on 0. Must match
+        # expectedCycleDiagnosis in the JS sibling.
+        walk = [0, *range(n - 1, 0, -1), 0]
+        return (
+            "transcript contains a prev_hash cycle through messages "
+            f"{', '.join(str(index) for index in walk)}: prev_hash links point to "
+            "each other with no root; a chain has exactly one message without "
+            "prev_hash"
+        )
 
     @staticmethod
     def _build_rootless_reverse_chain(n: int) -> list[dict[str, Any]]:
@@ -406,11 +458,8 @@ class TestCycleDetectionIsLinearNotQuadratic:
         no monkeypatched digest lookup, so this exercises the exact
         production hashing path, not a topology stand-in. The returned
         transcript presents them in REVERSE (M_{n-1} first, M_0 last): this
-        is what makes predecessor_of's insertion order put the ENTIRE
-        (n-1)-length chain behind the very first outer-loop `start`, so one
-        walk pays for the whole thing instead of the cost being spread
-        (and mostly skipped by the `state`-resolved short-circuit) across
-        many short walks.
+        is what made the old finder's insertion order put the ENTIRE
+        (n-1)-length chain behind the very first outer-loop ``start``.
         """
         messages: list[dict[str, Any]] = [
             {"id": "m0", "from": {"agent_id": "adversary"}, "prev_hash": f"sha256:{'f' * 64}"}
@@ -422,34 +471,77 @@ class TestCycleDetectionIsLinearNotQuadratic:
             )
         return list(reversed(messages))
 
-    def test_32k_rootless_reverse_orphan_chain_verifies_linearly(self) -> None:
-        n = 32_000
-        transcript = self._build_rootless_reverse_chain(n)
+    @classmethod
+    def _time_verify(cls, transcript: list[dict[str, Any]]) -> tuple[float, list[str]]:
         receipt = {
             "concordia_attestation": "0.5.0",
             "chain_head": GENESIS_HASH,
-            "message_count": n,
+            "message_count": len(transcript),
         }
+        errors: list[str] = []
 
-        start = time.perf_counter()
-        state, errors = evaluate_receipt_set_binding(receipt, transcript)
-        elapsed = time.perf_counter() - start
+        def run() -> None:
+            nonlocal errors
+            _state, errors = evaluate_receipt_set_binding(receipt, transcript)
 
-        assert state == "error"
-        # The gate (this round's second half of item 2) means the orphan
-        # alone explains the rejection; _find_cycle never runs for this
-        # shape, so this is the SAME diagnosis a caller got before the fix,
-        # just without the wasted O(n^2) (now-moot, since skipped) walk.
-        assert errors == [
+        return cls._min_elapsed(run), errors
+
+    @staticmethod
+    def _count_find_cycle_calls(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+        """Wrap the real ``_find_cycle`` so each call records how many edges
+        it was handed; the wrapper delegates, so verdicts are unchanged."""
+        import concordia.attestation as attestation_module
+
+        real_find_cycle = attestation_module._find_cycle
+        calls: list[int] = []
+
+        def counting(predecessor_of: dict[int, int]) -> list[int] | None:
+            calls.append(len(predecessor_of))
+            return real_find_cycle(predecessor_of)
+
+        monkeypatch.setattr("concordia.attestation._find_cycle", counting)
+        return calls
+
+    def test_genuine_cycle_reaches_find_cycle_and_walks_it_linearly(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("concordia.attestation.compute_hash", self._cycle_fake_hash)
+        calls = self._count_find_cycle_calls(monkeypatch)
+        n = 32_000
+
+        small_elapsed, small_errors = self._time_verify(self._build_genuine_cycle(n))
+        large_elapsed, large_errors = self._time_verify(self._build_genuine_cycle(2 * n))
+
+        # The finder ran once per verification, handed EVERY message's edge.
+        assert calls == [n] * self.REPEATS + [2 * n] * self.REPEATS
+        # And it walked the whole cycle: only _find_cycle produces this
+        # diagnosis, and it names every index.
+        assert small_errors == [self._expected_cycle_diagnosis(n)]
+        assert large_errors == [self._expected_cycle_diagnosis(2 * n)]
+        assert large_elapsed / small_elapsed < self.RATIO_BOUND, (small_elapsed, large_elapsed)
+
+    def test_orphan_chain_never_reaches_find_cycle_and_verifies_linearly(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._count_find_cycle_calls(monkeypatch)
+        n = 16_000
+
+        small_elapsed, small_errors = self._time_verify(self._build_rootless_reverse_chain(n))
+        large_elapsed, large_errors = self._time_verify(
+            self._build_rootless_reverse_chain(2 * n)
+        )
+
+        # The orphan alone explains the rejection; the gate keeps the finder
+        # out of it entirely.
+        assert calls == []
+        assert small_errors == [
             f"transcript message {n - 1} is an orphan: its prev_hash matches no presented message"
         ]
-        # Ceiling = 1.0s: comfortably above the measured post-fix linear
-        # runtime (~0.24s at n=32000, itself already >4x headroom over a
-        # slower CI box) while well below the measured pre-fix quadratic
-        # runtime (~1.95s at n=32000, this class's own docstring) -- a
-        # regression back to O(n^2) trips this, ordinary CI variance does
-        # not.
-        assert elapsed < 1.0, f"expected linear-time verification, took {elapsed:.3f}s"
+        assert large_errors == [
+            f"transcript message {2 * n - 1} is an orphan: its prev_hash matches no "
+            f"presented message"
+        ]
+        assert large_elapsed / small_elapsed < self.RATIO_BOUND, (small_elapsed, large_elapsed)
 
 
 class TestTranscriptSizeCap:
@@ -492,6 +584,75 @@ class TestTranscriptSizeCap:
 
         assert state == "error"
         assert not any("exceeding the maximum" in error for error in errors)
+
+    # Cap BEFORE any element is read (Codex P1, 2026-09-16 delta-12 gate; the
+    # JS sibling pins the same order against its boundary snapshot). An
+    # element canonical_json cannot serialize, planted at index 0, is the
+    # observable: over the cap it must never be reached; at the cap it must
+    # be, proving the cap is the only thing that stood before it.
+    @staticmethod
+    def _transcript_with_poison_at_zero(n: int) -> list[dict[str, Any]]:
+        transcript: list[dict[str, Any]] = [{"id": f"m{i}"} for i in range(n)]
+        transcript[0] = {"id": object()}
+        return transcript
+
+    def test_cap_is_decided_before_any_element_is_read(self) -> None:
+        n = MAX_SET_BINDING_TRANSCRIPT_MESSAGES + 1
+        receipt = {"concordia_attestation": "0.5.0", "chain_head": GENESIS_HASH, "message_count": n}
+
+        state, errors = evaluate_receipt_set_binding(
+            receipt, self._transcript_with_poison_at_zero(n)
+        )
+
+        assert state == "error"
+        assert errors == [
+            f"transcript has {n} messages, exceeding the maximum of "
+            f"{MAX_SET_BINDING_TRANSCRIPT_MESSAGES}"
+        ]
+
+    def test_at_the_cap_the_elements_are_read(self) -> None:
+        n = MAX_SET_BINDING_TRANSCRIPT_MESSAGES
+        receipt = {"concordia_attestation": "0.5.0", "chain_head": GENESIS_HASH, "message_count": n}
+
+        with pytest.raises(TypeError):
+            evaluate_receipt_set_binding(receipt, self._transcript_with_poison_at_zero(n))
+
+
+class TestTranscriptCapIsCrossPinned:
+    """Four independent literals carry the cap (the two SDKs and the two
+    conformance reference runners, which import no SDK). This test and its
+    JS sibling each read all four plus the shared fixture
+    tests/fixtures/set_binding_limits.json, so a one-sided edit fails CI in
+    both languages (Codex P2, 2026-09-16 delta-12 gate)."""
+
+    REPO = Path(__file__).resolve().parent.parent
+
+    @classmethod
+    def _literal_in(cls, rel_path: str, pattern: str) -> int:
+        import re
+
+        source = (cls.REPO / rel_path).read_text(encoding="utf-8")
+        match = re.search(pattern, source, re.MULTILINE)
+        assert match is not None, f"{rel_path}: MAX_SET_BINDING_TRANSCRIPT_MESSAGES not found"
+        return int(match.group(1).replace("_", ""))
+
+    def test_cap_equals_the_fixture_the_js_sdk_and_both_runners(self) -> None:
+        fixture = json.loads(
+            (self.REPO / "tests" / "fixtures" / "set_binding_limits.json").read_text(encoding="utf-8")
+        )
+        assert MAX_SET_BINDING_TRANSCRIPT_MESSAGES == fixture["max_set_binding_transcript_messages"]
+        assert MAX_SET_BINDING_TRANSCRIPT_MESSAGES == self._literal_in(
+            "js-sdk/src/attestation/attestation.ts",
+            r"^export const MAX_SET_BINDING_TRANSCRIPT_MESSAGES = ([\d_]+);$",
+        )
+        assert MAX_SET_BINDING_TRANSCRIPT_MESSAGES == self._literal_in(
+            "conformance/reference-runner-js/runner.mjs",
+            r"^const MAX_SET_BINDING_TRANSCRIPT_MESSAGES = ([\d_]+);$",
+        )
+        assert MAX_SET_BINDING_TRANSCRIPT_MESSAGES == self._literal_in(
+            "conformance/reference-runner/runner.py",
+            r"^MAX_SET_BINDING_TRANSCRIPT_MESSAGES = ([\d_]+)$",
+        )
 
 
 class TestSharedConformanceVectors:

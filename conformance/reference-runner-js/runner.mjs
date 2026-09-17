@@ -142,6 +142,17 @@ const AGENT_PROFILE_ENDPOINT_FIELDS = new Set([
 ]);
 const AGENT_PROFILE_LOCATION_FIELDS = new Set(["regions", "jurisdictions"]);
 const GENESIS_HASH = `sha256:${"0".repeat(64)}`;
+// Ceiling on the transcript length receipt-set-binding-v1 will verify or
+// walk, rejected by name before the snapshot and before any per-message
+// signature or hashing work. Same value and derivation as
+// MAX_SET_BINDING_TRANSCRIPT_MESSAGES in js-sdk/src/attestation/attestation.ts
+// (1.5x headroom above the largest transcript the SDK suites' adversarial-
+// complexity ratio tests prove linear); the runner carries its own literal
+// because it imports no SDK. Must match MAX_SET_BINDING_TRANSCRIPT_MESSAGES
+// in conformance/reference-runner/runner.py, concordia/attestation.py and
+// js-sdk/src/attestation/attestation.ts; all four are pinned to
+// tests/fixtures/set_binding_limits.json by tests in both SDK suites.
+const MAX_SET_BINDING_TRANSCRIPT_MESSAGES = 200_000;
 const SEMVER_RE = /^\d+\.\d+\.\d+$/u;
 const SHA256_HEX_RE = /^sha256:[a-f0-9]{64}$/u;
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
@@ -159,20 +170,17 @@ function reject(message) {
   throw new Reject(message);
 }
 
-// The single ingest chokepoint: every schema, manifest, vector, and
-// (because a transcript is just a nested field of a vector, not a
-// separately-read document) transcript this runner ever reads passes
-// through here. Grammar is validated by the native parser FIRST (a
-// malformed file throws SyntaxError before the scan runs), then the source
-// text is scanned for a bare unsafe integer literal ANYWHERE in the
-// document, at any nesting depth, before the caller ever sees the
-// (possibly already-lossy) parsed value. Must match parseJsonStrict in
-// js-sdk/src/canonical/parse.ts.
+// The single ingest chokepoint for every schema, manifest, and vector this
+// runner reads: grammar only (a malformed file throws SyntaxError here).
+// The unsafe-integer rule is NOT applied here any more: it is scoped to the
+// vector's `input` (see unsafeIntegerReachesCanonicalization and the
+// INTEGER-REJECTION RULE above it), and a vector's source text is kept by
+// runSuite for exactly that check. Round 12 scanned the whole document
+// here, which rejected an unsafe integer in the manifest, a schema, or an
+// unused vector member the Python runner accepts (Codex P1, 2026-09-16
+// delta-12 gate).
 function readJson(filePath) {
-  const text = fs.readFileSync(filePath, "utf8");
-  const parsed = JSON.parse(text);
-  rejectUnsafeIntegerLiterals(text);
-  return parsed;
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
 function b64urlDecode(value) {
@@ -289,36 +297,57 @@ const UNSAFE_INT_UPPER_E = 0x45; // E
 const UNSAFE_INT_ZERO = 0x30; // 0
 const UNSAFE_INT_NINE = 0x39; // 9
 
-// Single left-to-right pass over well-formed JSON SOURCE TEXT that rejects
-// the first bare integer literal outside Number.isSafeInteger's range,
-// reading the literal from the source before JSON.parse can collapse it
-// into a lossy double. Runner ingest-boundary fix (2026-09-16 delta-11 gate,
-// Codex P1): readJson previously ran a bare `JSON.parse` with no scan at
-// all, so a plain-decimal integer at the >= 1e21 magnitude -- where
-// `String(JSON.parse(literal))` itself switches to exponential form (e.g.
-// `1000000000000000000000` parses to the double that prints as `1e+21`) --
-// slipped past the post-parse checkNoSpecialFloatValue guard too, because
-// that guard's own `!/[eE]/.test(String(value))` exemption (added for the
-// legitimate exponential-literal case) matches the exponential STRING form
-// of this exact lossy double. The runner then emitted `1e+21` while the SDK
-// (fromJsonText/parseJsonStrict) and the Python reference runner
-// (rfc8785.dumps, whose IntegerDomainError bounds a bare int to
-// +/-(2**53 - 1)) both reject the same source literal -- a real
-// cross-language canonical-bytes divergence, not merely a runner quirk.
-// Reading the SOURCE text is the only way to catch this: once parsed, a
-// lossy double is indistinguishable from a legitimate large float (the
-// 1e30 predicate-limit case in fixture vector_08 lives in the same
-// exponential band and must still be accepted). Must match
-// rejectUnsafeIntegerLiterals in js-sdk/src/canonical/parse.ts.
-function rejectUnsafeIntegerLiterals(text) {
+const SCAN_LBRACE = 0x7b; // {
+const SCAN_RBRACE = 0x7d; // }
+const SCAN_LBRACKET = 0x5b; // [
+const SCAN_RBRACKET = 0x5d; // ]
+const SCAN_COLON = 0x3a; // :
+const SCAN_COMMA = 0x2c; // ,
+const SCAN_SPACE = 0x20;
+const SCAN_TAB = 0x09;
+const SCAN_LF = 0x0a;
+const SCAN_CR = 0x0d;
+const VECTOR_CANONICALIZED_MEMBER = "input";
+
+function isJsonWhitespace(code) {
+  return code === SCAN_SPACE || code === SCAN_TAB || code === SCAN_LF || code === SCAN_CR;
+}
+
+// INTEGER-REJECTION RULE (shared by both reference runners; must match the
+// same paragraph above reject_json_constant in
+// conformance/reference-runner/runner.py): an integer outside
+// +/-(2^53 - 1) is rejected iff it reaches canonicalization, which for a
+// vector means it lies under the vector's `input`, the subtree every
+// verification profile canonicalizes (minus string-valued signature fields).
+// An unsafe integer anywhere else (the manifest, a schema, `context`,
+// `notes`, any other vector member) is not a rejection, because nothing
+// there is canonicalized; the SDKs' parseJsonStrict likewise scans only the
+// document it is about to canonicalize. The Python runner gets the rule for
+// free (json.loads keeps arbitrary precision; rfc8785.dumps raises
+// IntegerDomainError at canonicalization). This runner cannot: once
+// JSON.parse has run, a plain-decimal integer at the >= 1e21 magnitude is
+// the same lossy double as a legitimate `1e+21` float literal (fixture
+// vector_08's 1e30 predicate limit lives in that band and must stay
+// accepted), and the post-parse checkNoSpecialFloatValue exemption for
+// exponential strings cannot tell them apart -- so the ONLY place the
+// literal form survives is the source text, before parsing. This single
+// left-to-right pass therefore tracks just enough structure to know which
+// top-level member it is inside (container depth, and the key of the
+// top-level member currently being read) and reports true for the first
+// integer-form literal outside Number.isSafeInteger's range that lies
+// under `input`. Strings are skipped whole (a big integer carried as a
+// JSON string is never a number token); fraction and exponent literals are
+// exempt exactly as in parseJsonStrict (js-sdk/src/canonical/parse.ts),
+// whose tokenization this mirrors.
+function unsafeIntegerReachesCanonicalization(text) {
   const n = text.length;
   let i = 0;
+  let depth = 0; // 1 = directly inside the top-level container
+  let topLevelKey; // the top-level member being read, once its key has been seen
   while (i < n) {
     const ch = text.charCodeAt(i);
     if (ch === UNSAFE_INT_QUOTE) {
-      // Skip the whole string literal, honoring backslash escapes, so a
-      // big integer carried as a JSON string ("123...901") is never
-      // inspected as a number token.
+      const start = i;
       i += 1;
       while (i < n) {
         const c = text.charCodeAt(i);
@@ -329,6 +358,30 @@ function rejectUnsafeIntegerLiterals(text) {
         i += 1;
         if (c === UNSAFE_INT_QUOTE) break;
       }
+      if (depth === 1) {
+        // A string directly inside the top-level object is a KEY exactly
+        // when the next non-whitespace character is ':'; otherwise it is a
+        // value and the current key stands.
+        let j = i;
+        while (j < n && isJsonWhitespace(text.charCodeAt(j))) j += 1;
+        if (text.charCodeAt(j) === SCAN_COLON) topLevelKey = JSON.parse(text.slice(start, i));
+      }
+      continue;
+    }
+    if (ch === SCAN_LBRACE || ch === SCAN_LBRACKET) {
+      depth += 1;
+      i += 1;
+      continue;
+    }
+    if (ch === SCAN_RBRACE || ch === SCAN_RBRACKET) {
+      depth -= 1;
+      if (depth < 1) topLevelKey = undefined;
+      i += 1;
+      continue;
+    }
+    if (ch === SCAN_COMMA && depth === 1) {
+      topLevelKey = undefined;
+      i += 1;
       continue;
     }
     if (ch === UNSAFE_INT_MINUS || (ch >= UNSAFE_INT_ZERO && ch <= UNSAFE_INT_NINE)) {
@@ -340,9 +393,6 @@ function rejectUnsafeIntegerLiterals(text) {
         if (c >= UNSAFE_INT_ZERO && c <= UNSAFE_INT_NINE) {
           i += 1;
         } else if (c === UNSAFE_INT_DOT || c === UNSAFE_INT_LOWER_E || c === UNSAFE_INT_UPPER_E) {
-          // Fraction or exponent -> a float literal, parity-safe across
-          // languages; exempt from the integer check (same carve-out as
-          // parseJsonStrict).
           integerForm = false;
           i += 1;
         } else if (c === UNSAFE_INT_PLUS || c === UNSAFE_INT_MINUS) {
@@ -351,22 +401,18 @@ function rejectUnsafeIntegerLiterals(text) {
           break;
         }
       }
-      if (integerForm) {
-        const literal = text.slice(start, i);
-        if (!Number.isSafeInteger(Number(literal))) {
-          reject(
-            `Cannot ingest unsafe integer literal ${literal}: bare integers beyond ` +
-              `Number.MAX_SAFE_INTEGER (2^53 - 1) lose precision when parsed into a ` +
-              `JavaScript number and would diverge from the Python reference's canonical ` +
-              `bytes. Carry large integers as JSON strings ("${literal}") to canonicalize ` +
-              `identically across languages.`,
-          );
-        }
+      if (
+        integerForm &&
+        topLevelKey === VECTOR_CANONICALIZED_MEMBER &&
+        !Number.isSafeInteger(Number(text.slice(start, i)))
+      ) {
+        return true;
       }
       continue;
     }
     i += 1;
   }
+  return false;
 }
 
 // Produce a realm-local, plain-data deep copy of `value` in a single
@@ -2072,6 +2118,18 @@ function verifyReceiptSetBindingProfile(suiteBase, inputData, context) {
   // a different message than each other (Codex P1, Grok finding 1,
   // 2026-09-16 delta-6 gate). Must match verifyReceiptSetBinding in
   // js-sdk/src/attestation/attestation.ts.
+  if (
+    Array.isArray(chainInput.messages) &&
+    chainInput.messages.length > MAX_SET_BINDING_TRANSCRIPT_MESSAGES
+  ) {
+    // Named cap on the presented array's length, read once, BEFORE the
+    // snapshot below copies anything and before any per-message signature
+    // or hashing work. Must match verifyReceiptSetBinding in
+    // js-sdk/src/attestation/attestation.ts and
+    // verify_receipt_set_binding_profile in
+    // conformance/reference-runner/runner.py.
+    reject("transcript exceeds the maximum message count");
+  }
   const messages = snapshotPlainJson(chainInput.messages);
   if (!Array.isArray(messages) || messages.length === 0) {
     reject("transcript messages are missing");
@@ -2213,9 +2271,15 @@ function verifyProfile(suiteBase, profile, inputData, context, regression) {
   }
 }
 
-function evaluateVector(suiteBase, vector, regression) {
+function evaluateVector(suiteBase, vector, regression, vectorText) {
   try {
     const [, inputData, context, profile] = requireVectorShape(vector);
+    if (unsafeIntegerReachesCanonicalization(vectorText)) {
+      // The rule's one JS-side enforcement point (see the INTEGER-REJECTION
+      // RULE comment): decided once the vector's own `expected` has been
+      // read, so the outcome line is scored like any other reject.
+      reject("unsafe integer reaches canonicalization");
+    }
     verifyProfile(suiteBase, profile, inputData, context, regression);
   } catch (error) {
     if (error instanceof Reject) {
@@ -2301,12 +2365,13 @@ function runSuite(suiteArg, regression) {
         if (typeof relPath !== "string") {
           reject("manifest path is not a string");
         }
-        const vector = readJson(resolveManifestFile(suiteBase, relPath));
+        const vectorText = fs.readFileSync(resolveManifestFile(suiteBase, relPath), "utf8");
+        const vector = JSON.parse(vectorText);
         if (isObject(vector) && typeof vector.id === "string") {
           vectorId = vector.id;
           expected = vector.expected ?? "<missing>";
         }
-        got = evaluateVector(suiteBase, vector, regression);
+        got = evaluateVector(suiteBase, vector, regression, vectorText);
       } catch (error) {
         got = "reject";
       }

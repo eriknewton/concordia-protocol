@@ -125,6 +125,34 @@ class Reject(Exception):
     """The vector does not satisfy its verification profile."""
 
 
+# Ceiling on the transcript length receipt-set-binding-v1 will verify or
+# walk, rejected by name before any per-message signature or hashing work.
+# Same value and derivation as MAX_SET_BINDING_TRANSCRIPT_MESSAGES in
+# concordia/attestation.py (1.5x headroom above the largest transcript the
+# SDK suites' adversarial-complexity ratio tests prove linear); the runner
+# carries its own literal because it imports no SDK. Must match
+# MAX_SET_BINDING_TRANSCRIPT_MESSAGES in
+# conformance/reference-runner-js/runner.mjs, concordia/attestation.py and
+# js-sdk/src/attestation/attestation.ts; all four are pinned to
+# tests/fixtures/set_binding_limits.json by tests in both SDK suites.
+MAX_SET_BINDING_TRANSCRIPT_MESSAGES = 200_000
+
+
+# INTEGER-REJECTION RULE (shared by both reference runners; must match the
+# same paragraph above unsafeIntegerReachesCanonicalization in
+# conformance/reference-runner-js/runner.mjs): an integer outside
+# +/-(2**53 - 1) is rejected iff it reaches canonicalization, which for a
+# vector means it lies under the vector's `input`, the subtree every
+# verification profile canonicalizes (minus string-valued signature fields).
+# An unsafe integer anywhere else (the manifest, a schema, `context`,
+# `notes`, any other vector member) is not a rejection, because nothing
+# there is canonicalized; the SDKs' parseJsonStrict likewise scans only the
+# document it is about to canonicalize. This runner enforces the rule for
+# free: json.loads keeps arbitrary precision, and rfc8785.dumps raises
+# IntegerDomainError only when the integer reaches jcs_bytes, which is the
+# exact moment the rule names. The JS runner cannot, because JSON.parse has
+# already collapsed the literal into a lossy double by then, so it enforces
+# the same rule at ingest by scanning the source text of `input` only.
 def reject_json_constant(value: str) -> None:
     raise ValueError(f"non-finite JSON value is not allowed: {value}")
 
@@ -1436,6 +1464,12 @@ def verify_receipt_set_binding_profile(
     messages = chain_input.get("messages")
     if not isinstance(messages, list) or not messages:
         raise Reject("transcript messages are missing")
+    if len(messages) > MAX_SET_BINDING_TRANSCRIPT_MESSAGES:
+        # Named cap before the per-message signature loop and before
+        # reconstruct_single_chain, so an over-cap transcript costs no
+        # per-message work. Must match verifyReceiptSetBindingProfile in
+        # conformance/reference-runner-js/runner.mjs.
+        raise Reject("transcript exceeds the maximum message count")
     for item in messages:
         message = require_object(item, "transcript message")
         sender = require_object(message.get("from"), "transcript sender")

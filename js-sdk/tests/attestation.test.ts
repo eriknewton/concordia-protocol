@@ -701,16 +701,29 @@ describe('pyIntCoerce strips surrounding whitespace without ReDoS (CodeQL js/pol
     });
   }
 
-  it('returns fast on the adversarial input the regex backtracked on', () => {
+  it('rejects the adversarial input the regex backtracked on in time linear in its length', () => {
     // A long interior whitespace run flanked by non-ws chars: the old
-    // `/[\s]+$/` alternative retried from every ws position (O(n^2)). The linear
-    // scan is O(n); even 200k chars must reject in well under the regex's old
-    // hundreds-of-ms. Generous ceiling to stay non-flaky on shared CI.
-    const adversarial = 'x' + '\t'.repeat(200_000) + 'y';
-    const t0 = performance.now();
-    expect(() => isValidNow(relAtt(adversarial), NOW_MS)).toThrow(AttestationError);
-    const elapsedMs = performance.now() - t0;
-    expect(elapsedMs).toBeLessThan(50);
+    // `/[\s]+$/` alternative retried from every ws position (O(n^2)); the
+    // linear scan is O(n). Asserted as an n-versus-2n RATIO (about 2 for a
+    // linear scan, about 4 for the old quadratic one; bound 3), never as a
+    // millisecond ceiling, which encodes one machine's speed and fails on a
+    // slower CI runner with no regression anywhere (2026-09-16 delta-12
+    // gate). Each timing is the minimum of five runs so timer and GC noise
+    // at this scale cannot move the ratio.
+    function minRejectMs(tabs: number): number {
+      const adversarial = 'x' + '\t'.repeat(tabs) + 'y';
+      let best = Number.POSITIVE_INFINITY;
+      for (let i = 0; i < 5; i += 1) {
+        const t0 = performance.now();
+        expect(() => isValidNow(relAtt(adversarial), NOW_MS)).toThrow(AttestationError);
+        best = Math.min(best, performance.now() - t0);
+      }
+      return best;
+    }
+    const length = 4_000_000;
+    const small = minRejectMs(length);
+    const large = minRejectMs(2 * length);
+    expect(large / small).toBeLessThan(3);
   });
 });
 

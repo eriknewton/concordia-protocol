@@ -908,26 +908,117 @@ describe('a cycle among prev_hash links is named "cycle", not "no root message" 
   });
 });
 
-describe('cycle detection is linear, not quadratic (AGENTS.md rule 8, 2026-09-16 delta-11 gate)', () => {
-  // A rootless, reverse-ordered chain ending in ONE orphan drives
-  // reconstructSingleChain into the `roots.length === 0` branch without any
-  // real hash cycle, and it is exactly this shape -- not a cycle -- that the
-  // OLD findCycle (`path.indexOf(node)`, an O(len(path)) scan per step)
-  // walked in O(n^2) before finally hitting the `!predecessorOf.has(node)`
-  // break (Codex P1). Measured against HEAD 5176dfc with the real
-  // computeHash (no mocking): at n=32000/64000/128000, 0.21s/0.55s/1.69s --
-  // consistent with quadratic growth becoming dominant as n grows (V8's
-  // native Array/Map scanning stays fast enough that the O(n) hashing cost
-  // dominates at 32000 alone -- unlike Python, whose interpreter overhead
-  // makes the O(n^2) term dominant already at 32000; see
-  // TestCycleDetectionIsLinearNotQuadratic in
-  // tests/test_attestation_set_binding_reconstruction.py for that
-  // measurement). Post-fix (position-map findCycle PLUS the gate that
-  // skips calling it at all once the orphan error already explains the
-  // rejection): 0.13s/0.27s/0.54s -- consistent with linear growth (~2x per
-  // doubling) at every scale measured. n=128000 is used here (rather than
-  // Python's 32000) so the ceiling below is tight enough to actually catch
-  // a regression to O(n^2) on THIS runtime, not merely so on Python's.
+describe('cycle detection is linear, not quadratic (AGENTS.md rule 8, 2026-09-16 delta-11 and delta-12 gates)', () => {
+  // Cost is asserted as a RATIO between n and 2n, never as a millisecond
+  // ceiling: a ceiling encodes one machine's speed (round 12's 1000 ms
+  // ceiling held at 540 ms on the MacBook and failed at 1858 and 2224 ms on
+  // the CI runners with no regression anywhere), while the n-to-2n ratio of
+  // a linear walk is about 2 on every machine and about 4 for a quadratic
+  // one. The bound is 3, halfway between. Each timing is the minimum of
+  // REPEATS back-to-back runs so a single GC pause cannot move the ratio.
+  //
+  // Two shapes, because they reach different code (Codex P2, delta-12 gate:
+  // the round-12 test built only the orphan shape, whose rejection is
+  // explained before findCycle runs, so the finder itself was never
+  // exercised at scale):
+  //   - a genuine n-message prev_hash CYCLE, built with mocked digests (the
+  //     technique of the cycle-naming tests above, since a real cycle is a
+  //     SHA-256 preimage search): no root, no orphan, no fork, so
+  //     reconstructSingleChain reaches findCycle with every message in
+  //     predecessorOf and the finder walks the whole cycle. The diagnosis
+  //     names every index in walk order, which is the proof it ran.
+  //   - the rootless reverse-ordered chain ending in ONE orphan, with real
+  //     hashing: the exact input that drove the old O(n^2) finder (Codex P1,
+  //     delta-11 gate), now rejected on the orphan alone before findCycle.
+  // Sizes: the cycle shape runs to 2n = 128_000, the range the cap's
+  // derivation cites (MAX_SET_BINDING_TRANSCRIPT_MESSAGES in attestation.ts).
+
+  const RATIO_BOUND = 3; // between linear (about 2) and quadratic (about 4)
+  const REPEATS = 2;
+  const LONG_TEST_TIMEOUT_MS = 180_000;
+
+  function minElapsedMs(run: () => void): number {
+    let best = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < REPEATS; i += 1) {
+      const t0 = performance.now();
+      run();
+      best = Math.min(best, performance.now() - t0);
+    }
+    return best;
+  }
+
+  // Digest of message `c<i>`: i + 1 in 64 hex digits (offset by one so that
+  // index 0's digest is not the all-zero GENESIS_HASH, which would make its
+  // successor a root), read off the canonical bytes (which carry the id) by
+  // the hashCanonicalBytes mock, so a cycle of any length is a lookup, not a
+  // preimage search.
+  function cycleDigest(i: number): string {
+    return `sha256:${(i + 1).toString(16).padStart(64, '0')}`;
+  }
+
+  function installCycleFakeHash(): void {
+    vi.spyOn(sessionModule, 'hashCanonicalBytes').mockImplementation((bytes: Buffer) => {
+      const match = /"id":"c(\d+)"/.exec(bytes.toString('utf8'));
+      if (match === null) throw new Error('installCycleFakeHash: no c<i> id in canonical bytes');
+      return cycleDigest(Number(match[1]));
+    });
+  }
+
+  // c_i links to c_{i-1} and c_0 links to c_{n-1}: one n-cycle, no root.
+  function buildGenuineCycle(n: number): Array<Record<string, unknown>> {
+    return Array.from({ length: n }, (_, i) => ({
+      id: `c${i}`,
+      prev_hash: cycleDigest((i + n - 1) % n),
+    }));
+  }
+
+  // findCycle iterates predecessorOf in insertion (transcript index) order,
+  // so the walk starts at index 0 and follows prev_hash: 0, n-1, n-2, ...,
+  // 1, then closes on 0. Must match _find_cycle's walk in
+  // concordia/attestation.py (same expected text in its sibling test).
+  function expectedCycleDiagnosis(n: number): string {
+    const walk = [0];
+    for (let i = n - 1; i >= 1; i -= 1) walk.push(i);
+    walk.push(0);
+    return (
+      `transcript contains a prev_hash cycle through messages ${walk.join(', ')}: ` +
+      `prev_hash links point to each other with no root; a chain has exactly one ` +
+      `message without prev_hash`
+    );
+  }
+
+  function timeVerify(transcript: Array<Record<string, unknown>>): {
+    elapsedMs: number;
+    errors: string[];
+  } {
+    const receipt = {
+      concordia_attestation: '0.5.0',
+      chain_head: GENESIS_HASH,
+      message_count: transcript.length,
+    };
+    let errors: string[] = [];
+    const elapsedMs = minElapsedMs(() => {
+      errors = verifyReceiptSetBinding(receipt, transcript).errors;
+    });
+    return { elapsedMs, errors };
+  }
+
+  it(
+    'walks a genuine 128k-message prev_hash cycle through findCycle in time linear in n (n-versus-2n ratio below 3)',
+    { timeout: LONG_TEST_TIMEOUT_MS },
+    () => {
+      installCycleFakeHash();
+      const n = 64_000;
+      const small = timeVerify(buildGenuineCycle(n));
+      const large = timeVerify(buildGenuineCycle(2 * n));
+
+      // The finder ran, over the WHOLE cycle, in both sizes: only findCycle
+      // produces this diagnosis, and it names every index.
+      expect(small.errors).toEqual([expectedCycleDiagnosis(n)]);
+      expect(large.errors).toEqual([expectedCycleDiagnosis(2 * n)]);
+      expect(large.elapsedMs / small.elapsedMs).toBeLessThan(RATIO_BOUND);
+    },
+  );
 
   function buildRootlessReverseChain(n: number): Array<Record<string, unknown>> {
     const messages: Array<Record<string, unknown>> = [
@@ -940,30 +1031,25 @@ describe('cycle detection is linear, not quadratic (AGENTS.md rule 8, 2026-09-16
     return [...messages].reverse();
   }
 
-  it('verifies a 128k rootless reverse-ordered orphan chain in linear time', () => {
-    const n = 128_000;
-    const transcript = buildRootlessReverseChain(n);
-    const receipt = { concordia_attestation: '0.5.0', chain_head: GENESIS_HASH, message_count: n };
+  it(
+    'rejects a rootless reverse-ordered orphan chain on the orphan alone, in time linear in n (n-versus-2n ratio below 3)',
+    { timeout: LONG_TEST_TIMEOUT_MS },
+    () => {
+      const n = 32_000;
+      const small = timeVerify(buildRootlessReverseChain(n));
+      const large = timeVerify(buildRootlessReverseChain(2 * n));
 
-    const t0 = performance.now();
-    const result = verifyReceiptSetBinding(receipt, transcript);
-    const elapsedMs = performance.now() - t0;
-
-    expect(result.state).toBe('error');
-    // The gate (this round's second half of item 2) means the orphan alone
-    // explains the rejection; findCycle never runs for this shape, so this
-    // is the SAME diagnosis a caller got before the fix, just without the
-    // wasted O(n^2) (now-moot, since skipped) walk.
-    expect(result.errors).toEqual([
-      `transcript message ${n - 1} is an orphan: its prev_hash matches no presented message`,
-    ]);
-    // Ceiling = 1.0s: comfortably above the measured post-fix linear
-    // runtime (~0.54s at n=128000, itself already ~2x headroom over a
-    // slower CI box) while well below the measured pre-fix quadratic
-    // runtime (~1.69s at n=128000, this block's own comment) -- a
-    // regression back to O(n^2) trips this, ordinary CI variance does not.
-    expect(elapsedMs).toBeLessThan(1000);
-  });
+      // The orphan alone explains the rejection; findCycle never runs for
+      // this shape, so the diagnosis is the plain orphan error at both sizes.
+      expect(small.errors).toEqual([
+        `transcript message ${n - 1} is an orphan: its prev_hash matches no presented message`,
+      ]);
+      expect(large.errors).toEqual([
+        `transcript message ${2 * n - 1} is an orphan: its prev_hash matches no presented message`,
+      ]);
+      expect(large.elapsedMs / small.elapsedMs).toBeLessThan(RATIO_BOUND);
+    },
+  );
 });
 
 describe('MAX_SET_BINDING_TRANSCRIPT_MESSAGES (2026-09-16 delta-11 gate, Codex P1 second half)', () => {
@@ -1000,5 +1086,123 @@ describe('MAX_SET_BINDING_TRANSCRIPT_MESSAGES (2026-09-16 delta-11 gate, Codex P
 
     expect(result.state).toBe('error');
     expect(result.errors.some((e) => e.includes('exceeding the maximum'))).toBe(false);
+  });
+
+  // Cap BEFORE the snapshot (Codex P1, 2026-09-16 delta-12 gate): the
+  // boundary snapshot is an O(n) traversal that throws on the first
+  // accessor, so the order is observable from outside through an accessor
+  // planted at element 0. Over the cap it must never be reached; at the cap
+  // it must be (proving the cap is the only thing that stood before it).
+  function transcriptWithAccessorAtZero(n: number): {
+    transcript: Array<Record<string, unknown>>;
+    getterReads: () => number;
+  } {
+    const transcript = Array.from({ length: n }, (_, i) => ({ id: `m${i}` }));
+    let reads = 0;
+    Object.defineProperty(transcript[0]!, 'id', {
+      get() {
+        reads += 1;
+        return 'm0';
+      },
+      enumerable: true,
+      configurable: true,
+    });
+    return { transcript, getterReads: () => reads };
+  }
+
+  it('checks the cap on the caller array BEFORE the snapshot: an over-cap transcript with an accessor at element 0 gets the named cap error, not a CanonicalizationError', () => {
+    const n = MAX_SET_BINDING_TRANSCRIPT_MESSAGES + 1;
+    const { transcript, getterReads } = transcriptWithAccessorAtZero(n);
+    const receipt = { concordia_attestation: '0.5.0', chain_head: GENESIS_HASH, message_count: n };
+
+    const result = verifyReceiptSetBinding(receipt, transcript);
+
+    expect(result.state).toBe('error');
+    expect(result.errors).toEqual([
+      `transcript has ${n} messages, exceeding the maximum of ` +
+        `${MAX_SET_BINDING_TRANSCRIPT_MESSAGES}`,
+    ]);
+    expect(getterReads()).toBe(0);
+  });
+
+  it('at exactly the cap the snapshot runs, so the same accessor at element 0 is refused by the snapshot', () => {
+    const n = MAX_SET_BINDING_TRANSCRIPT_MESSAGES;
+    const { transcript } = transcriptWithAccessorAtZero(n);
+    const receipt = { concordia_attestation: '0.5.0', chain_head: GENESIS_HASH, message_count: n };
+
+    expect(() => verifyReceiptSetBinding(receipt, transcript)).toThrow(CanonicalizationError);
+  });
+
+  it('reads the caller array length exactly once for the cap and never snapshots an over-cap array', () => {
+    const target = Array.from({ length: MAX_SET_BINDING_TRANSCRIPT_MESSAGES + 1 }, (_, i) => ({
+      id: `m${i}`,
+    }));
+    let lengthReads = 0;
+    let ownKeysReads = 0;
+    const proxied = new Proxy(target, {
+      get(t, property, receiver) {
+        if (property === 'length') lengthReads += 1;
+        return Reflect.get(t, property, receiver);
+      },
+      ownKeys(t) {
+        // The snapshot's single Object.getOwnPropertyDescriptors call is the
+        // only thing that would invoke this trap.
+        ownKeysReads += 1;
+        return Reflect.ownKeys(t);
+      },
+    });
+    const receipt = {
+      concordia_attestation: '0.5.0',
+      chain_head: GENESIS_HASH,
+      message_count: target.length,
+    };
+
+    const result = verifyReceiptSetBinding(receipt, proxied);
+
+    expect(result.errors).toEqual([
+      `transcript has ${target.length} messages, exceeding the maximum of ` +
+        `${MAX_SET_BINDING_TRANSCRIPT_MESSAGES}`,
+    ]);
+    expect(lengthReads).toBe(1);
+    expect(ownKeysReads).toBe(0);
+  });
+});
+
+describe('MAX_SET_BINDING_TRANSCRIPT_MESSAGES is cross-pinned to every other literal (2026-09-16 delta-12 gate, Codex P2)', () => {
+  // Four independent literals carry the cap (the two SDKs and the two
+  // conformance reference runners, which import no SDK). This test and its
+  // Python sibling (TestTranscriptCapIsCrossPinned in
+  // tests/test_attestation_set_binding_reconstruction.py) each read all four
+  // plus the shared fixture, so a one-sided edit fails CI in both languages.
+  const REPO = join(__dirname, '..', '..');
+
+  function literalIn(relPath: string, pattern: RegExp): number {
+    const source = readFileSync(join(REPO, relPath), 'utf8');
+    const match = pattern.exec(source);
+    if (match === null)
+      throw new Error(`${relPath}: MAX_SET_BINDING_TRANSCRIPT_MESSAGES not found`);
+    return Number(match[1]!.replace(/_/g, ''));
+  }
+
+  it('equals the shared fixture, the Python SDK, and both reference runners', () => {
+    const fixture = JSON.parse(
+      readFileSync(join(REPO, 'tests', 'fixtures', 'set_binding_limits.json'), 'utf8'),
+    ) as { max_set_binding_transcript_messages: number };
+    expect(MAX_SET_BINDING_TRANSCRIPT_MESSAGES).toBe(fixture.max_set_binding_transcript_messages);
+    expect(
+      literalIn('concordia/attestation.py', /^MAX_SET_BINDING_TRANSCRIPT_MESSAGES = ([\d_]+)$/m),
+    ).toBe(MAX_SET_BINDING_TRANSCRIPT_MESSAGES);
+    expect(
+      literalIn(
+        'conformance/reference-runner-js/runner.mjs',
+        /^const MAX_SET_BINDING_TRANSCRIPT_MESSAGES = ([\d_]+);$/m,
+      ),
+    ).toBe(MAX_SET_BINDING_TRANSCRIPT_MESSAGES);
+    expect(
+      literalIn(
+        'conformance/reference-runner/runner.py',
+        /^MAX_SET_BINDING_TRANSCRIPT_MESSAGES = ([\d_]+)$/m,
+      ),
+    ).toBe(MAX_SET_BINDING_TRANSCRIPT_MESSAGES);
   });
 });

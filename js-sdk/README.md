@@ -111,14 +111,35 @@ const b = canonicalizeJcs({ a: 1, b: 2 });
 console.log(a.equals(b)); // true
 ```
 
-**Accepted input.** `canonicalizeJcs` accepts a value iff it is an Array
-(`Array.isArray`) whose own prototype is exactly this realm's
-`Array.prototype`, or -- checked only when that is false, never as a
-fallback pair -- its own prototype is exactly `null` or exactly this
-realm's `Object.prototype`. Nothing else is inspected: not a hop count, not
-`Object.prototype.toString`, not a symbol key, not the value's construction
-history. An accepted value is snapshotted once, keeping only its own
-enumerable, non-accessor, string-keyed data.
+**Accepted input.** `canonicalizeJcs` accepts a value iff, recursively at
+every nesting level, one of the following holds:
+
+- a **primitive**, by JSON type: `null`; a boolean; a string with no
+  unpaired UTF-16 surrogate; or a finite number that is not `-0` and, when
+  it is integer-valued and `String(value)` prints it in plain decimal, lies
+  within `Number.MAX_SAFE_INTEGER` (an integer-valued number at or beyond
+  1e21 prints in exponential form and is accepted as a float, which is why
+  `parseJsonStrict` / `fromJsonText` refuse the plain-decimal literal in the
+  source text before it is parsed). `undefined`, a function, a symbol and a
+  bigint are refused;
+- an **Array** (`Array.isArray`) whose own prototype is exactly this realm's
+  `Array.prototype`, AND whose own property descriptors, observed once
+  through `Object.getOwnPropertyDescriptors`, hold an enumerable data
+  descriptor at every index below `length`: an accessor element throws, and
+  a sparse hole throws;
+- an **object** (checked only when `Array.isArray` is false, never as a
+  fallback pair) whose own prototype is exactly `null` or exactly this
+  realm's `Object.prototype`, AND whose own string-keyed properties,
+  observed the same way, are enumerable data descriptors only: an accessor
+  property throws; a non-enumerable property and a symbol-keyed property
+  are omitted, never read.
+
+The prototype test alone is not the predicate: a same-realm plain object
+with an enumerable accessor, or a sparse array, satisfies the prototype test
+and still throws. Nothing else is inspected: not a hop count, not
+`Object.prototype.toString`, not the value's construction history. An
+accepted value is snapshotted once, keeping only its own enumerable,
+non-accessor, string-keyed data.
 
 Because the check is a prototype-identity test and nothing more, it is
 satisfied by values `JSON.parse` cannot itself produce. **Proxies are not

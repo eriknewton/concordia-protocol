@@ -64,17 +64,22 @@ _SHA256_HEX_RE = re.compile(r"^sha256:[a-f0-9]{64}\Z")
 # would assume relay-mediated origin this verifier does not require. Instead
 # the ceiling is set above the largest n this suite's own adversarial-
 # complexity tests already measure and assert linear-time on with real
-# hashing (128_000, in TestCycleDetectionIsLinearNotQuadratic's JS sibling;
-# see js-sdk/tests/attestation-set-binding-reconstruction.test.ts) --
-# anything at or below that range is proven O(n) by those tests, so the cap
-# must not fall inside the range they already cover, or it would silently
-# convert an already-proven-safe input into an untested one; 200_000 is a
-# round number with roughly 1.5x headroom above that proven range. Anything
-# beyond 200_000 has no timing evidence behind it and is refused outright
-# rather than processed on faith. Must also match
-# MAX_SET_BINDING_TRANSCRIPT_MESSAGES in js-sdk/src/attestation/attestation.ts
-# (the two are independent literals, not a shared import, but must carry the
-# same value and the same reasoning).
+# hashing (2n = 128_000 in TestCycleDetectionIsLinearNotQuadratic's JS
+# sibling's n-versus-2n ratio tests, which drive the cycle finder over a
+# genuine 128_000-message cycle; see
+# js-sdk/tests/attestation-set-binding-reconstruction.test.ts) -- anything
+# at or below that range is proven O(n) by those tests, so the cap must not
+# fall inside the range they already cover, or it would silently convert an
+# already-proven-safe input into an untested one; 200_000 is a round number
+# with roughly 1.5x headroom above that proven range. Anything beyond
+# 200_000 has no complexity evidence behind it and is refused outright
+# rather than processed on faith. Four independent literals carry this
+# value (this one; MAX_SET_BINDING_TRANSCRIPT_MESSAGES in
+# js-sdk/src/attestation/attestation.ts; and the same name in both
+# conformance reference runners, conformance/reference-runner/runner.py and
+# conformance/reference-runner-js/runner.mjs), all pinned to
+# tests/fixtures/set_binding_limits.json by a test in each SDK suite, so a
+# one-sided edit fails CI in both languages.
 MAX_SET_BINDING_TRANSCRIPT_MESSAGES = 200_000
 
 
@@ -809,11 +814,17 @@ def evaluate_receipt_set_binding(
         errors.append("transcript must be a list when verifying set binding")
     elif not transcript:
         errors.append("transcript must contain at least one message")
-    elif len(transcript) > MAX_SET_BINDING_TRANSCRIPT_MESSAGES:
-        # Named rejection before any per-message hashing or walking work
-        # runs (see MAX_SET_BINDING_TRANSCRIPT_MESSAGES's derivation above).
+    elif (presented_length := len(transcript)) > MAX_SET_BINDING_TRANSCRIPT_MESSAGES:
+        # Named rejection of the length the caller's list presents, read
+        # once, BEFORE any per-message work: no element of an over-cap
+        # transcript is ever inspected, hashed, or copied (Python has no
+        # boundary snapshot to run first, so "before the snapshot" in the JS
+        # SDK is "before _reconstruct_single_chain" here; Codex P1, 2026-09-16
+        # delta-12 gate). Pinned by TestTranscriptSizeCap's cap-before-any-
+        # element-read test. Must match the same ordering in
+        # verifyReceiptSetBinding, js-sdk/src/attestation/attestation.ts.
         errors.append(
-            f"transcript has {len(transcript)} messages, exceeding the "
+            f"transcript has {presented_length} messages, exceeding the "
             f"maximum of {MAX_SET_BINDING_TRANSCRIPT_MESSAGES}"
         )
     else:
