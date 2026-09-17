@@ -3,7 +3,11 @@ import { readFileSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { runInNewContext } from 'vm';
-import { canonicalizeJcs, canonicalizePredicate } from '../src/canonical/canonicalize.js';
+import {
+  canonicalizeJcs,
+  canonicalizePredicate,
+  fromJsonText,
+} from '../src/canonical/canonicalize.js';
 import { CanonicalizationError } from '../src/canonical/checks.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -141,31 +145,74 @@ describe('canonicalizeJcs - large-integer fail-closed (Python parity)', () => {
   });
 });
 
-describe('snapshotPlainJson - the realm/Proxy class (Codex P2, Grok findings, 2026-09-16 delta-6 gate)', () => {
-  it('canonicalizes a node:vm cross-realm JSON value identically to the same JSON parsed in this realm', () => {
-    // Codex P2, proved fail-before against 37bfca7: `rejectForeignPrototype`
-    // rejected this value outright (a different vm context's `JSON.parse`
-    // produces an object whose `Object.prototype` is NOT this module's
-    // `Object.prototype`), so `canonicalizeJcs(crossRealm)` threw
-    // CanonicalizationError -- a genuine cross-realm canonicalization
-    // regression, since the SAME JSON text canonicalizes fine when parsed in
-    // this realm. Post-fix, prototype identity is never checked, so both
-    // realms' parse of the same text canonicalize to the same bytes.
+describe('snapshotPlainJson - cross-realm values must be re-parsed via fromJsonText (2026-09-16 fix round 11)', () => {
+  // Rounds 5-10 tried to accept a cross-realm JSON.parse result directly, by
+  // characterizing "plain enough" from outside (a hop count, then a brand
+  // probe, then a symbol-key walk) rather than by identity, because a
+  // same-realm identity check rejects a cross-realm object outright (its
+  // Object.prototype is a DIFFERENT object from this module's). The tenth
+  // review found that every one of those outside characterizations still
+  // let through a same-realm value that should be refused (Error,
+  // Arguments, Promise, a shortened class instance), because the probes
+  // themselves are built from this realm's OWN mutable builtins, which a
+  // hostile same-realm caller can replace before this module ever runs. This
+  // round subtracts the outside characterization entirely and goes back to
+  // same-realm identity, moving the cross-realm case to an explicit,
+  // documented caller obligation: re-parse foreign JSON here first.
+
+  it('refuses a node:vm cross-realm JSON value (values from another realm must be re-parsed here first)', () => {
+    // Fail-before against 73194db: the hop-count test accepted this value
+    // (a cross-realm Object.prototype still satisfies "reaches null within
+    // two hops"), so canonicalizeJcs(crossRealm) canonicalized it as plain
+    // data instead of throwing. Post-round-11, only THIS module's own
+    // Object.prototype identity is accepted, so a genuinely different
+    // realm's Object.prototype is refused outright.
     const json = '{"b":2,"a":1,"nested":{"x":[3,1,2]},"s":"hi"}';
-    const sameRealm = JSON.parse(json) as Record<string, unknown>;
     const crossRealm = runInNewContext(`JSON.parse(${JSON.stringify(json)})`, {}) as Record<
       string,
       unknown
     >;
     // Precondition the construction depends on: a genuinely different
     // realm's Object.prototype, not a same-realm no-op.
-    expect(Object.getPrototypeOf(crossRealm)).not.toBe(Object.getPrototypeOf(sameRealm));
+    expect(Object.getPrototypeOf(crossRealm)).not.toBe(Object.prototype);
 
-    expect(canonicalizeJcs(crossRealm).toString('utf8')).toBe(
+    expect(() => canonicalizeJcs(crossRealm)).toThrow(CanonicalizationError);
+  });
+
+  it('fromJsonText(JSON.stringify(vmObject)) canonicalizes identically to the same JSON parsed in this realm', () => {
+    // The documented escape hatch: a caller holding a cross-realm object
+    // re-serializes it (JSON.stringify works on any realm's plain object)
+    // and re-parses it HERE via fromJsonText, which is exactly JSON.parse
+    // in this realm (routed through parseJsonStrict for the same
+    // ingest-boundary unsafe-integer check every other parse path applies).
+    // The resulting value's prototype is THIS module's Object.prototype, so
+    // it canonicalizes byte-identically to the value the same JSON text
+    // produces when parsed directly in this realm.
+    const json = '{"b":2,"a":1,"nested":{"x":[3,1,2]},"s":"hi"}';
+    const sameRealm = JSON.parse(json) as Record<string, unknown>;
+    const crossRealm = runInNewContext(`JSON.parse(${JSON.stringify(json)})`, {}) as Record<
+      string,
+      unknown
+    >;
+    const reparsed = fromJsonText(JSON.stringify(crossRealm));
+
+    expect(canonicalizeJcs(reparsed).toString('utf8')).toBe(
       canonicalizeJcs(sameRealm).toString('utf8'),
     );
   });
 
+  it('fromJsonText(JSON.stringify(vmArray)) canonicalizes identically to the same array parsed in this realm', () => {
+    const sameRealmArray = JSON.parse('[3,1,2]') as unknown[];
+    const crossRealmArray = runInNewContext('[3, 1, 2]', {}) as unknown[];
+    const reparsed = fromJsonText(JSON.stringify(crossRealmArray));
+
+    expect(canonicalizeJcs(reparsed).toString('utf8')).toBe(
+      canonicalizeJcs(sameRealmArray).toString('utf8'),
+    );
+  });
+});
+
+describe('snapshotPlainJson - the descriptor-map Proxy class (Codex P2, Grok findings, 2026-09-16 delta-6 gate)', () => {
   it('rejects an array index whose own-descriptor lies about a value an indexed read can still reach', () => {
     // Codex/Grok delta-6 gate, proved fail-before against 37bfca7 (this
     // exact construction canonicalized as the bytes `[0,7]` instead of
@@ -181,7 +228,10 @@ describe('snapshotPlainJson - the realm/Proxy class (Codex P2, Grok findings, 20
     // `snapshotPlainJson` reads the descriptor exactly once and copies
     // `descriptor.value` directly, so a `getOwnPropertyDescriptor` lie
     // means an absent element, never a value fetched by a separate
-    // indexed read.
+    // indexed read. Unaffected by round 11's subtraction: the array's own
+    // prototype identity is still exactly `Array.prototype` here, so this
+    // construction still reaches the descriptor-observation code this test
+    // pins.
     const backing = [0, 7];
     const proxied = new Proxy(backing, {
       getOwnPropertyDescriptor(target, prop) {
@@ -199,74 +249,122 @@ describe('snapshotPlainJson - the realm/Proxy class (Codex P2, Grok findings, 20
   });
 });
 
-describe('snapshotPlainJson - plain-data prototype-chain test (Grok finding 2, 2026-09-16 delta-7 gate)', () => {
-  // Removing prototype-IDENTITY checking (delta-6, to fix the cross-realm
-  // case above) also removed the only thing that had been rejecting these
-  // non-JSON types: each construction below canonicalized to the bytes
-  // `{}` (or `[]` for the array subclass) against e1239db instead of
-  // throwing -- proved fail-before per test, stashing this describe block's
-  // sibling source fix and rerunning. Python's canonical_json raises
-  // TypeError for a datetime; JS silently dropping every field of these
-  // types to `{}`/`[]` is a JS-only over-acceptance, not a plain-JSON byte
-  // change (no legitimate JSON value parses to one of these types), so
-  // closing it cannot break a real cross-realm JSON.parse value -- which is
-  // exactly what the two hop-count helpers this fix adds test for, instead
-  // of the prototype identity the cross-realm fix had to remove.
+describe('snapshotPlainJson - same-realm prototype-identity refusals (2026-09-16 fix round 11)', () => {
+  // Each construction below has its OWN, natural prototype (Date.prototype,
+  // Map.prototype, ...), never `Object.prototype` or `null`, so the single
+  // identity comparison in isPlainObjectPrototype/isPlainArrayPrototype
+  // refuses every one of them without needing a brand probe, a hop count,
+  // or a symbol-key walk. Error, Arguments, and Promise are proved
+  // fail-before against 73194db: the tenth review (Codex findings 1-3)
+  // showed the round-10 brand-probe list had no probe for Error's
+  // [[ErrorData]] slot, and that Promise's brand check depended on a
+  // prototype-chain symbol lookup a one-hop Symbol.toStringTag spoof or a
+  // nulled prototype could dodge, so both canonicalized as plain data
+  // (`{}`) instead of throwing. Arguments is deliberately absent from this
+  // refusal list (see the dedicated describe block below): unlike Date,
+  // Map, Error, or Promise, an Arguments object's OWN `[[Prototype]]` is
+  // exactly `%Object.prototype%` per ECMA-262 (CreateMappedArgumentsObject
+  // / CreateUnmappedArgumentsObject both call `OrdinaryObjectCreate(
+  // %Object.prototype%, ...)`), so identity comparison cannot and does not
+  // try to distinguish it from plain data -- this was already true even in
+  // round 10's hop-count layer (the tenth review noted a stock `arguments`
+  // object is two hops to null "by default").
 
-  it('rejects a Date (fail-before against e1239db: canonicalized to "{}")', () => {
+  it('rejects a Date', () => {
     expect(() => canonicalizeJcs({ t: new Date('2026-01-01T00:00:00Z') })).toThrow(
       CanonicalizationError,
     );
   });
 
-  it('rejects a Map (fail-before against e1239db: canonicalized to "{}")', () => {
+  it('rejects a Map', () => {
     expect(() => canonicalizeJcs({ m: new Map([['a', 1]]) })).toThrow(CanonicalizationError);
   });
 
-  it('rejects a Set (fail-before against e1239db: canonicalized to "{}")', () => {
+  it('rejects a Set', () => {
     expect(() => canonicalizeJcs({ s: new Set([1]) })).toThrow(CanonicalizationError);
   });
 
-  it('rejects a boxed Number (fail-before against e1239db: canonicalized to "{}")', () => {
+  it('rejects a boxed Number', () => {
     expect(() => canonicalizeJcs({ n: new Number(1) })).toThrow(CanonicalizationError);
   });
 
-  it('rejects a class instance (fail-before against e1239db: canonicalized to "{}")', () => {
+  it('rejects a class instance', () => {
     class Terms {
       amount = 1;
     }
     expect(() => canonicalizeJcs({ v: new Terms() })).toThrow(CanonicalizationError);
   });
 
-  it('rejects an object more than two hops from null (fail-before against e1239db: canonicalized to "{}")', () => {
-    // Object.create(Object.create({})): hop1 (its own prototype) is the
-    // inner Object.create({}) result, itself not null; hop2 (that result's
-    // prototype) is the `{}` literal, also not null -- one hop further than
-    // the two-hop plain-object budget, so it is refused on the same test
-    // that accepts an ordinary `{}` or a cross-realm JSON.parse object.
-    const tooDeep = Object.create(Object.create({})) as Record<string, unknown>;
-    expect(() => canonicalizeJcs({ v: tooDeep })).toThrow(CanonicalizationError);
-  });
-
-  it('rejects an Array subclass instance (fail-before against e1239db: canonicalized to "[]")', () => {
+  it('rejects an Array subclass instance', () => {
     class Vec extends Array {}
     const vec = Vec.from([1, 2, 3]);
     // Precondition the construction depends on: Array.isArray alone would
-    // let this through, which is exactly why the array-side test counts
-    // prototype hops instead of relying on Array.isArray by itself.
+    // let this through, which is exactly why the array-side identity test
+    // also compares the prototype, not only Array.isArray.
     expect(Array.isArray(vec)).toBe(true);
     expect(() => canonicalizeJcs({ v: vec })).toThrow(CanonicalizationError);
   });
 
-  it('still accepts a null-prototype object and a cross-realm array (no regression)', () => {
+  it('rejects an Error (fail-before against 73194db: canonicalized to "{}", no probe for [[ErrorData]])', () => {
+    expect(() => canonicalizeJcs({ e: new Error('boom') })).toThrow(CanonicalizationError);
+  });
+
+  it('rejects a Promise (fail-before against 73194db: canonicalized to "{}" once its prototype was nulled, defeating the Symbol.toStringTag-property check the brand list relied on)', () => {
+    const settled = Promise.resolve(1);
+    // Swallow the unhandled-rejection-adjacent "unused promise" lint concern
+    // by attaching a no-op handler; the promise itself, not its resolution,
+    // is what this test canonicalizes.
+    settled.catch(() => undefined);
+    expect(() => canonicalizeJcs({ p: settled })).toThrow(CanonicalizationError);
+  });
+
+  it('still accepts an ordinary object and array (no regression)', () => {
+    expect(canonicalizeJcs({ a: 1, b: [1, 2, 3] }).toString('utf8')).toBe('{"a":1,"b":[1,2,3]}');
+  });
+});
+
+describe('snapshotPlainJson - identity-cannot-distinguish residuals (2026-09-16 fix round 11, documented)', () => {
+  it('an Arguments object canonicalizes as its own enumerable indices only, never refused (its own prototype genuinely IS Object.prototype, per ECMA-262 -- not a probe gap)', () => {
+    function capture(): unknown {
+      // eslint-disable-next-line prefer-rest-params
+      return arguments;
+    }
+    const args = capture.call(undefined, 'x', 'y') as unknown as Record<string, unknown>;
+    // Preconditions: the facts this test depends on. A stock `arguments`
+    // object's OWN prototype is this realm's Object.prototype, not a
+    // distinct `Arguments.prototype` the way Date/Map/Error/Promise each
+    // have their own, so no identity comparison, hop count, or brand probe
+    // from any round could have refused it without also refusing an
+    // ordinary object; its `length` and `callee` are non-enumerable (the
+    // spec-mandated shape, e.g. CreateUnmappedArgumentsObject in ES2026),
+    // so they are skipped the same way any non-enumerable own property is,
+    // leaving only the two enumerable indices in the snapshot.
+    expect(Object.getPrototypeOf(args)).toBe(Object.prototype);
+    expect(Object.getOwnPropertyDescriptor(args, 'length')?.enumerable).toBe(false);
+    expect(canonicalizeJcs(args).toString('utf8')).toBe('{"0":"x","1":"y"}');
+  });
+
+  it('a null-prototype object with own data canonicalizes as that data (documented residual, not a bug)', () => {
+    // The contract states this explicitly: "when its prototype has been
+    // set to null, is treated as the plain data of its own enumerable
+    // properties." A null-prototype object is indistinguishable from
+    // JSON.parse('{}')-then-Object.setPrototypeOf(...,null) by any
+    // structural check this module could run without reading through the
+    // very prototype link the check exists to interrogate, so this is
+    // accepted by design rather than refused by omission.
     const nullProto = Object.assign(Object.create(null), { a: 1 }) as Record<string, unknown>;
     expect(canonicalizeJcs(nullProto).toString('utf8')).toBe('{"a":1}');
+  });
 
-    const crossRealmArray = runInNewContext('[3, 1, 2]', {}) as unknown[];
-    // Precondition: a genuinely different realm's Array.prototype, not a
-    // same-realm no-op (mirrors the cross-realm object precondition above).
-    expect(Object.getPrototypeOf(crossRealmArray)).not.toBe(Array.prototype);
-    expect(canonicalizeJcs(crossRealmArray).toString('utf8')).toBe('[3,1,2]');
+  it('a symbol-keyed own property is silently ignored, never read and never rejected (documented: "symbol keys are ignored (never read)")', () => {
+    // A plain object literal's prototype is unaffected by adding a symbol
+    // property, so this value still passes the identity test; the snapshot
+    // then enumerates only STRING keys (Object.keys of the descriptor map),
+    // the same thing JSON.parse does, so the symbol key never reaches the
+    // output -- not an error, and not a read of the symbol's value either.
+    const marker = Symbol('marker');
+    const value: Record<string | symbol, unknown> = { a: 1, [marker]: 'hidden' };
+    expect(canonicalizeJcs(value).toString('utf8')).toBe('{"a":1}');
   });
 });
 
@@ -301,209 +399,5 @@ describe('snapshotPlainJson - "__proto__" is a JSON key, not a prototype (Grok/C
   it('canonicalizes {"a":1,"__proto__":2} sorting "__proto__" before "a" (fail-before: canonicalized to "{"a":1}", silently dropping the second key)', () => {
     const value = JSON.parse('{"a":1,"__proto__":2}');
     expect(canonicalizeJcs(value).toString('utf8')).toBe('{"__proto__":2,"a":1}');
-  });
-});
-
-describe('snapshotPlainJson - brand check refuses a prototype-stripped builtin (Codex second probe, 2026-09-16 delta-7 gate, fix round 8)', () => {
-  // The prototype-hop guard alone would accept both constructions below --
-  // each precondition proves that -- because hop1 === null after
-  // Object.setPrototypeOf(v, null) satisfies hasPlainObjectPrototypeChain on
-  // its own. hasPlainObjectTag is the check that still rejects them: their
-  // Object.prototype.toString tag ("Date" / "Number") comes from an internal
-  // slot Object.setPrototypeOf cannot touch. Fail-before against 23439e2 (no
-  // brand check existed): both canonicalized to "{}" instead of throwing.
-
-  it('rejects a Date whose prototype was nulled to pass the hop count (fail-before: canonicalized to "{}")', () => {
-    const brandedDate = new Date(0);
-    Object.setPrototypeOf(brandedDate, null);
-    expect(Object.getPrototypeOf(brandedDate)).toBeNull(); // precondition: hop count alone would accept this
-    expect(() => canonicalizeJcs({ t: brandedDate })).toThrow(CanonicalizationError);
-  });
-
-  it('rejects a null-prototype boxed Number (fail-before: canonicalized to "{}")', () => {
-    const brandedNumber = new Number(1);
-    Object.setPrototypeOf(brandedNumber, null);
-    expect(Object.getPrototypeOf(brandedNumber)).toBeNull(); // precondition: hop count alone would accept this
-    expect(() => canonicalizeJcs({ n: brandedNumber })).toThrow(CanonicalizationError);
-  });
-});
-
-describe('snapshotPlainJson - symbol-keyed Symbol.toStringTag spoof (Codex P1, 2026-09-16 delta-8 gate, fix round 9)', () => {
-  // The brand check added in fix round 8 reads Object.prototype.toString,
-  // which itself consults value[Symbol.toStringTag] before falling back to
-  // the internal slot. Every construction below owns that symbol somewhere
-  // reachable from `value` without moving any string key or lengthening the
-  // prototype chain the hop-count guards already accept, so round 8's brand
-  // check alone reads the spoofed tag and reports "Object". Fail-before
-  // against e4f82d5 (no symbol-key guard existed): all four refusal cases
-  // canonicalized as plain data instead of throwing.
-
-  it('rejects a prototype-stripped Date with an own Symbol.toStringTag = "Object" (fail-before against e4f82d5: canonicalized to "{}")', () => {
-    const spoofedDate = new Date(0) as unknown as Record<PropertyKey, unknown>;
-    Object.setPrototypeOf(spoofedDate, null);
-    Object.defineProperty(spoofedDate, Symbol.toStringTag, { value: 'Object', configurable: true });
-    // Preconditions: hop count and (spoofed) brand alone would both accept this.
-    expect(Object.getPrototypeOf(spoofedDate)).toBeNull();
-    expect(Object.prototype.toString.call(spoofedDate)).toBe('[object Object]');
-    expect(() => canonicalizeJcs({ t: spoofedDate })).toThrow(CanonicalizationError);
-  });
-
-  it('rejects a null-prototype boxed Number with the same Symbol.toStringTag spoof (fail-before against e4f82d5: canonicalized to "{}")', () => {
-    const spoofedNumber = new Number(1) as unknown as Record<PropertyKey, unknown>;
-    Object.setPrototypeOf(spoofedNumber, null);
-    Object.defineProperty(spoofedNumber, Symbol.toStringTag, {
-      value: 'Object',
-      configurable: true,
-    });
-    expect(Object.getPrototypeOf(spoofedNumber)).toBeNull();
-    expect(Object.prototype.toString.call(spoofedNumber)).toBe('[object Object]');
-    expect(() => canonicalizeJcs({ n: spoofedNumber })).toThrow(CanonicalizationError);
-  });
-
-  it('rejects a plain object whose one-hop crafted prototype carries Symbol.toStringTag = "Object" (fail-before against e4f82d5: canonicalized to "{}")', () => {
-    const craftedProto: Record<PropertyKey, unknown> = Object.create(null);
-    Object.defineProperty(craftedProto, Symbol.toStringTag, {
-      value: 'Object',
-      configurable: true,
-    });
-    const value: Record<string, unknown> = Object.create(craftedProto);
-    value.a = 1;
-    // Preconditions: two-hop chain (value -> craftedProto -> null) passes
-    // hasPlainObjectPrototypeChain, and the tag reads "Object" via the
-    // prototype's symbol, not value's own.
-    expect(Object.getPrototypeOf(Object.getPrototypeOf(value))).toBeNull();
-    expect(Object.getOwnPropertySymbols(value).length).toBe(0);
-    expect(Object.prototype.toString.call(value)).toBe('[object Object]');
-    expect(() => canonicalizeJcs(value)).toThrow(CanonicalizationError);
-  });
-
-  it('rejects a plain object with an own symbol-keyed property (fail-before against e4f82d5: canonicalized dropping the symbol key silently)', () => {
-    const marker = Symbol('marker');
-    const value: Record<string | symbol, unknown> = { a: 1, [marker]: 'hidden' };
-    expect(Object.getOwnPropertySymbols(value)).toEqual([marker]);
-    expect(() => canonicalizeJcs(value)).toThrow(CanonicalizationError);
-  });
-
-  it('still accepts a cross-realm array (no regression from the symbol-key guard)', () => {
-    const crossRealmArray = runInNewContext('[3, 1, 2]', {}) as unknown[];
-    expect(Object.getPrototypeOf(crossRealmArray)).not.toBe(Array.prototype);
-    expect(canonicalizeJcs(crossRealmArray).toString('utf8')).toBe('[3,1,2]');
-  });
-});
-
-describe('snapshotPlainJson - array hop-2 and Proxy-prototype brand bypass (Grok, 2026-09-16 delta-9 gate, fix round 10)', () => {
-  // Round 9's symbol-key guard listed own symbols on `value` and its
-  // ONE-hop prototype only. A plain array is allowed a three-hop chain
-  // (value -> Array.prototype -> Object.prototype -> null), so a symbol
-  // owned by the SECOND hop was never enumerated, and the round-9 brand
-  // test (Object.prototype.toString.call(value)) performs a [[Get]] of
-  // Symbol.toStringTag up the WHOLE chain regardless of what the guard
-  // saw. Separately, that same [[Get]] can be answered by a `get` trap on
-  // a Proxy used as a one-hop prototype while the Proxy's `ownKeys` trap
-  // reports zero symbols to the guard, so the guard and the brand test
-  // disagreed about the same object. Fail-before against 0781ef7 (before
-  // this round): the array case canonicalized to `[42,2,3]` with its
-  // getter invoked, and the Proxy-prototype Date case canonicalized to
-  // `{}` with its `get` trap fired.
-  //
-  // The fix replaces the toString-based brand test with internal-slot
-  // probes (Date.prototype.getTime, Map.prototype size getter, etc.,
-  // borrowed and called with the candidate as `this`) that read no
-  // property of the candidate or its prototype chain, so a hostile
-  // prototype -- Proxy or plain object -- has nothing to answer; and it
-  // extends the symbol-key guard to the array chain's second hop as an
-  // independent structural check.
-
-  it('rejects an array whose crafted second prototype hop owns Symbol.toStringTag via a getter (fail-before against 0781ef7: canonicalized to "[42,2,3]" with the getter invoked)', () => {
-    let invoked = false;
-    const hop2: Record<PropertyKey, unknown> = Object.create(null);
-    const arr: unknown[] = [1, 2, 3];
-    Object.defineProperty(hop2, Symbol.toStringTag, {
-      get() {
-        invoked = true;
-        Object.defineProperty(arr, '0', {
-          value: 42,
-          enumerable: true,
-          configurable: true,
-          writable: true,
-        });
-        return 'Array';
-      },
-      configurable: true,
-    });
-    Object.setPrototypeOf(arr, Object.create(hop2));
-    // Preconditions: three-hop chain (arr -> hop1 -> hop2 -> null), so the
-    // hop-count test alone accepts this; hop2 is exactly the hop the
-    // round-9 guard never enumerated.
-    expect(Object.getPrototypeOf(Object.getPrototypeOf(Object.getPrototypeOf(arr)))).toBeNull();
-    expect(Object.getOwnPropertySymbols(Object.getPrototypeOf(arr)).length).toBe(0);
-    expect(() => canonicalizeJcs(arr)).toThrow(CanonicalizationError);
-    expect(invoked).toBe(false);
-  });
-
-  it('rejects a plain object whose null-terminated one-hop prototype owns a disallowed symbol key (round-9 case, still refused)', () => {
-    const hop1: Record<PropertyKey, unknown> = Object.create(null);
-    hop1[Symbol.toPrimitive] = () => 5;
-    const value: Record<string, unknown> = Object.create(hop1);
-    value.a = 1;
-    expect(Object.getPrototypeOf(hop1)).toBeNull();
-    expect(() => canonicalizeJcs(value)).toThrow(CanonicalizationError);
-  });
-
-  it('rejects a Date whose Proxy-as-prototype hides Symbol.toStringTag from ownKeys but answers it via a get trap (fail-before against 0781ef7: canonicalized to "{}" with the trap fired)', () => {
-    const date = new Date(0);
-    let getTrapFired = false;
-    const proxyProto = new Proxy(Object.create(null), {
-      ownKeys() {
-        return [];
-      },
-      getOwnPropertyDescriptor() {
-        return undefined;
-      },
-      get(_target, prop) {
-        if (prop === Symbol.toStringTag) {
-          getTrapFired = true;
-          return 'Object';
-        }
-        return undefined;
-      },
-      has() {
-        return false;
-      },
-    });
-    Object.setPrototypeOf(date, proxyProto);
-    // Preconditions: two-hop chain (date -> proxyProto -> null) passes the
-    // hop-count test, and the guard's ownKeys-based symbol check sees no
-    // symbol at all -- only a real internal-slot probe catches this.
-    expect(Object.getPrototypeOf(proxyProto)).toBeNull();
-    expect(Object.getOwnPropertySymbols(proxyProto).length).toBe(0);
-    expect(() => canonicalizeJcs(date)).toThrow(CanonicalizationError);
-    expect(getTrapFired).toBe(false);
-  });
-
-  it('rejects a Map with its own prototype set to null (residual closed: internal-slot probes ignore [[Prototype]])', () => {
-    const map = new Map([['a', 1]]);
-    Object.setPrototypeOf(map, null);
-    expect(Object.getPrototypeOf(map)).toBeNull(); // precondition: hop count alone would accept this
-    expect(() => canonicalizeJcs(map)).toThrow(CanonicalizationError);
-  });
-
-  it('rejects a Set with its own prototype set to null (same residual, Set counterpart)', () => {
-    const set = new Set([1, 2]);
-    Object.setPrototypeOf(set, null);
-    expect(Object.getPrototypeOf(set)).toBeNull();
-    expect(() => canonicalizeJcs(set)).toThrow(CanonicalizationError);
-  });
-
-  it('still accepts a cross-realm plain object (no regression from the internal-slot brand probes)', () => {
-    const crossRealmObject = runInNewContext('({ a: 1, b: 2 })', {}) as Record<string, unknown>;
-    expect(Object.getPrototypeOf(crossRealmObject)).not.toBe(Object.prototype);
-    expect(canonicalizeJcs(crossRealmObject).toString('utf8')).toBe('{"a":1,"b":2}');
-  });
-
-  it('still accepts a cross-realm array (no regression from the array hop-2 symbol check)', () => {
-    const crossRealmArray = runInNewContext('[1, 2, 3]', {}) as unknown[];
-    expect(Object.getPrototypeOf(crossRealmArray)).not.toBe(Array.prototype);
-    expect(canonicalizeJcs(crossRealmArray).toString('utf8')).toBe('[1,2,3]');
   });
 });

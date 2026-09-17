@@ -498,6 +498,43 @@ def _attestation_version_at_least(ver: str, major: int, minor: int) -> bool:
     return (int(parts[0]), int(parts[1])) >= (major, minor)
 
 
+def _find_cycle(predecessor_of: dict[int, int]) -> list[int] | None:
+    """Return one cycle's message indices if ``predecessor_of`` has one, else ``None``.
+
+    ``predecessor_of`` maps a non-root message's index to the index of the
+    ONE presented message it names as its predecessor -- populated by
+    ``_reconstruct_single_chain`` only for links that already passed the
+    fork/orphan/duplicate/null-prev_hash checks, so every edge here names a
+    real, once-claimed predecessor. That makes the graph "functional"
+    (out-degree exactly 1 for every key) and finite, so a walk that never
+    reaches a message OUTSIDE ``predecessor_of`` (a root, which has no
+    entry) must eventually repeat a node -- a functional graph with no root
+    is nothing but a disjoint union of cycles, optionally with acyclic
+    tails feeding into them. Called only when the ordinary walk from the
+    root(s) has already failed to visit every message, so this is reached
+    on the genuinely disconnected remainder, never on the reconstructed
+    chain itself.
+    """
+    state: dict[int, int] = {}  # 0 = on the current walk, 1 = resolved (acyclic or on a found cycle)
+    for start in predecessor_of:
+        if state.get(start) == 1:
+            continue
+        path: list[int] = []
+        node = start
+        while True:
+            if state.get(node) == 1:
+                break  # already resolved by an earlier walk; nothing new here
+            if node not in predecessor_of:
+                break  # this walk reaches a root: nothing on it is cyclic
+            if node in path:
+                return path[path.index(node) :]
+            path.append(node)
+            node = predecessor_of[node]
+        for visited in path:
+            state[visited] = 1
+    return None
+
+
 def _reconstruct_single_chain(
     transcript: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[str]]:
@@ -545,6 +582,11 @@ def _reconstruct_single_chain(
 
     roots: list[int] = []
     successor_of: dict[int, int] = {}
+    # Inverse of successor_of, populated at the SAME point (only once a
+    # link passes the fork/orphan/null-prev_hash checks below): the input
+    # _find_cycle needs to walk the leftover graph without recomputing
+    # anything already validated here.
+    predecessor_of: dict[int, int] = {}
     for index, message in enumerate(transcript):
         has_prev_hash = "prev_hash" in message
         prev_hash = message.get("prev_hash")
@@ -579,12 +621,29 @@ def _reconstruct_single_chain(
             )
             continue
         successor_of[predecessor] = index
+        predecessor_of[index] = predecessor
 
     if not roots:
-        errors.append(
-            "transcript has no root message: a chain has exactly one message "
-            "without prev_hash"
-        )
+        # Cycle detection runs FIRST: by construction, every message that
+        # reaches this point already cleared the fork/orphan/duplicate/
+        # null-prev_hash checks above, so if there is also no root, every
+        # remaining message's predecessor edge stays inside the presented
+        # set with nowhere to terminate -- which _find_cycle's own docstring
+        # shows is possible only when the set decomposes into cycles. Name
+        # the cycle when one is found; keep the plain wording as a fallback
+        # for a shape this reasoning does not cover.
+        cycle = _find_cycle(predecessor_of)
+        if cycle is not None:
+            errors.append(
+                f"transcript contains a cycle at messages {cycle}: prev_hash "
+                f"links point to each other with no root; a chain has "
+                f"exactly one message without prev_hash"
+            )
+        else:
+            errors.append(
+                "transcript has no root message: a chain has exactly one message "
+                "without prev_hash"
+            )
     elif len(roots) > 1:
         errors.append(
             f"transcript has {len(roots)} root messages without prev_hash; a "
@@ -595,18 +654,39 @@ def _reconstruct_single_chain(
         return [], errors
 
     chain: list[dict[str, Any]] = []
+    visited_indices: set[int] = set()
     cursor: int | None = roots[0]
     while cursor is not None:
         chain.append(transcript[cursor])
+        visited_indices.add(cursor)
         cursor = successor_of.get(cursor)
     if len(chain) != len(transcript):
         # Closing invariant: a walk shorter than the presented set means part
         # of the set is disconnected from the root, which is set substitution
-        # however the individual links verify.
-        errors.append(
-            f"transcript does not form a single chain: the walk from the root "
-            f"visits {len(chain)} of {len(transcript)} presented messages"
-        )
+        # however the individual links verify. The disconnected remainder
+        # (every index the walk above never visited) cannot be an orphan, a
+        # fork, or a second root -- those are all excluded by the checks
+        # above running first -- so by the same reasoning as the no-root
+        # branch it can only be one or more cycles; name it as one when
+        # _find_cycle confirms it, falling back to the plain wording
+        # otherwise (a construction this reasoning does not cover).
+        leftover_predecessor_of = {
+            index: predecessor
+            for index, predecessor in predecessor_of.items()
+            if index not in visited_indices
+        }
+        cycle = _find_cycle(leftover_predecessor_of)
+        if cycle is not None:
+            errors.append(
+                f"transcript contains a cycle at messages {cycle} beside the "
+                f"reconstructed chain: the walk from the root visits "
+                f"{len(chain)} of {len(transcript)} presented messages"
+            )
+        else:
+            errors.append(
+                f"transcript does not form a single chain: the walk from the root "
+                f"visits {len(chain)} of {len(transcript)} presented messages"
+            )
         return [], errors
     return chain, []
 

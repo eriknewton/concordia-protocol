@@ -10,12 +10,13 @@
  * same verdict on the same bytes.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
+import * as sessionModule from '../src/session/index.js';
 import { GENESIS_HASH, computeHash } from '../src/session/index.js';
 import { verifyReceiptSetBinding } from '../src/attestation/index.js';
 import { canonicalizeJcs } from '../src/canonical/canonicalize.js';
@@ -750,5 +751,108 @@ describe('"__proto__" survives the double snapshot (boundary snapshot, then cano
     // differ -- proving the key was actually stored and hashed, not merely
     // "did not throw."
     expect(computeHash(withProto)).not.toBe(computeHash(withoutProto));
+  });
+});
+
+describe('a cycle among prev_hash links is named "cycle", not "no root message" (2026-09-16 fix round 11)', () => {
+  // A genuinely mutual prev_hash cycle cannot be built with the real
+  // hashCanonicalBytes: closing the loop needs message A's digest to equal
+  // what message B points at AND message B's digest to equal what A
+  // points at simultaneously, and the digest covers the WHOLE message
+  // including its own prev_hash field -- solving that pair of equations is
+  // exactly as hard as inverting SHA-256 (a hash preimage search), for any
+  // cycle length. These tests replace hashCanonicalBytes (imported from
+  // ../src/session/index.js, a SEPARATE module from attestation.ts, so a
+  // namespace-import spy intercepts the live binding attestation.ts calls
+  // through) with a fixed id-to-digest lookup so the GRAPH topology (what
+  // the fix under test reasons about) can be constructed directly, without
+  // needing a real hash preimage. The patched function is exercised through
+  // the public verifyReceiptSetBinding entry point, not a private helper,
+  // so this still proves the SDK-level behavior a caller observes. Mirrors
+  // TestCycleDetectionAndTheClosingInvariant in
+  // tests/test_attestation_set_binding_reconstruction.py; must match its
+  // verdicts.
+
+  const DIGESTS: Record<string, string> = {
+    chain_1: 'a'.repeat(64),
+    chain_2: 'b'.repeat(64),
+    chain_3: 'c'.repeat(64),
+    chain_4: 'd'.repeat(64),
+    chain_5: 'e'.repeat(64),
+    cycle_a: 'f'.repeat(64),
+    cycle_b: '0'.repeat(63) + '1',
+  };
+
+  function installFakeHash(): void {
+    vi.spyOn(sessionModule, 'hashCanonicalBytes').mockImplementation((bytes: Buffer) => {
+      const text = bytes.toString('utf8');
+      for (const [id, digest] of Object.entries(DIGESTS)) {
+        if (text.includes(`"id":${JSON.stringify(id)}`)) return `sha256:${digest}`;
+      }
+      throw new Error(`installFakeHash: no fixture digest for canonical bytes ${text}`);
+    });
+  }
+
+  function linkedChain(length: number): Msg[] {
+    const chain: Msg[] = [{ id: 'chain_1', from: { agent_id: 'alice' } }];
+    for (let position = 2; position <= length; position += 1) {
+      const predecessorId = `chain_${position - 1}`;
+      chain.push({
+        id: `chain_${position}`,
+        from: { agent_id: 'alice' },
+        prev_hash: `sha256:${DIGESTS[predecessorId]}`,
+      });
+    }
+    return chain;
+  }
+
+  function cyclePair(): [Msg, Msg] {
+    return [
+      { id: 'cycle_a', from: { agent_id: 'alice' }, prev_hash: `sha256:${DIGESTS.cycle_b}` },
+      { id: 'cycle_b', from: { agent_id: 'alice' }, prev_hash: `sha256:${DIGESTS.cycle_a}` },
+    ];
+  }
+
+  it('rejects a pure two-cycle (no root) and names it "cycle", not "no root message"', () => {
+    installFakeHash();
+    const [cycleA, cycleB] = cyclePair();
+    const receipt = { concordia_attestation: '0.5.0', chain_head: GENESIS_HASH, message_count: 2 };
+
+    const result = verifyReceiptSetBinding(receipt, [cycleA, cycleB]);
+
+    expect(result.state).toBe('error');
+    expect(result.errors.some((e) => e.includes('cycle'))).toBe(true);
+    expect(result.errors).not.toContain(
+      'transcript has no root message: a chain has exactly one message without prev_hash',
+    );
+  });
+
+  it('rejects a cycle beside a real chain and names it "cycle" -- the walk-length closing invariant\'s own regression test (item 6)', () => {
+    // A genuinely valid five-message chain, plus two extra messages that
+    // link only to each other: the walk from the root reconstructs the
+    // five-message chain and never reaches the two extras, so the
+    // `chain.length !== transcript.length` closing invariant is the ONLY
+    // thing that refuses crediting the five-message chain as the receipt's
+    // (larger, message_count-mismatched) claimed set. Verified by hand for
+    // this round: commenting out that check (and its early return) makes
+    // this exact assertion fail, because reconstructSingleChain then
+    // returns the five-message chain as a successful reconstruction, and
+    // verifyReceiptSetBinding instead reports a plain message_count /
+    // chain_head mismatch against the 7-message receipt, never reaching
+    // the cycle-naming branch at all -- proving the check is load-bearing,
+    // not merely present.
+    installFakeHash();
+    const [cycleA, cycleB] = cyclePair();
+    const transcript = [...linkedChain(5), cycleA, cycleB];
+    const receipt = {
+      concordia_attestation: '0.5.0',
+      chain_head: GENESIS_HASH,
+      message_count: transcript.length,
+    };
+
+    const result = verifyReceiptSetBinding(receipt, transcript);
+
+    expect(result.state).toBe('error');
+    expect(result.errors.some((e) => e.includes('cycle'))).toBe(true);
   });
 });

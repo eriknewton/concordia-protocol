@@ -122,6 +122,43 @@ function attestationVersionAtLeast(version: unknown, major: number, minor: numbe
  * not reconstruct. Fail-closed: whenever `errors` is non-empty the returned
  * chain is empty, so no caller can read a partial reconstruction as an order.
  */
+/**
+ * Return one cycle's message indices if `predecessorOf` has one, else
+ * `undefined`.
+ *
+ * `predecessorOf` maps a non-root message's index to the index of the ONE
+ * presented message it names as its predecessor -- populated by
+ * `reconstructSingleChain` only for links that already passed the
+ * fork/orphan/duplicate/null-prev_hash checks, so every edge here names a
+ * real, once-claimed predecessor. That makes the graph "functional"
+ * (out-degree exactly 1 for every key) and finite, so a walk that never
+ * reaches a message OUTSIDE `predecessorOf` (a root, which has no entry)
+ * must eventually repeat a node -- a functional graph with no root is
+ * nothing but a disjoint union of cycles, optionally with acyclic tails
+ * feeding into them. Called only when the ordinary walk from the root(s)
+ * has already failed to visit every message, so this runs on the
+ * genuinely disconnected remainder, never on the reconstructed chain
+ * itself. Must match `_find_cycle` in `concordia/attestation.py`.
+ */
+function findCycle(predecessorOf: Map<number, number>): number[] | undefined {
+  const state = new Map<number, 0 | 1>(); // 0 = on the current walk, 1 = resolved
+  for (const start of predecessorOf.keys()) {
+    if (state.get(start) === 1) continue;
+    const path: number[] = [];
+    let node: number | undefined = start;
+    while (node !== undefined) {
+      if (state.get(node) === 1) break; // resolved by an earlier walk
+      if (!predecessorOf.has(node)) break; // reaches a root: nothing cyclic
+      const seenAt = path.indexOf(node);
+      if (seenAt !== -1) return path.slice(seenAt);
+      path.push(node);
+      node = predecessorOf.get(node);
+    }
+    for (const visited of path) state.set(visited, 1);
+  }
+  return undefined;
+}
+
 function reconstructSingleChain(transcript: Array<Record<string, unknown>>): {
   chain: Array<Record<string, unknown>>;
   // The chain's terminal message's digest, taken from the SAME `digests`
@@ -184,6 +221,11 @@ function reconstructSingleChain(transcript: Array<Record<string, unknown>>): {
 
   const roots: number[] = [];
   const successorOf = new Map<number, number>();
+  // Inverse of successorOf, populated at the SAME point (only once a link
+  // passes the fork/orphan/null-prev_hash checks below): findCycle walks
+  // the leftover graph without recomputing anything already validated
+  // here. Must match predecessor_of in concordia/attestation.py.
+  const predecessorOf = new Map<number, number>();
   for (let index = 0; index < transcript.length; index += 1) {
     const view = views[index]!;
     // links are read from the same view the digest covers; a member the
@@ -223,12 +265,30 @@ function reconstructSingleChain(transcript: Array<Record<string, unknown>>): {
       continue;
     }
     successorOf.set(predecessor, index);
+    predecessorOf.set(index, predecessor);
   }
 
   if (roots.length === 0) {
-    errors.push(
-      'transcript has no root message: a chain has exactly one message without prev_hash',
-    );
+    // Cycle detection runs FIRST: by construction, every message that
+    // reaches this point already cleared the fork/orphan/duplicate/
+    // null-prev_hash checks above, so if there is also no root, every
+    // remaining message's predecessor edge stays inside the presented set
+    // with nowhere to terminate -- which findCycle's own comment shows is
+    // possible only when the set decomposes into cycles. Name the cycle
+    // when one is found; keep the plain wording as a fallback for a
+    // construction this reasoning does not cover. Must match the mirrored
+    // ordering in concordia/attestation.py.
+    const cycle = findCycle(predecessorOf);
+    if (cycle !== undefined) {
+      errors.push(
+        `transcript contains a cycle at messages ${JSON.stringify(cycle)}: prev_hash links ` +
+          `point to each other with no root; a chain has exactly one message without prev_hash`,
+      );
+    } else {
+      errors.push(
+        'transcript has no root message: a chain has exactly one message without prev_hash',
+      );
+    }
   } else if (roots.length > 1) {
     errors.push(
       `transcript has ${roots.length} root messages without prev_hash; a chain has exactly one`,
@@ -238,6 +298,7 @@ function reconstructSingleChain(transcript: Array<Record<string, unknown>>): {
   if (errors.length > 0) return { chain: [], headDigest: undefined, errors };
 
   const chain: Array<Record<string, unknown>> = [];
+  const visitedIndices = new Set<number>();
   let cursor: number | undefined = roots[0];
   // Tracks the ORIGINAL transcript index of the last message pushed, so the
   // terminal digest below can be read out of `digests` -- the array already
@@ -246,16 +307,35 @@ function reconstructSingleChain(transcript: Array<Record<string, unknown>>): {
   let terminalIndex: number | undefined;
   while (cursor !== undefined) {
     chain.push(transcript[cursor]!);
+    visitedIndices.add(cursor);
     terminalIndex = cursor;
     cursor = successorOf.get(cursor);
   }
   if (chain.length !== transcript.length) {
     // Closing invariant: a walk shorter than the presented set means part of
     // the set is disconnected from the root, which is set substitution however
-    // the individual links verify.
-    errors.push(
-      `transcript does not form a single chain: the walk from the root visits ${chain.length} of ${transcript.length} presented messages`,
+    // the individual links verify. The disconnected remainder (every index the
+    // walk above never visited) cannot be an orphan, a fork, or a second root
+    // -- those are all excluded by the checks above running first -- so by the
+    // same reasoning as the no-root branch it can only be one or more cycles;
+    // name it as one when findCycle confirms it, falling back to the plain
+    // wording otherwise. Must match the mirrored ordering in
+    // concordia/attestation.py.
+    const leftoverPredecessorOf = new Map(
+      [...predecessorOf].filter(([index]) => !visitedIndices.has(index)),
     );
+    const cycle = findCycle(leftoverPredecessorOf);
+    if (cycle !== undefined) {
+      errors.push(
+        `transcript contains a cycle at messages ${JSON.stringify(cycle)} beside the ` +
+          `reconstructed chain: the walk from the root visits ${chain.length} of ` +
+          `${transcript.length} presented messages`,
+      );
+    } else {
+      errors.push(
+        `transcript does not form a single chain: the walk from the root visits ${chain.length} of ${transcript.length} presented messages`,
+      );
+    }
     return { chain: [], headDigest: undefined, errors };
   }
   // chain.length === transcript.length and transcript.length > 0 (the caller

@@ -231,6 +231,121 @@ class TestChainReconstruction:
         assert any("not a JSON object" in error for error in errors)
 
 
+class TestCycleDetectionAndTheClosingInvariant:
+    """A cycle among prev_hash links is named 'cycle', not 'no root message'.
+
+    A genuinely mutual prev_hash cycle cannot be constructed with the real
+    compute_hash: closing the loop needs message A's digest to equal what
+    message B points at AND message B's digest to equal what A points at
+    simultaneously, and compute_hash covers the WHOLE message including its
+    own prev_hash field -- solving that pair of equations is exactly as hard
+    as inverting SHA-256 (a hash preimage search), for any cycle length.
+    These tests patch concordia.attestation.compute_hash with a fixed
+    id-to-digest lookup so the GRAPH topology (which is what the fix under
+    test reasons about) can be constructed directly, without needing a real
+    hash preimage. The patched function is exercised through the public
+    evaluate_receipt_set_binding entry point, not through a private helper,
+    so this still proves the SDK-level behavior a caller observes.
+    """
+
+    DIGESTS = {
+        "chain_1": "a" * 64,
+        "chain_2": "b" * 64,
+        "chain_3": "c" * 64,
+        "chain_4": "d" * 64,
+        "chain_5": "e" * 64,
+        "cycle_a": "f" * 64,
+        "cycle_b": "0" * 63 + "1",
+    }
+
+    @classmethod
+    def _fake_hash(cls, message: dict[str, Any]) -> str:
+        return f"sha256:{cls.DIGESTS[message['id']]}"
+
+    @classmethod
+    def _linked_chain(cls, length: int) -> list[dict[str, Any]]:
+        chain: list[dict[str, Any]] = [{"id": "chain_1", "from": {"agent_id": "alice"}}]
+        for position in range(2, length + 1):
+            predecessor_id = f"chain_{position - 1}"
+            chain.append(
+                {
+                    "id": f"chain_{position}",
+                    "from": {"agent_id": "alice"},
+                    "prev_hash": f"sha256:{cls.DIGESTS[predecessor_id]}",
+                }
+            )
+        return chain
+
+    def test_pure_two_cycle_is_rejected_and_named(self, monkeypatch):
+        monkeypatch.setattr("concordia.attestation.compute_hash", self._fake_hash)
+        cycle_a = {
+            "id": "cycle_a",
+            "from": {"agent_id": "alice"},
+            "prev_hash": f"sha256:{self.DIGESTS['cycle_b']}",
+        }
+        cycle_b = {
+            "id": "cycle_b",
+            "from": {"agent_id": "alice"},
+            "prev_hash": f"sha256:{self.DIGESTS['cycle_a']}",
+        }
+        receipt = {
+            "concordia_attestation": "0.5.0",
+            "chain_head": GENESIS_HASH,
+            "message_count": 2,
+        }
+
+        state, errors = evaluate_receipt_set_binding(receipt, [cycle_a, cycle_b])
+
+        assert state == "error"
+        assert any("cycle" in error for error in errors), errors
+        # Not the generic wording: the whole point of naming the cycle is
+        # that a reader (or a caller matching on substring) can tell this
+        # apart from an ordinary rootless malformed transcript.
+        assert not any(error == "transcript has no root message" for error in errors)
+
+    def test_cycle_beside_a_real_chain_is_rejected_and_named(self, monkeypatch):
+        """The walk-length closing invariant's own regression test (item 6).
+
+        A genuinely valid five-message chain, plus two extra messages that
+        link only to each other: the walk from the root reconstructs the
+        five-message chain and never reaches the two extras, so the
+        ``len(chain) != len(transcript)`` closing invariant is the ONLY
+        thing that refuses crediting the five-message chain as the receipt's
+        (larger, `message_count`-mismatched) claimed set. Verified by hand
+        for this round: commenting out that check (and its
+        ``return [], errors``) makes THIS test fail -- the function then
+        returns the five-message ``chain`` as a successful reconstruction,
+        and this test's own `state == "error"` / `"cycle" in errors`
+        assertions fail because the surrounding
+        ``evaluate_receipt_set_binding`` instead reports a plain
+        `message_count`/`chain_head` mismatch against the 7-message receipt,
+        never reaching this function's cycle-naming at all. That confirms
+        the check is load-bearing, not merely present.
+        """
+        monkeypatch.setattr("concordia.attestation.compute_hash", self._fake_hash)
+        cycle_a = {
+            "id": "cycle_a",
+            "from": {"agent_id": "alice"},
+            "prev_hash": f"sha256:{self.DIGESTS['cycle_b']}",
+        }
+        cycle_b = {
+            "id": "cycle_b",
+            "from": {"agent_id": "alice"},
+            "prev_hash": f"sha256:{self.DIGESTS['cycle_a']}",
+        }
+        transcript = [*self._linked_chain(5), cycle_a, cycle_b]
+        receipt = {
+            "concordia_attestation": "0.5.0",
+            "chain_head": GENESIS_HASH,
+            "message_count": len(transcript),
+        }
+
+        state, errors = evaluate_receipt_set_binding(receipt, transcript)
+
+        assert state == "error"
+        assert any("cycle" in error for error in errors), errors
+
+
 class TestSharedConformanceVectors:
     """The Python verifier's verdict on the vectors the JS SDK also executes.
 

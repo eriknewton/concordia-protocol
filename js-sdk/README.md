@@ -111,12 +111,33 @@ const b = canonicalizeJcs({ a: 1, b: 2 });
 console.log(a.equals(b)); // true
 ```
 
+**Accepted input.** `canonicalizeJcs` accepts plain data: values whose
+prototype is `null`, this realm's `Object.prototype`, or this realm's
+`Array.prototype`, with own enumerable string-keyed data properties, as
+`JSON.parse` produces them in this realm. Values from another realm (an
+iframe, a `node:vm` context) must be re-parsed here (`fromJsonText(text)` is
+provided). Any other object, including class instances, builtins, Proxies,
+and objects whose prototype chain has been altered, is refused or, when its
+prototype has been set to `null`, is treated as the plain data of its own
+enumerable properties. The library does not defend against replacement of
+this realm's builtins; a hostile same-realm environment is outside every
+JavaScript library's contract.
+
+```ts
+import { fromJsonText, canonicalizeJcs } from '@concordia-protocol/sdk';
+
+// A value from another realm must be re-parsed here before canonicalizing.
+const foreignJsonText = JSON.stringify(valueFromAnotherRealm);
+canonicalizeJcs(fromJsonText(foreignJsonText));
+```
+
 ## What this SDK provides
 
 The public API surface (see `src/index.ts`) covers:
 
 - **Canonical JSON:** `canonicalizeJcs` and `canonicalizePredicate` plus the
-  strict parser `parseJsonStrict` and the `checkNoSpecialFloats` guard.
+  strict parser `parseJsonStrict`, the cross-realm re-parse helper
+  `fromJsonText`, and the `checkNoSpecialFloats` guard.
 - **Ed25519 signing:** `generateKeyPair` / `KeyPair`, `sign` / `verify` over an
   object, `signJson` / `verifyJson` over a JSON string, and the
   `toBase64Url` / `fromBase64Url` helpers.

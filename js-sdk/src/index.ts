@@ -36,6 +36,7 @@ export {
 export {
   canonicalizeJcs,
   canonicalizePredicate,
+  fromJsonText,
   stripSignatures,
   canonicalCosignBytes,
   snapshotPlainJson,
