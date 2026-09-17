@@ -44,6 +44,12 @@ jobs:
       - name: Run tests
         run: pytest -v
 
+      - name: Run ERDL expression-layer conformance tests
+        # Must mirror ci.yml's test job (test_publish_workflow_mirrors_ci.py
+        # enforces parity); pyproject.toml testpaths = ["tests"] does not
+        # cover this directory.
+        run: pytest conformance/erdl-expression-v1 -v
+
       - name: Test-count floor (no silent coverage loss)
         run: bash scripts/test-floor.sh
 

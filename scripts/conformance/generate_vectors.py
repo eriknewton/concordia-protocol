@@ -142,7 +142,18 @@ VECTOR_SCHEMA_VERSION = "concordia-conformance-vector/v1-draft"
 SUITE_VERSION = "v1-draft"
 GENERATOR_COMMAND = "python3 scripts/conformance/generate_vectors.py"
 CHECK_COMMAND = "python3 scripts/conformance/generate_vectors.py --check"
-GENERATED_CHECK_EXCLUDED_DIRS = {"reference-runner", "reference-runner-js"}
+# Hand-written directories under conformance/ that this generator does not
+# produce, so "extra file" drift against generated output is the wrong test for
+# them. `erdl-do-v1.5` (the independent ERDL Decision Object v1.5 audit-layer
+# runner) and `erdl-expression-v1` (the independent ERDL expression-layer runner),
+# each with its submission envelope, are authored like the two reference runners,
+# not generated. The check's subject, conformance/vectors/, is unaffected.
+GENERATED_CHECK_EXCLUDED_DIRS = {
+    "reference-runner",
+    "reference-runner-js",
+    "erdl-do-v1.5",
+    "erdl-expression-v1",
+}
 GENERATED_CHECK_EXCLUDED_FILES = {
     "IMPLEMENTATIONS.md",
     "PROFILES.md",
