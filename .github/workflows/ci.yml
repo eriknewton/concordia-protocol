@@ -46,6 +46,12 @@ jobs:
       - name: Run tests
         run: pytest -v
 
+      - name: Run ERDL expression-layer conformance tests
+        # pyproject.toml testpaths = ["tests"] does not cover this directory,
+        # so the gloss-table full-set-equality pin (test_gloss.py) and the
+        # 2**53 boundary pin (test_limits.py) only run here, explicitly.
+        run: pytest conformance/erdl-expression-v1 -v
+
       - name: Test-count floor (no silent coverage loss)
         # Hard-fail gate: fails if the collected pytest count drops below the
         # integer in .test-baseline. Catches silently-deleted tests.
