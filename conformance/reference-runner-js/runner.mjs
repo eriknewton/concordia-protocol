@@ -227,14 +227,28 @@ function hasPlainArrayPrototypeChain(value) {
 // value's prototype chain to pass the hop count while its tag still reads
 // e.g. "Date" (Codex's second probe, 2026-09-16 delta-7 gate: "the
 // prototype-hop guard can be bypassed by shortening a branded object's or
-// class instance's prototype chain"). Bounded residual, stated once here
-// for both this helper and its array counterpart below: a value whose
-// prototype chain AND tag have BOTH been reduced to plain (for example a
-// Map with its own prototype set to null) is observationally identical to
-// a plain object holding the same own enumerable data properties, and no
-// such value can ever be produced by JSON.parse or Python's json.loads.
-// Mirrors hasPlainObjectTag in js-sdk/src/canonical/canonicalize.ts; must
-// match it.
+// class instance's prototype chain"). This tag itself reads an internal
+// slot, but the READ that exposes it -- Object.prototype.toString.call --
+// consults value[Symbol.toStringTag] first when present, so a value that
+// owns that symbol key directly, or whose one-hop prototype does, can make
+// this very function report "Object" for a Date or a boxed Number without
+// moving a single string key or changing the prototype-chain hop count
+// (Codex P1, 2026-09-16 delta-8 gate: a prototype-stripped Date or boxed
+// Number with an own Symbol.toStringTag = "Object" passed both existing
+// guards and canonicalized as {}). hasDisallowedSymbolKey below closes
+// that by refusing any value, or its prototype, that owns a symbol key the
+// plain-data shape does not, and every call site below runs it before
+// trusting this function's answer.
+//
+// Bounded residual, stated once here for both this helper and its array
+// counterpart below, now exact with the symbol-key guard in place: an
+// object whose prototype chain, tag, AND own-and-prototype symbol keys have
+// ALL been reduced to plain data (for example a Map with its own prototype
+// set to null and no symbol key on itself or that null prototype) is
+// indistinguishable from a plain object holding the same own enumerable
+// data properties, and no such value can ever be produced by JSON.parse or
+// Python's json.loads. Mirrors hasPlainObjectTag in
+// js-sdk/src/canonical/canonicalize.ts; must match it.
 function hasPlainObjectTag(value) {
   return Object.prototype.toString.call(value) === "[object Object]";
 }
@@ -243,13 +257,50 @@ function hasPlainObjectTag(value) {
 // "[object Array]". IsArray (what this tag is keyed on) reflects the
 // exotic Array internal behaviour, not [[Prototype]], so a real Array or
 // Array-subclass instance keeps this tag regardless of prototype
-// tampering -- the same bounded residual applies: an Array subclass
-// instance with no own properties beyond its indices and length, and a
-// shortened prototype chain, canonicalizes identically to a plain array of
-// the same elements. Mirrors hasPlainArrayTag in
+// tampering -- the same bounded residual applies, and so does its
+// symbol-key guard: an Array subclass instance with no own properties
+// beyond its indices and length, a shortened prototype chain, and no
+// disallowed symbol key, canonicalizes identically to a plain array of the
+// same elements. Mirrors hasPlainArrayTag in
 // js-sdk/src/canonical/canonicalize.ts; must match it.
 function hasPlainArrayTag(value) {
   return Object.prototype.toString.call(value) === "[object Array]";
+}
+
+// The own symbol keys a plain array's prototype (Array.prototype, in any
+// realm) legitimately owns: Symbol.iterator and Symbol.unscopables, and
+// nothing else, in every conforming realm including node:vm. Both are
+// well-known symbols, shared across realms by the ECMAScript spec, so
+// comparing against these exact two -- not merely "two symbols" -- is
+// realm-safe. Must match ARRAY_PROTOTYPE_ALLOWED_SYMBOLS in
+// js-sdk/src/canonical/canonicalize.ts.
+const ARRAY_PROTOTYPE_ALLOWED_SYMBOLS = [Symbol.iterator, Symbol.unscopables];
+
+// True when `value` itself owns a symbol-keyed property, or when its
+// prototype (when not null) owns a symbol-keyed property outside
+// `allowedPrototypeSymbols`. Run before the brand test above at every
+// snapshotPlainJson call site: Symbol.toStringTag is a symbol key, and
+// hasPlainObjectTag / hasPlainArrayTag read it through
+// Object.prototype.toString, so a value that owns one itself, or whose
+// one-hop prototype does, retargets the brand test's answer without moving
+// any string key or shortening the prototype chain (Codex P1, 2026-09-16
+// delta-8 gate).
+//
+// `value` itself never legitimately owns a symbol key for JSON data --
+// JSON.parse never produces one, and a plain object or array literal owns
+// none of its own -- so the allowed set applies ONLY to the prototype, and
+// only because a plain array's prototype is Array.prototype, which is not
+// itself plain data and does own two (see ARRAY_PROTOTYPE_ALLOWED_SYMBOLS
+// above). A plain object's prototype (Object.prototype, or null for a
+// null-prototype object) owns no symbol key at all, so callers pass an
+// empty array there. Mirrors hasDisallowedSymbolKey in
+// js-sdk/src/canonical/canonicalize.ts; must match it.
+function hasDisallowedSymbolKey(value, allowedPrototypeSymbols) {
+  if (Object.getOwnPropertySymbols(value).length !== 0) return true;
+  const proto = Object.getPrototypeOf(value);
+  if (proto === null) return false;
+  const protoSymbols = Object.getOwnPropertySymbols(proto);
+  return protoSymbols.some((s) => !allowedPrototypeSymbols.includes(s));
 }
 
 // Produce a realm-local, plain-data deep copy of `value` in a single
@@ -278,11 +329,14 @@ function hasPlainArrayTag(value) {
 //
 // Prototype IDENTITY is not checked -- that regressed cross-realm JSON (see
 // hasPlainObjectPrototypeChain above) -- but prototype SHAPE is (the two
-// hop-count helpers above) and internal-slot BRAND is (hasPlainObjectTag,
-// hasPlainArrayTag): shape alone accepts a builtin whose [[Prototype]] was
-// retargeted to pass the hop count, and brand alone accepts a cross-realm
-// array a hop-count-only test would reject, so a value must pass both to
-// snapshot.
+// hop-count helpers above), internal-slot BRAND is (hasPlainObjectTag,
+// hasPlainArrayTag), and the absence of a disallowed SYMBOL KEY on the
+// value or its prototype is (hasDisallowedSymbolKey): shape alone accepts a
+// builtin whose [[Prototype]] was retargeted to pass the hop count, brand
+// alone accepts a cross-realm array whose [[Prototype]] a hop-count-only
+// test would reject, and brand alone is itself spoofable by an own or
+// one-hop-prototype Symbol.toStringTag (Codex P1, 2026-09-16 delta-8 gate),
+// so a value must pass all three to snapshot.
 //
 // The copy this function returns is built with Object.create(null) (for an
 // object) or [] (for an array) and populated ONLY through
@@ -308,6 +362,13 @@ function snapshotPlainJson(value) {
     return value;
   }
   if (Array.isArray(value)) {
+    // Before the brand check below: a Symbol.toStringTag owned by `value`
+    // itself, or by its one-hop prototype, would make hasPlainArrayTag
+    // read whatever tag that symbol names instead of the real internal
+    // slot (Codex P1, 2026-09-16 delta-8 gate).
+    if (hasDisallowedSymbolKey(value, ARRAY_PROTOTYPE_ALLOWED_SYMBOLS)) {
+      reject("JCS canonicalization failed");
+    }
     if (!hasPlainArrayPrototypeChain(value) || !hasPlainArrayTag(value)) {
       reject("JCS canonicalization failed");
     }
@@ -353,6 +414,17 @@ function snapshotPlainJson(value) {
     return out;
   }
   if (isObject(value)) {
+    // Before the brand check below, and for the same reason as the array
+    // branch above: an own or one-hop-prototype Symbol.toStringTag would
+    // make hasPlainObjectTag read a spoofed tag (Codex P1, 2026-09-16
+    // delta-8 gate: a prototype-stripped Date or null-prototype boxed
+    // Number carrying Symbol.toStringTag = "Object" passed both existing
+    // guards and canonicalized as {}). A plain object's prototype
+    // legitimately owns no symbol key at all, so the allowed set here is
+    // empty (contrast the array branch's two well-known symbols).
+    if (hasDisallowedSymbolKey(value, [])) {
+      reject("JCS canonicalization failed");
+    }
     if (!hasPlainObjectPrototypeChain(value) || !hasPlainObjectTag(value)) {
       reject("JCS canonicalization failed");
     }

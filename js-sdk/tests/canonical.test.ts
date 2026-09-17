@@ -327,3 +327,66 @@ describe('snapshotPlainJson - brand check refuses a prototype-stripped builtin (
     expect(() => canonicalizeJcs({ n: brandedNumber })).toThrow(CanonicalizationError);
   });
 });
+
+describe('snapshotPlainJson - symbol-keyed Symbol.toStringTag spoof (Codex P1, 2026-09-16 delta-8 gate, fix round 9)', () => {
+  // The brand check added in fix round 8 reads Object.prototype.toString,
+  // which itself consults value[Symbol.toStringTag] before falling back to
+  // the internal slot. Every construction below owns that symbol somewhere
+  // reachable from `value` without moving any string key or lengthening the
+  // prototype chain the hop-count guards already accept, so round 8's brand
+  // check alone reads the spoofed tag and reports "Object". Fail-before
+  // against e4f82d5 (no symbol-key guard existed): all four refusal cases
+  // canonicalized as plain data instead of throwing.
+
+  it('rejects a prototype-stripped Date with an own Symbol.toStringTag = "Object" (fail-before against e4f82d5: canonicalized to "{}")', () => {
+    const spoofedDate = new Date(0) as unknown as Record<PropertyKey, unknown>;
+    Object.setPrototypeOf(spoofedDate, null);
+    Object.defineProperty(spoofedDate, Symbol.toStringTag, { value: 'Object', configurable: true });
+    // Preconditions: hop count and (spoofed) brand alone would both accept this.
+    expect(Object.getPrototypeOf(spoofedDate)).toBeNull();
+    expect(Object.prototype.toString.call(spoofedDate)).toBe('[object Object]');
+    expect(() => canonicalizeJcs({ t: spoofedDate })).toThrow(CanonicalizationError);
+  });
+
+  it('rejects a null-prototype boxed Number with the same Symbol.toStringTag spoof (fail-before against e4f82d5: canonicalized to "{}")', () => {
+    const spoofedNumber = new Number(1) as unknown as Record<PropertyKey, unknown>;
+    Object.setPrototypeOf(spoofedNumber, null);
+    Object.defineProperty(spoofedNumber, Symbol.toStringTag, {
+      value: 'Object',
+      configurable: true,
+    });
+    expect(Object.getPrototypeOf(spoofedNumber)).toBeNull();
+    expect(Object.prototype.toString.call(spoofedNumber)).toBe('[object Object]');
+    expect(() => canonicalizeJcs({ n: spoofedNumber })).toThrow(CanonicalizationError);
+  });
+
+  it('rejects a plain object whose one-hop crafted prototype carries Symbol.toStringTag = "Object" (fail-before against e4f82d5: canonicalized to "{}")', () => {
+    const craftedProto: Record<PropertyKey, unknown> = Object.create(null);
+    Object.defineProperty(craftedProto, Symbol.toStringTag, {
+      value: 'Object',
+      configurable: true,
+    });
+    const value: Record<string, unknown> = Object.create(craftedProto);
+    value.a = 1;
+    // Preconditions: two-hop chain (value -> craftedProto -> null) passes
+    // hasPlainObjectPrototypeChain, and the tag reads "Object" via the
+    // prototype's symbol, not value's own.
+    expect(Object.getPrototypeOf(Object.getPrototypeOf(value))).toBeNull();
+    expect(Object.getOwnPropertySymbols(value).length).toBe(0);
+    expect(Object.prototype.toString.call(value)).toBe('[object Object]');
+    expect(() => canonicalizeJcs(value)).toThrow(CanonicalizationError);
+  });
+
+  it('rejects a plain object with an own symbol-keyed property (fail-before against e4f82d5: canonicalized dropping the symbol key silently)', () => {
+    const marker = Symbol('marker');
+    const value: Record<string | symbol, unknown> = { a: 1, [marker]: 'hidden' };
+    expect(Object.getOwnPropertySymbols(value)).toEqual([marker]);
+    expect(() => canonicalizeJcs(value)).toThrow(CanonicalizationError);
+  });
+
+  it('still accepts a cross-realm array (no regression from the symbol-key guard)', () => {
+    const crossRealmArray = runInNewContext('[3, 1, 2]', {}) as unknown[];
+    expect(Object.getPrototypeOf(crossRealmArray)).not.toBe(Array.prototype);
+    expect(canonicalizeJcs(crossRealmArray).toString('utf8')).toBe('[3,1,2]');
+  });
+});
