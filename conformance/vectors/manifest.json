@@ -2,10 +2,10 @@
   "check_command": "python3 scripts/conformance/generate_vectors.py --check",
   "counts": {
     "canary": 5,
-    "diag_canonical_bytes": 1392,
+    "diag_canonical_bytes": 1401,
     "fixtures": 61,
-    "mutation": 1488,
-    "positive": 53,
+    "mutation": 1496,
+    "positive": 54,
     "schemas": 14
   },
   "files": {
@@ -1376,6 +1376,14 @@
       "conformance/diag/canonical-bytes/mut-synthetic-receipt-set-binding-0002.jcs",
       "conformance/diag/canonical-bytes/mut-synthetic-receipt-set-binding-0003.jcs",
       "conformance/diag/canonical-bytes/mut-synthetic-receipt-set-binding-0004.jcs",
+      "conformance/diag/canonical-bytes/mut-synthetic-receipt-set-reconstruction-0001.jcs",
+      "conformance/diag/canonical-bytes/mut-synthetic-receipt-set-reconstruction-0002.jcs",
+      "conformance/diag/canonical-bytes/mut-synthetic-receipt-set-reconstruction-0003.jcs",
+      "conformance/diag/canonical-bytes/mut-synthetic-receipt-set-reconstruction-0004.jcs",
+      "conformance/diag/canonical-bytes/mut-synthetic-receipt-set-reconstruction-0005.jcs",
+      "conformance/diag/canonical-bytes/mut-synthetic-receipt-set-reconstruction-0006.jcs",
+      "conformance/diag/canonical-bytes/mut-synthetic-receipt-set-reconstruction-0007.jcs",
+      "conformance/diag/canonical-bytes/mut-synthetic-receipt-set-reconstruction-0008.jcs",
       "conformance/diag/canonical-bytes/pos-1404-approval-receipt.jcs",
       "conformance/diag/canonical-bytes/pos-1404-capability-digest.jcs",
       "conformance/diag/canonical-bytes/pos-1404-cascade-deny.jcs",
@@ -1408,6 +1416,7 @@
       "conformance/diag/canonical-bytes/pos-synthetic-predicate-vector-10.jcs",
       "conformance/diag/canonical-bytes/pos-synthetic-predicate-vector-11.jcs",
       "conformance/diag/canonical-bytes/pos-synthetic-receipt-bundle.jcs",
+      "conformance/diag/canonical-bytes/pos-synthetic-receipt-set-binding-reconstruction.jcs",
       "conformance/diag/canonical-bytes/pos-synthetic-receipt-set-binding.jcs"
     ],
     "fixtures": [
@@ -2961,7 +2970,15 @@
       "conformance/vectors/mutation/mut-synthetic-receipt-set-binding-0001.json",
       "conformance/vectors/mutation/mut-synthetic-receipt-set-binding-0002.json",
       "conformance/vectors/mutation/mut-synthetic-receipt-set-binding-0003.json",
-      "conformance/vectors/mutation/mut-synthetic-receipt-set-binding-0004.json"
+      "conformance/vectors/mutation/mut-synthetic-receipt-set-binding-0004.json",
+      "conformance/vectors/mutation/mut-synthetic-receipt-set-reconstruction-0001.json",
+      "conformance/vectors/mutation/mut-synthetic-receipt-set-reconstruction-0002.json",
+      "conformance/vectors/mutation/mut-synthetic-receipt-set-reconstruction-0003.json",
+      "conformance/vectors/mutation/mut-synthetic-receipt-set-reconstruction-0004.json",
+      "conformance/vectors/mutation/mut-synthetic-receipt-set-reconstruction-0005.json",
+      "conformance/vectors/mutation/mut-synthetic-receipt-set-reconstruction-0006.json",
+      "conformance/vectors/mutation/mut-synthetic-receipt-set-reconstruction-0007.json",
+      "conformance/vectors/mutation/mut-synthetic-receipt-set-reconstruction-0008.json"
     ],
     "positive": [
       "conformance/vectors/positive/binding-1734-context-set-mismatch.json",
@@ -3005,6 +3022,7 @@
       "conformance/vectors/positive/pos-synthetic-predicate-vector-10.json",
       "conformance/vectors/positive/pos-synthetic-predicate-vector-11.json",
       "conformance/vectors/positive/pos-synthetic-receipt-bundle.json",
+      "conformance/vectors/positive/pos-synthetic-receipt-set-binding-reconstruction.json",
       "conformance/vectors/positive/pos-synthetic-receipt-set-binding.json",
       "conformance/vectors/positive/privacy-synthetic-attestation-behavior-note.json",
       "conformance/vectors/positive/transition-synthetic-cmpc-illegal-activated-to-anything.json",
@@ -3252,6 +3270,17 @@
     },
     {
       "accept": 0,
+      "battery_name": "synthetic/longtail/receipt_set_binding_reconstruction.json",
+      "object_name": "receipt_set_binding_reconstruction",
+      "record_type": "message_chain",
+      "reject": 8,
+      "selection_note": "vector 0001 exercises transcript-absent and has no presented set; vectors 0002 through 0008 each present a set whose length equals message_count and whose last presented message hashes to chain_head, so a digest-and-count verifier accepts them and chain reconstruction rejects them",
+      "source_fixture": "synthetic/longtail/receipt_set_binding.json",
+      "total": 8,
+      "verification_profile": "receipt-set-binding-v1"
+    },
+    {
+      "accept": 0,
       "battery_name": "synthetic/mandate/delegated_mandate.json",
       "object_name": "delegation_chain",
       "record_type": "mandate",
@@ -3313,7 +3342,8 @@
     "agent-profile-v1",
     "competence-proof-v1",
     "receipt-bundle-v1",
-    "message-chain-v1"
+    "message-chain-v1",
+    "receipt-set-binding-v1"
   ],
   "record_types": [
     "decision_object",

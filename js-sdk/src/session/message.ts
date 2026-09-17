@@ -37,6 +37,19 @@ import { canonicalizeJcs } from '../canonical/canonicalize.js';
 export const GENESIS_HASH = `sha256:${'0'.repeat(64)}`;
 
 /**
+ * Hash already-canonicalized bytes into the `sha256:<hex>` chain-digest
+ * format. Exported so a caller that must derive both a digest and a
+ * read-back view from one canonical byte string (attestation set-binding
+ * reconstruction) hashes through this exact path instead of re-deriving the
+ * format inline; two independent digest formatters is how a projection and
+ * a digest drift apart in the first place.
+ */
+export function hashCanonicalBytes(bytes: Buffer): string {
+  const digest = createHash('sha256').update(bytes).digest('hex');
+  return `sha256:${digest}`;
+}
+
+/**
  * Compute the SHA-256 hash of a message for chain integrity (SPEC §9.3).
  * Returns the hash in the format `sha256:<hex>`.
  *
@@ -47,8 +60,7 @@ export const GENESIS_HASH = `sha256:${'0'.repeat(64)}`;
  */
 export function computeHash(message: Record<string, unknown>): string {
   const payload = canonicalizeJcs(message);
-  const digest = createHash('sha256').update(payload).digest('hex');
-  return `sha256:${digest}`;
+  return hashCanonicalBytes(payload);
 }
 
 /**

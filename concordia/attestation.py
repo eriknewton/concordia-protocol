@@ -10,7 +10,7 @@ from __future__ import annotations
 import base64
 import re
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from .cosign import canonical_cosign_bytes
-from .message import compute_hash
+from .message import GENESIS_HASH, compute_hash
 from .signing import KeyPair, canonical_json, sign_message, verify_signature
 from .types import (
     OutcomeStatus,
@@ -51,6 +51,48 @@ ATTESTATION_VERSION = "0.5.0"
 _SET_BINDING_MIN = (0, 3)
 _SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+\Z")
 _SHA256_HEX_RE = re.compile(r"^sha256:[a-f0-9]{64}\Z")
+
+# Ceiling on the transcript length evaluate_receipt_set_binding will walk
+# (2026-09-16 delta-11 gate, Codex P1: "if none exists, add one derived from
+# the existing per-message ceilings"), rejected by name before
+# _reconstruct_single_chain spends any per-message hashing or O(n) walking on
+# it. Derivation: NegotiationRelay.MAX_TRANSCRIPT_SIZE (concordia/relay.py) =
+# 10_000 already bounds how long a transcript a Concordia relay session can
+# ever legitimately produce -- but this verifier's transcript parameter is
+# not required to have come from that relay at all (SPEC 9.6.5b takes a
+# plain list of message dicts), so bounding it AT the relay's own number
+# would assume relay-mediated origin this verifier does not require. Instead
+# the ceiling is set above the largest n this suite's own adversarial-
+# complexity tests already measure and assert linear-time on with real
+# hashing (2n = 128_000 in TestCycleDetectionIsLinearNotQuadratic's JS
+# sibling's n-versus-2n ratio tests, which drive the cycle finder over a
+# genuine 128_000-message cycle; see
+# js-sdk/tests/attestation-set-binding-reconstruction.test.ts) -- anything
+# at or below that range is proven O(n) by those tests, so the cap must not
+# fall inside the range they already cover, or it would silently convert an
+# already-proven-safe input into an untested one; 200_000 is a round number
+# with roughly 1.5x headroom above that proven range. Anything beyond
+# 200_000 has no complexity evidence behind it and is refused outright
+# rather than processed on faith. Four independent literals carry this
+# value (this one; MAX_SET_BINDING_TRANSCRIPT_MESSAGES in
+# js-sdk/src/attestation/attestation.ts; and the same name in both
+# conformance reference runners, conformance/reference-runner/runner.py and
+# conformance/reference-runner-js/runner.mjs), all pinned to
+# tests/fixtures/set_binding_limits.json by a test in each SDK suite, so a
+# one-sided edit fails CI in both languages.
+MAX_SET_BINDING_TRANSCRIPT_MESSAGES = 200_000
+
+# Test-only observation hook for the adversarial-complexity tests (AGENTS.md
+# rule 8). ``None`` in production, where the hot paths below pay one identity
+# check per visited element and nothing else. A test installs a counter and
+# asserts an OPERATION COUNT (visits per presented message), never a
+# wall-clock ceiling or a wall-clock n-versus-2n ratio: both encode one
+# machine's speed and scheduling (JIT warm-up, contention, GC) and were the
+# CI red of round 12 and the flake-in-waiting of round 13 (Codex P2,
+# 2026-09-17 delta-13 gate), while a count of visits is the same integer on
+# every machine. Must match setOperationObserverForTests in
+# js-sdk/src/attestation/attestation.ts (same operation names).
+_operation_observer: Callable[[str], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -498,6 +540,248 @@ def _attestation_version_at_least(ver: str, major: int, minor: int) -> bool:
     return (int(parts[0]), int(parts[1])) >= (major, minor)
 
 
+def _format_cycle_message(cycle: list[int]) -> str:
+    """Render a cycle's message indices in WALK order, closing the loop by
+    repeating the first index at the end (``[3, 4] -> "3, 4, 3"``), so the
+    string alone shows which link closes back on which -- not just the set
+    of indices ``_find_cycle`` names. Deterministic: ``cycle`` is already
+    walk-ordered by ``_find_cycle``, so no sorting or set conversion happens
+    here that could scramble it. Must match ``formatCycle`` in
+    ``js-sdk/src/attestation/attestation.ts``.
+    """
+    closed = [*cycle, cycle[0]]
+    return ", ".join(str(index) for index in closed)
+
+
+def _find_cycle(predecessor_of: dict[int, int]) -> list[int] | None:
+    """Return one cycle's message indices, in walk order, if ``predecessor_of``
+    has one, else ``None``.
+
+    ``predecessor_of`` maps a non-root message's index to the index of the
+    ONE presented message it names as its predecessor -- populated by
+    ``_reconstruct_single_chain`` only for links that already passed the
+    fork/orphan/duplicate/null-prev_hash checks, so every edge here names a
+    real, once-claimed predecessor. That makes the graph "functional"
+    (out-degree exactly 1 for every key) and finite, so a walk that never
+    reaches a message OUTSIDE ``predecessor_of`` (a root, which has no
+    entry) must eventually repeat a node -- a functional graph with no root
+    is nothing but a disjoint union of cycles, optionally with acyclic
+    tails feeding into them. Called only when the ordinary walk from the
+    root(s) has already failed to visit every message, so this is reached
+    on the genuinely disconnected remainder, never on the reconstructed
+    chain itself.
+
+    O(n) total, not O(n^2): ``position`` maps a node already on the CURRENT
+    walk to its index within ``path``, so "is this node already on this
+    walk, and if so where" is one dict lookup, not a linear scan of ``path``
+    repeated at every step (Codex P1, 2026-09-16 delta-11 gate: the prior
+    ``node in path`` / ``path.index(node)`` pair was O(len(path)) per step,
+    so a single walk of length n cost O(n^2) -- and callers reach that one
+    long walk not only on a real cycle but on a rootless, reverse-ordered
+    chain ending in ONE orphan, which is acyclic and still walks its entire
+    length before the ``node not in predecessor_of`` break; measured 8k/16k/
+    32k messages at 0.16s/0.54s/1.94s, consistent with quadratic growth).
+    Each node is added to exactly one walk's ``path`` (a later walk skips
+    any node ``state`` already marked resolved), so the position maps and
+    path lists across all walks hold at most n entries combined.
+    """
+    state: dict[int, int] = {}  # 0 = on the current walk, 1 = resolved (acyclic or on a found cycle)
+    for start in predecessor_of:
+        if state.get(start) == 1:
+            continue
+        path: list[int] = []
+        position: dict[int, int] = {}  # node -> its index within `path`
+        node = start
+        while True:
+            if _operation_observer is not None:
+                _operation_observer("cycle_finder_visit")
+            if state.get(node) == 1:
+                break  # already resolved by an earlier walk; nothing new here
+            if node not in predecessor_of:
+                break  # this walk reaches a root: nothing on it is cyclic
+            seen_at = position.get(node)
+            if seen_at is not None:
+                return path[seen_at:]
+            position[node] = len(path)
+            path.append(node)
+            node = predecessor_of[node]
+        for visited in path:
+            state[visited] = 1
+    return None
+
+
+def _reconstruct_single_chain(
+    transcript: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Rebuild one message order from ``prev_hash`` links alone (SPEC §9.6.5b).
+
+    The presented order is never consulted: the presenter chooses it, so an
+    order read off the list would let a fork, an orphan, or a second root ride
+    through whenever the last presented element still hashes to ``chain_head``.
+    Reconstruction is therefore the only ordering evidence, and it must be
+    total: exactly one message has no predecessor, every other message's
+    ``prev_hash`` is the §9.3 digest of exactly one presented message, no
+    message has two successors, and the walk from the single root visits every
+    presented message.
+
+    The digest compared against ``prev_hash`` is ``compute_hash``, the SHA-256
+    of the complete canonical form of a message INCLUDING its signature. A
+    reconstruction that hashed the signature-stripped form would accept a
+    transcript whose links were computed under the wrong convention, so the
+    convention is part of the check rather than an assumption about it.
+
+    Returns ``(chain, errors)``. Fail-closed: whenever ``errors`` is non-empty
+    the chain is empty, so no caller can read a partial reconstruction as an
+    order.
+    """
+    errors: list[str] = []
+    for index, message in enumerate(transcript):
+        if not isinstance(message, Mapping):
+            errors.append(f"transcript message {index} is not a JSON object")
+    if errors:
+        return [], errors
+
+    digests: list[str] = [compute_hash(message) for message in transcript]
+    by_digest: dict[str, int] = {}
+    for index, digest in enumerate(digests):
+        if digest in by_digest:
+            # Two byte-identical messages have one digest, so "exactly one
+            # presented message" is already false and a count taken from the
+            # presented list would over-count the chain.
+            errors.append(
+                "transcript presents the same message more than once; a chain "
+                "visits each message once"
+            )
+            return [], errors
+        by_digest[digest] = index
+
+    roots: list[int] = []
+    successor_of: dict[int, int] = {}
+    # Inverse of successor_of, populated at the SAME point (only once a
+    # link passes the fork/orphan/null-prev_hash checks below): the input
+    # _find_cycle needs to walk the leftover graph without recomputing
+    # anything already validated here.
+    predecessor_of: dict[int, int] = {}
+    for index, message in enumerate(transcript):
+        has_prev_hash = "prev_hash" in message
+        prev_hash = message.get("prev_hash")
+        if not has_prev_hash or prev_hash == GENESIS_HASH:
+            roots.append(index)
+            continue
+        if prev_hash is None:
+            # An absent key and an explicit JSON null both read back as None
+            # from .get(); the contract makes only the absent key a root, so
+            # a present-but-null prev_hash is a malformed link, not a second
+            # spelling of genesis. Read the check above this way, not as
+            # "either is fine."
+            errors.append(
+                f"transcript message {index} has an explicit null prev_hash; "
+                f"only an absent prev_hash or {GENESIS_HASH!r} is a root"
+            )
+            continue
+        if not isinstance(prev_hash, str):
+            errors.append(f"transcript message {index} has a non-string prev_hash")
+            continue
+        predecessor = by_digest.get(prev_hash)
+        if predecessor is None:
+            errors.append(
+                f"transcript message {index} is an orphan: its prev_hash "
+                f"matches no presented message"
+            )
+            continue
+        if predecessor in successor_of:
+            errors.append(
+                f"transcript forks at message {predecessor}: two presented "
+                f"messages claim it as predecessor"
+            )
+            continue
+        successor_of[predecessor] = index
+        predecessor_of[index] = predecessor
+
+    if not roots:
+        # Cycle detection runs only when it can CHANGE the diagnosis: if the
+        # loop above already recorded an orphan, fork, non-string-prev_hash,
+        # or duplicate error, rejection is already explained by a reason
+        # independent of any cycle, and walking predecessor_of to name one
+        # underneath it adds no information the caller doesn't already have
+        # (Codex P1, 2026-09-16 delta-11 gate: this branch ran _find_cycle
+        # unconditionally, so a rootless, reverse-ordered chain ending in
+        # ONE real orphan -- no hash cycle anywhere -- still paid for the
+        # full walk beside an orphan error that alone already explains the
+        # rejection). Only when errors is empty here can naming a cycle (or
+        # its plain-wording fallback) be the diagnosis, so only then do we
+        # run it: by construction, every message that reaches this point
+        # already cleared those checks, so if there is also no root, every
+        # remaining message's predecessor edge stays inside the presented
+        # set with nowhere to terminate -- which _find_cycle's own docstring
+        # shows is possible only when the set decomposes into cycles.
+        if not errors:
+            cycle = _find_cycle(predecessor_of)
+            if cycle is not None:
+                errors.append(
+                    f"transcript contains a prev_hash cycle through messages "
+                    f"{_format_cycle_message(cycle)}: prev_hash links point to "
+                    f"each other with no root; a chain has exactly one message "
+                    f"without prev_hash"
+                )
+            else:
+                errors.append(
+                    "transcript has no root message: a chain has exactly one message "
+                    "without prev_hash"
+                )
+    elif len(roots) > 1:
+        errors.append(
+            f"transcript has {len(roots)} root messages without prev_hash; a "
+            f"chain has exactly one"
+        )
+
+    if errors:
+        return [], errors
+
+    chain: list[dict[str, Any]] = []
+    visited_indices: set[int] = set()
+    cursor: int | None = roots[0]
+    while cursor is not None:
+        chain.append(transcript[cursor])
+        visited_indices.add(cursor)
+        cursor = successor_of.get(cursor)
+    # ``presented`` is the digest list's length: one digest per presented
+    # message, built above by iterating the list, so no second ``__len__``
+    # read of the caller's list happens here (the caller read it exactly
+    # once for the cap; see evaluate_receipt_set_binding).
+    presented = len(digests)
+    if len(chain) != presented:
+        # Closing invariant: a walk shorter than the presented set means part
+        # of the set is disconnected from the root, which is set substitution
+        # however the individual links verify. The disconnected remainder
+        # (every index the walk above never visited) cannot be an orphan, a
+        # fork, or a second root -- those are all excluded by the checks
+        # above running first -- so by the same reasoning as the no-root
+        # branch it can only be one or more cycles; name it as one when
+        # _find_cycle confirms it, falling back to the plain wording
+        # otherwise (a construction this reasoning does not cover).
+        leftover_predecessor_of = {
+            index: predecessor
+            for index, predecessor in predecessor_of.items()
+            if index not in visited_indices
+        }
+        cycle = _find_cycle(leftover_predecessor_of)
+        if cycle is not None:
+            errors.append(
+                f"transcript contains a prev_hash cycle through messages "
+                f"{_format_cycle_message(cycle)} beside the reconstructed "
+                f"chain: the walk from the root visits {len(chain)} of "
+                f"{presented} presented messages"
+            )
+        else:
+            errors.append(
+                f"transcript does not form a single chain: the walk from the root "
+                f"visits {len(chain)} of {presented} presented messages"
+            )
+        return [], errors
+    return chain, []
+
+
 def evaluate_receipt_set_binding(
     attestation: dict[str, Any],
     transcript: list[dict[str, Any]] | None = None,
@@ -505,8 +789,13 @@ def evaluate_receipt_set_binding(
     """Validate the v0.3.0 receipt set-binding fields.
 
     Returns ``(state, errors)`` where ``state`` is one of:
-      - ``"bound"``: >=0.3.0 fields are present, well-formed, and, when a
-        transcript was supplied, match its final message hash and length.
+      - ``"bound"``: >=0.3.0 fields are present and well-formed, a transcript
+        was supplied, it reconstructs to one chain from its ``prev_hash``
+        links, and that chain's head and length match the receipt.
+      - ``"fields_present_unverified"``: >=0.3.0 fields are present and
+        well-formed but NO transcript was supplied, so set binding is
+        unestablished. This is reported, not an error, and must not be
+        credited as set-bound.
       - ``"legacy_set_unbound"``: <0.3.0 or malformed version. This is
         reported, not an error, and must not be credited as set-bound.
       - ``"error"``: >=0.3.0 but required fields are missing, malformed, or do
@@ -531,32 +820,73 @@ def evaluate_receipt_set_binding(
     ):
         errors.append(f"version {ver} requires message_count as an integer >= 1")
 
-    if transcript is not None:
-        if not isinstance(transcript, list):
-            errors.append("transcript must be a list when verifying set binding")
-        elif not transcript:
+    if transcript is None:
+        # A "bound" verdict reached without ever seeing a transcript is the
+        # fail-open this state closes: the two fields are the receipt's own
+        # claim about a transcript, so checking them against nothing verifies
+        # nothing. Absence reads as unestablished, never as bound.
+        if errors:
+            return "error", errors
+        return "fields_present_unverified", []
+
+    if not isinstance(transcript, list):
+        errors.append("transcript must be a list when verifying set binding")
+    else:
+        # The ONE read of the caller's length, before any other use of the
+        # list: the emptiness check and the cap below both read this local,
+        # never the list again, and _reconstruct_single_chain counts from
+        # the digest list it builds itself. A ``not transcript`` truthiness
+        # test is a second ``__len__`` call (list defines no ``__bool__``), so
+        # a list subclass could answer the two reads differently and pass a
+        # cap decided on one length while the walk ran on another (Codex P1,
+        # 2026-09-17 delta-13 gate). Pinned by TestTranscriptSizeCap's
+        # ``__len__``-counting tests. Must match the single ``length`` read
+        # in verifyReceiptSetBinding, js-sdk/src/attestation/attestation.ts.
+        presented_length = len(transcript)
+        if presented_length == 0:
             errors.append("transcript must contain at least one message")
+        elif presented_length > MAX_SET_BINDING_TRANSCRIPT_MESSAGES:
+            # Named rejection of the length the caller's list presents,
+            # BEFORE any per-message work: no element of an over-cap
+            # transcript is ever inspected, hashed, or copied (Python has no
+            # boundary snapshot to run first, so "before the snapshot" in
+            # the JS SDK is "before _reconstruct_single_chain" here; Codex
+            # P1, 2026-09-16 delta-12 gate). Pinned by TestTranscriptSizeCap's
+            # cap-before-any-element-read test. Must match the same ordering
+            # in verifyReceiptSetBinding, js-sdk/src/attestation/attestation.ts.
+            errors.append(
+                f"transcript has {presented_length} messages, exceeding the "
+                f"maximum of {MAX_SET_BINDING_TRANSCRIPT_MESSAGES}"
+            )
         else:
-            expected_count = len(transcript)
-            expected_head = compute_hash(transcript[-1])
-            if (
-                isinstance(message_count, int)
-                and not isinstance(message_count, bool)
-                and message_count != expected_count
-            ):
-                errors.append(
-                    f"message_count mismatch: attestation has {message_count}, "
-                    f"transcript has {expected_count}"
-                )
-            if (
-                isinstance(chain_head, str)
-                and _SHA256_HEX_RE.match(chain_head)
-                and chain_head != expected_head
-            ):
-                errors.append(
-                    "chain_head mismatch: attestation does not match transcript "
-                    "final message hash"
-                )
+            chain, chain_errors = _reconstruct_single_chain(transcript)
+            if chain_errors:
+                errors.extend(chain_errors)
+            else:
+                # Both comparisons read the RECONSTRUCTED chain, never the
+                # presented list: a count taken from the list would credit a
+                # set the root cannot reach, which is the substitution set
+                # binding exists to refuse.
+                expected_count = len(chain)
+                expected_head = compute_hash(chain[-1])
+                if (
+                    isinstance(message_count, int)
+                    and not isinstance(message_count, bool)
+                    and message_count != expected_count
+                ):
+                    errors.append(
+                        f"message_count mismatch: attestation has {message_count}, "
+                        f"transcript has {expected_count}"
+                    )
+                if (
+                    isinstance(chain_head, str)
+                    and _SHA256_HEX_RE.match(chain_head)
+                    and chain_head != expected_head
+                ):
+                    errors.append(
+                        "chain_head mismatch: attestation does not match transcript "
+                        "final message hash"
+                    )
 
     if errors:
         return "error", errors
@@ -735,6 +1065,16 @@ def verify_attestation(
             warnings.append(
                 "attestation is legacy set-unbound (<0.3.0); chain_head and "
                 "message_count are not credited as bound"
+            )
+        elif set_binding_state == "fields_present_unverified":
+            # A caller that reads a valid result as "set-bound" would be
+            # crediting the receipt's own claim about a transcript nobody
+            # supplied, so the unestablished state is surfaced here rather
+            # than left to be inferred from ``valid``.
+            warnings.append(
+                "no transcript was supplied, so set binding is unestablished; "
+                "chain_head and message_count are present but not credited as "
+                "bound"
             )
 
         errors = [*schema_errors, *signature_errors, *set_binding_errors]

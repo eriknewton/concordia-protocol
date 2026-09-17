@@ -13,21 +13,32 @@ import rfc8785
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_PATH = REPO_ROOT / "conformance" / "vectors" / "manifest.json"
+GENESIS_HASH = "sha256:" + ("0" * 64)
 
 EXPECTED_VECTORS = {
     "positive": {
         "pos-synthetic-receipt-set-binding": "accept",
+        "pos-synthetic-receipt-set-binding-reconstruction": "accept",
     },
     "mutation": {
         "mut-synthetic-receipt-set-binding-0001": "reject",
         "mut-synthetic-receipt-set-binding-0002": "reject",
         "mut-synthetic-receipt-set-binding-0003": "reject",
         "mut-synthetic-receipt-set-binding-0004": "reject",
+        "mut-synthetic-receipt-set-reconstruction-0001": "reject",
+        "mut-synthetic-receipt-set-reconstruction-0002": "reject",
+        "mut-synthetic-receipt-set-reconstruction-0003": "reject",
+        "mut-synthetic-receipt-set-reconstruction-0004": "reject",
+        "mut-synthetic-receipt-set-reconstruction-0005": "reject",
+        "mut-synthetic-receipt-set-reconstruction-0006": "reject",
+        "mut-synthetic-receipt-set-reconstruction-0007": "reject",
+        "mut-synthetic-receipt-set-reconstruction-0008": "reject",
     },
     "canary": {
         "canary-receipt-set-unchecked": "reject",
     },
 }
+RECONSTRUCTION_PREFIX = "mut-synthetic-receipt-set-reconstruction-"
 
 
 class CheckError(RuntimeError):
@@ -141,11 +152,123 @@ def check_reject(vector: dict[str, Any], vector_id: str) -> None:
         require(not head_matches and not count_matches, "0004 must splice the transcript")
 
 
+def reconstruction_pair(
+    vector: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]] | None]:
+    require(
+        vector.get("verification_profile") == "receipt-set-binding-v1",
+        "wrong profile",
+    )
+    require(vector.get("record_type") == "message_chain", "wrong record_type")
+    input_data = vector.get("input")
+    require(isinstance(input_data, dict), "vector input is not an object")
+    receipt = input_data.get("receipt")
+    require(isinstance(receipt, dict), "receipt is missing from vector input")
+    if "messages" not in input_data:
+        return receipt, None
+    messages = input_data.get("messages")
+    require(isinstance(messages, list) and messages, "messages are missing")
+    require(
+        all(isinstance(message, dict) for message in messages),
+        "message is not an object",
+    )
+    return receipt, messages
+
+
+def reconstruct_chain_tail(messages: list[dict[str, Any]]) -> dict[str, Any]:
+    """Find the reconstructed chain's last message by walking prev_hash links.
+
+    Must match ``_reconstruct_single_chain`` in concordia/attestation.py: a
+    message has no predecessor when its ``prev_hash`` key is absent or equals
+    GENESIS_HASH, an explicit null is malformed, and the chain's tail is the
+    one presented message no other message names as its predecessor. This
+    check exists because the positive vector below is deliberately presented
+    out of chain order, so the array's last element is NOT the chain tail;
+    reading ``messages[-1]`` here would silently re-introduce the very
+    order-dependent comparison the vector is meant to defeat.
+    """
+    by_digest = {message_hash(message): index for index, message in enumerate(messages)}
+    require(len(by_digest) == len(messages), "duplicate presented message")
+    has_successor = [False] * len(messages)
+    for message in messages:
+        prev_hash = message.get("prev_hash")
+        if "prev_hash" not in message or prev_hash == GENESIS_HASH:
+            continue
+        require(prev_hash is not None, "explicit null prev_hash is malformed")
+        predecessor = by_digest.get(prev_hash)
+        require(predecessor is not None, "orphan prev_hash in positive fixture")
+        assert predecessor is not None
+        has_successor[predecessor] = True
+    tails = [messages[i] for i, has in enumerate(has_successor) if not has]
+    require(len(tails) == 1, "reconstructed chain must have exactly one tail")
+    return tails[0]
+
+
+def check_reconstruction_positive(vector: dict[str, Any]) -> None:
+    receipt, messages = reconstruction_pair(vector)
+    require(vector.get("expected") == "accept", "positive vector must accept")
+    require(messages is not None, "the positive vector must supply a transcript")
+    assert messages is not None
+    require(receipt.get("message_count") == len(messages), "positive count mismatch")
+    require(
+        receipt.get("chain_head") == message_hash(reconstruct_chain_tail(messages)),
+        "positive chain_head mismatch",
+    )
+    require(
+        message_hash(messages[-1]) != receipt.get("chain_head"),
+        "positive vector must be presented out of chain order: the last "
+        "presented message must NOT be the chain tail, or a verifier that "
+        "compares only a final digest and a count would still pass",
+    )
+
+
+def check_reconstruction_reject(vector: dict[str, Any], vector_id: str) -> None:
+    """Every reconstruction reject must be one a weak verifier would accept.
+
+    The guard these vectors defend is the difference between reconstructing a
+    chain and comparing a final digest to a count. A vector that a
+    digest-and-count comparison already refuses would prove nothing about that
+    difference, so each one is required here to be indistinguishable from a
+    genuine set under the weak comparison.
+    """
+    receipt, messages = reconstruction_pair(vector)
+    require(vector.get("expected") == "reject", f"{vector_id} must reject")
+    require(
+        vector.get("expected_reason_class") == "binding",
+        f"{vector_id} must reject as binding",
+    )
+    if messages is None:
+        require(
+            vector_id.endswith("0001"),
+            "only 0001 presents a receipt with no transcript",
+        )
+        require(
+            isinstance(receipt.get("chain_head"), str)
+            and isinstance(receipt.get("message_count"), int),
+            "0001 must carry well-formed set-binding fields",
+        )
+        return
+    require(
+        receipt.get("chain_head") == message_hash(messages[-1]),
+        f"{vector_id} must keep the final presented hash matching chain_head",
+    )
+    require(
+        receipt.get("message_count") == len(messages),
+        f"{vector_id} must keep message_count matching the presented length",
+    )
+
+
 def main() -> int:
     try:
         vectors = load_expected_vectors()
         check_positive(vectors["positive"]["pos-synthetic-receipt-set-binding"])
+        check_reconstruction_positive(
+            vectors["positive"]["pos-synthetic-receipt-set-binding-reconstruction"]
+        )
         for vector_id, vector in sorted(vectors["mutation"].items()):
+            if vector_id.startswith(RECONSTRUCTION_PREFIX):
+                check_reconstruction_reject(vector, vector_id)
+                continue
             check_reject(vector, vector_id)
         canary = vectors["canary"]["canary-receipt-set-unchecked"]
         check_reject(canary, "canary-receipt-set-unchecked")

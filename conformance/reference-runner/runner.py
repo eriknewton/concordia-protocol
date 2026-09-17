@@ -65,6 +65,7 @@ PROFILE_ORDER = (
     "competence-proof-v1",
     "receipt-bundle-v1",
     "message-chain-v1",
+    "receipt-set-binding-v1",
 )
 RECORD_TYPES = {
     "decision_object",
@@ -124,6 +125,40 @@ class Reject(Exception):
     """The vector does not satisfy its verification profile."""
 
 
+# Ceiling on the transcript length receipt-set-binding-v1 will verify or
+# walk, rejected by name before any per-message signature or hashing work.
+# Same value and derivation as MAX_SET_BINDING_TRANSCRIPT_MESSAGES in
+# concordia/attestation.py (1.5x headroom above the largest transcript the
+# SDK suites' adversarial-complexity ratio tests prove linear); the runner
+# carries its own literal because it imports no SDK. Must match
+# MAX_SET_BINDING_TRANSCRIPT_MESSAGES in
+# conformance/reference-runner-js/runner.mjs, concordia/attestation.py and
+# js-sdk/src/attestation/attestation.ts; all four are pinned to
+# tests/fixtures/set_binding_limits.json by tests in both SDK suites.
+MAX_SET_BINDING_TRANSCRIPT_MESSAGES = 200_000
+
+
+# INTEGER-REJECTION RULE (shared by both reference runners; must match the
+# same paragraph above parseVectorJson in
+# conformance/reference-runner-js/runner.mjs): an integer outside
+# +/-(2**53 - 1) is rejected iff it reaches canonicalization, by the SAME
+# mechanism in both runners. This runner: json.loads keeps every integer at
+# arbitrary precision, and rfc8785.dumps raises IntegerDomainError at the
+# exact moment such an integer reaches jcs_bytes; an unsafe integer a
+# profile never canonicalizes (an unused `input` member, an extra key
+# profile_subdict drops, anything under `context` or `notes`) is never
+# rejected. The JS runner: parseVectorJson keeps an unsafe plain-decimal
+# integer literal as a BigInt (its lossless, distinguishable analogue of
+# this int), and snapshotPlainJson, the one chokepoint every
+# canonicalization runs through there, rejects a BigInt at the moment it
+# reaches canonicalization; its schema validation is shown the number
+# jsonschema sees here. Nothing is decided at ingest and nothing is
+# approximated by document position: round 13's "reject if it lies under
+# `input`" scan diverged from this runner on an unsafe integer in an unused
+# `input` member of chain-session-transition-v1 and on an extra key under
+# agent-profile-v1's trust_signals or a reputation assertion (Codex P1 and
+# Grok lens A, 2026-09-17 delta-13 gate); both are pinned by
+# tests/conformance_runner_checks.py.
 def reject_json_constant(value: str) -> None:
     raise ValueError(f"non-finite JSON value is not allowed: {value}")
 
@@ -1314,6 +1349,153 @@ def verify_message_chain_receipt_binding(
         raise Reject("receipt chain_head mismatch")
 
 
+def reconstruct_single_chain(messages: list[Json]) -> list[Json]:
+    """Rebuild one message order from prev_hash links alone (SPEC 9.6.5b).
+
+    Raises Reject when the presented set is not exactly one chain. The
+    presented order is never consulted, because the presenter chooses it: a
+    fork, an orphan, a second root, or a re-linked substitution of equal size
+    all survive a sequential walk whenever the last presented message still
+    hashes to chain_head. The digest compared against prev_hash is the SPEC 9.3
+    digest over the complete canonical form INCLUDING the signature, so a
+    transcript whose links were computed over the signature-stripped form does
+    not reconstruct. Must match reconstruct_single_chain in
+    scripts/conformance/generate_vectors.py and reconstructSingleChain in
+    conformance/reference-runner-js/runner.mjs.
+    """
+    by_digest: dict[str, int] = {}
+    for index, item in enumerate(messages):
+        digest = message_hash(item)
+        if digest in by_digest:
+            raise Reject("transcript presents the same message more than once")
+        by_digest[digest] = index
+
+    roots: list[int] = []
+    successor_of: dict[int, int] = {}
+    for index, item in enumerate(messages):
+        message = require_object(item, "transcript message")
+        has_prev_hash = "prev_hash" in message
+        prev_hash = message.get("prev_hash")
+        if not has_prev_hash or prev_hash == GENESIS_HASH:
+            roots.append(index)
+            continue
+        if prev_hash is None:
+            # An absent key and an explicit JSON null both read back as None
+            # from .get(); the contract makes only the absent key a root, so
+            # a present-but-null prev_hash is a malformed link, not a second
+            # spelling of genesis. Must match attestation.py and
+            # attestation.ts.
+            raise Reject("transcript message has an explicit null prev_hash")
+        if not isinstance(prev_hash, str):
+            raise Reject("transcript message prev_hash is not a string")
+        predecessor = by_digest.get(prev_hash)
+        if predecessor is None:
+            raise Reject("transcript message is an orphan")
+        if predecessor in successor_of:
+            raise Reject("transcript forks: two messages claim one predecessor")
+        successor_of[predecessor] = index
+
+    if len(roots) != 1:
+        raise Reject("a chain has exactly one message without prev_hash")
+
+    chain: list[Json] = []
+    cursor: int | None = roots[0]
+    while cursor is not None:
+        chain.append(messages[cursor])
+        cursor = successor_of.get(cursor)
+    if len(chain) != len(messages):
+        raise Reject("transcript does not form a single chain")
+    return chain
+
+
+def verify_receipt_set_binding_profile(
+    suite_base: Path,
+    input_data: Json,
+    context: dict[str, Json],
+) -> None:
+    """Decide receipt set binding under SPEC 9.6.5b.
+
+    Distinct from message-chain-v1: that profile walks a transcript in the
+    order it was presented, while this one credits set binding only from a
+    chain rebuilt out of prev_hash links, and only when a transcript is
+    supplied at all.
+    """
+    chain_input = require_object(input_data, "receipt set binding input")
+    if set(chain_input) not in ({"receipt"}, {"receipt", "messages"}):
+        raise Reject("input must contain a receipt, optionally with messages")
+    receipt = require_object(chain_input.get("receipt"), "receipt")
+    validate_schema(suite_base, "attestation.schema.json", receipt)
+    if not attestation_version_at_least(receipt.get("concordia_attestation"), 0, 3):
+        raise Reject("receipt is legacy set-unbound")
+    chain_head = receipt.get("chain_head")
+    message_count = receipt.get("message_count")
+    if not isinstance(chain_head, str) or SHA256_HEX_RE.match(chain_head) is None:
+        raise Reject("receipt chain_head is malformed")
+    if not isinstance(message_count, int) or isinstance(message_count, bool) or message_count < 1:
+        raise Reject("receipt message_count is malformed")
+
+    public_keys = context.get("public_keys_b64url")
+    parties = receipt.get("parties")
+    countersignatures = receipt.get("countersignatures")
+    if not isinstance(public_keys, dict):
+        raise Reject("receipt public key map is missing")
+    if not isinstance(parties, list):
+        raise Reject("receipt parties are missing")
+    if not isinstance(countersignatures, dict):
+        raise Reject("receipt countersignatures are missing")
+    countersign_payload = countersign_preimage(receipt)
+    for party_item in parties:
+        party = require_object(party_item, "receipt party")
+        agent_id = party.get("agent_id")
+        if not isinstance(agent_id, str) or not agent_id:
+            raise Reject("receipt party agent_id is missing")
+        public_key = public_keys.get(agent_id)
+        if not isinstance(public_key, str):
+            raise Reject("receipt party public key is missing")
+        verify_ed25519(
+            public_key,
+            bare_signature(party),
+            jcs_bytes(without_top_level(party, {"signature"})),
+        )
+        countersignature = countersignatures.get(agent_id)
+        if not isinstance(countersignature, str):
+            raise Reject("receipt countersignature is missing")
+        verify_ed25519(public_key, countersignature, countersign_payload)
+
+    if "messages" not in chain_input:
+        # chain_head and message_count are the issuer's own claim about a
+        # transcript, so a verdict reached without one has checked that claim
+        # against nothing. Unestablished is never an accept.
+        raise Reject("set binding is unestablished without a transcript")
+    messages = chain_input.get("messages")
+    if not isinstance(messages, list) or not messages:
+        raise Reject("transcript messages are missing")
+    if len(messages) > MAX_SET_BINDING_TRANSCRIPT_MESSAGES:
+        # Named cap before the per-message signature loop and before
+        # reconstruct_single_chain, so an over-cap transcript costs no
+        # per-message work. Must match verifyReceiptSetBindingProfile in
+        # conformance/reference-runner-js/runner.mjs.
+        raise Reject("transcript exceeds the maximum message count")
+    for item in messages:
+        message = require_object(item, "transcript message")
+        sender = require_object(message.get("from"), "transcript sender")
+        agent_id = sender.get("agent_id")
+        if not isinstance(agent_id, str):
+            raise Reject("transcript sender agent_id is missing")
+        public_key = public_keys.get(agent_id)
+        verify_ed25519(
+            public_key,
+            message.get("signature"),
+            jcs_bytes(without_top_level(message, {"signature"})),
+        )
+
+    chain = reconstruct_single_chain(messages)
+    if message_count != len(chain):
+        raise Reject("receipt message_count mismatch")
+    if chain_head != message_hash(chain[-1]):
+        raise Reject("receipt chain_head mismatch")
+
+
 def verify_message_chain(
     input_data: Json,
     suite_base: Path,
@@ -1426,6 +1608,8 @@ def verify_profile(
         verify_receipt_bundle(suite_base, input_data, context)
     elif profile == "message-chain-v1":
         verify_message_chain(input_data, suite_base, context, regression)
+    elif profile == "receipt-set-binding-v1":
+        verify_receipt_set_binding_profile(suite_base, input_data, context)
     else:
         raise Reject("unknown verification profile")
 
@@ -1434,13 +1618,17 @@ def evaluate_vector(
     suite_base: Path,
     vector: Json,
     regression: Regression | None,
-) -> Outcome:
+) -> tuple[Outcome, str | None]:
+    """The verdict and, for a reject, its reason (the Reject message). The
+    reason never reaches stdout; run_suite prints it to stderr only under
+    --explain, so the verdict-only stdout contract is unchanged. Must match
+    evaluateVector in conformance/reference-runner-js/runner.mjs."""
     try:
         _, input_data, context, profile = require_vector_shape(vector)
         verify_profile(suite_base, profile, input_data, context, regression)
-    except Reject:
-        return "reject"
-    return "accept"
+    except Reject as exc:
+        return "reject", str(exc)
+    return "accept", None
 
 
 def suite_base_from_root(suite_root: Path) -> Path:
@@ -1484,7 +1672,7 @@ def active_regression() -> Regression | None:
     return raw  # type: ignore[return-value]
 
 
-def run_suite(suite_arg: str, regression: Regression | None) -> int:
+def run_suite(suite_arg: str, regression: Regression | None, explain: bool = False) -> int:
     manifest_path, suite_base = manifest_path_from_arg(suite_arg)
     manifest = load_json(manifest_path)
     if not isinstance(manifest, dict):
@@ -1508,6 +1696,7 @@ def run_suite(suite_arg: str, regression: Regression | None) -> int:
             vector_id = str(rel_path)
             expected: Json = "<unreadable>"
             got: Outcome = "reject"
+            reason: str | None = None
             try:
                 if not isinstance(rel_path, str):
                     raise Reject("manifest path is not a string")
@@ -1516,9 +1705,15 @@ def run_suite(suite_arg: str, regression: Regression | None) -> int:
                 if isinstance(vector, dict) and isinstance(vector.get("id"), str):
                     vector_id = vector["id"]
                     expected = vector.get("expected", "<missing>")
-                got = evaluate_vector(suite_base, vector, regression)
-            except Exception:
+                got, reason = evaluate_vector(suite_base, vector, regression)
+            except Exception as exc:
                 got = "reject"
+                reason = str(exc) if isinstance(exc, Reject) else f"error: {exc}"
+            if explain and got == "reject":
+                # stderr, never stdout: the [OK]/[FAIL]/[SUMMARY] contract
+                # stays verdict-only. Line format must match runSuite in
+                # conformance/reference-runner-js/runner.mjs.
+                print(f"[EXPLAIN] {vector_id} reject: {reason}", file=sys.stderr)
             if expected == got:
                 print(f"[OK] {vector_id}")
             else:
@@ -1540,12 +1735,17 @@ def run_suite(suite_arg: str, regression: Regression | None) -> int:
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("suite", help="path to conformance/vectors/ or manifest.json")
+    parser.add_argument(
+        "--explain",
+        action="store_true",
+        help="print each rejected vector's reason to stderr (stdout is unchanged)",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
-    return run_suite(args.suite, active_regression())
+    return run_suite(args.suite, active_regression(), explain=args.explain)
 
 
 if __name__ == "__main__":

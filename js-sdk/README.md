@@ -111,12 +111,73 @@ const b = canonicalizeJcs({ a: 1, b: 2 });
 console.log(a.equals(b)); // true
 ```
 
+**Accepted input.** `canonicalizeJcs` accepts a value iff, recursively at
+every nesting level, one of the following holds:
+
+- a **primitive**, by JSON type: `null`; a boolean; a string with no
+  unpaired UTF-16 surrogate; or a finite number that is not `-0` and, when
+  it is integer-valued and `String(value)` prints it in plain decimal, lies
+  within `Number.MAX_SAFE_INTEGER` (an integer-valued number at or beyond
+  1e21 prints in exponential form and is accepted as a float, which is why
+  `parseJsonStrict` / `fromJsonText` refuse the plain-decimal literal in the
+  source text before it is parsed). `undefined`, a function, a symbol and a
+  bigint are refused;
+- an **Array** (`Array.isArray`) whose own prototype is exactly this realm's
+  `Array.prototype`, AND whose own property descriptors, observed once
+  through `Object.getOwnPropertyDescriptors`, hold an enumerable data
+  descriptor at every index below `length`: an accessor element throws, a
+  sparse hole throws, and a non-enumerable index throws;
+- an **object** (checked only when `Array.isArray` is false, never as a
+  fallback pair) whose own prototype is exactly `null` or exactly this
+  realm's `Object.prototype`, AND whose own string-keyed properties,
+  observed the same way, are enumerable data descriptors only: an accessor
+  property throws; a non-enumerable property and a symbol-keyed property
+  are omitted, never read.
+
+The prototype test alone is not the predicate: a same-realm plain object
+with an enumerable accessor, or a sparse array, satisfies the prototype test
+and still throws. Nothing else is inspected: not a hop count, not
+`Object.prototype.toString`, not the value's construction history. An
+accepted value is snapshotted once, keeping only its own enumerable,
+non-accessor, string-keyed data. Arrays and objects share that one rule (a
+member is kept iff it is an own enumerable data descriptor); they differ
+only in what happens to a member that fails it, because an object key can
+be omitted while an array index below `length` cannot be omitted without
+renumbering every later element: an object's non-enumerable key is left
+out, an array's non-enumerable index throws.
+
+Because the check is a prototype-identity test and nothing more, it is
+satisfied by values `JSON.parse` cannot itself produce. **Proxies are not
+detected:** a Proxy whose `getPrototypeOf` and `getOwnPropertyDescriptors`
+traps present a same-realm plain object or Array is snapshotted as the
+plain data those traps returned, once; the SDK does not attempt to detect
+Proxies. A builtin or class instance (`Date`, `Map`, `new Foo()`) is
+refused as constructed, but is accepted once its own prototype has been
+retargeted to `null` or this realm's `Object.prototype`, and is then
+snapshotted as whatever own enumerable data it carries -- the check cannot
+see, and does not claim to see, what the value used to be. Values from
+another realm (an iframe, a `node:vm` context) fail the same identity test
+-- a cross-realm `Object.prototype` is a distinct object -- and must be
+re-parsed here (`fromJsonText(text)` is provided) rather than retargeted by
+hand. The library does not defend against replacement of this realm's
+builtins; a hostile same-realm environment is outside every JavaScript
+library's contract.
+
+```ts
+import { fromJsonText, canonicalizeJcs } from '@concordia-protocol/sdk';
+
+// A value from another realm must be re-parsed here before canonicalizing.
+const foreignJsonText = JSON.stringify(valueFromAnotherRealm);
+canonicalizeJcs(fromJsonText(foreignJsonText));
+```
+
 ## What this SDK provides
 
 The public API surface (see `src/index.ts`) covers:
 
 - **Canonical JSON:** `canonicalizeJcs` and `canonicalizePredicate` plus the
-  strict parser `parseJsonStrict` and the `checkNoSpecialFloats` guard.
+  strict parser `parseJsonStrict`, the cross-realm re-parse helper
+  `fromJsonText`, and the `checkNoSpecialFloats` guard.
 - **Ed25519 signing:** `generateKeyPair` / `KeyPair`, `sign` / `verify` over an
   object, `signJson` / `verifyJson` over a JSON string, and the
   `toBase64Url` / `fromBase64Url` helpers.

@@ -1,0 +1,81 @@
+{
+  "context": {
+    "public_keys_b64url": {
+      "did:concordia:agent:receipt-chain-initiator": "PvpsKWi2oPBbZv2mzdOf6tKmumdTrbV9rDyGb8m3NBA=",
+      "did:concordia:agent:receipt-chain-responder": "xgl2oSl1XU6m7Otw_eHFkZuaTfw0F7R9ZfNFV6xGhDU="
+    }
+  },
+  "expected": "reject",
+  "expected_reason_class": "binding",
+  "id": "mut-synthetic-receipt-set-reconstruction-0001",
+  "input": {
+    "receipt": {
+      "attestation_id": "att_conformance_receipt_set_binding_0001",
+      "chain_head": "sha256:5bea6ab535a41f45c21d6bc9a3989c536480a72ffe7cff7eb8b697aac7f6237f",
+      "concordia_attestation": "0.3.0",
+      "countersignatures": {
+        "did:concordia:agent:receipt-chain-initiator": "6IC1EKmcdIqdXNUGxALLFZzdmeGgvQ4m5lZkkk9T1kAi7Cawj8i046FX07-vP_tDSV39TydSVJnkNcl5vzHQCQ==",
+        "did:concordia:agent:receipt-chain-responder": "GZP8y-_XL0H-xuPFtoUbJZuL_4OYlOiozyzE7_-mXA-A4dKZ3byLqZyjfR0GGrxsnernjFaspFT-VFex8K-_CQ=="
+      },
+      "fulfillment": null,
+      "message_count": 5,
+      "meta": {
+        "category": "software.tools",
+        "extensions_used": [],
+        "mediator_invoked": false
+      },
+      "outcome": {
+        "duration_seconds": 300,
+        "resolution_mechanism": "direct",
+        "rounds": 3,
+        "status": "agreed",
+        "terms_count": 1
+      },
+      "parties": [
+        {
+          "agent_id": "did:concordia:agent:receipt-chain-initiator",
+          "behavior": {
+            "concession_magnitude": 0.0,
+            "concessions": 0,
+            "constraints_declared": 1,
+            "constraints_violated": 0,
+            "offers_made": 1,
+            "reasoning_provided": true,
+            "response_time_avg_seconds": 2.0,
+            "signals_shared": 1,
+            "withdrawal": false
+          },
+          "role": "initiator",
+          "signature": "L5ipTF-T5ogYJ5HYNHw4IVWDA_9WBzU7jlUSo-Z7_CncRbr9v-tE05_PSVjnh8WwN94kRoa6rHmQPKoLey8BCw=="
+        },
+        {
+          "agent_id": "did:concordia:agent:receipt-chain-responder",
+          "behavior": {
+            "concession_magnitude": 0.0,
+            "concessions": 0,
+            "constraints_declared": 1,
+            "constraints_violated": 0,
+            "offers_made": 0,
+            "reasoning_provided": false,
+            "response_time_avg_seconds": 3.0,
+            "signals_shared": 1,
+            "withdrawal": false
+          },
+          "role": "responder",
+          "signature": "TcEmwYVLN3lc3qCOHefGB6dPnTA_EgI62u-ZwKP6Cfct3R7iEyNMdMNhmI3_XT9KJVxXSKG2G66Gcx1dPcufDg=="
+        }
+      ],
+      "references": [],
+      "session_id": "sess_conformance_receipt_set_binding_0001",
+      "summary": "Agreement completed with a deterministic transcript and no mediation.",
+      "timestamp": "2026-05-10T16:05:00Z",
+      "transcript_hash": "sha256:9cd9edfe9d4bd688856a9cbe4c1f92563137b489e373c485adf5344a5725285b"
+    }
+  },
+  "notes": "chain_head and message_count are the issuer's own claim about a transcript, so set binding is unestablished until a transcript is supplied",
+  "record_type": "message_chain",
+  "schema_version": "concordia-conformance-vector/v1-draft",
+  "source_fixture": "synthetic/longtail/receipt_set_binding.json",
+  "title": "receipt_set_binding: receipt presented with no transcript is not set-bound",
+  "verification_profile": "receipt-set-binding-v1"
+}

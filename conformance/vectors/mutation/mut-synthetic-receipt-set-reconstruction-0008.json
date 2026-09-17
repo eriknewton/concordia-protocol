@@ -1,0 +1,199 @@
+{
+  "context": {
+    "public_keys_b64url": {
+      "did:concordia:agent:receipt-chain-initiator": "PvpsKWi2oPBbZv2mzdOf6tKmumdTrbV9rDyGb8m3NBA=",
+      "did:concordia:agent:receipt-chain-responder": "xgl2oSl1XU6m7Otw_eHFkZuaTfw0F7R9ZfNFV6xGhDU="
+    }
+  },
+  "expected": "reject",
+  "expected_reason_class": "binding",
+  "id": "mut-synthetic-receipt-set-reconstruction-0008",
+  "input": {
+    "messages": [
+      {
+        "body": {
+          "proposal": {
+            "assurance_level": "standard",
+            "workstream": "analysis"
+          }
+        },
+        "concordia": "0.1.0",
+        "from": {
+          "agent_id": "did:concordia:agent:receipt-chain-initiator"
+        },
+        "id": "msg_conformance_receipt_binding_0001",
+        "prev_hash": null,
+        "reasoning": "Open deterministic receipt set-binding session.",
+        "session_id": "sess_conformance_receipt_set_binding_0001",
+        "signature": "qnp0UayXXU-jCdx-K7jTjWu5Kb-fozYqTJYMdTk0Fm_Gaf0oIavqMqi38H7xHg3MNLvFpKLyzcfx_sxDWbgDCg==",
+        "timestamp": "2026-05-10T16:00:00Z",
+        "to": [
+          {
+            "agent_id": "did:concordia:agent:receipt-chain-responder"
+          }
+        ],
+        "type": "negotiate.open"
+      },
+      {
+        "body": {
+          "accepted": true
+        },
+        "concordia": "0.1.0",
+        "from": {
+          "agent_id": "did:concordia:agent:receipt-chain-responder"
+        },
+        "id": "msg_conformance_receipt_binding_0002",
+        "in_reply_to": "msg_conformance_receipt_binding_0001",
+        "prev_hash": "sha256:b17c18464cfebc54217fee4ba01ac3571f7c6d3bfaea1fd91859808b5e678a7b",
+        "session_id": "sess_conformance_receipt_set_binding_0001",
+        "signature": "KaQFtRU3idtI7IqMFjh2fXcGOLsMfWfCUVX_b4cd6nwtqURtXfqTAurk8vnwXxdvPgPxeMA__yuqOqydIBr3Bw==",
+        "timestamp": "2026-05-10T16:01:00Z",
+        "to": [
+          {
+            "agent_id": "did:concordia:agent:receipt-chain-initiator"
+          }
+        ],
+        "type": "negotiate.accept_session"
+      },
+      {
+        "body": {
+          "offer": {
+            "assurance": "standard",
+            "scope": "analysis-summary"
+          }
+        },
+        "concordia": "0.1.0",
+        "from": {
+          "agent_id": "did:concordia:agent:receipt-chain-initiator"
+        },
+        "id": "msg_conformance_receipt_binding_0003",
+        "in_reply_to": "msg_conformance_receipt_binding_0002",
+        "prev_hash": "sha256:d1d792434b4087728f8cc680b3eb285908e7fd5b5186b6f40e5026907c692474",
+        "reasoning": "First offer in the deterministic receipt-binding chain.",
+        "session_id": "sess_conformance_receipt_set_binding_0001",
+        "signature": "32bRBM9u7T1gDKTLxV8aFoUQSOP0WYLlSilqSnu0WFtFm4L58fPcwHDzmJ9L4ZU4l3M6_F7MFhuFYprkb76tBg==",
+        "timestamp": "2026-05-10T16:02:00Z",
+        "to": [
+          {
+            "agent_id": "did:concordia:agent:receipt-chain-responder"
+          }
+        ],
+        "type": "negotiate.offer"
+      },
+      {
+        "body": {
+          "questions": [
+            "acceptance_criteria"
+          ]
+        },
+        "concordia": "0.1.0",
+        "from": {
+          "agent_id": "did:concordia:agent:receipt-chain-initiator"
+        },
+        "id": "msg_conformance_receipt_binding_0004",
+        "in_reply_to": "msg_conformance_receipt_binding_0003",
+        "prev_hash": "sha256:33fa7b37b2ed6f82cb1c1c0a797f53897a4d2cae49aad1dad9c7b88127f2f770",
+        "reasoning": "Same-signer downstream message for splice coverage.",
+        "session_id": "sess_conformance_receipt_set_binding_0001",
+        "signature": "HZI9-FSTewrEgmJRA1Fk5RJvjvwhTIC0AVHtrf0IiProjgdLCl2JJTwYCMRVI2YEsUkc5L3xJtWtErDs22CiAA==",
+        "timestamp": "2026-05-10T16:03:00Z",
+        "to": [
+          {
+            "agent_id": "did:concordia:agent:receipt-chain-responder"
+          }
+        ],
+        "type": "negotiate.inquire"
+      },
+      {
+        "body": {
+          "accepted": true
+        },
+        "concordia": "0.1.0",
+        "from": {
+          "agent_id": "did:concordia:agent:receipt-chain-initiator"
+        },
+        "id": "msg_conformance_receipt_binding_0005",
+        "in_reply_to": "msg_conformance_receipt_binding_0003",
+        "prev_hash": "sha256:a37be2095ddab2d4dce61c0b31161da84cb9ecc5fc224de74b864276ec9e3f09",
+        "reasoning": "Terminal agreement message for receipt set-binding.",
+        "session_id": "sess_conformance_receipt_set_binding_0001",
+        "signature": "BNvSKZJURkxJhAAMkHmtKydcvNHZsVZEQ-htnQB_EiRoJTX9dLIeaisuZnbtmrD_Qx7kz2gbGxdYrne1AnGMDg==",
+        "timestamp": "2026-05-10T16:04:00Z",
+        "to": [
+          {
+            "agent_id": "did:concordia:agent:receipt-chain-responder"
+          }
+        ],
+        "type": "negotiate.accept_offer"
+      }
+    ],
+    "receipt": {
+      "attestation_id": "att_conformance_receipt_set_binding_0001",
+      "chain_head": "sha256:c6b3bf9a61bea7c2b4fe147152f8990c07e7873ebe1ffd972107e0dcf7d1ecfb",
+      "concordia_attestation": "0.3.0",
+      "countersignatures": {
+        "did:concordia:agent:receipt-chain-initiator": "nWD-Hhh5Z1DmiRJqGybDJNwWmq_dSemHYUBPt9tAwlvCESdopdQeRW0uH0PJarYnkOmMyIqG7Br8rq42sXBADw==",
+        "did:concordia:agent:receipt-chain-responder": "pD2SqImC58HxUaJOzjNqEL245HQX8ju2hueUC3NnCg-MrFas39Kze7X02H8SrBFt-6EKSZWh67r3pw6rzShLCw=="
+      },
+      "fulfillment": null,
+      "message_count": 5,
+      "meta": {
+        "category": "software.tools",
+        "extensions_used": [],
+        "mediator_invoked": false
+      },
+      "outcome": {
+        "duration_seconds": 300,
+        "resolution_mechanism": "direct",
+        "rounds": 3,
+        "status": "agreed",
+        "terms_count": 1
+      },
+      "parties": [
+        {
+          "agent_id": "did:concordia:agent:receipt-chain-initiator",
+          "behavior": {
+            "concession_magnitude": 0.0,
+            "concessions": 0,
+            "constraints_declared": 1,
+            "constraints_violated": 0,
+            "offers_made": 1,
+            "reasoning_provided": true,
+            "response_time_avg_seconds": 2.0,
+            "signals_shared": 1,
+            "withdrawal": false
+          },
+          "role": "initiator",
+          "signature": "L5ipTF-T5ogYJ5HYNHw4IVWDA_9WBzU7jlUSo-Z7_CncRbr9v-tE05_PSVjnh8WwN94kRoa6rHmQPKoLey8BCw=="
+        },
+        {
+          "agent_id": "did:concordia:agent:receipt-chain-responder",
+          "behavior": {
+            "concession_magnitude": 0.0,
+            "concessions": 0,
+            "constraints_declared": 1,
+            "constraints_violated": 0,
+            "offers_made": 0,
+            "reasoning_provided": false,
+            "response_time_avg_seconds": 3.0,
+            "signals_shared": 1,
+            "withdrawal": false
+          },
+          "role": "responder",
+          "signature": "TcEmwYVLN3lc3qCOHefGB6dPnTA_EgI62u-ZwKP6Cfct3R7iEyNMdMNhmI3_XT9KJVxXSKG2G66Gcx1dPcufDg=="
+        }
+      ],
+      "references": [],
+      "session_id": "sess_conformance_receipt_set_binding_0001",
+      "summary": "Agreement completed with a deterministic transcript and no mediation.",
+      "timestamp": "2026-05-10T16:05:00Z",
+      "transcript_hash": "sha256:9cd9edfe9d4bd688856a9cbe4c1f92563137b489e373c485adf5344a5725285b"
+    }
+  },
+  "notes": "an absent prev_hash key and an explicit JSON null both read back as nothing from a permissive accessor, but the contract makes only the absent key a root; every other link is genuinely valid, so this is the malformed-root case in isolation",
+  "record_type": "message_chain",
+  "schema_version": "concordia-conformance-vector/v1-draft",
+  "source_fixture": "synthetic/longtail/receipt_set_binding.json",
+  "title": "receipt_set_binding: root message carries an explicit null prev_hash",
+  "verification_profile": "receipt-set-binding-v1"
+}
