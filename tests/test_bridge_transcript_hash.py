@@ -72,11 +72,22 @@ def test_bridge_commit_emits_a_non_null_chain_head_end_to_end(make_agent) -> Non
             "enabled": True,
             "identity_mappings": [
                 {"agent_id": a.agent_id, "sanctuary_id": "s1", "did": "did:sanc:s1"},
-                {"agent_id": b.agent_id, "sanctuary_id": "s2", "did": "did:sanc:s2"},
             ],
         },
     )
     assert config.get("enabled"), config
+    buyer_config = handle_tool_call(
+        "concordia_sanctuary_bridge_configure",
+        {
+            "agent_id": b.agent_id,
+            "auth_token": b.auth_token,
+            "enabled": True,
+            "identity_mappings": [
+                {"agent_id": b.agent_id, "sanctuary_id": "s2", "did": "did:sanc:s2"},
+            ],
+        },
+    )
+    assert buyer_config.get("enabled"), buyer_config
 
     ctx = run_negotiation(a, b)
     session_id = ctx["session_id"]

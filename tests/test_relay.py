@@ -252,20 +252,20 @@ class TestRelaySessionLifecycle:
     def test_conclude_session(self):
         relay = NegotiationRelay()
         session = relay.create_session("a", "b")
-        result = relay.conclude_session(session.relay_session_id, "agreed")
+        result = relay.conclude_session(session.relay_session_id, "agreed", agent_id=session.initiator.agent_id)
         assert result.state == RelaySessionState.CONCLUDED
         assert result.conclusion_reason == "agreed"
         assert result.concluded_at is not None
 
     def test_conclude_nonexistent(self):
         relay = NegotiationRelay()
-        assert relay.conclude_session("fake") is None
+        assert relay.conclude_session("fake", agent_id="a") is None
 
     def test_conclude_already_concluded(self):
         relay = NegotiationRelay()
         session = relay.create_session("a", "b")
-        relay.conclude_session(session.relay_session_id, "agreed")
-        result = relay.conclude_session(session.relay_session_id, "again")
+        relay.conclude_session(session.relay_session_id, "agreed", agent_id=session.initiator.agent_id)
+        result = relay.conclude_session(session.relay_session_id, "again", agent_id=session.initiator.agent_id)
         assert result.state == RelaySessionState.CONCLUDED  # no error, idempotent
 
     def test_per_initiator_quota_rejects_at_cap(self, monkeypatch):
@@ -474,7 +474,7 @@ class TestMessageRouting:
     def test_send_to_concluded_session(self):
         relay = NegotiationRelay()
         session = _create_active_session(relay)
-        relay.conclude_session(session.relay_session_id)
+        relay.conclude_session(session.relay_session_id, agent_id=session.initiator.agent_id)
         assert relay.send_message(session.relay_session_id, "a", "offer", {}) is None
 
     def test_send_from_non_participant_fails(self):
@@ -625,7 +625,7 @@ class TestTranscriptAndArchival:
         relay = NegotiationRelay()
         session = _create_active_session(relay)
         relay.send_message(session.relay_session_id, "a", "offer", {"x": 1})
-        relay.conclude_session(session.relay_session_id, "agreed")
+        relay.conclude_session(session.relay_session_id, "agreed", agent_id=session.initiator.agent_id)
 
         archive = relay.archive_session(session.relay_session_id)
         assert archive is not None
@@ -637,7 +637,7 @@ class TestTranscriptAndArchival:
     def test_archive_never_joined_reservation_serializes_unconfirmed_responder(self):
         relay = NegotiationRelay()
         session = relay.create_session("a", "b")
-        relay.conclude_session(session.relay_session_id, "manual")
+        relay.conclude_session(session.relay_session_id, "manual", agent_id=session.initiator.agent_id)
 
         archive = relay.archive_session(session.relay_session_id)
 
@@ -655,7 +655,7 @@ class TestTranscriptAndArchival:
         relay = NegotiationRelay()
         session = relay.create_session("a", "b", auto_attest=True)
 
-        relay.conclude_session(session.relay_session_id, "manual")
+        relay.conclude_session(session.relay_session_id, "manual", agent_id=session.initiator.agent_id)
 
         assert "auto_attest_skipped" in session.metadata
         assert "has not confirmed" in session.metadata["auto_attest_skipped"]
@@ -666,7 +666,7 @@ class TestTranscriptAndArchival:
         session = relay.create_session("a", "b", auto_attest=True)
         relay.join_session(session.relay_session_id, "b")
 
-        relay.conclude_session(session.relay_session_id, "manual")
+        relay.conclude_session(session.relay_session_id, "manual", agent_id=session.initiator.agent_id)
 
         assert "auto_attest_skipped" not in session.metadata
 
@@ -695,8 +695,8 @@ class TestTranscriptAndArchival:
         relay.MAX_ARCHIVES = 1
         first = _create_active_session(relay, "a", "b")
         second = _create_active_session(relay, "c", "d")
-        relay.conclude_session(first.relay_session_id)
-        relay.conclude_session(second.relay_session_id)
+        relay.conclude_session(first.relay_session_id, agent_id=first.initiator.agent_id)
+        relay.conclude_session(second.relay_session_id, agent_id=second.initiator.agent_id)
         relay.archive_session(first.relay_session_id)
 
         with pytest.raises(ValueError, match="Archive limit reached"):
@@ -709,7 +709,7 @@ class TestTranscriptAndArchival:
     def test_get_archive(self):
         relay = NegotiationRelay()
         session = _create_active_session(relay)
-        relay.conclude_session(session.relay_session_id)
+        relay.conclude_session(session.relay_session_id, agent_id=session.initiator.agent_id)
         archive = relay.archive_session(session.relay_session_id)
         retrieved = relay.get_archive(archive.archive_id)
         assert retrieved is not None
@@ -719,7 +719,7 @@ class TestTranscriptAndArchival:
         relay = NegotiationRelay()
         for i in range(3):
             s = _create_active_session(relay, f"a{i}", f"b{i}")
-            relay.conclude_session(s.relay_session_id)
+            relay.conclude_session(s.relay_session_id, agent_id=s.initiator.agent_id)
             relay.archive_session(s.relay_session_id)
         assert len(relay.list_archives()) == 3
 
@@ -729,7 +729,7 @@ class TestTranscriptAndArchival:
         s2 = _create_active_session(relay, "alice", "carol")
         s3 = _create_active_session(relay, "bob", "carol")
         for s in [s1, s2, s3]:
-            relay.conclude_session(s.relay_session_id)
+            relay.conclude_session(s.relay_session_id, agent_id=s.initiator.agent_id)
             relay.archive_session(s.relay_session_id)
 
         alice_archives = relay.list_archives(agent_id="alice")
@@ -742,14 +742,14 @@ class TestTranscriptAndArchival:
         session = _create_active_session(relay)
         relay.send_message(session.relay_session_id, "a", "offer", {"price": 100})
         relay.send_message(session.relay_session_id, "b", "accept", {})
-        relay.conclude_session(session.relay_session_id)
+        relay.conclude_session(session.relay_session_id, agent_id=session.initiator.agent_id)
         archive = relay.archive_session(session.relay_session_id)
         assert len(archive.messages) == 2
 
     def test_archive_retention_days(self):
         relay = NegotiationRelay()
         session = _create_active_session(relay)
-        relay.conclude_session(session.relay_session_id)
+        relay.conclude_session(session.relay_session_id, agent_id=session.initiator.agent_id)
         archive = relay.archive_session(session.relay_session_id, retention_days=90)
         assert archive.retention_days == 90
 
@@ -802,7 +802,7 @@ class TestRelayStats:
         s1 = relay.create_session("a", "b")
         relay.join_session(s1.relay_session_id, "b")
         relay.create_session("c")  # pending
-        relay.conclude_session(s1.relay_session_id)
+        relay.conclude_session(s1.relay_session_id, agent_id=s1.initiator.agent_id)
 
         active = relay.list_sessions(state="active")
         assert len(active) == 0

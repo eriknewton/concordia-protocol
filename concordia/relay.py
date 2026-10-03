@@ -538,10 +538,17 @@ class NegotiationRelay:
         self,
         relay_session_id: str,
         reason: str = "manual",
+        *,
+        agent_id: str,
     ) -> RelaySession | None:
-        """Manually conclude a relay session."""
+        """Manually conclude a relay session as an authenticated participant."""
         session = self._sessions.get(relay_session_id)
         if session is None:
+            return None
+        # Only confirmed participants may conclude or inspect terminal sessions;
+        # reservations grant no authority, and refusal must not reveal existence.
+        participant = self._get_participant(session, agent_id)
+        if participant is None or not participant.confirmed:
             return None
         if session.state in (RelaySessionState.CONCLUDED, RelaySessionState.ARCHIVED):
             return session
