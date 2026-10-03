@@ -2519,9 +2519,9 @@ def tool_relay_conclude(
     """Conclude a relay session."""
     if not _auth.validate_agent_token(agent_id, auth_token):
         return _auth_error(agent_id, context="concordia_relay_conclude")
-    session = _relay.conclude_session(relay_session_id, reason)
+    session = _relay.conclude_session(relay_session_id, reason, agent_id=agent_id)
     if session is None:
-        return json.dumps({"error": f"Relay session '{relay_session_id}' not found."})
+        return json.dumps({"error": "Cannot conclude relay session. Not found or not authorized."})
     return json.dumps({
         "concluded": True,
         "session": session.to_dict(),
@@ -2694,7 +2694,7 @@ _bridge_config = _load_bridge_config()
         "Configure the Sanctuary bridge. When enabled, Concordia agreements "
         "produce Sanctuary commitment payloads (L3), and attestations produce "
         "Sanctuary reputation payloads (L4). Map Concordia agent IDs to "
-        "Sanctuary identity IDs and DIDs."
+        "Sanctuary identity IDs and DIDs. Identity mappings may name only the authenticated caller."
     ),
 )
 def tool_sanctuary_bridge_configure(
@@ -2709,6 +2709,12 @@ def tool_sanctuary_bridge_configure(
     """Configure the Sanctuary bridge."""
     if not _auth.validate_agent_token(agent_id, auth_token):
         return _auth_error(agent_id, context="concordia_sanctuary_bridge_configure")
+    # Caller ownership applies to the whole request: validate every mapping before
+    # changing any bridge state so a foreign entry cannot leave partial updates.
+    if identity_mappings and any(
+        mapping.get("agent_id", "") != agent_id for mapping in identity_mappings
+    ):
+        return json.dumps({"error": "Identity mappings may name only the authenticated caller."})
     _bridge_config.enabled = enabled
     _bridge_config.commitment_on_agree = commitment_on_agree
     _bridge_config.reputation_on_receipt = reputation_on_receipt
@@ -2718,11 +2724,11 @@ def tool_sanctuary_bridge_configure(
 
     if identity_mappings:
         for mapping in identity_mappings:
-            agent_id = mapping.get("agent_id", "")
+            mapped_agent_id = mapping.get("agent_id", "")
             sanctuary_id = mapping.get("sanctuary_id", "")
             did = mapping.get("did")
-            if agent_id and sanctuary_id:
-                _bridge_config.map_identity(agent_id, sanctuary_id, did)
+            if mapped_agent_id and sanctuary_id:
+                _bridge_config.map_identity(mapped_agent_id, sanctuary_id, did)
 
     return json.dumps({
         "enabled": _bridge_config.enabled,

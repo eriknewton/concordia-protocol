@@ -444,10 +444,18 @@ class TestSanctuaryBridge:
             "enabled": True,
             "identity_mappings": [
                 {"agent_id": "bridge_seller", "sanctuary_id": "sanc_seller", "did": "did:sanc:seller"},
-                {"agent_id": "bridge_buyer", "sanctuary_id": "sanc_buyer", "did": "did:sanc:buyer"},
             ],
         })
         assert config["enabled"]
+        buyer_config = handle_tool_call("concordia_sanctuary_bridge_configure", {
+            "agent_id": "bridge_buyer",
+            "auth_token": b.auth_token,
+            "enabled": True,
+            "identity_mappings": [
+                {"agent_id": "bridge_buyer", "sanctuary_id": "sanc_buyer", "did": "did:sanc:buyer"},
+            ],
+        })
+        assert buyer_config["enabled"]
 
         # Negotiate to agreement
         ctx = run_negotiation(a, b)

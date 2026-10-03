@@ -427,13 +427,12 @@ class TestSanctuaryBridgeMcpTools:
             auth_token=token,
             enabled=True,
             identity_mappings=[
-                {"agent_id": "seller_01", "sanctuary_id": "sanc_s", "did": "did:sanctuary:s"},
-                {"agent_id": "buyer_42", "sanctuary_id": "sanc_b"},
+                {"agent_id": "bridge_cfg_agent", "sanctuary_id": "sanc_s", "did": "did:sanctuary:s"},
             ],
             default_context="test_context",
         ))
         assert result["enabled"] is True
-        assert result["identity_count"] == 2
+        assert result["identity_count"] == 1
         assert result["default_context"] == "test_context"
 
     def test_bridge_status_after_configure(self):
@@ -442,10 +441,10 @@ class TestSanctuaryBridgeMcpTools:
             tool_sanctuary_bridge_status,
             tool_register_agent,
         )
-        reg = self._parse(tool_register_agent(agent_id="bsac_agent"))
+        reg = self._parse(tool_register_agent(agent_id="a1"))
         token = reg["auth_token"]
         tool_sanctuary_bridge_configure(
-            agent_id="bsac_agent",
+            agent_id="a1",
             auth_token=token,
             enabled=True,
             identity_mappings=[
@@ -503,10 +502,10 @@ class TestSanctuaryBridgeMcpTools:
             tool_accept,
             tool_register_agent,
         )
-        reg = self._parse(tool_register_agent(agent_id="bcoas_agent"))
+        reg = self._parse(tool_register_agent(agent_id="seller_01"))
         agent_token = reg["auth_token"]
         tool_sanctuary_bridge_configure(
-            agent_id="bcoas_agent",
+            agent_id="seller_01",
             auth_token=agent_token,
             enabled=True,
             identity_mappings=[
@@ -594,6 +593,12 @@ class TestSanctuaryBridgeMcpTools:
             enabled=True,
             identity_mappings=[
                 {"agent_id": "seller_01", "sanctuary_id": "sanc_s", "did": "did:s:1"},
+            ],
+        )
+        buyer = self._parse(tool_register_agent(agent_id="buyer_42"))
+        tool_sanctuary_bridge_configure(
+            agent_id="buyer_42", auth_token=buyer["auth_token"], enabled=True,
+            identity_mappings=[
                 {"agent_id": "buyer_42", "sanctuary_id": "sanc_b", "did": "did:b:1"},
             ],
         )
@@ -611,21 +616,21 @@ class TestSanctuaryBridgeMcpTools:
         """End-to-end: configure → negotiate → commit → attest."""
         from concordia.mcp_server import handle_tool_call
 
-        # Register an agent for bridge configuration
-        reg = handle_tool_call("concordia_register_agent", {"agent_id": "bridge_lc_agent"})
-        agent_token = reg["auth_token"]
-
-        # Configure bridge
-        config_result = handle_tool_call("concordia_sanctuary_bridge_configure", {
-            "agent_id": "bridge_lc_agent",
-            "auth_token": agent_token,
-            "enabled": True,
-            "identity_mappings": [
-                {"agent_id": "seller_01", "sanctuary_id": "sanc_s", "did": "did:s:1"},
-                {"agent_id": "buyer_42", "sanctuary_id": "sanc_b", "did": "did:b:1"},
-            ],
-        })
-        assert config_result["enabled"] is True
+        # Each agent configures its own bridge identity.
+        agent_tokens = {}
+        for mapping in [
+            {"agent_id": "seller_01", "sanctuary_id": "sanc_s", "did": "did:s:1"},
+            {"agent_id": "buyer_42", "sanctuary_id": "sanc_b", "did": "did:b:1"},
+        ]:
+            reg = handle_tool_call("concordia_register_agent", {"agent_id": mapping["agent_id"]})
+            agent_tokens[mapping["agent_id"]] = reg["auth_token"]
+            config_result = handle_tool_call("concordia_sanctuary_bridge_configure", {
+                "agent_id": mapping["agent_id"],
+                "auth_token": reg["auth_token"],
+                "enabled": True,
+                "identity_mappings": [mapping],
+            })
+            assert config_result["enabled"] is True
 
         # Run a Concordia negotiation to agreement
         session = handle_tool_call("concordia_open_session", {
@@ -664,13 +669,9 @@ class TestSanctuaryBridgeMcpTools:
         })
         assert "receipt" in receipt
 
-        # Register seller_01 as agent so we can pass agent-scoped auth for attest
-        seller_reg = handle_tool_call("concordia_register_agent", {"agent_id": "seller_01"})
-        seller_agent_token = seller_reg["auth_token"]
-
         attest_result = handle_tool_call("concordia_sanctuary_bridge_attest", {
             "agent_id": "seller_01",
-            "auth_token": seller_agent_token,
+            "auth_token": agent_tokens["seller_01"],
             "attestation": receipt["receipt"],
         })
         assert attest_result["sanctuary_enabled"] is True
