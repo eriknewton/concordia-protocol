@@ -55,7 +55,11 @@ import { createHash } from 'node:crypto';
 
 import { ed25519 } from '@noble/curves/ed25519.js';
 
-import { canonicalizeJcs, canonicalCosignBytes } from '../canonical/canonicalize.js';
+import {
+  canonicalizeJcs,
+  canonicalCosignBytes,
+  snapshotPlainJson,
+} from '../canonical/canonicalize.js';
 import { toBase64Url, fromBase64Url } from '../crypto/base64url.js';
 import { sign, KeyPair } from '../crypto/signing.js';
 import {
@@ -69,7 +73,7 @@ import {
   behaviorRecordToDict,
 } from '../types/index.js';
 import { validateReference } from '../predicate/references.js';
-import { computeHash, type Session } from '../session/index.js';
+import { GENESIS_HASH, computeHash, hashCanonicalBytes, type Session } from '../session/index.js';
 
 /** Attestation schema version, byte-identical to Python `ATTESTATION_VERSION`. */
 export const ATTESTATION_VERSION = '0.5.0';
@@ -80,7 +84,60 @@ const SET_BINDING_MIN = { major: 0, minor: 3 } as const;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+$/;
 const SHA256_HEX_PATTERN = /^sha256:[a-f0-9]{64}$/;
 
-export type ReceiptSetBindingState = 'bound' | 'legacy_set_unbound' | 'error';
+// Ceiling on the transcript length verifyReceiptSetBinding will walk
+// (2026-09-16 delta-11 gate, Codex P1: "if none exists, add one derived from
+// the existing per-message ceilings"), rejected by name before
+// reconstructSingleChain spends any per-message hashing or O(n) walking on
+// it. Derivation: Python's NegotiationRelay.MAX_TRANSCRIPT_SIZE
+// (concordia/relay.py) = 10_000 already bounds how long a transcript a
+// Concordia relay session can ever legitimately produce -- but this
+// verifier's transcript parameter is not required to have come from that
+// relay at all (SPEC 9.6.5b takes a plain array of message objects), so
+// bounding it AT the relay's own number would assume relay-mediated origin
+// this verifier does not require. Instead the ceiling is set above the
+// largest n this suite's own adversarial-complexity test already measures
+// and asserts linear growth on (2n = 128_000 in the "cycle detection is
+// linear, not quadratic" n-versus-2n ratio tests in
+// js-sdk/tests/attestation-set-binding-reconstruction.test.ts, which drive
+// the cycle finder over a genuine 128_000-message cycle): anything at or
+// below that range is proven O(n) by those tests, so the cap must not fall
+// inside the range they already cover, or it would silently convert an
+// already-proven-safe input into an untested one; 200_000 is a round number
+// with roughly 1.5x headroom above that proven range. Anything beyond
+// 200_000 has no complexity evidence behind it and is refused outright
+// rather than processed on faith. Four independent literals carry this
+// value (this one; MAX_SET_BINDING_TRANSCRIPT_MESSAGES in
+// concordia/attestation.py; and the same name in both conformance
+// reference runners, conformance/reference-runner-js/runner.mjs and
+// conformance/reference-runner/runner.py), all pinned to
+// tests/fixtures/set_binding_limits.json by a test in each SDK suite, so a
+// one-sided edit fails CI in both languages.
+export const MAX_SET_BINDING_TRANSCRIPT_MESSAGES = 200_000;
+
+/**
+ * Test-only observation hook for the adversarial-complexity tests (AGENTS.md
+ * rule 8). `undefined` in production, where the hot paths below pay one
+ * identity check per visited element and nothing else. A test installs a
+ * counter and asserts an OPERATION COUNT (visits per presented message or
+ * per scanned character), never a wall-clock ceiling or a wall-clock
+ * n-versus-2n ratio: both encode one machine's speed and scheduling (JIT
+ * warm-up, contention, GC) and were the CI red of round 12 and the
+ * flake-in-waiting of round 13 (Codex P2, 2026-09-17 delta-13 gate), while a
+ * count of visits is the same integer on every machine. Not re-exported from
+ * the package barrel (`./index.ts`); tests import it from this module. Must
+ * match `_operation_observer` in `concordia/attestation.py` (same operation
+ * names).
+ */
+export type OperationName = 'cycle_finder_visit' | 'int_coerce_scan_visit';
+let operationObserver: ((operation: OperationName) => void) | undefined;
+export function setOperationObserverForTests(
+  observer: ((operation: OperationName) => void) | undefined,
+): void {
+  operationObserver = observer;
+}
+
+export type ReceiptSetBindingState =
+  'bound' | 'fields_present_unverified' | 'legacy_set_unbound' | 'error';
 
 export interface ReceiptSetBindingResult {
   state: ReceiptSetBindingState;
@@ -95,10 +152,335 @@ function attestationVersionAtLeast(version: unknown, major: number, minor: numbe
   return gotMajor > major || (gotMajor === major && gotMinor >= minor);
 }
 
+/**
+ * Rebuild one message order from `prev_hash` links alone (SPEC 9.6.5b),
+ * byte-for-byte the same rule as Python `_reconstruct_single_chain`.
+ *
+ * `transcript` here is ALREADY the boundary snapshot `verifyReceiptSetBinding`
+ * (the only caller) produced from the caller's argument -- a realm-local
+ * plain copy, not the caller's own array. This function therefore reads
+ * `transcript.length` and `transcript[i]` freely below without reopening the
+ * class the snapshot exists to close: a Proxy transcript array that answers
+ * one length during an early check and a different one during reconstruction
+ * (Codex P1, 2026-09-16 delta-6 gate) cannot occur here, because there is no
+ * live reference back to the caller's array left to answer inconsistently.
+ *
+ * The presented order is never consulted: the presenter chooses it, so an
+ * order read off the array would let a fork, an orphan, or a second root ride
+ * through whenever the last presented element still hashes to `chain_head`.
+ * The digest compared against `prev_hash` is `computeHash`, the SHA-256 of the
+ * complete canonical form of a message INCLUDING its signature, so a
+ * transcript whose links were computed over the signature-stripped form does
+ * not reconstruct. Fail-closed: whenever `errors` is non-empty the returned
+ * chain is empty, so no caller can read a partial reconstruction as an order.
+ */
+/**
+ * Render a cycle's message indices in WALK order, closing the loop by
+ * repeating the first index at the end (`[3, 4] -> "3, 4, 3"`), so the
+ * string alone shows which link closes back on which -- not just the set
+ * of indices `findCycle` names. Deterministic: `cycle` is already
+ * walk-ordered by `findCycle`, so nothing here sorts or set-converts it.
+ * Must match `_format_cycle_message` in `concordia/attestation.py`.
+ */
+function formatCycle(cycle: number[]): string {
+  return [...cycle, cycle[0]].join(', ');
+}
+
+/**
+ * Return one cycle's message indices, in walk order, if `predecessorOf` has
+ * one, else `undefined`.
+ *
+ * `predecessorOf` maps a non-root message's index to the index of the ONE
+ * presented message it names as its predecessor -- populated by
+ * `reconstructSingleChain` only for links that already passed the
+ * fork/orphan/duplicate/null-prev_hash checks, so every edge here names a
+ * real, once-claimed predecessor. That makes the graph "functional"
+ * (out-degree exactly 1 for every key) and finite, so a walk that never
+ * reaches a message OUTSIDE `predecessorOf` (a root, which has no entry)
+ * must eventually repeat a node -- a functional graph with no root is
+ * nothing but a disjoint union of cycles, optionally with acyclic tails
+ * feeding into them. Called only when the ordinary walk from the root(s)
+ * has already failed to visit every message, so this runs on the
+ * genuinely disconnected remainder, never on the reconstructed chain
+ * itself. Must match `_find_cycle` in `concordia/attestation.py`.
+ *
+ * O(n) total, not O(n^2): `position` maps a node already on the CURRENT
+ * walk to its index within `path`, so "is this node already on this walk,
+ * and if so where" is one Map lookup, not a linear `path.indexOf` scan
+ * repeated at every step (Codex P1, 2026-09-16 delta-11 gate: the prior
+ * `path.indexOf(node)` was O(len(path)) per step, so a single walk of
+ * length n cost O(n^2) -- and callers reach that one long walk not only on
+ * a real cycle but on a rootless, reverse-ordered chain ending in ONE
+ * orphan, which is acyclic and still walks its entire length before the
+ * `!predecessorOf.has(node)` break). Each node is added to exactly one
+ * walk's `path` (a later walk skips any node `state` already marked
+ * resolved), so the position maps and path arrays across all walks hold at
+ * most n entries combined.
+ */
+function findCycle(predecessorOf: Map<number, number>): number[] | undefined {
+  const state = new Map<number, 0 | 1>(); // 0 = on the current walk, 1 = resolved
+  for (const start of predecessorOf.keys()) {
+    if (state.get(start) === 1) continue;
+    const path: number[] = [];
+    const position = new Map<number, number>(); // node -> its index within `path`
+    let node: number | undefined = start;
+    while (node !== undefined) {
+      if (operationObserver !== undefined) operationObserver('cycle_finder_visit');
+      if (state.get(node) === 1) break; // resolved by an earlier walk
+      if (!predecessorOf.has(node)) break; // reaches a root: nothing cyclic
+      const seenAt = position.get(node);
+      if (seenAt !== undefined) return path.slice(seenAt);
+      position.set(node, path.length);
+      path.push(node);
+      node = predecessorOf.get(node);
+    }
+    for (const visited of path) state.set(visited, 1);
+  }
+  return undefined;
+}
+
+function reconstructSingleChain(transcript: Array<Record<string, unknown>>): {
+  chain: Array<Record<string, unknown>>;
+  // The chain's terminal message's digest, taken from the SAME `digests`
+  // array the walk below is built from -- never recomputed later by
+  // rehashing the original object a second time. Set exactly when errors is
+  // empty; see the caller (`verifyReceiptSetBinding`), which is the only
+  // consumer and only reads it in that case.
+  headDigest: string | undefined;
+  errors: string[];
+} {
+  const errors: string[] = [];
+  for (let index = 0; index < transcript.length; index += 1) {
+    const message = transcript[index];
+    if (typeof message !== 'object' || message === null || Array.isArray(message)) {
+      errors.push(`transcript message ${index} is not a JSON object`);
+    }
+  }
+  if (errors.length > 0) return { chain: [], headDigest: undefined, errors };
+
+  // One canonical byte string per message, computed once, feeds BOTH the
+  // digest and the link-reading view below (and, via the returned
+  // headDigest, the caller's final chain_head comparison too -- see
+  // verifyReceiptSetBinding). canonicalizeJcs walks only own enumerable
+  // string-keyed data properties (snapshotPlainJson, see canonicalize.ts),
+  // rejects any accessor property outright, and never invokes a toJSON
+  // method, own or inherited, unlike JSON.stringify. A member that reaches
+  // the view therefore always reaches the digest too: there is no second
+  // channel (a hidden toJSON, an inherited or non-enumerable own accessor)
+  // that could carry a prev_hash the digest never covers. `message` here is
+  // already an element of the boundary-snapshotted `transcript`, not the
+  // caller's own object, so canonicalizeJcs's own internal snapshot copies
+  // data this function already owns rather than reading anything
+  // caller-controlled a second time. canonicalizeJcs still rejects NaN,
+  // Infinity, -0, and lossy integers exactly as before.
+  const canonicalBytes = transcript.map((message) => canonicalizeJcs(message));
+
+  const digests = canonicalBytes.map((bytes) => hashCanonicalBytes(bytes));
+  const byDigest = new Map<string, number>();
+  for (let index = 0; index < digests.length; index += 1) {
+    const digest = digests[index]!;
+    if (byDigest.has(digest)) {
+      // Two byte-identical messages have one digest, so "exactly one presented
+      // message" is already false and a count taken from the presented array
+      // would over-count the chain.
+      errors.push(
+        'transcript presents the same message more than once; a chain visits each message once',
+      );
+      return { chain: [], headDigest: undefined, errors };
+    }
+    byDigest.set(digest, index);
+  }
+
+  // The link-reading view is parsed from the SAME canonical bytes just
+  // hashed above, not from the caller's object and not from a fresh
+  // JSON.stringify of it. Must match the digest derivation immediately
+  // above: same bytes in, digest one way, view the other.
+  const views = canonicalBytes.map(
+    (bytes) => JSON.parse(bytes.toString('utf8')) as Record<string, unknown>,
+  );
+
+  const roots: number[] = [];
+  const successorOf = new Map<number, number>();
+  // Inverse of successorOf, populated at the SAME point (only once a link
+  // passes the fork/orphan/null-prev_hash checks below): findCycle walks
+  // the leftover graph without recomputing anything already validated
+  // here. Must match predecessor_of in concordia/attestation.py.
+  const predecessorOf = new Map<number, number>();
+  for (let index = 0; index < transcript.length; index += 1) {
+    const view = views[index]!;
+    // links are read from the same view the digest covers; a member the
+    // digest does not cover cannot form a link.
+    const hasPrevHash = Object.prototype.hasOwnProperty.call(view, 'prev_hash');
+    const prevHash = view.prev_hash;
+    if (!hasPrevHash || prevHash === GENESIS_HASH) {
+      roots.push(index);
+      continue;
+    }
+    if (prevHash === null) {
+      // An absent key and an explicit JSON null are indistinguishable once
+      // read through `.prev_hash` (both are `undefined`/`null`-ish); the
+      // contract makes only the absent key a root, so a present-but-null
+      // prev_hash is a malformed link, not a second spelling of genesis.
+      // The `hasOwnProperty` check above is what keeps these two cases apart.
+      errors.push(
+        `transcript message ${index} has an explicit null prev_hash; only an absent prev_hash or ${JSON.stringify(GENESIS_HASH)} is a root`,
+      );
+      continue;
+    }
+    if (typeof prevHash !== 'string') {
+      errors.push(`transcript message ${index} has a non-string prev_hash`);
+      continue;
+    }
+    const predecessor = byDigest.get(prevHash);
+    if (predecessor === undefined) {
+      errors.push(
+        `transcript message ${index} is an orphan: its prev_hash matches no presented message`,
+      );
+      continue;
+    }
+    if (successorOf.has(predecessor)) {
+      errors.push(
+        `transcript forks at message ${predecessor}: two presented messages claim it as predecessor`,
+      );
+      continue;
+    }
+    successorOf.set(predecessor, index);
+    predecessorOf.set(index, predecessor);
+  }
+
+  if (roots.length === 0) {
+    // Cycle detection runs only when it can CHANGE the diagnosis: if the
+    // loop above already recorded an orphan, fork, non-string-prev_hash, or
+    // duplicate error, rejection is already explained by a reason
+    // independent of any cycle, and walking predecessorOf to name one
+    // underneath it adds no information the caller doesn't already have
+    // (Codex P1, 2026-09-16 delta-11 gate: this branch ran findCycle
+    // unconditionally, so a rootless, reverse-ordered chain ending in ONE
+    // real orphan -- no hash cycle anywhere -- still paid for the full walk
+    // beside an orphan error that alone already explains the rejection).
+    // Only when errors is empty here can naming a cycle (or its
+    // plain-wording fallback) be the diagnosis, so only then do we run it:
+    // by construction, every message that reaches this point already
+    // cleared those checks, so if there is also no root, every remaining
+    // message's predecessor edge stays inside the presented set with
+    // nowhere to terminate -- which findCycle's own comment shows is
+    // possible only when the set decomposes into cycles. Must match the
+    // mirrored ordering in concordia/attestation.py.
+    if (errors.length === 0) {
+      const cycle = findCycle(predecessorOf);
+      if (cycle !== undefined) {
+        errors.push(
+          `transcript contains a prev_hash cycle through messages ${formatCycle(cycle)}: ` +
+            `prev_hash links point to each other with no root; a chain has exactly one ` +
+            `message without prev_hash`,
+        );
+      } else {
+        errors.push(
+          'transcript has no root message: a chain has exactly one message without prev_hash',
+        );
+      }
+    }
+  } else if (roots.length > 1) {
+    errors.push(
+      `transcript has ${roots.length} root messages without prev_hash; a chain has exactly one`,
+    );
+  }
+
+  if (errors.length > 0) return { chain: [], headDigest: undefined, errors };
+
+  const chain: Array<Record<string, unknown>> = [];
+  const visitedIndices = new Set<number>();
+  let cursor: number | undefined = roots[0];
+  // Tracks the ORIGINAL transcript index of the last message pushed, so the
+  // terminal digest below can be read out of `digests` -- the array already
+  // hashed above -- instead of rehashing `chain[chain.length - 1]` (the
+  // caller's original object) a second time.
+  let terminalIndex: number | undefined;
+  while (cursor !== undefined) {
+    chain.push(transcript[cursor]!);
+    visitedIndices.add(cursor);
+    terminalIndex = cursor;
+    cursor = successorOf.get(cursor);
+  }
+  if (chain.length !== transcript.length) {
+    // Closing invariant: a walk shorter than the presented set means part of
+    // the set is disconnected from the root, which is set substitution however
+    // the individual links verify. The disconnected remainder (every index the
+    // walk above never visited) cannot be an orphan, a fork, or a second root
+    // -- those are all excluded by the checks above running first -- so by the
+    // same reasoning as the no-root branch it can only be one or more cycles;
+    // name it as one when findCycle confirms it, falling back to the plain
+    // wording otherwise. Must match the mirrored ordering in
+    // concordia/attestation.py.
+    const leftoverPredecessorOf = new Map(
+      [...predecessorOf].filter(([index]) => !visitedIndices.has(index)),
+    );
+    const cycle = findCycle(leftoverPredecessorOf);
+    if (cycle !== undefined) {
+      errors.push(
+        `transcript contains a prev_hash cycle through messages ${formatCycle(cycle)} beside ` +
+          `the reconstructed chain: the walk from the root visits ${chain.length} of ` +
+          `${transcript.length} presented messages`,
+      );
+    } else {
+      errors.push(
+        `transcript does not form a single chain: the walk from the root visits ${chain.length} of ${transcript.length} presented messages`,
+      );
+    }
+    return { chain: [], headDigest: undefined, errors };
+  }
+  // chain.length === transcript.length and transcript.length > 0 (the caller
+  // rejects an empty transcript before calling this function), so the walk
+  // above ran at least once and terminalIndex is set.
+  return { chain, headDigest: digests[terminalIndex!], errors: [] };
+}
+
 export function verifyReceiptSetBinding(
-  attestation: Record<string, unknown>,
-  transcript: Array<Record<string, unknown>> | null = null,
+  callerAttestation: Record<string, unknown>,
+  callerTranscript: Array<Record<string, unknown>> | null = null,
 ): ReceiptSetBindingResult {
+  // Boundary snapshot: both caller-supplied inputs are read exactly once,
+  // right here, before either is inspected, into realm-local plain copies
+  // (the one exception is the single `length` read for the transcript cap
+  // just below, which happens BEFORE the snapshot and is explained there).
+  // Every line below this one reads only `attestation` and `transcript`;
+  // neither caller argument is read again anywhere in this function or in
+  // reconstructSingleChain. This is what keeps an early check (the version
+  // gate, the transcript length) and a later comparison (chain_head,
+  // message_count) looking at the SAME data: a getter or a Proxy trap on
+  // either caller argument gets exactly one chance to answer, so it cannot
+  // answer the two differently (Codex P1, Grok findings 1-2, 2026-09-16
+  // delta-6 gate). Must match the boundary snapshot in
+  // verifyReceiptSetBindingProfile, conformance/reference-runner-js/runner.mjs.
+  const attestation = snapshotPlainJson(callerAttestation) as Record<string, unknown>;
+  // The transcript cap is checked on the CALLER's array length, read exactly
+  // once here, BEFORE the snapshot copies anything. The snapshot is itself an
+  // O(n) traversal of every element that throws on the first accessor it
+  // meets, so a cap applied only to the snapshotted copy let an over-cap
+  // transcript be fully walked and copied first, and reported a
+  // CanonicalizationError from element 0 instead of the named cap error
+  // (Codex P1, 2026-09-16 delta-12 gate). An over-cap array is never
+  // snapshotted at all; `overCapLength` carries the length it presented to
+  // the named rejection below. This is the only read of the caller's
+  // transcript outside the snapshot. A Proxy that answers a small `length`
+  // here and a larger descriptor map to the snapshot has paid for its own
+  // copy, and the second cap check on the snapshotted copy below still
+  // refuses to walk it, so reconstruction never sees more than the cap
+  // either way. Must match the same ordering in evaluate_receipt_set_binding
+  // (concordia/attestation.py) and in verifyReceiptSetBindingProfile
+  // (conformance/reference-runner-js/runner.mjs); pinned by the
+  // "cap before snapshot" tests in
+  // js-sdk/tests/attestation-set-binding-reconstruction.test.ts.
+  let overCapLength: number | undefined;
+  if (Array.isArray(callerTranscript)) {
+    const presentedLength: number = callerTranscript.length;
+    if (presentedLength > MAX_SET_BINDING_TRANSCRIPT_MESSAGES) overCapLength = presentedLength;
+  }
+  const transcript =
+    callerTranscript === null || overCapLength !== undefined
+      ? null
+      : (snapshotPlainJson(callerTranscript) as Array<Record<string, unknown>>);
+
   const version = attestation.concordia_attestation;
   if (!attestationVersionAtLeast(version, SET_BINDING_MIN.major, SET_BINDING_MIN.minor)) {
     return { state: 'legacy_set_unbound', errors: [] };
@@ -114,14 +496,58 @@ export function verifyReceiptSetBinding(
     errors.push(`version ${String(version)} requires message_count as an integer >= 1`);
   }
 
-  if (transcript !== null) {
-    if (!Array.isArray(transcript)) {
-      errors.push('transcript must be a list when verifying set binding');
-    } else if (transcript.length === 0) {
-      errors.push('transcript must contain at least one message');
+  if (transcript === null && overCapLength === undefined) {
+    // A 'bound' verdict reached without ever seeing a transcript is the
+    // fail-open this state closes: the two fields are the receipt's own claim
+    // about a transcript, so checking them against nothing verifies nothing.
+    // Absence reads as unestablished, never as bound.
+    if (errors.length > 0) {
+      return { state: 'error', errors };
+    }
+    return { state: 'fields_present_unverified', errors: [] };
+  }
+
+  if (overCapLength !== undefined) {
+    // Named rejection of the length the caller's array presented, decided
+    // above before the snapshot ran (see MAX_SET_BINDING_TRANSCRIPT_MESSAGES's
+    // derivation above).
+    errors.push(
+      `transcript has ${overCapLength} messages, exceeding the maximum of ` +
+        `${MAX_SET_BINDING_TRANSCRIPT_MESSAGES}`,
+    );
+  } else if (!Array.isArray(transcript)) {
+    errors.push('transcript must be a list when verifying set binding');
+  } else if (transcript.length === 0) {
+    errors.push('transcript must contain at least one message');
+  } else if (transcript.length > MAX_SET_BINDING_TRANSCRIPT_MESSAGES) {
+    // Second cap check, on the snapshotted copy: reachable only when the
+    // caller's `length` read above and the descriptor map the snapshot
+    // walked disagree (a Proxy), and it is what keeps reconstruction below
+    // the cap in that case too.
+    errors.push(
+      `transcript has ${transcript.length} messages, exceeding the maximum of ` +
+        `${MAX_SET_BINDING_TRANSCRIPT_MESSAGES}`,
+    );
+  } else {
+    const { chain, headDigest, errors: chainErrors } = reconstructSingleChain(transcript);
+    if (chainErrors.length > 0) {
+      errors.push(...chainErrors);
     } else {
-      const expectedCount = transcript.length;
-      const expectedHead = computeHash(transcript[transcript.length - 1]!);
+      // Both comparisons read the RECONSTRUCTED chain, never the presented
+      // array: a count taken from the array would credit a set the root cannot
+      // reach, which is the substitution set binding exists to refuse.
+      //
+      // expectedHead reuses headDigest -- the digest reconstructSingleChain
+      // already computed, once, from the same canonicalBytes the chain walk
+      // itself reads links from. It is NOT computeHash(chain[chain.length -
+      // 1]), which would canonicalize the terminal message's ORIGINAL object
+      // a second time: a getter could then answer that second read
+      // differently than the first, passing reconstruction with one value
+      // and this comparison with another (Codex P1, 2026-09-16 delta-5
+      // gate). chainErrors is empty here, which is exactly when
+      // reconstructSingleChain guarantees headDigest is set.
+      const expectedCount = chain.length;
+      const expectedHead = headDigest!;
       if (
         typeof messageCount === 'number' &&
         Number.isInteger(messageCount) &&
@@ -503,6 +929,26 @@ function pyTruthy(value: unknown): boolean {
  * where Python's `int(...)` would raise -- never silently coerced (the prior
  * `Number(...)` accepted `"1.5"` -> `1.5` and `NaN` where Python raises).
  */
+const ASCII_PLUS = 0x2b; // '+'
+const ASCII_MINUS = 0x2d; // '-'
+const ASCII_ZERO = 0x30; // '0'
+const ASCII_NINE = 0x39; // '9'
+
+// One visit of `value[index]`, reported to the test-only observer. The
+// whitespace question is delegated to `trim()` on that single code unit so
+// the set stripped here is by definition the set `String.prototype.trim`
+// strips (see pyIntCoerce).
+function isWhitespaceCodeUnit(value: string, index: number): boolean {
+  if (operationObserver !== undefined) operationObserver('int_coerce_scan_visit');
+  return value.charAt(index).trim() === '';
+}
+
+function isAsciiDigitCodeUnit(value: string, index: number): boolean {
+  if (operationObserver !== undefined) operationObserver('int_coerce_scan_visit');
+  const code = value.charCodeAt(index);
+  return code >= ASCII_ZERO && code <= ASCII_NINE;
+}
+
 function pyIntCoerce(value: unknown): number {
   if (typeof value === 'boolean') return value ? 1 : 0;
   if (typeof value === 'number') {
@@ -519,17 +965,34 @@ function pyIntCoerce(value: unknown): number {
   }
   if (typeof value === 'string') {
     // Python strips surrounding whitespace, then requires an optional sign +
-    // digits. `String.prototype.trim()` is a linear intrinsic that strips the
-    // same leading and trailing whitespace run the regex `^\s+|\s+$` did, but
-    // without that regex's O(n^2) backtracking on adversarial input (a long
-    // whitespace run NOT at a string boundary forced the trailing-`\s+$`
-    // alternative to retry from every position) -- the CodeQL
-    // `js/polynomial-redos` finding. The accepted/rejected string set is
-    // byte-for-byte unchanged: `trim()` removes exactly the ECMAScript
-    // WhiteSpace + LineTerminator set the `\s` character class matched.
-    const stripped = value.trim();
-    if (/^[+-]?\d+$/.test(stripped)) {
-      return parseInt(stripped, 10);
+    // digits. This is a single hand-written pass with no regex at all: the
+    // original `^\s+|\s+$` regex backtracked in O(n^2) on a long whitespace
+    // run NOT at a string boundary (the CodeQL `js/polynomial-redos`
+    // finding), and its `trim()` replacement, while linear, is an intrinsic
+    // whose work cannot be counted, so its linearity could only be asserted
+    // by wall-clock timing, a flaky oracle (Codex P2, 2026-09-17 delta-13
+    // gate). Here every code unit is visited at most once per phase
+    // (leading run, trailing run, digits) and each visit reports to the
+    // test-only observer, so the adversarial-complexity test asserts an
+    // exact visit bound instead. The accepted/rejected string set is
+    // byte-for-byte unchanged: "is this one code unit whitespace" is decided
+    // by `trim()` itself on that code unit, so the stripped set is exactly
+    // the ECMAScript WhiteSpace + LineTerminator set the `\s` class matched
+    // (no whitespace code point is a surrogate, so per-code-unit is exact),
+    // and the digits phase accepts exactly `^[+-]?[0-9]+$`.
+    const length = value.length;
+    let start = 0;
+    while (start < length && isWhitespaceCodeUnit(value, start)) start += 1;
+    let end = length;
+    while (end > start && isWhitespaceCodeUnit(value, end - 1)) end -= 1;
+    let i = start;
+    if (i < end && (value.charCodeAt(i) === ASCII_PLUS || value.charCodeAt(i) === ASCII_MINUS)) {
+      i += 1;
+    }
+    const digitsStart = i;
+    while (i < end && isAsciiDigitCodeUnit(value, i)) i += 1;
+    if (i === end && i > digitsStart) {
+      return parseInt(value.slice(start, end), 10);
     }
     throw new AttestationError(`invalid literal for int() with base 10: ${jsRepr(value)}`);
   }

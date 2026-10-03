@@ -253,6 +253,13 @@ class NegotiationRelay:
     MAX_SESSIONS = 10_000
     MAX_ARCHIVES = 50_000
     MAX_MAILBOX_SIZE = 1_000
+    # No relayed session's transcript ever grows past this (see
+    # append_message's check below). A DIFFERENT, larger ceiling bounds the
+    # transcript a set-binding claim presents for verification
+    # (MAX_SET_BINDING_TRANSCRIPT_MESSAGES in concordia/attestation.py): that
+    # verifier's transcript is not required to have come from this relay at
+    # all, so it is not bounded at this relay's own number, only informed by
+    # it (see that constant's derivation comment).
     MAX_TRANSCRIPT_SIZE = 10_000
 
     def __init__(self) -> None:

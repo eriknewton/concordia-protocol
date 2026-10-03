@@ -109,3 +109,30 @@ def test_rfc8785_appendix_b_number_samples(raw: str, expected: str) -> None:
 def test_negative_zero_is_rejected() -> None:
     with pytest.raises(ValueError, match="negative zero"):
         canonical_json({"value": -0.0})
+
+
+def test_python_reference_runner_rfc8785_rejects_the_1e21_plain_decimal_integer() -> None:
+    """The literal from the delta-11 gate (2026-09-16 fix round 12, Codex
+    P1): a bare plain-decimal integer at the magnitude where JS
+    Number#toString first switches to exponential notation
+    (String(1e21) === "1e+21"). ``json.loads`` keeps Python's
+    arbitrary-precision int exact -- no exponential collapse, no precision
+    loss -- so this is NOT about Python's ingest; it is about
+    ``rfc8785.dumps`` (the RFC 8785 implementation
+    ``conformance/reference-runner/runner.py``'s ``jcs_bytes`` delegates
+    to, a DIFFERENT implementation from this module's own
+    ``canonical_json``) rejecting the int outside its safe integer domain
+    (``+/- (2**53 - 1)``, ``rfc8785._impl._INT_MAX``/``_INT_MIN``). This is
+    the reference behavior
+    ``conformance/reference-runner-js/runner.mjs``'s ``readJson`` must now
+    match at its own ingest boundary (see ``rejectUnsafeIntegerLiterals``
+    there and ``parseJsonStrict`` in ``js-sdk/src/canonical/parse.ts``) --
+    "both runners reject identically."
+    """
+    import rfc8785
+
+    value = json.loads("1000000000000000000000")
+    assert value == 10**21  # exact; Python lost no precision parsing it
+
+    with pytest.raises(rfc8785.IntegerDomainError):
+        rfc8785.dumps({"quantity": value})

@@ -1014,9 +1014,13 @@ class TestOutcomeBindingBundle:
         assert legacy["attestation_id"] in result.outcome_unbound_attestations
         assert bound["attestation_id"] not in result.outcome_unbound_attestations
         assert result.outcome_bound_count == 1
+        # A bundle carries receipts and no transcripts, so set binding is
+        # unestablished for BOTH: the legacy one because it predates the
+        # fields, the 0.5.0 one because nothing here can check its claim
+        # against a transcript (SPEC §9.6.5b).
         assert legacy["attestation_id"] in result.set_unbound_attestations
-        assert bound["attestation_id"] not in result.set_unbound_attestations
-        assert result.set_bound_count == 1
+        assert bound["attestation_id"] in result.set_unbound_attestations
+        assert result.set_bound_count == 0
 
     def test_unbound_legacy_outcome_emits_warning(self):
         """FORGE finding 1: a legacy (<0.2.0) attestation whose outcome feeds
@@ -1057,7 +1061,10 @@ class TestOutcomeBindingBundle:
 
         assert result.valid is True, f"Errors: {result.errors}"
         assert result.outcome_bound_count == 1
-        assert result.set_bound_count == 1
+        # Outcome binding is checkable from the receipt alone; set binding is
+        # not, and this bundle carries no transcript (SPEC §9.6.5b).
+        assert result.set_bound_count == 0
+        assert att["attestation_id"] in result.set_unbound_attestations
         assert not any(
             "not cryptographically bound" in w.lower() for w in result.warnings
         ), f"unexpected unbound-outcome warning on a fully bound bundle: {result.warnings}"

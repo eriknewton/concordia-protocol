@@ -35,6 +35,7 @@ const PROFILE_ORDER = new Set([
   "competence-proof-v1",
   "receipt-bundle-v1",
   "message-chain-v1",
+  "receipt-set-binding-v1",
 ]);
 const RECORD_TYPES = new Set([
   "decision_object",
@@ -141,6 +142,17 @@ const AGENT_PROFILE_ENDPOINT_FIELDS = new Set([
 ]);
 const AGENT_PROFILE_LOCATION_FIELDS = new Set(["regions", "jurisdictions"]);
 const GENESIS_HASH = `sha256:${"0".repeat(64)}`;
+// Ceiling on the transcript length receipt-set-binding-v1 will verify or
+// walk, rejected by name before the snapshot and before any per-message
+// signature or hashing work. Same value and derivation as
+// MAX_SET_BINDING_TRANSCRIPT_MESSAGES in js-sdk/src/attestation/attestation.ts
+// (1.5x headroom above the largest transcript the SDK suites' adversarial-
+// complexity ratio tests prove linear); the runner carries its own literal
+// because it imports no SDK. Must match MAX_SET_BINDING_TRANSCRIPT_MESSAGES
+// in conformance/reference-runner/runner.py, concordia/attestation.py and
+// js-sdk/src/attestation/attestation.ts; all four are pinned to
+// tests/fixtures/set_binding_limits.json by tests in both SDK suites.
+const MAX_SET_BINDING_TRANSCRIPT_MESSAGES = 200_000;
 const SEMVER_RE = /^\d+\.\d+\.\d+$/u;
 const SHA256_HEX_RE = /^sha256:[a-f0-9]{64}$/u;
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
@@ -158,6 +170,16 @@ function reject(message) {
   throw new Reject(message);
 }
 
+// The ingest chokepoint for every schema and manifest this runner reads:
+// grammar only (a malformed file throws SyntaxError here). Vector documents
+// go through parseVectorJson instead (see the INTEGER-REJECTION RULE), so
+// an unsafe integer literal in a vector survives parsing as a BigInt and is
+// rejected only if it reaches canonicalization; nothing in a manifest or a
+// schema is ever canonicalized, so the native parser is exact for them.
+// Round 12 scanned the whole document here, which rejected an unsafe
+// integer in the manifest, a schema, or an
+// unused vector member the Python runner accepts (Codex P1, 2026-09-16
+// delta-12 gate).
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
@@ -185,29 +207,516 @@ function b64urlEncode(value) {
   return Buffer.from(value).toString("base64").replace(/\+/g, "-").replace(/\//g, "_");
 }
 
-function jcs(value) {
+// Same-realm prototype-IDENTITY test for a non-array object: true only when
+// `value`'s own [[Prototype]] is exactly null or exactly THIS module's
+// Object.prototype -- the two prototypes an object literal or a same-realm
+// JSON.parse result can ever have. Comparing identity, not shape or brand,
+// is deliberate and is this round's entire subtraction: a hop count, a
+// toString/internal-slot brand probe, or a symbol-key walk all tried to
+// characterize "plain-enough" from OUTSIDE, and every one of them borrowed
+// a mutable builtin (Date.prototype.getTime, Array.prototype.some,
+// Object.prototype.toString) that a hostile SAME-REALM caller can reassign
+// before handing this function a value -- there is no probe a JavaScript
+// library can build from its own realm's builtins that survives a caller
+// who controls that realm's builtins (2026-09-16 delta-10 gate, Codex
+// findings 1-3 and Grok lens A). Object.getPrototypeOf performs a single
+// structural [[GetPrototypeOf]] operation and nothing else; comparing its
+// result against a REFERENCE this module already holds (Object.prototype)
+// reads no property of `value` and calls no method borrowed from `value`'s
+// own realm, so there is nothing left for a hostile same-realm caller to
+// intercept. A cross-realm JSON.parse result has a DIFFERENT
+// Object.prototype object and is refused by this test on purpose: the
+// caller re-parses it here first (fromJsonText in js-sdk/src/canonical/
+// canonicalize.ts; this runner has no public API of its own, so it has no
+// mirror of that helper). Must match isPlainObjectPrototype in
+// js-sdk/src/canonical/canonicalize.ts.
+function isPlainObjectPrototype(value) {
+  const proto = Object.getPrototypeOf(value);
+  return proto === null || proto === Object.prototype;
+}
+
+// Same-realm prototype-IDENTITY test for an array: true only when `value`
+// is an exotic Array (Array.isArray, itself a structural check that reads
+// no property of `value`) whose own [[Prototype]] is exactly THIS module's
+// Array.prototype. An Array subclass instance, or a cross-realm array, has
+// a different prototype object and is refused here for the same reason, and
+// by the same single comparison, as isPlainObjectPrototype. Must match
+// isPlainArrayPrototype in js-sdk/src/canonical/canonicalize.ts.
+function isPlainArrayPrototype(value) {
+  return Array.isArray(value) && Object.getPrototypeOf(value) === Array.prototype;
+}
+
+// Reject a single number that cannot canonicalize identically to the Python
+// reference: non-finite, negative zero, or a plain-decimal integer beyond
+// Number.MAX_SAFE_INTEGER. Runner parity fix (2026-09-16 delta-10 gate,
+// Grok lens B finding 3): this runner previously rejected only non-finite
+// numbers here, so -0 and an unsafe plain-decimal integer canonicalized
+// silently instead of matching the SDK's and Python's rejection. Must match
+// checkNoSpecialFloatValue in js-sdk/src/canonical/checks.ts.
+function checkNoSpecialFloatValue(value) {
+  if (!Number.isFinite(value)) {
+    reject(`Cannot serialize non-finite number: ${value}`);
+  }
+  if (Object.is(value, -0)) {
+    reject("Cannot serialize negative zero (-0)");
+  }
+  if (Number.isInteger(value) && !Number.isSafeInteger(value) && !/[eE]/.test(String(value))) {
+    reject(`Cannot serialize unsafe integer ${value}: it would diverge from the Python reference`);
+  }
+}
+
+// Reject a string containing an unpaired UTF-16 surrogate. Runner parity fix
+// (2026-09-16 delta-10 gate, Grok lens B finding 3): this runner previously
+// applied no lone-surrogate check at all in snapshotPlainJson, so a lone
+// surrogate in a string value OR an object key canonicalized silently
+// instead of matching the SDK's and Python's rejection. Must match
+// checkLoneSurrogates in js-sdk/src/canonical/checks.ts.
+function checkLoneSurrogates(s) {
+  for (let i = 0; i < s.length; i++) {
+    const code = s.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = i + 1 < s.length ? s.charCodeAt(i + 1) : 0;
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        i++;
+        continue;
+      }
+      reject(`Cannot canonicalize string with unpaired UTF-16 high surrogate at index ${i}`);
+    }
+    if (code >= 0xdc00 && code <= 0xdfff) {
+      reject(`Cannot canonicalize string with unpaired UTF-16 low surrogate at index ${i}`);
+    }
+  }
+}
+
+const UNSAFE_INT_QUOTE = 0x22; // "
+const UNSAFE_INT_BACKSLASH = 0x5c; // \
+const UNSAFE_INT_MINUS = 0x2d; // -
+const UNSAFE_INT_PLUS = 0x2b; // +
+const UNSAFE_INT_DOT = 0x2e; // .
+const UNSAFE_INT_LOWER_E = 0x65; // e
+const UNSAFE_INT_UPPER_E = 0x45; // E
+const UNSAFE_INT_ZERO = 0x30; // 0
+const UNSAFE_INT_NINE = 0x39; // 9
+
+const SCAN_LBRACE = 0x7b; // {
+const SCAN_RBRACE = 0x7d; // }
+const SCAN_LBRACKET = 0x5b; // [
+const SCAN_RBRACKET = 0x5d; // ]
+const SCAN_COLON = 0x3a; // :
+const SCAN_COMMA = 0x2c; // ,
+const SCAN_SPACE = 0x20;
+const SCAN_TAB = 0x09;
+const SCAN_LF = 0x0a;
+const SCAN_CR = 0x0d;
+
+function isJsonWhitespace(code) {
+  return code === SCAN_SPACE || code === SCAN_TAB || code === SCAN_LF || code === SCAN_CR;
+}
+
+// INTEGER-REJECTION RULE (shared by both reference runners; must match the
+// same paragraph above reject_json_constant in
+// conformance/reference-runner/runner.py): an integer outside
+// +/-(2^53 - 1) is rejected iff it reaches canonicalization, by the SAME
+// mechanism in both runners. The Python runner: json.loads keeps every
+// integer at arbitrary precision, and rfc8785.dumps raises
+// IntegerDomainError at the exact moment such an integer reaches jcs_bytes;
+// an unsafe integer a profile never canonicalizes (an unused `input`
+// member, an extra key profile_subdict drops, anything under `context` or
+// `notes`) is never rejected. This runner: parseVectorJson below keeps an
+// unsafe plain-decimal integer literal as a BigInt (the JavaScript value
+// that, like Python's int, holds it without loss and is distinguishable
+// from a legitimate `1e+21` float literal), and snapshotPlainJson, the one
+// chokepoint every canonicalization runs through, rejects a BigInt at the
+// exact moment it reaches canonicalization. Nothing is decided at ingest
+// and nothing is approximated by document position: round 13's "reject if
+// it lies under `input`" scan diverged from Python on an unsafe integer in
+// an unused `input` member of chain-session-transition-v1 and on an extra
+// key under agent-profile-v1's trust_signals or a reputation assertion
+// (Codex P1 and Grok lens A, 2026-09-17 delta-13 gate); both are pinned by
+// tests/conformance_runner_checks.py. Schema validation sees the BigInt as
+// the number Python's jsonschema sees (schemaView below), so a schema
+// verdict cannot diverge either. JSON.parse cannot do any of this: once it
+// has run, a plain-decimal integer at the >= 1e21 magnitude is the same
+// lossy double as a `1e+21` float literal (fixture vector_08's 1e30
+// predicate limit lives in that band and must stay accepted), so the only
+// place the literal form survives is the source text, which is why the
+// vector document is parsed by hand. Strings are decoded by JSON.parse on
+// the string token (a big integer carried as a JSON string is never a
+// number token); fraction and exponent literals stay floats exactly as in
+// parseJsonStrict (js-sdk/src/canonical/parse.ts), whose number
+// tokenization this mirrors.
+const LITERAL_TRUE = "true";
+const LITERAL_FALSE = "false";
+const LITERAL_NULL = "null";
+
+function parseVectorJson(text) {
+  // Grammar first, with the native parser: a malformed document throws
+  // SyntaxError here, so the descent below only ever sees well-formed JSON
+  // and needs no error recovery of its own. Its value is discarded; the
+  // tree returned is the one built below.
+  JSON.parse(text);
+  const cursor = { text, i: 0 };
+  skipJsonWhitespace(cursor);
+  return parseJsonValue(cursor);
+}
+
+function skipJsonWhitespace(cursor) {
+  while (cursor.i < cursor.text.length && isJsonWhitespace(cursor.text.charCodeAt(cursor.i))) {
+    cursor.i += 1;
+  }
+}
+
+function parseJsonValue(cursor) {
+  const ch = cursor.text.charCodeAt(cursor.i);
+  if (ch === SCAN_LBRACE) return parseJsonObject(cursor);
+  if (ch === SCAN_LBRACKET) return parseJsonArray(cursor);
+  if (ch === UNSAFE_INT_QUOTE) return parseJsonString(cursor);
+  for (const literal of [LITERAL_TRUE, LITERAL_FALSE, LITERAL_NULL]) {
+    if (cursor.text.startsWith(literal, cursor.i)) {
+      cursor.i += literal.length;
+      return JSON.parse(literal);
+    }
+  }
+  return parseJsonNumber(cursor);
+}
+
+function parseJsonString(cursor) {
+  const text = cursor.text;
+  const start = cursor.i;
+  let i = start + 1;
+  while (i < text.length) {
+    const c = text.charCodeAt(i);
+    if (c === UNSAFE_INT_BACKSLASH) {
+      i += 2; // the escape and the escaped character together
+      continue;
+    }
+    i += 1;
+    if (c === UNSAFE_INT_QUOTE) break;
+  }
+  cursor.i = i;
+  return JSON.parse(text.slice(start, i));
+}
+
+// The number tokenization of parseJsonStrict (js-sdk/src/canonical/parse.ts):
+// a token is in INTEGER form until a '.' or an exponent marker appears.
+function parseJsonNumber(cursor) {
+  const text = cursor.text;
+  const start = cursor.i;
+  let integerForm = true;
+  let i = start + 1; // the first character is '-' or a digit in well-formed JSON
+  while (i < text.length) {
+    const c = text.charCodeAt(i);
+    if (c >= UNSAFE_INT_ZERO && c <= UNSAFE_INT_NINE) {
+      i += 1;
+    } else if (c === UNSAFE_INT_DOT || c === UNSAFE_INT_LOWER_E || c === UNSAFE_INT_UPPER_E) {
+      integerForm = false;
+      i += 1;
+    } else if (c === UNSAFE_INT_PLUS || c === UNSAFE_INT_MINUS) {
+      i += 1; // only follows an exponent marker in well-formed JSON
+    } else {
+      break;
+    }
+  }
+  cursor.i = i;
+  const token = text.slice(start, i);
+  if (integerForm && !Number.isSafeInteger(Number(token))) {
+    return BigInt(token);
+  }
+  return JSON.parse(token);
+}
+
+function parseJsonArray(cursor) {
+  const out = [];
+  cursor.i += 1; // '['
+  skipJsonWhitespace(cursor);
+  if (cursor.text.charCodeAt(cursor.i) === SCAN_RBRACKET) {
+    cursor.i += 1;
+    return out;
+  }
+  for (;;) {
+    skipJsonWhitespace(cursor);
+    out.push(parseJsonValue(cursor));
+    skipJsonWhitespace(cursor);
+    const c = cursor.text.charCodeAt(cursor.i);
+    cursor.i += 1;
+    if (c === SCAN_RBRACKET) return out;
+    // otherwise ',' in well-formed JSON
+  }
+}
+
+function parseJsonObject(cursor) {
+  // A {} object populated by defineProperty, never `out[key] = value`: this
+  // is what JSON.parse itself does (CreateDataProperty), so a "__proto__"
+  // key becomes an own data property and a duplicate key is last-wins,
+  // exactly as the native tree would have them.
+  const out = {};
+  cursor.i += 1; // '{'
+  skipJsonWhitespace(cursor);
+  if (cursor.text.charCodeAt(cursor.i) === SCAN_RBRACE) {
+    cursor.i += 1;
+    return out;
+  }
+  for (;;) {
+    skipJsonWhitespace(cursor);
+    const key = parseJsonString(cursor);
+    skipJsonWhitespace(cursor);
+    cursor.i += 1; // ':'
+    skipJsonWhitespace(cursor);
+    const value = parseJsonValue(cursor);
+    Object.defineProperty(out, key, {
+      value,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+    skipJsonWhitespace(cursor);
+    const c = cursor.text.charCodeAt(cursor.i);
+    cursor.i += 1;
+    if (c === SCAN_RBRACE) return out;
+    // otherwise ',' in well-formed JSON
+  }
+}
+
+// What schema validation is shown: the same tree with every BigInt replaced
+// by the lossy double JSON.parse would have produced. Python's jsonschema
+// validates an arbitrary-precision int as an ordinary integer; ajv would
+// call a BigInt neither "number" nor "integer", and that would be a verdict
+// reached by a different mechanism than Python's. The view is used for
+// validation only; the value canonicalization sees is the original tree,
+// BigInt included.
+function schemaView(value) {
+  if (typeof value === "bigint") return Number(value);
+  if (Array.isArray(value)) return value.map((item) => schemaView(item));
+  if (isObject(value)) {
+    const out = {};
+    for (const [key, item] of Object.entries(value)) {
+      Object.defineProperty(out, key, {
+        value: schemaView(item),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+    }
+    return out;
+  }
+  return value;
+}
+
+// Produce a realm-local, plain-data deep copy of `value` in a single
+// traversal, reading each member of the caller-supplied structure exactly
+// once. Mirrors snapshotPlainJson in js-sdk/src/canonical/canonicalize.ts;
+// must match it.
+//
+// Every own, string-keyed property (object) or index (array) is observed
+// through exactly ONE call to Object.getOwnPropertyDescriptors, which
+// performs one [[OwnPropertyKeys]] and one [[GetOwnProperty]] per key and
+// returns fresh, realm-local plain descriptor records whose `value` was
+// read exactly once -- never a separate Object.keys enumerability pass
+// followed by a per-key Object.getOwnPropertyDescriptor call, which is two
+// independent trap invocations a Proxy can answer differently (Grok finding
+// 1, 2026-09-16 delta-7 gate). This function never calls Object.keys,
+// Object.getOwnPropertyDescriptor, or any indexed/keyed [[Get]]
+// (`value[key]`, `value[index]`) on the caller's own value -- only on the
+// descriptor MAP this function itself built from that one call. An
+// accessor descriptor throws outright, and an array index absent from the
+// map -- a sparse hole, including one an inherited index getter would
+// otherwise answer -- throws too, instead of falling through to an indexed
+// read that would reach the prototype chain.
+//
+// THE CONTRACT (2026-09-16 fix round 12 -- restated to name exactly the
+// predicate below, matching js-sdk/src/canonical/canonicalize.ts's own
+// restatement after Grok lens A's delta-11 finding that the fix-round-11
+// wording said Proxies and retargeted class instances are refused, when
+// the identity tests below cannot tell them apart from an ordinary object
+// or array and accept them): this function accepts a value iff it is an
+// Array (Array.isArray) whose own prototype is exactly this realm's
+// Array.prototype, or -- checked only when that is false, never as a
+// fallback pair -- its own prototype is exactly null or exactly this
+// realm's Object.prototype. Nothing else is inspected: not a hop count,
+// not a toString/internal-slot brand, not a symbol key. A value from
+// another realm has no re-parse helper in this standalone runner and is
+// simply refused (a cross-realm Object.prototype/Array.prototype is a
+// distinct object and fails the same identity test); a caller driving
+// this runner re-parses cross-realm JSON before handing it in.
+//
+// Because the predicate reads only prototype identity and the descriptor
+// map, it accepts values JSON.parse cannot itself produce -- documented
+// residuals, not a probe gap: a Proxy whose getPrototypeOf and
+// getOwnPropertyDescriptors traps present a same-realm plain object or
+// Array is snapshotted as the plain data those traps returned, once (this
+// runner does not attempt to detect Proxies); a builtin or class instance
+// is refused as constructed but accepted once its own prototype has been
+// retargeted to null or this realm's Object.prototype, snapshotted as
+// whatever own enumerable data it then carries; a null-prototype object
+// with own data canonicalizes as that data; an arguments object
+// canonicalizes as its own enumerable indices only, because its OWN
+// prototype genuinely IS this realm's Object.prototype. This runner does
+// not defend against replacement of this realm's builtins; a hostile
+// same-realm environment is outside every JavaScript library's contract.
+//
+// The copy this function returns is built with Object.create(null) (for an
+// object) or [] (for an array) and populated ONLY through
+// Object.defineProperty, never [[Set]] (`out[key] = ...` /
+// `out[index] = ...`): this is what makes the JSON key "__proto__" an
+// ordinary own data property on the copy instead of a trigger for the
+// inherited Object.prototype __proto__ accessor.
+function snapshotPlainJson(value) {
+  if (value === null) {
+    return null;
+  }
+  const t = typeof value;
+  if (t === "bigint") {
+    // The INTEGER-REJECTION RULE's one enforcement point: a BigInt is what
+    // parseVectorJson made of a plain-decimal integer literal outside
+    // +/-(2^53 - 1), and this is the moment it reaches canonicalization,
+    // the same moment rfc8785.dumps raises IntegerDomainError inside the
+    // Python runner's jcs_bytes. Reason text must match the Python runner's
+    // jcs_bytes rejection for the same input.
+    reject("JCS canonicalization failed: unsafe integer reaches canonicalization");
+  }
+  if (t === "boolean") {
+    return value;
+  }
+  if (t === "string") {
+    // Runs on this exact read, the one that copies the value into the
+    // snapshot; there is no earlier pre-pass reading this string a second
+    // time.
+    checkLoneSurrogates(value);
+    return value;
+  }
+  if (t === "number") {
+    // Runs on this exact read, the one that copies the value into the
+    // snapshot; there is no earlier pre-pass reading this number a second
+    // time.
+    checkNoSpecialFloatValue(value);
+    return value;
+  }
+  if (Array.isArray(value)) {
+    if (!isPlainArrayPrototype(value)) {
+      reject("JCS canonicalization failed: array prototype is not this realm's Array.prototype");
+    }
+    // One call observes every index AND `length` together; there is no
+    // separate `value.length` read left for a `length` trap to answer
+    // differently from the descriptor map this loop actually walks (Codex
+    // P1, 2026-09-16 delta-6 gate: a transcript array reporting length 2
+    // during validation and length 1 during reconstruction).
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const lengthDescriptor = descriptors.length;
+    if (
+      lengthDescriptor === undefined ||
+      lengthDescriptor.get !== undefined ||
+      typeof lengthDescriptor.value !== "number" ||
+      !Number.isSafeInteger(lengthDescriptor.value) ||
+      lengthDescriptor.value < 0
+    ) {
+      reject("JCS canonicalization failed: array length is not a non-negative safe integer");
+    }
+    const length = lengthDescriptor.value;
+    // Built as [] and populated by defineProperty per index, never
+    // `out[index] = ...` (a [[Set]]): must match the object branch below
+    // and js-sdk/src/canonical/canonicalize.ts's array branch. Array's
+    // exotic [[DefineOwnProperty]] still updates `length` to the highest
+    // index defined, exactly as an array literal would.
+    const out = [];
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = descriptors[String(index)];
+      // Hole, accessor, or non-enumerable: one rule with the object branch
+      // (own enumerable data descriptors only), except that an array index
+      // cannot be skipped without renumbering the later elements, so it is
+      // refused rather than omitted. Must match the array branch of
+      // snapshotPlainJson in js-sdk/src/canonical/canonicalize.ts.
+      if (
+        descriptor === undefined ||
+        descriptor.get !== undefined ||
+        descriptor.set !== undefined ||
+        !descriptor.enumerable
+      ) {
+        reject(
+          `JCS canonicalization failed: array index ${index} is a hole, an accessor, or non-enumerable`,
+        );
+      }
+      Object.defineProperty(out, index, {
+        value: snapshotPlainJson(descriptor.value),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+    }
+    return out;
+  }
+  if (isObject(value)) {
+    if (!isPlainObjectPrototype(value)) {
+      reject(
+        "JCS canonicalization failed: object prototype is not null or this realm's Object.prototype",
+      );
+    }
+    // Object.create(null), never {}: a {} copy inherits Object.prototype,
+    // whose OWN __proto__ property is an ACCESSOR (get/set), not a plain
+    // data property. Populating such a copy with `out[key] = value` (a
+    // [[Set]]) for the JSON key "__proto__" does not create an own
+    // property at all -- it invokes that inherited setter, which retargets
+    // the copy's OWN prototype to the JSON value instead of storing it
+    // (Grok and Codex verbatim, 2026-09-16 delta-7 gate). A null-prototype
+    // copy has no inherited accessor at any key, so there is nothing left
+    // to intercept. Must match the object branch in
+    // js-sdk/src/canonical/canonicalize.ts.
+    const out = Object.create(null);
+    // The ONE call: every own key of `value` is observed here, once. A key
+    // absent from `value` never appears in `descriptors` at all
+    // (getOwnPropertyDescriptors omits it outright, rather than two calls
+    // disagreeing about it), so there is no raced-deletion case left to
+    // silently skip.
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    // Object.keys of THIS descriptor map -- a fresh plain object this
+    // function just built from the call above -- not of `value`;
+    // enumerating it performs no further read of the caller-controlled
+    // object at all, and returns only string keys, so a symbol-keyed own
+    // property is silently absent from the snapshot (the same thing
+    // JSON.parse does).
+    for (const key of Object.keys(descriptors)) {
+      const descriptor = descriptors[key];
+      if (!descriptor.enumerable) continue;
+      if (descriptor.get !== undefined || descriptor.set !== undefined) {
+        reject(`JCS canonicalization failed: property ${JSON.stringify(key)} is an accessor`);
+      }
+      checkLoneSurrogates(key);
+      // defineProperty, never `out[key] = ...`: see the invariant comment
+      // on Object.create(null) above. "__proto__" is stored and later
+      // emitted as the ordinary JSON key RFC 8785 and the Python
+      // implementation both treat it as -- never as this copy's
+      // prototype.
+      Object.defineProperty(out, key, {
+        value: snapshotPlainJson(descriptor.value),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+    }
+    return out;
+  }
+  reject("JCS canonicalization failed");
+}
+
+function stringifyPlain(value) {
   if (value === null) {
     return "null";
   }
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) {
-      reject("JCS canonicalization failed");
-    }
-    return JSON.stringify(value);
-  }
-  if (typeof value === "string" || typeof value === "boolean") {
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "string") {
     return JSON.stringify(value);
   }
   if (Array.isArray(value)) {
-    return `[${value.map((item) => jcs(item)).join(",")}]`;
+    return `[${value.map((item) => stringifyPlain(item)).join(",")}]`;
   }
-  if (isObject(value)) {
-    return `{${Object.keys(value)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${jcs(value[key])}`)
-      .join(",")}}`;
-  }
-  reject("JCS canonicalization failed");
+  // The only case left a snapshot can produce is a plain object built by
+  // snapshotPlainJson itself (own string-keyed data properties only).
+  return `{${Object.keys(value)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stringifyPlain(value[key])}`)
+    .join(",")}}`;
+}
+
+function jcs(value) {
+  return stringifyPlain(snapshotPlainJson(value));
 }
 
 function jcsBytes(value) {
@@ -226,14 +735,32 @@ function canonicalSha256(payload) {
   return `sha256:${sha256Bytes(payload)}`;
 }
 
+// Runner parity fix (2026-09-16 delta-10 gate, Grok lens B finding 3):
+// `result[key] = value` (a [[Set]]) on a `{}` copy invokes the inherited
+// Object.prototype `__proto__` ACCESSOR for the JSON key "__proto__"
+// instead of storing it, so a signed message carrying that key verified
+// over bytes silently missing it here while the SDK's own boundary
+// snapshot (canonicalize.ts's Object.create(null) + defineProperty) kept
+// it -- the same divergence the object branch of snapshotPlainJson above
+// closed for the general case. Object.entries(data), like the [[Set]] this
+// replaces, is a read of the CALLER's `data`, never of a copy this
+// function built, so it stays: this fix is about how the copy is
+// populated, not how `data` is read. Must match Python's without_top_level
+// in conformance/reference-runner/runner.py (dict comprehension, no
+// __proto__ hazard in Python).
 function withoutTopLevel(data, keys) {
   if (!isObject(data)) {
     reject("input is not an object");
   }
-  const result = {};
+  const result = Object.create(null);
   for (const [key, value] of Object.entries(data)) {
     if (!keys.has(key)) {
-      result[key] = value;
+      Object.defineProperty(result, key, {
+        value,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
     }
   }
   return result;
@@ -355,7 +882,7 @@ function validateSchema(suiteBase, schemaName, data) {
     }
     context.validators.set(schemaName, validate);
   }
-  if (!validate(data)) {
+  if (!validate(schemaView(data))) {
     reject("schema validation failed");
   }
 }
@@ -385,7 +912,7 @@ function validateAction(schema, action) {
   validateJsonSchemaObject(schema);
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const validate = ajv.compile(schema);
-  if (!validate(action)) {
+  if (!validate(schemaView(action))) {
     reject("action violates constraints");
   }
 }
@@ -1503,6 +2030,243 @@ function verifyMessageChainReceiptBinding(suiteBase, inputData, messages, contex
   }
 }
 
+/**
+ * Rebuild one message order from prev_hash links alone (SPEC 9.6.5b).
+ *
+ * `messages` here is ALREADY the boundary snapshot verifyReceiptSetBindingProfile
+ * (the only caller) produced from the caller's transcript -- a realm-local
+ * plain copy, not the caller's own array. This function reads
+ * `messages.length` and `messages[i]` freely below without reopening the
+ * class the snapshot exists to close: a Proxy transcript array that answers
+ * one length during the signature loop and a different one during
+ * reconstruction (Codex P1, 2026-09-16 delta-6 gate) cannot occur here,
+ * because there is no live reference back to the caller's array left to
+ * answer inconsistently.
+ *
+ * Rejects when the presented set is not exactly one chain. The presented order
+ * is never consulted, because the presenter chooses it: a fork, an orphan, a
+ * second root, or a re-linked substitution of equal size all survive a
+ * sequential walk whenever the last presented message still hashes to
+ * chain_head. The digest compared against prev_hash is the SPEC 9.3 digest over
+ * the complete canonical form INCLUDING the signature, so a transcript whose
+ * links were computed over the signature-stripped form does not reconstruct.
+ * Must match reconstruct_single_chain in
+ * conformance/reference-runner/runner.py and in
+ * scripts/conformance/generate_vectors.py.
+ */
+function reconstructSingleChain(messages) {
+  // One canonical byte string per message, computed once, feeds BOTH the
+  // digest below and the link-reading view further down (and, via the
+  // returned headDigest, the caller's chain_head comparison too -- see
+  // verifyReceiptSetBindingProfile). jcs walks only own enumerable
+  // string-keyed data properties (snapshotPlainJson, see the jcs() function
+  // above), rejects any accessor property outright, and never invokes a
+  // toJSON method, own or inherited, unlike JSON.stringify. `message` here
+  // is already an element of the boundary-snapshotted `messages`, not the
+  // caller's own object, so jcs's own internal snapshot copies data this
+  // function already owns rather than reading anything caller-controlled a
+  // second time. Must match attestation.ts and runner.py.
+  const canonicalBytes = messages.map((message) => jcsBytes(message));
+  const digests = canonicalBytes.map((bytes) => canonicalSha256(bytes));
+
+  const byDigest = new Map();
+  for (let index = 0; index < messages.length; index += 1) {
+    const digest = digests[index];
+    if (byDigest.has(digest)) {
+      reject("transcript presents the same message more than once");
+    }
+    byDigest.set(digest, index);
+  }
+
+  const roots = [];
+  const successorOf = new Map();
+  for (let index = 0; index < messages.length; index += 1) {
+    requireObject(messages[index], "transcript message");
+    // The view is parsed from the SAME canonical bytes just hashed above,
+    // not from the caller's object and not from a fresh JSON.stringify of
+    // it. Must match the digest derivation immediately above: same bytes
+    // in, digest one way, view the other. Must match attestation.ts and
+    // runner.py.
+    const view = JSON.parse(canonicalBytes[index].toString("utf8"));
+    const hasPrevHash = Object.prototype.hasOwnProperty.call(view, "prev_hash");
+    const prevHash = view.prev_hash;
+    if (!hasPrevHash || prevHash === GENESIS_HASH) {
+      roots.push(index);
+      continue;
+    }
+    if (prevHash === null) {
+      // An absent key and an explicit JSON null both read back as undefined/
+      // null from `message.prev_hash`; the contract makes only the absent
+      // key a root, so a present-but-null prev_hash is a malformed link, not
+      // a second spelling of genesis. Must match runner.py and
+      // attestation.ts.
+      reject("transcript message has an explicit null prev_hash");
+    }
+    if (typeof prevHash !== "string") {
+      reject("transcript message prev_hash is not a string");
+    }
+    const predecessor = byDigest.get(prevHash);
+    if (predecessor === undefined) {
+      reject("transcript message is an orphan");
+    }
+    if (successorOf.has(predecessor)) {
+      reject("transcript forks: two messages claim one predecessor");
+    }
+    successorOf.set(predecessor, index);
+  }
+
+  if (roots.length !== 1) {
+    reject("a chain has exactly one message without prev_hash");
+  }
+
+  const chain = [];
+  let cursor = roots[0];
+  // Tracks the ORIGINAL messages-array index of the last message pushed, so
+  // the terminal digest below reads out of `digests` -- already hashed
+  // above -- instead of rehashing `chain[chain.length - 1]` (the caller's
+  // original object) a second time.
+  let terminalIndex;
+  while (cursor !== undefined) {
+    chain.push(messages[cursor]);
+    terminalIndex = cursor;
+    cursor = successorOf.get(cursor);
+  }
+  if (chain.length !== messages.length) {
+    reject("transcript does not form a single chain");
+  }
+  return { chain, headDigest: digests[terminalIndex] };
+}
+
+/**
+ * Decide receipt set binding under SPEC 9.6.5b.
+ *
+ * Distinct from message-chain-v1: that profile walks a transcript in the order
+ * it was presented, while this one credits set binding only from a chain
+ * rebuilt out of prev_hash links, and only when a transcript is supplied at
+ * all.
+ */
+function verifyReceiptSetBindingProfile(suiteBase, inputData, context) {
+  const chainInput = requireObject(inputData, "receipt set binding input");
+  const inputKeys = Object.keys(chainInput).sort().join("\u0000");
+  if (inputKeys !== "receipt" && inputKeys !== "messages\u0000receipt") {
+    reject("input must contain a receipt, optionally with messages");
+  }
+  // Boundary snapshot: the caller-supplied receipt is read here exactly
+  // once, into a realm-local plain copy. Every later read in this function
+  // -- the version gate, the chain_head/message_count format checks, the
+  // party and countersignature loops, the final chain_head/message_count
+  // comparison -- reads only this `receipt`, never chainInput.receipt
+  // again, so a getter or Proxy trap on the caller's receipt gets exactly
+  // one chance to answer (Grok finding 2, 2026-09-16 delta-6 gate:
+  // chain_head previously read at the format check, again inside the
+  // countersign snapshot, and again at the final comparison, with room for
+  // a getter to answer each differently). Must match verifyReceiptSetBinding
+  // in js-sdk/src/attestation/attestation.ts.
+  const receipt = snapshotPlainJson(requireObject(chainInput.receipt, "receipt"));
+  validateSchema(suiteBase, "attestation.schema.json", receipt);
+  if (!attestationVersionAtLeast(receipt.concordia_attestation, 0, 3)) {
+    reject("receipt is legacy set-unbound");
+  }
+  if (typeof receipt.chain_head !== "string" || !SHA256_HEX_RE.test(receipt.chain_head)) {
+    reject("receipt chain_head is malformed");
+  }
+  if (
+    !Number.isInteger(receipt.message_count) ||
+    typeof receipt.message_count === "boolean" ||
+    receipt.message_count < 1
+  ) {
+    reject("receipt message_count is malformed");
+  }
+  if (!isObject(context.public_keys_b64url)) {
+    reject("receipt public key map is missing");
+  }
+  if (!Array.isArray(receipt.parties)) {
+    reject("receipt parties are missing");
+  }
+  if (!isObject(receipt.countersignatures)) {
+    reject("receipt countersignatures are missing");
+  }
+  const countersignPayload = countersignPreimage(receipt);
+  for (const partyItem of receipt.parties) {
+    const party = requireObject(partyItem, "receipt party");
+    if (typeof party.agent_id !== "string" || party.agent_id === "") {
+      reject("receipt party agent_id is missing");
+    }
+    const publicKey = context.public_keys_b64url[party.agent_id];
+    if (typeof publicKey !== "string") {
+      reject("receipt party public key is missing");
+    }
+    verifyEd25519(
+      publicKey,
+      bareSignature(party),
+      jcsBytes(withoutTopLevel(party, new Set(["signature"]))),
+    );
+    const countersignature = receipt.countersignatures[party.agent_id];
+    if (typeof countersignature !== "string") {
+      reject("receipt countersignature is missing");
+    }
+    verifyEd25519(publicKey, countersignature, countersignPayload);
+  }
+
+  if (!Object.hasOwn(chainInput, "messages")) {
+    // chain_head and message_count are the issuer's own claim about a
+    // transcript, so a verdict reached without one has checked that claim
+    // against nothing. Unestablished is never an accept.
+    reject("set binding is unestablished without a transcript");
+  }
+  // Boundary snapshot: the caller-supplied transcript and every message in
+  // it are read here exactly once, into a realm-local plain copy. Neither
+  // the per-message signature loop just below nor reconstructSingleChain
+  // reads chainInput.messages or any of its elements again -- both read
+  // only this `messages`, so the two cannot be shown a different length or
+  // a different message than each other (Codex P1, Grok finding 1,
+  // 2026-09-16 delta-6 gate). Must match verifyReceiptSetBinding in
+  // js-sdk/src/attestation/attestation.ts.
+  if (
+    Array.isArray(chainInput.messages) &&
+    chainInput.messages.length > MAX_SET_BINDING_TRANSCRIPT_MESSAGES
+  ) {
+    // Named cap on the presented array's length, read once, BEFORE the
+    // snapshot below copies anything and before any per-message signature
+    // or hashing work. Must match verifyReceiptSetBinding in
+    // js-sdk/src/attestation/attestation.ts and
+    // verify_receipt_set_binding_profile in
+    // conformance/reference-runner/runner.py.
+    reject("transcript exceeds the maximum message count");
+  }
+  const messages = snapshotPlainJson(chainInput.messages);
+  if (!Array.isArray(messages) || messages.length === 0) {
+    reject("transcript messages are missing");
+  }
+  for (const item of messages) {
+    const message = requireObject(item, "transcript message");
+    const sender = requireObject(message.from, "transcript sender");
+    if (typeof sender.agent_id !== "string") {
+      reject("transcript sender agent_id is missing");
+    }
+    const publicKey = context.public_keys_b64url[sender.agent_id];
+    verifyEd25519(
+      publicKey,
+      message.signature,
+      jcsBytes(withoutTopLevel(message, new Set(["signature"]))),
+    );
+  }
+
+  const { chain, headDigest } = reconstructSingleChain(messages);
+  if (receipt.message_count !== chain.length) {
+    reject("receipt message_count mismatch");
+  }
+  // headDigest reuses the digest reconstructSingleChain already computed,
+  // once, from the same canonicalBytes the chain walk reads links from. It
+  // is NOT messageHash(chain[chain.length - 1]), which would canonicalize
+  // the terminal message's ORIGINAL object a second time and let a getter
+  // answer that second read differently than the first (Codex P1,
+  // 2026-09-16 delta-5 gate). Must match attestation.ts.
+  if (receipt.chain_head !== headDigest) {
+    reject("receipt chain_head mismatch");
+  }
+}
+
 function verifyMessageChain(suiteBase, inputData, context, regression) {
   const chain = requireObject(inputData, "message chain");
   const chainKeys = Object.keys(chain).sort().join("\u0000");
@@ -1604,22 +2368,31 @@ function verifyProfile(suiteBase, profile, inputData, context, regression) {
     verifyReceiptBundle(suiteBase, inputData, context);
   } else if (profile === "message-chain-v1") {
     verifyMessageChain(suiteBase, inputData, context, regression);
+  } else if (profile === "receipt-set-binding-v1") {
+    verifyReceiptSetBindingProfile(suiteBase, inputData, context);
   } else {
     reject("unknown verification profile");
   }
 }
 
+// Returns the verdict and, for a reject, its reason: the Reject message, or
+// `error: <message>` for any other exception (still a reject). The reason
+// never reaches stdout; runSuite prints it to stderr only under --explain,
+// so the verdict-only stdout contract is unchanged. Must match
+// evaluate_vector in conformance/reference-runner/runner.py.
 function evaluateVector(suiteBase, vector, regression) {
   try {
     const [, inputData, context, profile] = requireVectorShape(vector);
     verifyProfile(suiteBase, profile, inputData, context, regression);
   } catch (error) {
-    if (error instanceof Reject) {
-      return "reject";
-    }
-    return "reject";
+    return { outcome: "reject", reason: rejectReason(error) };
   }
-  return "accept";
+  return { outcome: "accept", reason: null };
+}
+
+function rejectReason(error) {
+  if (error instanceof Reject) return error.message;
+  return `error: ${error instanceof Error ? error.message : String(error)}`;
 }
 
 function suiteBaseFromRoot(suiteRoot) {
@@ -1668,7 +2441,7 @@ function activeRegression() {
   return raw;
 }
 
-function runSuite(suiteArg, regression) {
+function runSuite(suiteArg, regression, explain) {
   const [manifestPath, suiteBase] = manifestPathFromArg(suiteArg);
   const manifest = readJson(manifestPath);
   if (!isObject(manifest)) {
@@ -1693,18 +2466,27 @@ function runSuite(suiteArg, regression) {
       let vectorId = String(relPath);
       let expected = "<unreadable>";
       let got = "reject";
+      let reason = null;
       try {
         if (typeof relPath !== "string") {
           reject("manifest path is not a string");
         }
-        const vector = readJson(resolveManifestFile(suiteBase, relPath));
+        const vectorText = fs.readFileSync(resolveManifestFile(suiteBase, relPath), "utf8");
+        const vector = parseVectorJson(vectorText);
         if (isObject(vector) && typeof vector.id === "string") {
           vectorId = vector.id;
           expected = vector.expected ?? "<missing>";
         }
-        got = evaluateVector(suiteBase, vector, regression);
+        ({ outcome: got, reason } = evaluateVector(suiteBase, vector, regression));
       } catch (error) {
         got = "reject";
+        reason = rejectReason(error);
+      }
+      if (explain && got === "reject") {
+        // stderr, never stdout: the [OK]/[FAIL]/[SUMMARY] contract stays
+        // verdict-only. Line format must match run_suite in
+        // conformance/reference-runner/runner.py.
+        console.error(`[EXPLAIN] ${vectorId} reject: ${reason}`);
       }
       if (expected === got) {
         console.log(`[OK] ${vectorId}`);
@@ -1728,11 +2510,13 @@ function runSuite(suiteArg, regression) {
 }
 
 function main(argv) {
-  if (argv.length !== 1) {
-    console.error("usage: runner.mjs <path to conformance/vectors/ or manifest.json>");
+  const explain = argv.includes("--explain");
+  const positional = argv.filter((arg) => arg !== "--explain");
+  if (positional.length !== 1) {
+    console.error("usage: runner.mjs [--explain] <path to conformance/vectors/ or manifest.json>");
     return 2;
   }
-  return runSuite(argv[0], activeRegression());
+  return runSuite(positional[0], activeRegression(), explain);
 }
 
 try {

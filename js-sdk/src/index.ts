@@ -36,8 +36,10 @@ export {
 export {
   canonicalizeJcs,
   canonicalizePredicate,
+  fromJsonText,
   stripSignatures,
   canonicalCosignBytes,
+  snapshotPlainJson,
 } from './canonical/canonicalize.js';
 export { CanonicalizationError, checkNoSpecialFloats } from './canonical/checks.js';
 export { parseJsonStrict } from './canonical/parse.js';
@@ -154,6 +156,7 @@ export {
   VALUE_RANGE_BUCKETS,
   MAX_CATEGORY_LENGTH,
   MAX_REFERENCES,
+  MAX_SET_BINDING_TRANSCRIPT_MESSAGES,
   AttestationError,
   generateAttestation,
   countersignAttestation,

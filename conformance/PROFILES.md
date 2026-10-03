@@ -28,6 +28,35 @@ Vectors:
   `mut-synthetic-receipt-set-binding-0004`;
 - canary: `canary-receipt-set-unchecked`.
 
+## `receipt-set-binding-v1`
+
+Normative sources:
+
+- `SPEC.md` Section 9.6.5b, Receipt Set-Binding.
+- `conformance/RUNNER_CONTRACT.md`, `receipt-set-binding-v1`.
+
+This profile decides set binding from the receipt's own position. A verifier
+credits set binding only when a transcript is supplied, and only when that
+transcript rebuilds into one chain from its `prev_hash` links.
+
+Checks covered by this profile:
+
+- receipt party signatures and countersignatures;
+- a supplied transcript as a precondition for any set-bound credit, so a
+  receipt presented alone reports set binding as unestablished;
+- message signatures over every presented message;
+- chain reconstruction from `prev_hash` links alone, refusing a fork, an
+  orphan, a second root, a duplicated message, and a walk that does not reach
+  every presented message;
+- `message_count` against the length of the reconstructed chain;
+- `chain_head` against the final message of the reconstructed chain.
+
+Vectors:
+
+- positive: `pos-synthetic-receipt-set-binding-reconstruction`;
+- mutations: `mut-synthetic-receipt-set-reconstruction-0001` through
+  `mut-synthetic-receipt-set-reconstruction-0008`.
+
 Reference implementations:
 
 - Python: `conformance/reference-runner/runner.py`;

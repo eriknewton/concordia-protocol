@@ -1,0 +1,4 @@
+{
+  "max_set_binding_transcript_messages": 200000,
+  "derivation": "A round number with roughly 1.5x headroom above the largest transcript length (2n = 128000) the JS SDK's adversarial-complexity n-versus-2n ratio tests drive through set-binding reconstruction with the cycle finder engaged. Four independent literals carry this value: MAX_SET_BINDING_TRANSCRIPT_MESSAGES in js-sdk/src/attestation/attestation.ts, concordia/attestation.py, conformance/reference-runner-js/runner.mjs and conformance/reference-runner/runner.py. A test in each SDK suite pins all four to this file, so a one-sided edit fails CI in both languages."
+}
