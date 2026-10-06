@@ -57,7 +57,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `legacy`, or `not-bound`, applies the structure, freshness, binding,
   revocation, and expected-session checks from
   `draft-newton-agreement-evidence-00`, and keeps well-formed artifacts
-  below 0.5.0 on the `legacy` exit before any signature check.
+  below 0.5.0 on the `legacy` exit before any signature check. There is no
+  0.5.x carve-out: a 0.5.0 or later artifact carrying `fulfillment`
+  including `fulfillment: null`, reference `extensions`, or
+  `validity_temporal.mode: "window"` terminates `not-bound`; a malformed
+  version also terminates `not-bound`.
 
 ### Added
 

@@ -13,12 +13,16 @@ from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+import pytest
+
 from concordia.attestation import (
     ATTESTATION_VERSION,
     AttestationVerificationPolicy,
+    MAX_ATTESTATION_ARTIFACT_BYTES,
     countersign_attestation,
     verify_attestation_artifact,
 )
+from concordia.schema_validator import validate_attestation
 from concordia.signing import KeyPair, sign_message
 
 
@@ -37,6 +41,12 @@ def _key_pair(seed: bytes) -> KeyPair:
 
 def _iso(dt: datetime) -> str:
     return dt.replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _iso_ms(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace(
+        "+00:00", "Z"
+    )
 
 
 def _artifact(now: datetime) -> tuple[dict[str, Any], dict[str, KeyPair]]:
@@ -132,6 +142,18 @@ def _verify(
     )
 
 
+def _resign(artifact: dict[str, Any], keys: dict[str, KeyPair]) -> None:
+    artifact.pop("countersignatures", None)
+    artifact["countersignatures"] = {
+        agent_id: countersign_attestation(artifact, key_pair)
+        for agent_id, key_pair in keys.items()
+    }
+
+
+def _not_bound(artifact: dict[str, Any], keys: dict[str, KeyPair], now: datetime) -> None:
+    assert _verify(artifact, keys, now).terminal_state == "not-bound"
+
+
 def test_v06_positive_vector_round_trips_to_current() -> None:
     now = datetime.now(timezone.utc)
     artifact, keys = _artifact(now)
@@ -202,13 +224,287 @@ def test_v06_expected_party_mismatch_terminates_not_bound() -> None:
     assert result.terminal_state == "not-bound"
 
 
+def test_v05_positive_vector_without_removed_members_is_current() -> None:
+    now = datetime.now(timezone.utc)
+    artifact, keys = _artifact(now)
+    artifact["concordia_attestation"] = "0.5.0"
+    _resign(artifact, keys)
+
+    result = _verify(artifact, keys, now)
+
+    assert validate_attestation(artifact) == []
+    assert result.terminal_state == "current"
+
+
+@pytest.mark.parametrize(
+    "mutator",
+    [
+        lambda artifact, now: artifact.__setitem__("fulfillment", None),
+        lambda artifact, now: artifact["references"][0].__setitem__(
+            "extensions", {"x": True}
+        ),
+        lambda artifact, now: artifact.__setitem__(
+            "validity_temporal",
+            {
+                "mode": "window",
+                "start": _iso(now - timedelta(seconds=30)),
+                "end": _iso(now + timedelta(seconds=300)),
+                "duration_seconds": 60,
+            },
+        ),
+    ],
+)
+def test_v05_removed_members_terminate_not_bound(mutator) -> None:
+    now = datetime.now(timezone.utc)
+    artifact, keys = _artifact(now)
+    artifact["concordia_attestation"] = "0.5.0"
+    mutator(artifact, now)
+    _resign(artifact, keys)
+
+    assert validate_attestation(artifact)
+    _not_bound(artifact, keys, now)
+
+
+@pytest.mark.parametrize(
+    ("mutator", "expected_error"),
+    [
+        (
+            lambda artifact: artifact["references"][0].__setitem__("id", "cafe\u0301"),
+            "not-bound",
+        ),
+        (
+            lambda artifact: artifact["references"][0].__setitem__(
+                "id", "did:example:alice\u200b"
+            ),
+            "not-bound",
+        ),
+        (
+            lambda artifact: artifact["references"][0].__setitem__(
+                "id", "x" * 400
+            ),
+            "not-bound",
+        ),
+        (
+            lambda artifact: artifact["references"][0].__setitem__(
+                "id", "bad\u0001id"
+            ),
+            "not-bound",
+        ),
+    ],
+)
+def test_reference_string_rules_apply_to_identifier_fields(
+    mutator, expected_error: str
+) -> None:
+    now = datetime.now(timezone.utc)
+    artifact, keys = _artifact(now)
+    mutator(artifact)
+
+    assert _verify(artifact, keys, now).terminal_state == expected_error
+
+
+def test_unicode_digit_version_is_malformed_not_bound() -> None:
+    now = datetime.now(timezone.utc)
+    artifact, keys = _artifact(now)
+    artifact["concordia_attestation"] = "0.5.1\u0660"
+    artifact["fulfillment"] = None
+    _resign(artifact, keys)
+
+    _not_bound(artifact, keys, now)
+
+
+def test_absolute_lifetime_fractional_over_cap_is_not_bound() -> None:
+    now = datetime.now(timezone.utc)
+    artifact, keys = _artifact(now)
+    artifact["validity_temporal"] = {
+        "mode": "absolute",
+        "from": _iso(now),
+        "until": _iso_ms(now + timedelta(seconds=7_776_000, milliseconds=999)),
+    }
+    _resign(artifact, keys)
+
+    _not_bound(artifact, keys, now)
+
+
+def test_step_8_expected_binding_arguments_are_required() -> None:
+    now = datetime.now(timezone.utc)
+    artifact, keys = _artifact(now)
+
+    with pytest.raises(TypeError):
+        verify_attestation_artifact(
+            _bytes(artifact),
+            lambda agent_id: keys[agent_id].public_key,
+            now=now,
+            revocation_checker=lambda _: False,
+        )
+
+
+def test_valid_artifact_for_another_session_is_not_bound() -> None:
+    now = datetime.now(timezone.utc)
+    artifact, keys = _artifact(now)
+
+    result = _verify(artifact, keys, now, expected_session_id="sess_other")
+
+    assert result.terminal_state == "not-bound"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b'{"concordia_attestation":"0.6.0","x":' + b"[" * 5000 + b"]" * 5000 + b"}",
+        b'{"concordia_attestation":"0.6.0","attestation_id":"\\ud800"}',
+    ],
+)
+def test_parser_exception_inputs_return_not_bound(payload: bytes) -> None:
+    result = verify_attestation_artifact(
+        payload,
+        lambda _: None,
+        expected_session_id="unused",
+        expected_party_ids=frozenset(),
+    )
+
+    assert result.terminal_state == "not-bound"
+
+
+@pytest.mark.parametrize(
+    "mutator",
+    [
+        lambda artifact: artifact["outcome"].__setitem__("status", []),
+        lambda artifact: artifact["outcome"].__setitem__("resolution_mechanism", []),
+        lambda artifact: artifact["parties"][0].__setitem__("role", []),
+        lambda artifact: artifact["parties"][0]["behavior"].__setitem__(
+            "concession_magnitude", int("9" * 400)
+        ),
+        lambda artifact: artifact["validity_temporal"].__setitem__(
+            "duration_seconds", (2**53) - 1
+        ),
+    ],
+)
+def test_structure_exception_inputs_return_not_bound(mutator) -> None:
+    now = datetime.now(timezone.utc)
+    artifact, keys = _artifact(now)
+    if artifact["validity_temporal"]["mode"] == "absolute":
+        artifact["validity_temporal"] = {
+            "mode": "relative",
+            "from": _iso(now),
+            "duration_seconds": 300,
+        }
+    mutator(artifact)
+
+    result = verify_attestation_artifact(
+        _bytes(artifact),
+        lambda agent_id: keys[agent_id].public_key,
+        expected_session_id="sess_v06_positive",
+        expected_party_ids={"did:example:alice", "did:example:bob"},
+        now=now,
+        revocation_checker=lambda _: False,
+    )
+
+    assert result.terminal_state == "not-bound"
+
+
+def test_size_cap_applies_before_parse() -> None:
+    payload = b" " * (MAX_ATTESTATION_ARTIFACT_BYTES + 1)
+
+    result = verify_attestation_artifact(
+        payload,
+        lambda _: None,
+        expected_session_id="unused",
+        expected_party_ids=frozenset(),
+    )
+
+    assert result.terminal_state == "not-bound"
+
+
+def test_duplicate_member_names_return_not_bound() -> None:
+    payload = (
+        b'{"concordia_attestation":"0.6.0",'
+        b'"concordia_attestation":"0.6.0"}'
+    )
+
+    result = verify_attestation_artifact(
+        payload,
+        lambda _: None,
+        expected_session_id="unused",
+        expected_party_ids=frozenset(),
+    )
+
+    assert result.terminal_state == "not-bound"
+
+
+def test_revocation_undetermined_is_bound_only_and_revoked_is_not_bound() -> None:
+    now = datetime.now(timezone.utc)
+    artifact, keys = _artifact(now)
+
+    bound_only = verify_attestation_artifact(
+        _bytes(artifact),
+        lambda agent_id: keys[agent_id].public_key,
+        expected_session_id="sess_v06_positive",
+        expected_party_ids={"did:example:alice", "did:example:bob"},
+        now=now,
+        revocation_checker=lambda _: None,
+    )
+    revoked = verify_attestation_artifact(
+        _bytes(artifact),
+        lambda agent_id: keys[agent_id].public_key,
+        expected_session_id="sess_v06_positive",
+        expected_party_ids={"did:example:alice", "did:example:bob"},
+        now=now,
+        revocation_checker=lambda _: True,
+    )
+
+    assert bound_only.terminal_state == "bound-only"
+    assert revoked.terminal_state == "not-bound"
+
+
+def test_temporal_expiry_skew_age_and_relative_lifetime_reject() -> None:
+    now = datetime.now(timezone.utc)
+    artifact, keys = _artifact(now)
+
+    expired = deepcopy(artifact)
+    expired["validity_temporal"] = {
+        "mode": "absolute",
+        "from": _iso(now - timedelta(seconds=600)),
+        "until": _iso(now - timedelta(seconds=1)),
+    }
+    _resign(expired, keys)
+    _not_bound(expired, keys, now)
+
+    future = deepcopy(artifact)
+    future["timestamp"] = _iso(now + timedelta(seconds=301))
+    future["validity_temporal"]["from"] = _iso(now + timedelta(seconds=301))
+    future["validity_temporal"]["until"] = _iso(now + timedelta(seconds=600))
+    _resign(future, keys)
+    _not_bound(future, keys, now)
+
+    old = deepcopy(artifact)
+    old["timestamp"] = _iso(now - timedelta(seconds=7_776_001))
+    old["validity_temporal"]["from"] = _iso(now - timedelta(seconds=7_776_001))
+    old["validity_temporal"]["until"] = _iso(now + timedelta(seconds=1))
+    _resign(old, keys)
+    _not_bound(old, keys, now)
+
+    long_relative = deepcopy(artifact)
+    long_relative["validity_temporal"] = {
+        "mode": "relative",
+        "from": _iso(now),
+        "duration_seconds": 7_776_001,
+    }
+    _resign(long_relative, keys)
+    _not_bound(long_relative, keys, now)
+
+
 def test_pre_v05_legacy_exits_before_signature_resolution() -> None:
     artifact = {"concordia_attestation": "0.4.0", "unread": {"signature": "bad"}}
 
     def resolver(agent_id: str):  # pragma: no cover: must not be called
         raise AssertionError(f"unexpected signature resolution for {agent_id}")
 
-    result = verify_attestation_artifact(json.dumps(artifact).encode(), resolver)
+    result = verify_attestation_artifact(
+        json.dumps(artifact).encode(),
+        resolver,
+        expected_session_id="unused",
+        expected_party_ids=frozenset(),
+    )
 
     assert result.terminal_state == "legacy"
     assert result.signature_checks == 0

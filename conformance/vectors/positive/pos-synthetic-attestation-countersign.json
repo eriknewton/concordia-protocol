@@ -1,6 +1,6 @@
 {
   "context": {
-    "canonical_sha256": "sha256:2a60aa65f797bef0ff3e9c833bf7e4e98ccc08ea6f2a83b0b4ce4192b56a6ff7",
+    "canonical_sha256": "sha256:1c5fba9ada7bb4a8fbffc6ab0ce6d1db52a4701e4bceb81225746b4fca75dcb5",
     "countersigners": [
       "did:concordia:agent:synthetic-initiator",
       "did:concordia:agent:synthetic-responder"
@@ -14,14 +14,13 @@
   "expected_reason_class": null,
   "id": "pos-synthetic-attestation-countersign",
   "input": {
-    "attestation_id": "att_conformance_p2a1_0001",
+    "attestation_id": "att_conformance_p2a1_v06_countersign_0001",
     "chain_head": "sha256:b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
-    "concordia_attestation": "0.3.0",
+    "concordia_attestation": "0.6.0",
     "countersignatures": {
-      "did:concordia:agent:synthetic-initiator": "g4s0fsTHbyaGNLSSvsXw0To4uINocOHytNn_5Us32EYUH99dKV5cMmG9ps58qPsPvyljt1J92m43295wHa3_DQ==",
-      "did:concordia:agent:synthetic-responder": "7WoUSEUFgodvX4C2EXWBn9yjTYC-51zNvL5Wi2Z5Afqr3LA6zMdO7wbV42aBd895alH0ZwWTDAgjbqdFfd3NCA=="
+      "did:concordia:agent:synthetic-initiator": "W7bfKnnQ7ygil7mBY1FdyZilny7MuogLunx8yPFThr1kzFMUCbfgJFDQxQQcWn31G3OXBRXO0Lu-NFxbIfSYCw==",
+      "did:concordia:agent:synthetic-responder": "D8iCvncVweL0sFzO88FRmF2lm5a6PJMcTPOTGvR_-RTQgRnVzYzCn1_K9iBySk_6qwuDohtMu2qRywomUEqrBg=="
     },
-    "fulfillment": null,
     "message_count": 6,
     "meta": {
       "category": "software.tools",
@@ -81,7 +80,12 @@
     "session_id": "sess_conformance_p2a1_0001",
     "summary": "Agreement completed with four rounds, two active parties, and no mediation.",
     "timestamp": "2026-05-10T14:25:00Z",
-    "transcript_hash": "sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+    "transcript_hash": "sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "validity_temporal": {
+      "from": "2026-05-10T14:25:00Z",
+      "mode": "absolute",
+      "until": "2026-08-08T14:25:00Z"
+    }
   },
   "notes": "",
   "record_type": "attestation",

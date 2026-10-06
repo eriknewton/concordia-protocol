@@ -53,10 +53,13 @@ if TYPE_CHECKING:
 # below 0.5.0 exits as legacy before signature, freshness, or revocation work.
 ATTESTATION_VERSION = "0.6.0"
 _SET_BINDING_MIN = (0, 3)
-_SEMVER_RE = re.compile(r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\Z")
+_SEMVER_RE = re.compile(
+    r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z"
+)
 _SHA256_HEX_RE = re.compile(r"^sha256:[a-f0-9]{64}\Z")
 _TIMESTAMP_Z_RE = re.compile(
-    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z\Z"
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:\.[0-9]{1,3})?Z\Z"
 )
 _SIGNATURE_B64URL_RE = re.compile(r"^[A-Za-z0-9_-]{86}==\Z")
 _BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
@@ -112,6 +115,7 @@ class AttestationVerifyResult:
     set_binding_errors: list[str] = field(default_factory=list)
     verified_parties: list[str] = field(default_factory=list)
     set_binding_state: str = "unknown"
+    terminal_state: str = "unknown"
 
 # v0.5 SPEC §11.5: generalized attestation-level references[] shape. Per
 # §11.5.6 the four canonical type values are receipt, chain_session,
@@ -178,16 +182,29 @@ MAX_REFERENCE_TYPE_LENGTH = 64
 MAX_REFERENCE_RELATIONSHIP_LENGTH = 64
 MAX_REFERENCE_ID_LENGTH = 256
 MAX_REFERENCE_OPTIONAL_STRING_LENGTH = 256
-MAX_REFERENCE_EXTENSIONS_BYTES = 2048
-MAX_REFERENCE_EXTENSIONS_DEPTH = 8
-MAX_REFERENCE_EXTENSIONS_NODES = 256
 
-# Reference string fields are identifier-shaped (UUIDs, DIDs, URNs, ISO
-# timestamps, semver); legitimate values never contain whitespace. Banning
-# any \s closes the residual prose channel ("price=4350 USD qty=1") that
-# length caps alone leave open (review fix, finding 1).
-_WHITESPACE_RE = re.compile(r"\s")
 
+def _reference_string(
+    value: Any,
+    path: str,
+    *,
+    max_octets: int,
+    min_octets: int | None = 1,
+) -> str:
+    try:
+        return _require_string(
+            value,
+            path,
+            min_octets=min_octets,
+            max_octets=max_octets,
+            no_whitespace=True,
+        )
+    except _AttestationStructureError as exc:
+        if "too short" in str(exc):
+            raise ValueError(
+                f"{path} must be a non-empty whitespace-free string per SPEC §11.5.6"
+            ) from exc
+        raise
 
 def _version_tuple(value: str) -> tuple[int, int, int]:
     if not isinstance(value, str) or not _SEMVER_RE.match(value):
@@ -216,6 +233,7 @@ def _contains_forbidden_whitespace(value: str) -> bool:
 
 
 def _require_nfc(value: str, path: str) -> None:
+    _reject_lone_surrogate_string(value, path)
     if unicodedata.normalize("NFC", value) != value:
         raise _AttestationStructureError(f"{path} must be Unicode NFC")
 
@@ -227,6 +245,27 @@ def _require_no_whitespace(value: str, path: str) -> None:
 
 def _utf8_len(value: str) -> int:
     return len(value.encode("utf-8"))
+
+
+def _reject_lone_surrogate_string(value: str, path: str) -> None:
+    for ch in value:
+        if 0xD800 <= ord(ch) <= 0xDFFF:
+            raise _AttestationStructureError(f"{path} contains an unpaired surrogate")
+
+
+def _reject_lone_surrogates(value: Any) -> None:
+    stack = [("artifact", value)]
+    while stack:
+        path, current = stack.pop()
+        if isinstance(current, str):
+            _reject_lone_surrogate_string(current, path)
+        elif isinstance(current, dict):
+            for key, child in current.items():
+                _reject_lone_surrogate_string(key, "object member name")
+                stack.append((f"{path}.{key}", child))
+        elif isinstance(current, list):
+            for index, child in enumerate(current):
+                stack.append((f"{path}[{index}]", child))
 
 
 def _require_string(
@@ -273,7 +312,12 @@ def _require_number(
 ) -> float:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         raise _AttestationStructureError(f"{path} must be a number")
-    number = float(value)
+    if isinstance(value, int) and abs(value) > _MAX_SAFE_INTEGER:
+        raise _AttestationStructureError(f"{path} outside allowed range")
+    try:
+        number = float(value)
+    except OverflowError as exc:
+        raise _AttestationStructureError(f"{path} outside allowed range") from exc
     if math.isnan(number) or math.isinf(number):
         raise _AttestationStructureError(f"{path} must be finite")
     if number < minimum or (maximum is not None and number > maximum):
@@ -330,12 +374,47 @@ def _json_object_no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return obj
 
 
+def _precheck_json_nesting(raw: bytes) -> None:
+    depth = 0
+    in_string = False
+    escaped = False
+    for byte in raw:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif byte == 0x5C:
+                escaped = True
+            elif byte == 0x22:
+                in_string = False
+            continue
+        if byte == 0x22:
+            in_string = True
+        elif byte in (0x5B, 0x7B):
+            depth += 1
+            # The raw pre-scan is load-bearing: it bounds parser recursion
+            # before Python builds nested containers from untrusted bytes.
+            if depth > MAX_ATTESTATION_JSON_DEPTH:
+                raise _AttestationStructureError(
+                    f"JSON nesting depth exceeds {MAX_ATTESTATION_JSON_DEPTH}"
+                )
+        elif byte in (0x5D, 0x7D):
+            depth = max(0, depth - 1)
+
+
 def _json_depth(value: Any) -> int:
-    if isinstance(value, dict):
-        return 1 + max((_json_depth(v) for v in value.values()), default=0)
-    if isinstance(value, list):
-        return 1 + max((_json_depth(v) for v in value), default=0)
-    return 0
+    max_depth = 0
+    stack: list[tuple[Any, int]] = [(value, 0)]
+    while stack:
+        current, parent_depth = stack.pop()
+        if isinstance(current, dict):
+            depth = parent_depth + 1
+            max_depth = max(max_depth, depth)
+            stack.extend((child, depth) for child in current.values())
+        elif isinstance(current, list):
+            depth = parent_depth + 1
+            max_depth = max(max_depth, depth)
+            stack.extend((child, depth) for child in current)
+    return max_depth
 
 
 def _loads_strict_json(received: bytes | str) -> dict[str, Any]:
@@ -343,6 +422,7 @@ def _loads_strict_json(received: bytes | str) -> dict[str, Any]:
         raw = received.encode("utf-8")
     else:
         raw = received
+    _precheck_json_nesting(raw)
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -361,6 +441,7 @@ def _loads_strict_json(received: bytes | str) -> dict[str, Any]:
         raise _AttestationStructureError("artifact is not strict JSON") from exc
     if not isinstance(parsed, dict):
         raise _AttestationStructureError("attestation artifact must be a JSON object")
+    _reject_lone_surrogates(parsed)
     if _json_depth(parsed) > MAX_ATTESTATION_JSON_DEPTH:
         raise _AttestationStructureError(
             f"JSON nesting depth exceeds {MAX_ATTESTATION_JSON_DEPTH}"
@@ -519,44 +600,7 @@ def is_valid_now(
     return False
 
 
-def _extensions_shape_counts(value: Any, depth: int = 0) -> tuple[int, int]:
-    if depth > MAX_REFERENCE_EXTENSIONS_DEPTH:
-        raise ValueError("reference extensions nesting is too deep")
-    if isinstance(value, dict):
-        nodes = 1
-        deepest = depth
-        for key, child in value.items():
-            if not isinstance(key, str):
-                raise ValueError("reference extension keys must be strings")
-            child_nodes, child_depth = _extensions_shape_counts(child, depth + 1)
-            nodes += child_nodes
-            deepest = max(deepest, child_depth)
-            if nodes > MAX_REFERENCE_EXTENSIONS_NODES:
-                raise ValueError("reference extensions contain too many nodes")
-        return nodes, deepest
-    if isinstance(value, list):
-        nodes = 1
-        deepest = depth
-        for child in value:
-            child_nodes, child_depth = _extensions_shape_counts(child, depth + 1)
-            nodes += child_nodes
-            deepest = max(deepest, child_depth)
-            if nodes > MAX_REFERENCE_EXTENSIONS_NODES:
-                raise ValueError("reference extensions contain too many nodes")
-        return nodes, deepest
-    if isinstance(value, str):
-        _require_nfc(value, "reference extensions string")
-    elif not isinstance(value, (int, float, bool)) and value is not None:
-        raise ValueError("reference extensions contain unsupported JSON value")
-    return 1, depth
-
-
-def _validate_reference(
-    ref: Any,
-    index: int,
-    *,
-    allow_legacy_extensions: bool = False,
-) -> dict[str, Any]:
+def _validate_reference(ref: Any, index: int) -> dict[str, Any]:
     """Validate a single attestation-level reference per SPEC §11.5.
 
     Required keys ``type``, ``id``, ``relationship`` are enforced
@@ -565,14 +609,13 @@ def _validate_reference(
     strings per the §11.5.8 MUST forward-compat clause. Read-side schemas
     accept non-empty strings per §11.5.5 and §11.5.8; the canonical
     vocabulary remains the emit-side default. draft-newton-agreement-evidence-00
-    removes the reference ``extensions`` member from 0.6.0; 0.5.0 verification
-    keeps a bounded read path so previously issued artifacts remain verifiable.
+    removes the reference ``extensions`` member. The -00 verifier applies that
+    closed Table 6 member set at 0.5.0 and later.
 
     L3 hardening (security audit 2026-06-09): every string field is
     length-capped and whitespace-banned (legitimate identifiers such as
     UUIDs, DIDs, URNs, ISO timestamps, and semver never contain
     whitespace, so any \\s indicates prose). Legacy ``extensions`` are
-    accepted only on pre-0.6 verification and remain size-capped.
     """
     if not isinstance(ref, dict):
         raise ValueError(
@@ -580,8 +623,6 @@ def _validate_reference(
             f"per SPEC §11.5.6"
         )
     allowed_keys = {"id", "type", "relationship", "version", "signed_at", "signer_did"}
-    if allow_legacy_extensions:
-        allowed_keys = allowed_keys | {"extensions"}
     if set(ref) - allowed_keys:
         raise ValueError(
             f"references[{index}] contains undefined member(s) for "
@@ -593,42 +634,21 @@ def _validate_reference(
             f"references[{index}] missing required keys {missing} "
             f"per SPEC §11.5.6 (id, type, relationship)"
         )
-    ref_type = ref["type"]
-    ref_id = ref["id"]
-    relationship = ref["relationship"]
-    if (
-        not isinstance(ref_type, str)
-        or not ref_type
-        or len(ref_type) > MAX_REFERENCE_TYPE_LENGTH
-        or _WHITESPACE_RE.search(ref_type)
-    ):
-        raise ValueError(
-            f"references[{index}].type must be a non-empty whitespace-free "
-            f"string of at most {MAX_REFERENCE_TYPE_LENGTH} chars "
-            f"per SPEC §11.5.6"
-        )
-    if (
-        not isinstance(ref_id, str)
-        or not ref_id
-        or len(ref_id) > MAX_REFERENCE_ID_LENGTH
-        or _WHITESPACE_RE.search(ref_id)
-    ):
-        raise ValueError(
-            f"references[{index}].id must be a non-empty whitespace-free "
-            f"string of at most {MAX_REFERENCE_ID_LENGTH} chars "
-            f"per SPEC §11.5.6"
-        )
-    if (
-        not isinstance(relationship, str)
-        or not relationship
-        or len(relationship) > MAX_REFERENCE_RELATIONSHIP_LENGTH
-        or _WHITESPACE_RE.search(relationship)
-    ):
-        raise ValueError(
-            f"references[{index}].relationship must be a non-empty "
-            f"whitespace-free string of at most "
-            f"{MAX_REFERENCE_RELATIONSHIP_LENGTH} chars per SPEC §11.5.6"
-        )
+    ref_type = _reference_string(
+        ref["type"],
+        f"references[{index}].type",
+        max_octets=MAX_REFERENCE_TYPE_LENGTH,
+    )
+    ref_id = _reference_string(
+        ref["id"],
+        f"references[{index}].id",
+        max_octets=MAX_REFERENCE_ID_LENGTH,
+    )
+    relationship = _reference_string(
+        ref["relationship"],
+        f"references[{index}].relationship",
+        max_octets=MAX_REFERENCE_RELATIONSHIP_LENGTH,
+    )
     normalized: dict[str, Any] = {
         "type": ref_type,
         "id": ref_id,
@@ -637,35 +657,13 @@ def _validate_reference(
     for optional_key in ("version", "signed_at", "signer_did"):
         if optional_key in ref:
             value = ref[optional_key]
-            if (
-                not isinstance(value, str)
-                or not value
-                or len(value) > MAX_REFERENCE_OPTIONAL_STRING_LENGTH
-                or _WHITESPACE_RE.search(value)
-            ):
-                raise ValueError(
-                    f"references[{index}].{optional_key} must be a "
-                    f"non-empty whitespace-free string of at most "
-                    f"{MAX_REFERENCE_OPTIONAL_STRING_LENGTH} chars"
-                )
-            normalized[optional_key] = value
-    if "extensions" in ref:
-        if not allow_legacy_extensions:
-            raise ValueError(
-                f"references[{index}] contains undefined member(s) for "
-                "attestation format 0.6.0"
+            min_octets = 1 if optional_key == "signer_did" else None
+            normalized[optional_key] = _reference_string(
+                value,
+                f"references[{index}].{optional_key}",
+                min_octets=min_octets,
+                max_octets=MAX_REFERENCE_OPTIONAL_STRING_LENGTH,
             )
-        extensions = ref["extensions"]
-        if not isinstance(extensions, dict):
-            raise ValueError(f"references[{index}].extensions must be a dict")
-        _extensions_shape_counts(extensions)
-        canonical = canonical_json(extensions)
-        if len(canonical) > MAX_REFERENCE_EXTENSIONS_BYTES:
-            raise ValueError(
-                f"references[{index}].extensions exceeds "
-                f"{MAX_REFERENCE_EXTENSIONS_BYTES} canonical JSON bytes"
-            )
-        normalized["extensions"] = extensions
     return normalized
 
 
@@ -678,21 +676,30 @@ def _validate_outcome_shape(outcome: Any) -> None:
         {"status", "rounds", "duration_seconds"},
         "outcome",
     )
-    if outcome["status"] not in {"agreed", "rejected", "expired", "withdrawn"}:
+    status = _require_string(outcome["status"], "outcome.status", no_whitespace=True)
+    if status not in {"agreed", "rejected", "expired", "withdrawn"}:
         raise _AttestationStructureError("outcome.status is not defined")
     _require_int(outcome["rounds"], "outcome.rounds")
     _require_int(outcome["duration_seconds"], "outcome.duration_seconds")
     if "terms_count" in outcome:
         _require_int(outcome["terms_count"], "outcome.terms_count", minimum=1)
-    if "resolution_mechanism" in outcome and outcome["resolution_mechanism"] not in {
-        "direct",
-        "split",
-        "foa",
-        "tradeoff",
-        "escalation",
-        "none",
-    }:
-        raise _AttestationStructureError("outcome.resolution_mechanism is not defined")
+    if "resolution_mechanism" in outcome:
+        mechanism = _require_string(
+            outcome["resolution_mechanism"],
+            "outcome.resolution_mechanism",
+            no_whitespace=True,
+        )
+        if mechanism not in {
+            "direct",
+            "split",
+            "foa",
+            "tradeoff",
+            "escalation",
+            "none",
+        }:
+            raise _AttestationStructureError(
+                "outcome.resolution_mechanism is not defined"
+            )
 
 
 def _validate_behavior_shape(behavior: Any, path: str) -> None:
@@ -758,7 +765,8 @@ def _validate_parties_shape(parties: Any) -> list[str]:
             max_octets=MAX_REFERENCE_ID_LENGTH,
             no_whitespace=True,
         )
-        if party["role"] not in {"initiator", "responder", "mediator", "witness"}:
+        role = _require_string(party["role"], f"{path}.role", no_whitespace=True)
+        if role not in {"initiator", "responder", "mediator", "witness"}:
             raise _AttestationStructureError(f"{path}.role is not defined")
         _validate_behavior_shape(party["behavior"], f"{path}.behavior")
         _decode_strict_signature(party["signature"], f"{path}.signature")
@@ -803,20 +811,12 @@ def _validate_meta_shape(meta: Any) -> None:
         raise _AttestationStructureError("meta.mediator_invoked must be boolean")
 
 
-def _validate_references_shape(
-    references: Any,
-    *,
-    allow_legacy_extensions: bool = False,
-) -> None:
+def _validate_references_shape(references: Any) -> None:
     if not isinstance(references, list) or len(references) > MAX_REFERENCES:
         raise _AttestationStructureError("references malformed")
     for index, reference in enumerate(references):
         try:
-            _validate_reference(
-                reference,
-                index,
-                allow_legacy_extensions=allow_legacy_extensions,
-            )
+            _validate_reference(reference, index)
         except ValueError as exc:
             raise _AttestationStructureError("references malformed") from exc
         if "signed_at" in reference:
@@ -825,9 +825,7 @@ def _validate_references_shape(
 
 def _validate_validity_temporal_shape(
     validity_temporal: Any,
-    *,
-    allow_legacy_window: bool = False,
-) -> tuple[datetime, datetime, int]:
+) -> tuple[datetime, datetime, float]:
     if not isinstance(validity_temporal, dict):
         raise _AttestationStructureError("validity_temporal must be an object")
     mode = validity_temporal.get("mode")
@@ -842,7 +840,7 @@ def _validate_validity_temporal_shape(
         end = _parse_rfc3339_z(validity_temporal["until"], "validity_temporal.until")
         if end <= start:
             raise _AttestationStructureError("validity_temporal interval is empty")
-        lifetime = int((end - start).total_seconds())
+        lifetime = (end - start).total_seconds()
         return start, end, lifetime
     if mode == "relative":
         _require_closed_keys(
@@ -857,24 +855,9 @@ def _validate_validity_temporal_shape(
             "validity_temporal.duration_seconds",
             minimum=1,
         )
+        if lifetime > MAX_RELYING_FRESHNESS_SECONDS:
+            raise _AttestationStructureError("validity lifetime exceeds maximum")
         return start, start + timedelta(seconds=lifetime), lifetime
-    if allow_legacy_window and mode == "window":
-        _require_closed_keys(
-            validity_temporal,
-            {"mode", "start", "end", "duration_seconds"},
-            {"mode", "start", "end", "duration_seconds"},
-            "validity_temporal",
-        )
-        start = _parse_rfc3339_z(validity_temporal["start"], "validity_temporal.start")
-        end = _parse_rfc3339_z(validity_temporal["end"], "validity_temporal.end")
-        lifetime = _require_int(
-            validity_temporal["duration_seconds"],
-            "validity_temporal.duration_seconds",
-            minimum=1,
-        )
-        if end <= start or lifetime > int((end - start).total_seconds()):
-            raise _AttestationStructureError("validity_temporal window is malformed")
-        return start, end, lifetime
     raise _AttestationStructureError("validity_temporal mode is not defined")
 
 
@@ -899,7 +882,7 @@ def _validate_countersignature_shape(
 
 def _validate_attestation_structure(
     attestation: dict[str, Any],
-) -> tuple[tuple[int, int, int], datetime, datetime, datetime, int, list[str]]:
+) -> tuple[tuple[int, int, int], datetime, datetime, datetime, float, list[str]]:
     version = _version_tuple(attestation.get("concordia_attestation", ""))
     if version < _LEGACY_FLOOR_VERSION:
         raise AssertionError("legacy artifacts must exit before structure validation")
@@ -917,10 +900,7 @@ def _validate_attestation_structure(
         "validity_temporal",
         "countersignatures",
     }
-    legacy_member_allowed = version < _IMPLEMENTED_ATTESTATION_VERSION
     root_allowed = root_required | {"summary", "references"}
-    if legacy_member_allowed:
-        root_allowed = root_allowed | {"fulfillment"}
     _require_closed_keys(attestation, root_allowed, root_required, "attestation")
     _require_string(
         attestation["attestation_id"],
@@ -950,7 +930,6 @@ def _validate_attestation_structure(
     )
     start, end, lifetime = _validate_validity_temporal_shape(
         attestation["validity_temporal"],
-        allow_legacy_window=legacy_member_allowed,
     )
     _validate_countersignature_shape(attestation["countersignatures"], agent_ids)
     if "summary" in attestation:
@@ -958,10 +937,7 @@ def _validate_attestation_structure(
         if len(summary) > MAX_SUMMARY_SCALARS:
             raise _AttestationStructureError("summary is too long")
     if "references" in attestation:
-        _validate_references_shape(
-            attestation["references"],
-            allow_legacy_extensions=legacy_member_allowed,
-        )
+        _validate_references_shape(attestation["references"])
     return version, timestamp, start, end, lifetime, agent_ids
 
 
@@ -1152,8 +1128,8 @@ def verify_attestation_artifact(
     received: bytes | str,
     key_resolver: Callable[[str], Ed25519PublicKey | None],
     *,
-    expected_session_id: str | None = None,
-    expected_party_ids: set[str] | frozenset[str] | None = None,
+    expected_session_id: str,
+    expected_party_ids: set[str] | frozenset[str],
     now: datetime | None = None,
     policy: AttestationVerificationPolicy | None = None,
     revocation_checker: Callable[[dict[str, Any]], bool | None] | None = None,
@@ -1176,15 +1152,10 @@ def verify_attestation_artifact(
     try:
         attestation = _loads_strict_json(raw)
         version = _version_tuple(attestation.get("concordia_attestation", ""))
-    except _AttestationStructureError as exc:
-        return _not_bound(str(exc))
-
-    if version > _IMPLEMENTED_ATTESTATION_VERSION:
-        return _not_bound("attestation version exceeds implemented ceiling")
-    if version < _LEGACY_FLOOR_VERSION:
-        return AttestationTerminalResult(terminal_state="legacy")
-
-    try:
+        if version > _IMPLEMENTED_ATTESTATION_VERSION:
+            return _not_bound("attestation version exceeds implemented ceiling")
+        if version < _LEGACY_FLOOR_VERSION:
+            return AttestationTerminalResult(terminal_state="legacy")
         (
             _version,
             timestamp,
@@ -1195,6 +1166,8 @@ def verify_attestation_artifact(
         ) = _validate_attestation_structure(attestation)
     except _AttestationStructureError as exc:
         return _not_bound(str(exc))
+    except Exception:
+        return _not_bound("attestation structure is malformed")
 
     resolved_keys: dict[str, Ed25519PublicKey] = {}
     try:
@@ -1260,20 +1233,44 @@ def verify_attestation_artifact(
             revocation_checked = True
             terminal_after_revocation = "current"
 
-    if expected_session_id is not None:
-        expected_session = unicodedata.normalize("NFC", expected_session_id)
-        if attestation["session_id"] != expected_session:
+    try:
+        expected_session = _require_string(
+            expected_session_id,
+            "expected_session_id",
+            min_octets=1,
+            max_octets=MAX_REFERENCE_ID_LENGTH,
+            no_whitespace=True,
+        )
+        if not isinstance(expected_party_ids, (set, frozenset)):
             return _not_bound(
-                "session_id does not match relying-party expectation",
+                "expected_party_ids is malformed",
                 signature_checks=signature_checks,
             )
-    if expected_party_ids is not None:
-        expected = {unicodedata.normalize("NFC", party) for party in expected_party_ids}
-        if set(agent_ids) != expected:
-            return _not_bound(
-                "parties do not match relying-party expectation",
-                signature_checks=signature_checks,
+        expected = {
+            _require_string(
+                party,
+                "expected_party_ids member",
+                min_octets=1,
+                max_octets=MAX_REFERENCE_ID_LENGTH,
+                no_whitespace=True,
             )
+            for party in expected_party_ids
+        }
+    except _AttestationStructureError:
+        return _not_bound(
+            "relying-party binding inputs are malformed",
+            signature_checks=signature_checks,
+        )
+    if attestation["session_id"] != expected_session:
+        return _not_bound(
+            "session_id does not match relying-party expectation",
+            signature_checks=signature_checks,
+        )
+    if set(agent_ids) != expected:
+        return _not_bound(
+            "parties do not match relying-party expectation",
+            signature_checks=signature_checks,
+        )
 
     return AttestationTerminalResult(
         terminal_state=terminal_after_revocation,
@@ -1288,18 +1285,13 @@ def verify_attestation(
     public_keys: Mapping[str, Ed25519PublicKey],
     transcript: list[dict[str, Any]] | None = None,
 ) -> AttestationVerifyResult:
-    """Validate an attestation and verify its party and outcome signatures.
+    """Legacy verifier for artifacts below 0.5.0; not the -00 procedure.
 
-    This is the end-to-end verifier for session receipts. It first runs
-    ``validate_attestation`` schema validation, then checks each
-    ``parties[*].signature`` against ``public_keys[agent_id]``. Each party's
-    signature covers that party's own sub-object minus its top-level
-    ``signature`` field, the same scope used by ``sign_message`` and
-    ``verify_signature``. For version 0.2.0 and later, it also verifies every
-    party's SPEC §9.6.5a countersignature over the issuance snapshot.
-
-    Fail closed: malformed inputs, missing keys, invalid key types, bad
-    signatures, and schema failures return ``valid=False`` instead of raising.
+    Artifacts whose ``concordia_attestation`` value is well formed and at or
+    above 0.5.0 delegate to ``verify_attestation_artifact`` so the SDK reports
+    one terminal-state answer for those bytes. Below 0.5.0, this keeps the old
+    schema, party-signature, outcome-binding, and set-binding checks for callers
+    that still inspect legacy artifacts.
     """
     schema_errors: list[str] = []
     signature_errors: list[str] = []
@@ -1315,12 +1307,52 @@ def verify_attestation(
                 errors=["attestation must be a dict"],
                 schema_errors=["attestation must be a dict"],
                 set_binding_state="error",
+                terminal_state="not-bound",
             )
         if not isinstance(public_keys, Mapping):
             signature_errors.append(
                 "public_keys must map agent_id to Ed25519PublicKey"
             )
             public_keys = {}
+
+        version_value = attestation.get("concordia_attestation")
+        if isinstance(version_value, str) and _SEMVER_RE.match(version_value):
+            version = _version_tuple(version_value)
+            if version >= _LEGACY_FLOOR_VERSION:
+                parties = attestation.get("parties")
+                expected_parties = {
+                    party.get("agent_id")
+                    for party in parties
+                    if isinstance(party, dict) and isinstance(party.get("agent_id"), str)
+                } if isinstance(parties, list) else set()
+                session_id = attestation.get("session_id")
+                payload = json.dumps(
+                    attestation,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                    ensure_ascii=False,
+                ).encode("utf-8")
+                terminal = verify_attestation_artifact(
+                    payload,
+                    lambda agent_id: public_keys.get(agent_id),
+                    expected_session_id=session_id if isinstance(session_id, str) else "",
+                    expected_party_ids=expected_parties,
+                )
+                errors = terminal.errors if terminal.terminal_state == "not-bound" else []
+                warnings = (
+                    ["attestation revocation status is undetermined"]
+                    if terminal.terminal_state == "bound-only"
+                    else []
+                )
+                return AttestationVerifyResult(
+                    valid=terminal.terminal_state in {"current", "bound-only"},
+                    errors=errors,
+                    warnings=warnings,
+                    signature_errors=errors,
+                    verified_parties=terminal.verified_parties,
+                    set_binding_state=terminal.terminal_state,
+                    terminal_state=terminal.terminal_state,
+                )
 
         from .schema_validator import validate_attestation
 
@@ -1399,11 +1431,10 @@ def verify_attestation(
             set_binding_errors=set_binding_errors,
             verified_parties=verified_parties,
             set_binding_state=set_binding_state,
+            terminal_state="legacy" if len(errors) == 0 else "not-bound",
         )
-    except Exception as exc:
-        signature_errors.append(
-            f"attestation verification failed closed: {type(exc).__name__}"
-        )
+    except Exception:
+        signature_errors.append("attestation verification failed closed")
         errors = [*schema_errors, *signature_errors, *set_binding_errors]
         return AttestationVerifyResult(
             valid=False,
@@ -1414,6 +1445,7 @@ def verify_attestation(
             set_binding_errors=set_binding_errors,
             verified_parties=verified_parties,
             set_binding_state="error",
+            terminal_state="not-bound",
         )
 
 
@@ -1488,6 +1520,11 @@ def generate_attestation(
     outcome["resolution_mechanism"] = resolution_mechanism.value
 
     # Build party records with signatures
+    missing_party_keys = set(session.parties) - set(key_pairs)
+    if missing_party_keys:
+        raise ValueError(
+            "Cannot generate attestation: every listed party must have a signing key"
+        )
     parties: list[dict[str, Any]] = []
     for agent_id, role in session.parties.items():
         behavior = session.get_behavior(agent_id)
@@ -1497,11 +1534,8 @@ def generate_attestation(
             "behavior": behavior.to_dict(),
         }
         # Sign the party's behavioral record
-        if agent_id in key_pairs:
-            sig = sign_message(party_record, key_pairs[agent_id])
-            party_record["signature"] = sig
-        else:
-            party_record["signature"] = ""
+        sig = sign_message(party_record, key_pairs[agent_id])
+        party_record["signature"] = sig
         parties.append(party_record)
 
     if not session.transcript:
@@ -1578,16 +1612,15 @@ def generate_attestation(
     # Attach a plaintext 4-line summary for quick human/agent inspection.
     attestation["summary"] = generate_receipt_summary(attestation)
 
-    # C-H2 outcome-binding (Option B): one issuance countersignature per party
-    # that has a signing key, over the FULLY-ASSEMBLED snapshot (after summary).
+    # C-H2 outcome-binding (Option B): one issuance countersignature per listed
+    # party over the FULLY-ASSEMBLED snapshot (after summary).
     # Added LAST so the payload (`_countersign_payload`) excludes the map; the
-    # helper also excludes it explicitly as belt-and-suspenders. Parties without
-    # a key get NO entry (distinct from the per-party signature:"" convention --
-    # an empty countersignature would be meaningless and rejected anyway).
+    # helper also excludes it explicitly as belt-and-suspenders. The missing-key
+    # guard above is the fail-closed invariant: a 0.6.0 issuer must never emit
+    # signature:"" or omit a party countersignature.
     countersignatures: dict[str, str] = {
         agent_id: countersign_attestation(attestation, key_pairs[agent_id])
         for agent_id in session.parties
-        if agent_id in key_pairs
     }
     attestation["countersignatures"] = countersignatures
 

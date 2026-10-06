@@ -137,6 +137,12 @@ class TestAttestationGeneration:
         with pytest.raises(ValueError):
             generate_attestation(session, {})
 
+    def test_generation_requires_every_party_signing_key(self, agreed_session):
+        session, seller, buyer = agreed_session
+
+        with pytest.raises(ValueError, match="every listed party"):
+            generate_attestation(session, {"seller_01": seller.key_pair})
+
 
 class TestAttestationVerification:
     def test_verify_attestation_checks_schema_and_party_signatures(self, agreed_session):
@@ -171,7 +177,7 @@ class TestAttestationVerification:
         result = verify_attestation(att, public_keys)
 
         assert result.valid is False
-        assert any("invalid signature" in e for e in result.signature_errors)
+        assert any("countersignature" in e for e in result.signature_errors)
 
     def test_verify_attestation_rejects_outcome_status_tamper(self, agreed_session):
         session, seller, buyer = agreed_session
@@ -199,6 +205,7 @@ class TestAttestationVerification:
             agent_id: key_pair.public_key
             for agent_id, key_pair in key_pairs.items()
         }
+        _set_legacy_version(att, key_pairs, "0.4.0")
         monkeypatch.setattr(
             receipt_bundle,
             "evaluate_outcome_binding",
@@ -221,6 +228,7 @@ class TestAttestationVerification:
         key_pairs = {seller.agent_id: seller.key_pair, buyer.agent_id: buyer.key_pair}
         public_keys = {agent_id: kp.public_key for agent_id, kp in key_pairs.items()}
         att = generate_attestation(session, key_pairs)
+        _set_legacy_version(att, key_pairs, "0.4.0")
 
         assert validate_chain(spliced) is True
         assert compute_hash(spliced[-1]) != att["chain_head"]
@@ -236,6 +244,7 @@ class TestAttestationVerification:
         key_pairs = {"seller_01": seller.key_pair, "buyer_42": buyer.key_pair}
         public_keys = {agent_id: kp.public_key for agent_id, kp in key_pairs.items()}
         att = generate_attestation(session, key_pairs)
+        _set_legacy_version(att, key_pairs, "0.4.0")
         truncated = session.transcript[:-1]
 
         assert validate_chain(truncated) is True
@@ -250,6 +259,7 @@ class TestAttestationVerification:
         key_pairs = {"seller_01": seller.key_pair, "buyer_42": buyer.key_pair}
         public_keys = {agent_id: kp.public_key for agent_id, kp in key_pairs.items()}
         att = generate_attestation(session, key_pairs)
+        _set_legacy_version(att, key_pairs, "0.3.0")
         del att["chain_head"]
 
         result = verify_attestation(att, public_keys)
@@ -263,6 +273,7 @@ class TestAttestationVerification:
         key_pairs = {"seller_01": seller.key_pair, "buyer_42": buyer.key_pair}
         public_keys = {agent_id: kp.public_key for agent_id, kp in key_pairs.items()}
         att = generate_attestation(session, key_pairs)
+        _set_legacy_version(att, key_pairs, "0.3.0")
         att["chain_head"] = "sha256:NOTLOWERHEX"
         att["message_count"] = 0
 
@@ -322,3 +333,15 @@ def _same_signer_splice_fixture():
     assert validate_chain(original) is True
     assert validate_chain(spliced) is True
     return session, spliced, seller, buyer
+
+
+def _set_legacy_version(
+    attestation: dict,
+    key_pairs: dict,
+    version: str,
+) -> None:
+    attestation["concordia_attestation"] = version
+    attestation["countersignatures"] = {
+        agent_id: countersign_attestation(attestation, key_pair)
+        for agent_id, key_pair in key_pairs.items()
+    }
