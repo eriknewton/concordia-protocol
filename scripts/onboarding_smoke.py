@@ -111,12 +111,24 @@ def _check_attestation_round_trip() -> None:
         value_range="100-500_USD",
     )
 
-    result = verify_attestation(attestation, public_keys)
+    result = verify_attestation(
+        attestation,
+        public_keys,
+        expected_session_id=session.session_id,
+        expected_party_ids=set(key_pairs),
+        revocation_checker=lambda _: False,
+    )
     _assert(result.valid is True, f"attestation did not verify: {result.errors}")
 
     tampered = copy.deepcopy(attestation)
     tampered["parties"][0]["behavior"]["offers_made"] += 1
-    tamper_result = verify_attestation(tampered, public_keys)
+    tamper_result = verify_attestation(
+        tampered,
+        public_keys,
+        expected_session_id=session.session_id,
+        expected_party_ids=set(key_pairs),
+        revocation_checker=lambda _: False,
+    )
     _assert(
         tamper_result.valid is False,
         "party behavior tamper verified successfully",

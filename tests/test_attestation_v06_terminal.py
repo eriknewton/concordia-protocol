@@ -22,7 +22,7 @@ from concordia.attestation import (
     countersign_attestation,
     verify_attestation_artifact,
 )
-from concordia.schema_validator import validate_attestation
+from concordia.schema_validator import is_valid_attestation, validate_attestation
 from concordia.signing import KeyPair, sign_message
 
 
@@ -365,6 +365,36 @@ def test_parser_exception_inputs_return_not_bound(payload: bytes) -> None:
     assert result.terminal_state == "not-bound"
 
 
+def test_string_input_with_lone_surrogate_returns_not_bound() -> None:
+    result = verify_attestation_artifact(
+        "\ud800",
+        lambda _: None,
+        expected_session_id="unused",
+        expected_party_ids=frozenset(),
+    )
+
+    assert result.terminal_state == "not-bound"
+
+
+def test_long_member_name_diagnostic_is_bounded() -> None:
+    payload = json.dumps(
+        {"concordia_attestation": "0.6.0", "x" * 8000: "\ud800"}
+    ).encode()
+
+    result = verify_attestation_artifact(
+        payload,
+        lambda _: None,
+        expected_session_id="unused",
+        expected_party_ids=frozenset(),
+    )
+
+    assert result.terminal_state == "not-bound"
+    assert result.errors
+    assert len(result.errors[0]) < 180
+    assert "..." in result.errors[0]
+    assert "x" * 200 not in result.errors[0]
+
+
 @pytest.mark.parametrize(
     "mutator",
     [
@@ -400,6 +430,16 @@ def test_structure_exception_inputs_return_not_bound(mutator) -> None:
     )
 
     assert result.terminal_state == "not-bound"
+
+
+def test_schema_validation_reports_oversized_numeric_counter() -> None:
+    now = datetime.now(timezone.utc)
+    artifact, keys = _artifact(now)
+    artifact["outcome"]["rounds"] = int("9" * 400)
+    _resign(artifact, keys)
+
+    assert validate_attestation(artifact)
+    assert not is_valid_attestation(artifact)
 
 
 def test_size_cap_applies_before_parse() -> None:

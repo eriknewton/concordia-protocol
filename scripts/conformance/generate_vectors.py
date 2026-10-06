@@ -3452,6 +3452,9 @@ def build_synthetic_attestation() -> tuple[dict[str, Any], dict[str, Any]]:
             agent_id: key_pair.public_key
             for agent_id, key_pair in key_by_agent.items()
         },
+        expected_session_id=attestation["session_id"],
+        expected_party_ids=frozenset(key_by_agent),
+        revocation_checker=lambda _: False,
     )
     if not result.valid:
         raise GenerationError(f"synthetic attestation did not verify: {result.errors}")

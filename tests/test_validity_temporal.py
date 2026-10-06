@@ -55,6 +55,18 @@ class TestValidityTemporalAbsolute:
         assert att["validity_temporal"]["mode"] == "absolute"
         assert is_valid_now(att)
 
+    def test_until_endpoint_is_in_window(self, session_pair):
+        session, kps = session_pair
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        vt = {
+            "mode": "absolute",
+            "from": _iso(now - timedelta(hours=1)),
+            "until": _iso(now),
+        }
+        att = generate_attestation(session, kps, validity_temporal=vt)
+
+        assert is_valid_now(att, now)
+
     def test_pre_window(self, session_pair):
         session, kps = session_pair
         future = datetime.now(timezone.utc) + timedelta(hours=1)
@@ -116,6 +128,24 @@ class TestValidityTemporalRelative:
               "duration_seconds": 0}
         with pytest.raises(ValueError, match="positive int"):
             generate_attestation(session, kps, validity_temporal=vt)
+
+    def test_bool_duration_rejected(self, session_pair):
+        session, kps = session_pair
+        vt = {
+            "mode": "relative",
+            "from": _iso(datetime.now(timezone.utc)),
+            "duration_seconds": True,
+        }
+        with pytest.raises(ValueError, match="positive int"):
+            generate_attestation(session, kps, validity_temporal=vt)
+
+    def test_relative_until_endpoint_is_in_window(self, session_pair):
+        session, kps = session_pair
+        anchor = datetime.now(timezone.utc).replace(microsecond=0)
+        vt = {"mode": "relative", "from": _iso(anchor), "duration_seconds": 60}
+        att = generate_attestation(session, kps, validity_temporal=vt)
+
+        assert is_valid_now(att, anchor + timedelta(seconds=60))
 
 
 class TestValidityTemporalDefault:

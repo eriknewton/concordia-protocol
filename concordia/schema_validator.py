@@ -235,7 +235,7 @@ def _validate_attestation_v05_shape(attestation: Any) -> list[str]:
     if _LEGACY_FLOOR_VERSION <= version <= _IMPLEMENTED_ATTESTATION_VERSION:
         try:
             _validate_attestation_structure(attestation)
-        except _AttestationStructureError:
+        except (_AttestationStructureError, OverflowError, ValueError):
             return ["$: violates draft-newton-agreement-evidence-00 structure"]
     return []
 

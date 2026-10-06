@@ -204,6 +204,14 @@ def _reference_string(
             f"{path} must be a non-empty whitespace-free string per SPEC §11.5.6"
         ) from exc
 
+
+def _diagnostic_path(path: str) -> str:
+    """Bound path-only diagnostics before they leave the verifier."""
+    if len(path) <= 128:
+        return path
+    return path[:125] + "..."
+
+
 def _version_tuple(value: str) -> tuple[int, int, int]:
     if not isinstance(value, str) or not _SEMVER_RE.match(value):
         raise _AttestationStructureError(
@@ -248,7 +256,9 @@ def _utf8_len(value: str) -> int:
 def _reject_lone_surrogate_string(value: str, path: str) -> None:
     for ch in value:
         if 0xD800 <= ord(ch) <= 0xDFFF:
-            raise _AttestationStructureError(f"{path} contains an unpaired surrogate")
+            raise _AttestationStructureError(
+                f"{_diagnostic_path(path)} contains an unpaired surrogate"
+            )
 
 
 def _reject_lone_surrogates(value: Any) -> None:
@@ -274,16 +284,17 @@ def _require_string(
     max_octets: int | None = None,
     no_whitespace: bool = False,
 ) -> str:
+    diagnostic_path = _diagnostic_path(path)
     if not isinstance(value, str):
-        raise _AttestationStructureError(f"{path} must be a string")
+        raise _AttestationStructureError(f"{diagnostic_path} must be a string")
     _require_nfc(value, path)
     if no_whitespace:
         _require_no_whitespace(value, path)
     octets = _utf8_len(value)
     if min_octets is not None and octets < min_octets:
-        raise _AttestationStructureError(f"{path} is too short")
+        raise _AttestationStructureError(f"{diagnostic_path} is too short")
     if max_octets is not None and octets > max_octets:
-        raise _AttestationStructureError(f"{path} is too long")
+        raise _AttestationStructureError(f"{diagnostic_path} is too long")
     return value
 
 
@@ -294,10 +305,11 @@ def _require_int(
     minimum: int = 0,
     maximum: int = _MAX_SAFE_INTEGER,
 ) -> int:
+    diagnostic_path = _diagnostic_path(path)
     if not isinstance(value, int) or isinstance(value, bool):
-        raise _AttestationStructureError(f"{path} must be an integer")
+        raise _AttestationStructureError(f"{diagnostic_path} must be an integer")
     if value < minimum or value > maximum:
-        raise _AttestationStructureError(f"{path} outside allowed range")
+        raise _AttestationStructureError(f"{diagnostic_path} outside allowed range")
     return value
 
 
@@ -308,18 +320,21 @@ def _require_number(
     minimum: float = 0.0,
     maximum: float | None = None,
 ) -> float:
+    diagnostic_path = _diagnostic_path(path)
     if not isinstance(value, (int, float)) or isinstance(value, bool):
-        raise _AttestationStructureError(f"{path} must be a number")
+        raise _AttestationStructureError(f"{diagnostic_path} must be a number")
     if isinstance(value, int) and abs(value) > _MAX_SAFE_INTEGER:
-        raise _AttestationStructureError(f"{path} outside allowed range")
+        raise _AttestationStructureError(f"{diagnostic_path} outside allowed range")
     try:
         number = float(value)
     except OverflowError as exc:
-        raise _AttestationStructureError(f"{path} outside allowed range") from exc
+        raise _AttestationStructureError(
+            f"{diagnostic_path} outside allowed range"
+        ) from exc
     if math.isnan(number) or math.isinf(number):
-        raise _AttestationStructureError(f"{path} must be finite")
+        raise _AttestationStructureError(f"{diagnostic_path} must be finite")
     if number < minimum or (maximum is not None and number > maximum):
-        raise _AttestationStructureError(f"{path} outside allowed range")
+        raise _AttestationStructureError(f"{diagnostic_path} outside allowed range")
     return number
 
 
@@ -417,7 +432,7 @@ def _json_depth(value: Any) -> int:
 
 def _loads_strict_json(received: bytes | str) -> dict[str, Any]:
     if isinstance(received, str):
-        raw = received.encode("utf-8")
+        raw = received.encode("utf-8", "surrogatepass")
     else:
         raw = received
     _precheck_json_nesting(raw)
@@ -551,7 +566,11 @@ def _validate_validity_temporal(vt: Any) -> dict[str, Any]:
             raise ValueError(f"validity_temporal[relative] missing: {missing}")
         _parse_iso8601(vt["from"], "validity_temporal.from")
         duration = vt["duration_seconds"]
-        if not isinstance(duration, int) or duration < 1:
+        if (
+            not isinstance(duration, int)
+            or isinstance(duration, bool)
+            or duration < 1
+        ):
             raise ValueError(
                 "validity_temporal[relative].duration_seconds must be a positive int"
             )
@@ -590,11 +609,11 @@ def is_valid_now(
     if mode == "absolute":
         frm = _parse_iso8601(vt["from"], "validity_temporal.from")
         until = _parse_iso8601(vt["until"], "validity_temporal.until")
-        return frm <= now_dt < until
+        return frm <= now_dt <= until
     if mode == "relative":
         frm = _parse_iso8601(vt["from"], "validity_temporal.from")
         until = frm + timedelta(seconds=int(vt["duration_seconds"]))
-        return frm <= now_dt < until
+        return frm <= now_dt <= until
     return False
 
 
@@ -1143,7 +1162,11 @@ def verify_attestation_artifact(
     if policy_failure is not None:
         return _not_bound(policy_failure)
 
-    raw = received.encode("utf-8") if isinstance(received, str) else received
+    raw = (
+        received.encode("utf-8", "surrogatepass")
+        if isinstance(received, str)
+        else received
+    )
     if len(raw) > active_policy.max_artifact_bytes:
         return _not_bound("artifact exceeds maximum size")
 
@@ -1282,14 +1305,21 @@ def verify_attestation(
     attestation: dict[str, Any],
     public_keys: Mapping[str, Ed25519PublicKey],
     transcript: list[dict[str, Any]] | None = None,
+    *,
+    expected_session_id: str,
+    expected_party_ids: set[str] | frozenset[str],
+    revocation_checker: Callable[[dict[str, Any]], bool | None] | None = None,
 ) -> AttestationVerifyResult:
     """Legacy verifier for artifacts below 0.5.0; not the -00 procedure.
 
     Artifacts whose ``concordia_attestation`` value is well formed and at or
     above 0.5.0 delegate to ``verify_attestation_artifact`` so the SDK reports
-    one terminal-state answer for those bytes. Below 0.5.0, this keeps the old
-    schema, party-signature, outcome-binding, and set-binding checks for callers
-    that still inspect legacy artifacts.
+    one relying-party-bound terminal-state answer for those bytes. The caller's
+    expected session and party set are required because draft-newton-agreement-
+    evidence-00 Section 10 step 8 compares against the relying party's own
+    expectation, never values copied from the artifact. Below 0.5.0, this keeps
+    the old schema, party-signature, outcome-binding, and set-binding checks for
+    callers that still inspect legacy artifacts.
     """
     schema_errors: list[str] = []
     signature_errors: list[str] = []
@@ -1317,40 +1347,65 @@ def verify_attestation(
         if isinstance(version_value, str) and _SEMVER_RE.match(version_value):
             version = _version_tuple(version_value)
             if version >= _LEGACY_FLOOR_VERSION:
-                parties = attestation.get("parties")
-                expected_parties: set[str] = set()
-                if isinstance(parties, list):
-                    for party in parties:
-                        if isinstance(party, dict):
-                            agent_id = party.get("agent_id")
-                            if isinstance(agent_id, str):
-                                expected_parties.add(agent_id)
-                session_id = attestation.get("session_id")
                 payload = json.dumps(
                     attestation,
                     separators=(",", ":"),
                     sort_keys=True,
                     ensure_ascii=False,
-                ).encode("utf-8")
+                ).encode("utf-8", "surrogatepass")
                 terminal = verify_attestation_artifact(
                     payload,
                     lambda agent_id: public_keys.get(agent_id),
-                    expected_session_id=session_id if isinstance(session_id, str) else "",
-                    expected_party_ids=expected_parties,
+                    expected_session_id=expected_session_id,
+                    expected_party_ids=expected_party_ids,
+                    revocation_checker=revocation_checker,
                 )
-                errors = terminal.errors if terminal.terminal_state == "not-bound" else []
+                procedure_errors = (
+                    terminal.errors if terminal.terminal_state == "not-bound" else []
+                )
+                if (
+                    terminal.terminal_state == "not-bound"
+                    and terminal.signature_checks > 0
+                    and any("countersignature" in e for e in procedure_errors)
+                ):
+                    signature_errors = procedure_errors
+                else:
+                    schema_errors = procedure_errors
+                if transcript is not None:
+                    evaluated_set_binding_state, set_binding_errors = (
+                        evaluate_receipt_set_binding(attestation, transcript)
+                    )
+                    set_binding_state = (
+                        evaluated_set_binding_state
+                        if terminal.terminal_state in {"current", "bound-only"}
+                        else "error"
+                    )
+                elif terminal.terminal_state in {"current", "bound-only"}:
+                    set_binding_state = "bound"
+                    set_binding_errors = []
+                else:
+                    set_binding_state = "error"
+                    set_binding_errors = []
+                errors = [
+                    *schema_errors,
+                    *signature_errors,
+                    *set_binding_errors,
+                ]
                 warnings = (
                     ["attestation revocation status is undetermined"]
                     if terminal.terminal_state == "bound-only"
                     else []
                 )
                 return AttestationVerifyResult(
-                    valid=terminal.terminal_state in {"current", "bound-only"},
+                    valid=terminal.terminal_state in {"current", "bound-only"}
+                    and not set_binding_errors,
                     errors=errors,
                     warnings=warnings,
-                    signature_errors=errors,
+                    schema_errors=schema_errors,
+                    signature_errors=signature_errors,
+                    set_binding_errors=set_binding_errors,
                     verified_parties=terminal.verified_parties,
-                    set_binding_state=terminal.terminal_state,
+                    set_binding_state=set_binding_state,
                     terminal_state=terminal.terminal_state,
                 )
 
@@ -1431,7 +1486,7 @@ def verify_attestation(
             set_binding_errors=set_binding_errors,
             verified_parties=verified_parties,
             set_binding_state=set_binding_state,
-            terminal_state="legacy" if len(errors) == 0 else "not-bound",
+            terminal_state="legacy",
         )
     except Exception:
         signature_errors.append("attestation verification failed closed")

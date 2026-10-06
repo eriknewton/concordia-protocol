@@ -145,6 +145,17 @@ class TestAttestationGeneration:
 
 
 class TestAttestationVerification:
+    def test_verify_attestation_requires_relying_party_expectations(
+        self, agreed_session
+    ):
+        session, seller, buyer = agreed_session
+        key_pairs = {"seller_01": seller.key_pair, "buyer_42": buyer.key_pair}
+        public_keys = {agent_id: kp.public_key for agent_id, kp in key_pairs.items()}
+        att = generate_attestation(session, key_pairs)
+
+        with pytest.raises(TypeError):
+            verify_attestation(att, public_keys)
+
     def test_verify_attestation_checks_schema_and_party_signatures(self, agreed_session):
         session, seller, buyer = agreed_session
         key_pairs = {"seller_01": seller.key_pair, "buyer_42": buyer.key_pair}
@@ -158,11 +169,45 @@ class TestAttestationVerification:
             agent_id: kp.public_key for agent_id, kp in key_pairs.items()
         }
 
-        result = verify_attestation(att, public_keys)
+        result = verify_attestation(
+            att,
+            public_keys,
+            expected_session_id=session.session_id,
+            expected_party_ids=set(key_pairs),
+            revocation_checker=lambda _: False,
+        )
 
         assert result.valid is True
         assert result.errors == []
         assert sorted(result.verified_parties) == ["buyer_42", "seller_01"]
+        assert result.set_binding_state == "bound"
+        assert result.terminal_state == "current"
+
+    def test_verify_attestation_rejects_other_session_expectation(
+        self, agreed_session
+    ):
+        session, seller, buyer = agreed_session
+        key_pairs = {"seller_01": seller.key_pair, "buyer_42": buyer.key_pair}
+        public_keys = {agent_id: kp.public_key for agent_id, kp in key_pairs.items()}
+        att = generate_attestation(session, key_pairs)
+
+        result = verify_attestation(
+            att,
+            public_keys,
+            expected_session_id="sess_other",
+            expected_party_ids=set(key_pairs),
+            revocation_checker=lambda _: False,
+        )
+
+        print(
+            "round2 other-session wrapper "
+            f"valid={result.valid} terminal_state={result.terminal_state} "
+            f"errors={result.errors}"
+        )
+        assert result.valid is False
+        assert result.terminal_state == "not-bound"
+        assert result.set_binding_state == "error"
+        assert result.schema_errors
 
     def test_verify_attestation_rejects_party_tamper(self, agreed_session):
         session, seller, buyer = agreed_session
@@ -172,9 +217,21 @@ class TestAttestationVerification:
             agent_id: kp.public_key for agent_id, kp in key_pairs.items()
         }
 
-        assert verify_attestation(att, public_keys).valid is True
+        assert verify_attestation(
+            att,
+            public_keys,
+            expected_session_id=session.session_id,
+            expected_party_ids=set(key_pairs),
+            revocation_checker=lambda _: False,
+        ).valid is True
         att["parties"][0]["behavior"]["offers_made"] += 1
-        result = verify_attestation(att, public_keys)
+        result = verify_attestation(
+            att,
+            public_keys,
+            expected_session_id=session.session_id,
+            expected_party_ids=set(key_pairs),
+            revocation_checker=lambda _: False,
+        )
 
         assert result.valid is False
         assert any("countersignature" in e for e in result.signature_errors)
@@ -188,9 +245,21 @@ class TestAttestationVerification:
             for agent_id, key_pair in key_pairs.items()
         }
 
-        assert verify_attestation(att, public_keys).valid is True
+        assert verify_attestation(
+            att,
+            public_keys,
+            expected_session_id=session.session_id,
+            expected_party_ids=set(key_pairs),
+            revocation_checker=lambda _: False,
+        ).valid is True
         att["outcome"]["status"] = "rejected"
-        result = verify_attestation(att, public_keys)
+        result = verify_attestation(
+            att,
+            public_keys,
+            expected_session_id=session.session_id,
+            expected_party_ids=set(key_pairs),
+            revocation_checker=lambda _: False,
+        )
 
         assert result.valid is False
         assert any("countersignature" in error for error in result.signature_errors)
@@ -212,13 +281,24 @@ class TestAttestationVerification:
             lambda *_: ("error", None),
         )
 
-        result = verify_attestation(att, public_keys)
+        result = verify_attestation(
+            att,
+            public_keys,
+            expected_session_id=session.session_id,
+            expected_party_ids=set(key_pairs),
+        )
 
         assert result.valid is False
         assert "attestation outcome binding failed" in result.signature_errors
+        assert result.terminal_state == "legacy"
 
     def test_verify_attestation_fails_closed_on_malformed_input(self):
-        result = verify_attestation({"parties": "not-a-list"}, {})
+        result = verify_attestation(
+            {"parties": "not-a-list"},
+            {},
+            expected_session_id="unused",
+            expected_party_ids=frozenset(),
+        )
 
         assert result.valid is False
         assert result.errors
@@ -228,31 +308,55 @@ class TestAttestationVerification:
         key_pairs = {seller.agent_id: seller.key_pair, buyer.agent_id: buyer.key_pair}
         public_keys = {agent_id: kp.public_key for agent_id, kp in key_pairs.items()}
         att = generate_attestation(session, key_pairs)
-        _set_legacy_version(att, key_pairs, "0.4.0")
 
         assert validate_chain(spliced) is True
         assert compute_hash(spliced[-1]) != att["chain_head"]
-        result = verify_attestation(att, public_keys, transcript=spliced)
+        result = verify_attestation(
+            att,
+            public_keys,
+            transcript=spliced,
+            expected_session_id=session.session_id,
+            expected_party_ids=set(key_pairs),
+            revocation_checker=lambda _: False,
+        )
 
         assert result.valid is False
         assert result.set_binding_state == "error"
+        assert result.terminal_state == "current"
         assert any("chain_head mismatch" in e for e in result.set_binding_errors)
         assert any("message_count mismatch" in e for e in result.set_binding_errors)
+        print(
+            "round2 spliced-transcript wrapper "
+            f"valid={result.valid} terminal_state={result.terminal_state} "
+            f"set_binding_errors={result.set_binding_errors}"
+        )
 
     def test_verify_attestation_rejects_truncated_transcript(self, agreed_session):
         session, seller, buyer = agreed_session
         key_pairs = {"seller_01": seller.key_pair, "buyer_42": buyer.key_pair}
         public_keys = {agent_id: kp.public_key for agent_id, kp in key_pairs.items()}
         att = generate_attestation(session, key_pairs)
-        _set_legacy_version(att, key_pairs, "0.4.0")
         truncated = session.transcript[:-1]
 
         assert validate_chain(truncated) is True
-        result = verify_attestation(att, public_keys, transcript=truncated)
+        result = verify_attestation(
+            att,
+            public_keys,
+            transcript=truncated,
+            expected_session_id=session.session_id,
+            expected_party_ids=set(key_pairs),
+            revocation_checker=lambda _: False,
+        )
 
         assert result.valid is False
         assert result.set_binding_state == "error"
+        assert result.terminal_state == "current"
         assert any("message_count mismatch" in e for e in result.set_binding_errors)
+        print(
+            "round2 truncated-transcript wrapper "
+            f"valid={result.valid} terminal_state={result.terminal_state} "
+            f"set_binding_errors={result.set_binding_errors}"
+        )
 
     def test_verify_attestation_v03_missing_set_field_fails_closed(self, agreed_session):
         session, seller, buyer = agreed_session
@@ -262,7 +366,12 @@ class TestAttestationVerification:
         _set_legacy_version(att, key_pairs, "0.3.0")
         del att["chain_head"]
 
-        result = verify_attestation(att, public_keys)
+        result = verify_attestation(
+            att,
+            public_keys,
+            expected_session_id=session.session_id,
+            expected_party_ids=set(key_pairs),
+        )
 
         assert result.valid is False
         assert result.set_binding_state == "error"
@@ -277,7 +386,12 @@ class TestAttestationVerification:
         att["chain_head"] = "sha256:NOTLOWERHEX"
         att["message_count"] = 0
 
-        result = verify_attestation(att, public_keys)
+        result = verify_attestation(
+            att,
+            public_keys,
+            expected_session_id=session.session_id,
+            expected_party_ids=set(key_pairs),
+        )
 
         assert result.valid is False
         assert any("requires chain_head" in e for e in result.set_binding_errors)
@@ -296,7 +410,13 @@ class TestAttestationVerification:
             for agent_id, key_pair in key_pairs.items()
         }
 
-        result = verify_attestation(att, public_keys, transcript=session.transcript)
+        result = verify_attestation(
+            att,
+            public_keys,
+            transcript=session.transcript,
+            expected_session_id=session.session_id,
+            expected_party_ids=set(key_pairs),
+        )
 
         assert result.valid is True
         assert result.set_binding_state == "legacy_set_unbound"
