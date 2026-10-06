@@ -18,10 +18,9 @@
     "chain_head": "sha256:b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
     "concordia_attestation": "0.5.0",
     "countersignatures": {
-      "did:concordia:agent:synthetic-initiator": "kvr0FTEGCSxsy--caj21GOczN-EnZW40-jEqmJVDsF9GqE0j8juRMsTGcaUWSZjYt45Bqeu5m3cJ9Ud8AJSwBA==",
-      "did:concordia:agent:synthetic-responder": "FIuSRGDVvDhC71CEXKzxZiI26xreYiUcqwHvuecdZ4sdBoBOF5ZhTLP8LDizGH-vLYP1E6xJc0GuakyChW8LDQ=="
+      "did:concordia:agent:synthetic-initiator": "DBaGNF0glU18SHtNyE5S9RxCNaja8t_LECDSDcKw2WX0FDZCt1o9daUI9MHfdHRlsFkVOoYbNdKrUogiusLrDA==",
+      "did:concordia:agent:synthetic-responder": "xIhzdvFUpyk-LJAnR18YA2B1W-PQ6ftc0nBfxQg68cAD_PQj_rO6kPE9km2hTVqkkMp34hw88mPzZL6I6a0JCg=="
     },
-    "fulfillment": null,
     "message_count": 6,
     "meta": {
       "category": "software.tools",

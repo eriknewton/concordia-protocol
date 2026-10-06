@@ -111,13 +111,13 @@ class TestAttestationValidation:
                     "agent_id": "agent_a",
                     "role": "initiator",
                     "behavior": copy.deepcopy(behavior),
-                    "signature": "sig_a",
+                    "signature": "A" * 86 + "==",
                 },
                 {
                     "agent_id": "agent_b",
                     "role": "responder",
                     "behavior": copy.deepcopy(behavior),
-                    "signature": "sig_b",
+                    "signature": "A" * 86 + "==",
                 },
             ],
             "meta": {
@@ -127,7 +127,6 @@ class TestAttestationValidation:
                 "mediator_invoked": False,
             },
             "transcript_hash": "sha256:" + "a" * 64,
-            "fulfillment": None,
         }
 
     def test_valid_attestation(self):
@@ -210,10 +209,7 @@ class TestAttestationValidation:
             }
         ]
         errors = validate_attestation(att)
-        assert (
-            "$.references[0].extensions: violates 'additionalProperties' "
-            "constraint: false"
-        ) in errors
+        assert "$.references[0]: violates 'additionalProperties' constraint: false" in errors
         assert not any("1900" in e or "quantity" in e for e in errors)
 
     def test_accepts_legitimate_behavioral_summary(self):

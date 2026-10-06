@@ -1732,8 +1732,8 @@ CHAIN_POSITION_RESIGNED_SPLICE_TOLERANCE_NOTE = (
     "tolerated-accept: per-message signatures authenticate links, not the complete message set"
 )
 EXPECTED_MUTATION_TOTAL = 1488
-EXPECTED_MUTATION_REJECTS = 1443
-EXPECTED_MUTATION_ACCEPTS = 45
+EXPECTED_MUTATION_REJECTS = 1449
+EXPECTED_MUTATION_ACCEPTS = 39
 EXPECTED_CANARY_TOTAL = 5
 EXPECTED_RAW_TYPED_DIVERGENCES = (
     MutationDivergence(
@@ -1754,10 +1754,10 @@ EXPECTED_MUTATION_BATTERY_COUNTS: dict[str, tuple[int, int, int]] = {
     "1920/fulfillment_attestation.json": (63, 63, 0),
     "synthetic/attestation/attestation.json::attestation-countersign-v1": (
         111,
-        108,
-        3,
+        111,
+        0,
     ),
-    "synthetic/attestation/attestation.json::attestation-v1": (111, 78, 33),
+    "synthetic/attestation/attestation.json::attestation-v1": (111, 81, 30),
     "synthetic/attestation/attestation.json::attestation-v05-validity": (4, 4, 0),
     "synthetic/cosign/cosigned_receipt.json": (42, 42, 0),
     "synthetic/cmpc_bilateral/primitives/atomic_activation_proof.json": (30, 30, 0),
@@ -3313,6 +3313,7 @@ def build_v05_attestation(fixtures: SyntheticFixtures) -> dict[str, Any]:
     attestation = copy.deepcopy(fixtures.attestation)
     attestation["concordia_attestation"] = "0.5.0"
     attestation["attestation_id"] = "att_conformance_p2a1_v05_0001"
+    attestation.pop("fulfillment", None)
     validity_from = fixed_iso_now_dt()
     validity_until = validity_from + timedelta(
         seconds=DEFAULT_ATTESTATION_VALIDITY_SECONDS
@@ -3451,6 +3452,10 @@ def build_synthetic_attestation() -> tuple[dict[str, Any], dict[str, Any]]:
             agent_id: key_pair.public_key
             for agent_id, key_pair in key_by_agent.items()
         },
+        # The relying party's expectation is never copied from the artifact.
+        expected_session_id="sess_conformance_p2a1_0001",
+        expected_party_ids=frozenset(key_by_agent),
+        revocation_checker=lambda _: False,
     )
     if not result.valid:
         raise GenerationError(f"synthetic attestation did not verify: {result.errors}")
@@ -4426,12 +4431,31 @@ def build_phase2_vectors(fixtures: SyntheticFixtures) -> list[Vector]:
         "agent_public_keys_b64url"
     ]
     attestation_parties = [party["agent_id"] for party in attestation["parties"]]
-    countersign_preimage = attestation_countersign_payload(attestation)
     raw_term_attestation = copy.deepcopy(attestation)
     raw_term_attestation["parties"][0]["behavior"]["note"] = (
         "price: USD 250 for 10 units"
     )
     v05_attestation = build_v05_attestation(fixtures)
+    attestation_key_by_agent = {
+        "did:concordia:agent:synthetic-initiator": key_pair_from_seed(
+            SYNTHETIC_SEEDS["attestation_initiator"]
+        ),
+        "did:concordia:agent:synthetic-responder": key_pair_from_seed(
+            SYNTHETIC_SEEDS["attestation_responder"]
+        ),
+    }
+    v06_countersign_attestation = copy.deepcopy(v05_attestation)
+    v06_countersign_attestation["concordia_attestation"] = "0.6.0"
+    v06_countersign_attestation["attestation_id"] = (
+        "att_conformance_p2a1_v06_countersign_0001"
+    )
+    v06_countersign_attestation = resign_attestation(
+        v06_countersign_attestation,
+        attestation_key_by_agent,
+    )
+    v06_countersign_preimage = attestation_countersign_payload(
+        v06_countersign_attestation
+    )
 
     action = {"max_spend": 500, "category": "software"}
     mandate_issuer_key = fixtures.mandate_seed_manifest[
@@ -4534,14 +4558,14 @@ def build_phase2_vectors(fixtures: SyntheticFixtures) -> list[Vector]:
             source_fixture=SYNTHETIC_SOURCE_ATTESTATION,
             record_type="attestation",
             verification_profile="attestation-countersign-v1",
-            input_data=attestation,
+            input_data=v06_countersign_attestation,
             context={
                 "canonical_sha256": "sha256:"
-                + hashlib.sha256(countersign_preimage).hexdigest(),
+                + hashlib.sha256(v06_countersign_preimage).hexdigest(),
                 "countersigners": attestation_parties,
                 "public_keys_b64url": attestation_public_keys,
             },
-            canonical_preimage=countersign_preimage,
+            canonical_preimage=v06_countersign_preimage,
         ),
         Vector(
             vector_id="pos-synthetic-mandate",

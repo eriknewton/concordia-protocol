@@ -208,9 +208,45 @@ def validate_attestation(attestation: dict[str, Any]) -> list[str]:
     for error in validator.iter_errors(attestation):
         errors.append(_format_validation_error(error))
     errors.extend(_validate_attestation_free_text(attestation))
+    errors.extend(_validate_attestation_v05_shape(attestation))
     if not errors:
         _warn_on_noncanonical_references(attestation)
     return errors
+
+
+def _validate_attestation_v05_shape(attestation: Any) -> list[str]:
+    if not isinstance(attestation, dict):
+        return []
+    from .attestation import (
+        _IMPLEMENTED_ATTESTATION_VERSION,
+        _LEGACY_FLOOR_VERSION,
+        _AttestationStructureError,
+        _validate_attestation_structure,
+        _version_tuple,
+    )
+
+    version_value = attestation.get("concordia_attestation")
+    if not isinstance(version_value, str):
+        return []
+    try:
+        version = _version_tuple(version_value)
+    except _AttestationStructureError:
+        # The JSON Schema pattern ends in `$`, which Python's regex engine
+        # (the engine jsonschema runs here) lets match before a trailing
+        # newline; the structure grammar (`\Z`, must match _SEMVER_RE in
+        # concordia/attestation.py) does not. Report the gap as a schema
+        # error so a schema-only consumer never passes a version the
+        # verifier rejects.
+        return [
+            "$.concordia_attestation: violates "
+            "draft-newton-agreement-evidence-00 version grammar"
+        ]
+    if _LEGACY_FLOOR_VERSION <= version <= _IMPLEMENTED_ATTESTATION_VERSION:
+        try:
+            _validate_attestation_structure(attestation)
+        except (_AttestationStructureError, OverflowError, ValueError):
+            return ["$: violates draft-newton-agreement-evidence-00 structure"]
+    return []
 
 
 def validate_fulfillment_attestation(attestation: dict[str, Any]) -> list[str]:

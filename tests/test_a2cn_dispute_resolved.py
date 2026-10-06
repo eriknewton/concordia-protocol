@@ -456,22 +456,26 @@ def test_fulfillment_status_enum_has_fulfilled_with_mediation():
     )
 
 
-def test_attestation_schema_accepts_fulfilled_with_mediation():
+def test_fulfillment_schema_accepts_fulfilled_with_mediation():
     schema_path = (
         Path(__file__).resolve().parents[1]
         / "schemas"
-        / "attestation.schema.json"
+        / "fulfillment_attestation.schema.json"
     )
     with schema_path.open(encoding="utf-8") as fp:
         schema = json.load(fp)
-    status_enum = schema["$defs"]["fulfillment_attestation"]["properties"]["status"][
-        "enum"
-    ]
+    status_enum = schema["properties"]["fulfillment"]["properties"]["status"]["enum"]
     assert "fulfilled_with_mediation" in status_enum
-    # Validate a synthetic attestation carrying the new status against
-    # the schema (full document, not just the fulfillment block).
-    full_attestation = _base_attestation()
-    full_attestation["fulfillment"] = build_fulfillment_from_dispute_resolved(
-        _base_message(),
-    )
-    jsonschema.validate(full_attestation, schema)
+    artifact = {
+        "attestation_type": "FulfillmentAttestation",
+        "id": "urn:concordia:fulfillment:test",
+        "agreement_attestation_id": "att_existing",
+        "issued_at": SAMPLE_RESOLUTION_TS,
+        "fulfillment": build_fulfillment_from_dispute_resolved(_base_message()),
+        "meta": {"mediator_invoked": True},
+        "references": [
+            {"id": "att_existing", "type": "receipt", "relationship": "fulfills"}
+        ],
+        "signature": {"alg": "Ed25519", "value": "A" * 86 + "=="},
+    }
+    jsonschema.validate(artifact, schema)

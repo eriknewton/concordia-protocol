@@ -9,8 +9,7 @@ attestation. These tests pin the fail-closed validation:
 - ``value_range`` is an enumerated logarithmic bucket vocabulary plus a
   shape-validated 3-letter currency code; anything else raises.
 - ``category`` is a dotted lowercase taxonomy path with a length cap.
-- ``references`` entries are count-capped, string-length-capped, and the
-  ``extensions`` escape hatch is size-capped in canonical-JSON bytes.
+- ``references`` entries are count-capped and string-length-capped.
 - Invalid input is rejected, never coerced, and never echoed back in the
   error text (content-injection lens).
 - Previously issued attestations: party-signature verification and the
@@ -25,8 +24,8 @@ Review fixes (codex security review, 2026-06-11) extend the coverage:
   (finding 1).
 - The embedded $defs.reference in both attestation schema files stays in
   lockstep with reference.schema.json (finding 3).
-- extensions objects are structurally pre-checked (depth/node bounds)
-  before canonicalization (finding 4).
+- the v0.6.0 attestation reference shape rejects the removed
+  ``extensions`` member at issuance.
 - Schema validation errors never echo the rejected instance value
   (finding 5).
 - The legacy read-side behavior is pinned explicitly (finding 6).
@@ -49,9 +48,6 @@ from concordia import (
 )
 from concordia.attestation import (
     MAX_CATEGORY_LENGTH,
-    MAX_REFERENCE_EXTENSIONS_BYTES,
-    MAX_REFERENCE_EXTENSIONS_DEPTH,
-    MAX_REFERENCE_EXTENSIONS_NODES,
     MAX_REFERENCE_ID_LENGTH,
     MAX_REFERENCE_OPTIONAL_STRING_LENGTH,
     MAX_REFERENCE_RELATIONSHIP_LENGTH,
@@ -285,38 +281,11 @@ class TestReferencesCaps:
                 session, _key_pairs(seller, buyer), references=[bad_ref]
             )
 
-    def test_extensions_small_dict_roundtrips(self, agreed_session):
+    def test_extensions_member_rejected_in_v06(self, agreed_session):
         session, seller, buyer = agreed_session
         ref = _ref()
         ref["extensions"] = {"chain_depth": 2}
-        att = generate_attestation(
-            session, _key_pairs(seller, buyer), references=[ref]
-        )
-        assert att["references"][0]["extensions"] == {"chain_depth": 2}
-
-    def test_extensions_non_dict_rejected(self, agreed_session):
-        session, seller, buyer = agreed_session
-        ref = _ref()
-        ref["extensions"] = "free text deal terms: $4,350"
-        with pytest.raises(ValueError, match="extensions"):
-            generate_attestation(
-                session, _key_pairs(seller, buyer), references=[ref]
-            )
-
-    def test_extensions_oversize_rejected(self, agreed_session):
-        session, seller, buyer = agreed_session
-        ref = _ref()
-        ref["extensions"] = {"blob": "x" * (MAX_REFERENCE_EXTENSIONS_BYTES + 1)}
-        with pytest.raises(ValueError, match="extensions"):
-            generate_attestation(
-                session, _key_pairs(seller, buyer), references=[ref]
-            )
-
-    def test_extensions_unserializable_rejected(self, agreed_session):
-        session, seller, buyer = agreed_session
-        ref = _ref()
-        ref["extensions"] = {"bad": float("nan")}
-        with pytest.raises(ValueError, match="extensions"):
+        with pytest.raises(ValueError, match="undefined"):
             generate_attestation(
                 session, _key_pairs(seller, buyer), references=[ref]
             )
@@ -435,97 +404,13 @@ class TestReferenceWhitespaceBan:
         assert "4350" not in str(excinfo.value)
 
 
-class TestExtensionsStructuralPrecheck:
-    """Finding 4: structure is bounded BEFORE canonical serialization.
-
-    The 2048-canonical-byte cap is enforced after full canonicalization,
-    so without a pre-check a pathological extensions object would be
-    fully walked just to be rejected. Depth and node-count bounds bail
-    early instead. Depth counts every level including scalar leaves; the
-    extensions object itself is depth 1.
-    """
-
-    @staticmethod
-    def _chain(n_dicts):
-        """Build n_dicts nested dicts; the innermost holds a scalar."""
-        value = 0
-        for _ in range(n_dicts):
-            value = {"a": value}
-        return value
-
-    def test_depth_at_bound_accepted(self, agreed_session):
-        session, seller, buyer = agreed_session
-        ref = _ref()
-        # Dicts at depths 1..7, scalar leaf at depth 8: within the bound.
-        ref["extensions"] = self._chain(MAX_REFERENCE_EXTENSIONS_DEPTH - 1)
-        att = generate_attestation(
-            session, _key_pairs(seller, buyer), references=[ref]
-        )
-        assert att["references"][0]["extensions"] == ref["extensions"]
-
-    def test_depth_over_bound_rejected(self, agreed_session):
-        session, seller, buyer = agreed_session
-        ref = _ref()
-        # Dicts at depths 1..8, scalar leaf at depth 9: over the bound.
-        ref["extensions"] = self._chain(MAX_REFERENCE_EXTENSIONS_DEPTH)
-        with pytest.raises(ValueError, match="nesting depth"):
-            generate_attestation(
-                session, _key_pairs(seller, buyer), references=[ref]
-            )
-
-    def test_deeply_nested_list_rejected(self, agreed_session):
-        session, seller, buyer = agreed_session
-        value = [0]
-        for _ in range(MAX_REFERENCE_EXTENSIONS_DEPTH):
-            value = [value]
-        ref = _ref()
-        ref["extensions"] = {"a": value}
-        with pytest.raises(ValueError, match="nesting depth"):
-            generate_attestation(
-                session, _key_pairs(seller, buyer), references=[ref]
-            )
-
-    def test_node_count_at_bound_accepted(self, agreed_session):
-        session, seller, buyer = agreed_session
-        ref = _ref()
-        # Nodes: extensions dict (1) + list (1) + 254 scalars = 256.
-        ref["extensions"] = {"a": [0] * (MAX_REFERENCE_EXTENSIONS_NODES - 2)}
-        att = generate_attestation(
-            session, _key_pairs(seller, buyer), references=[ref]
-        )
-        assert att["references"][0]["extensions"] == ref["extensions"]
-
-    def test_node_count_over_bound_rejected(self, agreed_session):
-        session, seller, buyer = agreed_session
-        ref = _ref()
-        # Nodes: extensions dict (1) + list (1) + 255 scalars = 257.
-        ref["extensions"] = {"a": [0] * (MAX_REFERENCE_EXTENSIONS_NODES - 1)}
-        with pytest.raises(ValueError, match="nodes"):
-            generate_attestation(
-                session, _key_pairs(seller, buyer), references=[ref]
-            )
-
-    def test_wide_object_rejected_by_node_bound_not_byte_cap(
-        self, agreed_session
-    ):
-        """A huge flat object trips the cheap node bound, not the byte cap."""
-        session, seller, buyer = agreed_session
-        ref = _ref()
-        ref["extensions"] = {f"k{i}": 0 for i in range(10_000)}
-        with pytest.raises(ValueError, match="nodes"):
-            generate_attestation(
-                session, _key_pairs(seller, buyer), references=[ref]
-            )
-
-
 def _schema_path(*parts):
     return Path(__file__).resolve().parent.parent.joinpath(*parts)
 
 
-class TestSchemaLockstep:
-    """Finding 3: the embedded $defs.reference in BOTH attestation schema
-    files carries the same caps and whitespace pattern as
-    reference.schema.json, and references[] is count-capped.
+class TestSchemaReferenceShape:
+    """The embedded $defs.reference in both attestation schema files carries
+    the 0.6.0 closed reference shape and references[] is count-capped.
     """
 
     REFERENCE_FIELDS = ("id", "type", "relationship", "version",
@@ -536,7 +421,7 @@ class TestSchemaLockstep:
         with open(path) as f:
             return json.load(f)
 
-    def test_three_schema_files_in_lockstep(self):
+    def test_attestation_reference_shape_is_v06(self):
         canonical = self._load(
             _schema_path("schemas", "reference.schema.json")
         )["properties"]
@@ -549,9 +434,12 @@ class TestSchemaLockstep:
             ]
             for field in self.REFERENCE_FIELDS:
                 for key in ("maxLength", "pattern", "minLength"):
+                    if field == "signed_at" and key == "pattern":
+                        continue
                     assert embedded[field].get(key) == canonical[field].get(
                         key
                     ), f"{schema_file.name}: {field}.{key} out of lockstep"
+            assert "extensions" not in embedded
 
     def test_attestation_schemas_cap_references_count(self):
         for schema_file in (
@@ -724,13 +612,13 @@ def _legacy_style_attestation():
                 "agent_id": "agent_legacy_a",
                 "role": "initiator",
                 "behavior": copy.deepcopy(behavior),
-                "signature": "sig_a",
+                "signature": "A" * 86 + "==",
             },
             {
                 "agent_id": "agent_legacy_b",
                 "role": "responder",
                 "behavior": copy.deepcopy(behavior),
-                "signature": "sig_b",
+                "signature": "A" * 86 + "==",
             },
         ],
         "meta": {
@@ -740,7 +628,6 @@ def _legacy_style_attestation():
             "mediator_invoked": False,
         },
         "transcript_hash": "sha256:" + "a" * 64,
-        "fulfillment": None,
     }
 
 

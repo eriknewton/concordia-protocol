@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:concordia:schema:attestation:v0.5",
+  "$id": "urn:concordia:schema:attestation:v0.6",
   "title": "Concordia Reputation Attestation",
-  "description": "A signed, structured record of negotiation behavior and outcome. Produced automatically from every Concordia session transcript. Attestations are the raw material of trust; they record what happened without computing scores. Scoring is performed by external reputation services that consume attestations. v0.5 ratifies the references[] shape introduced in v0.4.0; see SPEC.md §11.5 for the normative spec including the layering boundary between attestation-level and envelope-level references.",
+  "description": "A signed, structured record of negotiation behavior and outcome. Produced automatically from every Concordia session transcript. Attestations are the raw material of trust; they record what happened without computing scores. Scoring is performed by external reputation services that consume attestations. v0.6 follows draft-newton-agreement-evidence-00 with a closed member set.",
 
   "type": "object",
   "required": [
@@ -19,25 +19,30 @@
   "properties": {
     "concordia_attestation": {
       "type": "string",
-      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
       "description": "Attestation schema version (semver). Matches the protocol version."
     },
 
     "attestation_id": {
       "type": "string",
       "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\s\\u0000-\\u001F\\u007F-\\u009F\\u200B-\\u200F\\u2028-\\u202E]+$",
       "description": "Unique identifier for this attestation. Recommended format: 'att_' followed by a UUID v4."
     },
 
     "session_id": {
       "type": "string",
       "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\s\\u0000-\\u001F\\u007F-\\u009F\\u200B-\\u200F\\u2028-\\u202E]+$",
       "description": "The negotiation session this attestation records."
     },
 
     "timestamp": {
       "type": "string",
       "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,3})?Z$",
       "description": "ISO 8601 UTC timestamp of attestation generation."
     },
 
@@ -78,6 +83,7 @@
     "parties": {
       "type": "array",
       "minItems": 2,
+      "maxItems": 64,
       "description": "Behavioral record for each party in the negotiation.",
       "items": {
         "type": "object",
@@ -85,6 +91,9 @@
         "properties": {
           "agent_id": {
             "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[^\\s\\u0000-\\u001F\\u007F-\\u009F\\u200B-\\u200F\\u2028-\\u202E]+$",
             "description": "The agent's persistent identifier."
           },
           "role": {
@@ -145,6 +154,7 @@
           },
           "signature": {
             "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{86}==$",
             "description": "Ed25519 signature over this party's behavioral record, confirming accuracy."
           }
         },
@@ -170,7 +180,13 @@
         },
         "extensions_used": {
           "type": "array",
-          "items": { "type": "string" },
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[^\\s\\u0000-\\u001F\\u007F-\\u009F\\u200B-\\u200F\\u2028-\\u202E]+$"
+          },
           "description": "Protocol extensions active in this session."
         },
         "mediator_invoked": {
@@ -196,6 +212,7 @@
     "message_count": {
       "type": "integer",
       "minimum": 1,
+      "maximum": 10000,
       "description": "v0.3.0 receipt set-binding: number of messages in the transcript. Closes truncation when paired with chain_head. Required by verifiers for concordia_attestation >= 0.3.0."
     },
 
@@ -210,7 +227,7 @@
         { "type": "null" },
         { "$ref": "#/$defs/fulfillment_attestation" }
       ],
-      "description": "Post-settlement fulfillment record. Null until settlement is complete. Updated after delivery/service completion."
+      "description": "Legacy pre-0.6 root fulfillment block. Undefined for 0.6.0 and later agreement attestations."
     },
 
     "references": {
@@ -227,9 +244,15 @@
 
     "countersignatures": {
       "type": "object",
-      "description": "C-H2 outcome-binding (Option B): map of party agent_id -> base64url-padded Ed25519 signature over canonical_json(strip_signatures(attestation minus countersignatures)). Binds the issuance snapshot (outcome, meta, session_id, transcript_hash) so the outcome is not merely prover-asserted. One entry per party that had a signing key at issuance; parties without a key get no entry. Added in v0.2.0 (C-H2). Soundness (a >=0.2.0 attestation MUST carry a valid map) is enforced by the bundle verifier, not by this shape schema; <0.2.0 attestations validate without it.",
-      "additionalProperties": { "type": "string", "minLength": 1 },
-      "propertyNames": { "minLength": 1 }
+      "description": "Map of party agent_id to base64url-padded Ed25519 signature over canonical_json(strip_signatures(attestation minus countersignatures)).",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]{86}==$"
+      },
+      "propertyNames": {
+        "minLength": 1,
+        "pattern": "^[^\\s\\u0000-\\u001F\\u007F-\\u009F\\u200B-\\u200F\\u2028-\\u202E]+$"
+      }
     }
   },
   "allOf": [
@@ -243,7 +266,25 @@
         }
       },
       "then": {
-        "required": ["validity_temporal"]
+        "required": [
+          "chain_head",
+          "message_count",
+          "validity_temporal",
+          "countersignatures"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": ["concordia_attestation"],
+        "properties": {
+          "concordia_attestation": {
+            "pattern": "^(?:0\\.(?:[5-9]|[1-9][0-9]+)\\.[0-9]+|[1-9][0-9]*\\.[0-9]+\\.[0-9]+)$"
+          }
+        }
+      },
+      "then": {
+        "not": { "required": ["fulfillment"] }
       }
     }
   ],
@@ -335,63 +376,44 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 256,
-          "pattern": "^\\S+$",
+          "pattern": "^[^\\s\\u0000-\\u001F\\u007F-\\u009F\\u200B-\\u200F\\u2028-\\u202E]+$",
           "description": "Identifier of the referenced artifact. URN-shaped where possible (SPEC §11.5.7). Max 256 chars, whitespace-free so prose deal terms cannot ride in identifier fields (SPEC §9.6.6)."
         },
         "type": {
           "type": "string",
           "minLength": 1,
           "maxLength": 64,
-          "pattern": "^\\S+$",
+          "pattern": "^[^\\s\\u0000-\\u001F\\u007F-\\u009F\\u200B-\\u200F\\u2028-\\u202E]+$",
           "description": "Kind of artifact referenced. Canonical emit vocabulary is receipt, chain_session, predicate, mandate. Read-side validators accept non-empty whitespace-free strings of at most 64 chars and preserve unknown values per SPEC §11.5.5 and §11.5.8."
         },
         "relationship": {
           "type": "string",
           "minLength": 1,
           "maxLength": 64,
-          "pattern": "^\\S+$",
+          "pattern": "^[^\\s\\u0000-\\u001F\\u007F-\\u009F\\u200B-\\u200F\\u2028-\\u202E]+$",
           "description": "Semantic relationship per SPEC §11.5.5. Canonical emit vocabulary is supersedes, extends, fulfills, references. Read-side validators accept non-empty whitespace-free strings of at most 64 chars and preserve unknown values per SPEC §11.5.8."
         },
         "version": {
           "type": "string",
+          "minLength": 1,
           "maxLength": 256,
-          "pattern": "^\\S+$",
+          "pattern": "^[^\\s\\u0000-\\u001F\\u007F-\\u009F\\u200B-\\u200F\\u2028-\\u202E]+$",
           "description": "Optional. Version of the referenced artifact when known. Whitespace-free, max 256 chars."
         },
         "signed_at": {
           "type": "string",
           "format": "date-time",
+          "minLength": 1,
           "maxLength": 256,
-          "pattern": "^\\S+$",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,3})?Z$",
           "description": "Optional. Timestamp of the referenced artifact's signature when known. Whitespace-free, max 256 chars."
         },
         "signer_did": {
           "type": "string",
+          "minLength": 1,
           "maxLength": 256,
-          "pattern": "^\\S+$",
+          "pattern": "^[^\\s\\u0000-\\u001F\\u007F-\\u009F\\u200B-\\u200F\\u2028-\\u202E]+$",
           "description": "Optional. DID of the signer of the referenced artifact when known. Whitespace-free, max 256 chars."
-        },
-        "extensions": {
-          "type": "object",
-          "properties": {
-            "profile": { "type": "string" },
-            "custom_key": { "type": "string" },
-            "future_field": { "type": "string" },
-            "future_v0x_field": { "type": "string" },
-            "another_extension": {
-              "type": "object",
-              "properties": {
-                "nested": { "type": "boolean" }
-              },
-              "additionalProperties": false
-            },
-            "tl_leaf_canonical_hash": { "type": "string" },
-            "verified_signing_key_hex": { "type": "string" },
-            "leaf_index": { "type": "integer", "minimum": 0 },
-            "tl_url": { "type": "string" }
-          },
-          "additionalProperties": false,
-          "description": "Optional. Forward-compatibility map for v0.x extension keys, capped at 2048 canonical-JSON bytes at issuance. Implementations SHOULD preserve unknown keys verbatim across roundtrips."
         }
       },
       "additionalProperties": false
@@ -404,8 +426,16 @@
           "required": ["mode", "from", "until"],
           "properties": {
             "mode": { "const": "absolute" },
-            "from": { "type": "string", "format": "date-time" },
-            "until": { "type": "string", "format": "date-time" }
+            "from": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,3})?Z$"
+            },
+            "until": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,3})?Z$"
+            }
           },
           "additionalProperties": false,
           "description": "Absolute clock-bounded validity. Added in v0.4.0 (WP3)."
@@ -415,23 +445,15 @@
           "required": ["mode", "from", "duration_seconds"],
           "properties": {
             "mode": { "const": "relative" },
-            "from": { "type": "string", "format": "date-time" },
+            "from": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,3})?Z$"
+            },
             "duration_seconds": { "type": "integer", "minimum": 1 }
           },
           "additionalProperties": false,
           "description": "Validity is N seconds after the anchor timestamp. Added in v0.4.0 (WP3)."
-        },
-        {
-          "type": "object",
-          "required": ["mode", "start", "end", "duration_seconds"],
-          "properties": {
-            "mode": { "const": "window" },
-            "start": { "type": "string", "format": "date-time" },
-            "end": { "type": "string", "format": "date-time" },
-            "duration_seconds": { "type": "integer", "minimum": 1 }
-          },
-          "additionalProperties": false,
-          "description": "Valid during any N-second window within [start, end]. Added in v0.4.0 (WP3)."
         }
       ]
     },

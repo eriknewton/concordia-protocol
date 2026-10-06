@@ -316,7 +316,7 @@ class TestOutcomeBindingCountersignature:
         countersignature. This is the exact pre-C-H2 exploit: the party sigs
         still verify, but the OUTCOME is no longer bound."""
         att, key_pairs = _agreed_attestation()
-        assert att["concordia_attestation"] == "0.5.0"
+        assert att["concordia_attestation"] == "0.6.0"
         cs = att["countersignatures"]
         assert isinstance(cs, dict) and cs
 
@@ -368,9 +368,8 @@ class TestOutcomeBindingCountersignature:
             ) is False, f"chain_head tamper must break {aid}"
 
     def test_single_key_countersignature_degraded_form(self):
-        """Degraded single-key form ({AGENT_A: KP_A}, B omitted) yields a
-        one-entry map that is still bound for the present signer (Option C
-        degraded form, explicitly labelled in the design)."""
+        """The -00 Section 6.2 countersignature set requires every listed
+        party, so the old single-key degraded form now fails closed."""
         seller = Agent("seller_01")
         buyer = Agent("buyer_42")
         terms = {"price": {"value": 150.00, "currency": "USD"}}
@@ -384,19 +383,7 @@ class TestOutcomeBindingCountersignature:
             reasoning="Fair price",
         )
         buyer.accept_offer(reasoning="ok")
-        # Only seller has a key (B omitted) -> exactly the single-key form.
+        # Only seller has a key (B omitted) -> the old single-key form.
         key_pairs = {"seller_01": seller.key_pair}
-        att = generate_attestation(session, key_pairs)
-
-        cs = att["countersignatures"]
-        assert set(cs.keys()) == {"seller_01"}, (
-            "single-key form must yield exactly one countersignature entry"
-        )
-        assert verify_attestation_countersignature(
-            att, cs["seller_01"], seller.key_pair.public_key
-        ) is True
-        # And it is still outcome-bound: tampering breaks it.
-        att["outcome"]["rounds"] = 999
-        assert verify_attestation_countersignature(
-            att, cs["seller_01"], seller.key_pair.public_key
-        ) is False
+        with pytest.raises(ValueError, match="every listed party"):
+            generate_attestation(session, key_pairs)

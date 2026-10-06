@@ -47,6 +47,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   force Intel Mac adopters to a source build for a surface Concordia never
   reaches.
 
+### Changed
+
+- Implemented agreement attestation format 0.6.0 for Python issuance and
+  verification. New attestations emit `concordia_attestation: "0.6.0"`,
+  remove the root `fulfillment` member, remove reference-level
+  `extensions`, and reject the removed `validity_temporal` `window` mode.
+  The new byte-level verifier reports only `current`, `bound-only`,
+  `legacy`, or `not-bound`, applies the structure, freshness, binding,
+  revocation, and expected-session checks from
+  `draft-newton-agreement-evidence-00`, and keeps well-formed artifacts
+  below 0.5.0 on the `legacy` exit before any signature check. There is no
+  0.5.x carve-out: a 0.5.0 or later artifact carrying `fulfillment`
+  including `fulfillment: null`, reference `extensions`, or
+  `validity_temporal.mode: "window"` terminates `not-bound`; a malformed
+  version also terminates `not-bound`.
+- Changed the pre-1.0 Python `verify_attestation()` API for 0.5.0 and later
+  artifacts: callers must now pass keyword-only `expected_session_id` and
+  `expected_party_ids` arguments. The verifier no longer infers those values
+  from the artifact, because draft-newton-agreement-evidence-00 step 8
+  requires the relying party's own expected session and party set. The same
+  wrapper accepts an optional `revocation_checker`, preserves `legacy` as the
+  terminal state for well-formed below-floor artifacts, reports current-version
+  structural failures separately from signature failures, and checks a supplied
+  transcript against `chain_head` and `message_count` without changing the
+  terminal state.
+- Tightened edge behavior around attestations: `is_valid_now()` treats
+  validity intervals as closed at both endpoints, string inputs with lone
+  surrogates fail closed, schema validation reports oversized numeric fields
+  as validation errors, diagnostics bound untrusted member paths, and issuance
+  rejects boolean `duration_seconds` values.
+
 ### Added
 
 - **A2A #1734 interop fixture: a signed receipt that binds its decision

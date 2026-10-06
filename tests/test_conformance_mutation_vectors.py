@@ -16,8 +16,8 @@ EXPECTED_REASON_CLASSES = {
     "privacy",
     "transition",
 }
-EXPECTED_MUTATION_REJECTS = 1443
-EXPECTED_MUTATION_ACCEPTS = 45
+EXPECTED_MUTATION_REJECTS = 1449
+EXPECTED_MUTATION_ACCEPTS = 39
 EXPECTED_MUTATION_TOTAL = 1488
 EXPECTED_BATTERY_COUNTS = {
     "1404/approval_receipt.json": (63, 63, 0),
@@ -28,10 +28,10 @@ EXPECTED_BATTERY_COUNTS = {
     "1920/fulfillment_attestation.json": (63, 63, 0),
     "synthetic/attestation/attestation.json::attestation-countersign-v1": (
         111,
-        108,
-        3,
+        111,
+        0,
     ),
-    "synthetic/attestation/attestation.json::attestation-v1": (111, 78, 33),
+    "synthetic/attestation/attestation.json::attestation-v1": (111, 81, 30),
     "synthetic/attestation/attestation.json::attestation-v05-validity": (4, 4, 0),
     "synthetic/cosign/cosigned_receipt.json": (42, 42, 0),
     "synthetic/cmpc_bilateral/primitives/atomic_activation_proof.json": (30, 30, 0),
@@ -81,15 +81,9 @@ EXPECTED_ACCEPTED_IDS = {
     "mut-synthetic-attestation-0102",
     "mut-synthetic-attestation-0103",
     "mut-synthetic-attestation-0104",
-    "mut-synthetic-attestation-0105",
     "mut-synthetic-attestation-0106",
-    "mut-synthetic-attestation-0107",
     "mut-synthetic-attestation-0108",
-    "mut-synthetic-attestation-0109",
     "mut-synthetic-attestation-0110",
-    "mut-synthetic-attestation-countersign-0045",
-    "mut-synthetic-attestation-countersign-0072",
-    "mut-synthetic-attestation-countersign-0109",
     "mut-synthetic-cmpc-closure-predicate-0038",
     "mut-synthetic-competence-proof-0001",
     "mut-synthetic-competence-proof-0002",

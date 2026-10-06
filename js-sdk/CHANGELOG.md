@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-Nothing yet.
+- `isValidNow` fails closed on a malformed or absent `concordia_attestation` when `validity_temporal` is missing, mirroring Python `is_valid_now`; the `no_constraint` parity case now expects `false`. Full 0.6.0 parity (closed member set, the three removals, the nine-step verifier) is a separate build; the fixture generator does not run against this Python until then.
+
 
 ## 0.0.1-alpha.12 -- 2026-08-02
 
