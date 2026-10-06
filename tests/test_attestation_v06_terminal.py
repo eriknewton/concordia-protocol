@@ -715,3 +715,53 @@ def test_countersignature_diagnostic_does_not_echo_long_agent_id() -> None:
     assert result.errors
     assert all(len(error) < 200 for error in result.errors)
     assert long_agent_id not in combined
+
+
+@pytest.mark.parametrize(
+    "version_value", ["0.6.0\n", "0.5.0\n", "0.4.0\n", "0.6.0\r\n"]
+)
+def test_wrapper_trailing_newline_version_is_not_bound_and_invalid(
+    version_value: str,
+) -> None:
+    """A version the schema's `$` tolerates must not verify through the wrapper.
+
+    The legacy checks never cover the version member, so without the early
+    step-2 refusal both party signatures verify and `valid` reads True while
+    `terminal_state` reads not-bound.
+    """
+    now = datetime.now(timezone.utc)
+    artifact, keys = _artifact(now)
+    artifact["concordia_attestation"] = version_value
+
+    result = _wrapper_verify(artifact, keys)
+
+    assert result.valid is False
+    assert result.terminal_state == "not-bound"
+    assert result.verified_parties == []
+    assert result.errors
+    assert validate_attestation(artifact)
+    assert is_valid_attestation(artifact) is False
+
+
+def test_bundle_refuses_trailing_newline_version_with_tampered_outcome() -> None:
+    """The bundle verifier must not credit or pass an artifact whose version
+    only the schema's lenient `$` admits; before this fix the artifact rode the
+    legacy-unbound lane with no countersignature checked and verify_bundle
+    returned valid=True."""
+    from concordia.receipt_bundle import ReceiptBundle, verify_bundle
+
+    now = datetime.now(timezone.utc)
+    artifact, keys = _artifact(now)
+    artifact["concordia_attestation"] = "0.6.0\n"
+    artifact["outcome"]["status"] = "rejected"
+    artifact["countersignatures"] = {
+        agent_id: "A" * 86 + "==" for agent_id in artifact["countersignatures"]
+    }
+    holder = "did:example:alice"
+    bundle = ReceiptBundle.create(holder, [artifact], keys[holder]).to_dict()
+
+    result = verify_bundle(bundle, lambda agent_id: keys[agent_id].public_key)
+
+    assert result.valid is False
+    assert result.outcome_bound_count == 0
+    assert any("malformed" in error for error in result.errors)

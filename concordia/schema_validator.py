@@ -231,7 +231,16 @@ def _validate_attestation_v05_shape(attestation: Any) -> list[str]:
     try:
         version = _version_tuple(version_value)
     except _AttestationStructureError:
-        return []
+        # The JSON Schema pattern ends in `$`, which Python's regex engine
+        # (the engine jsonschema runs here) lets match before a trailing
+        # newline; the structure grammar (`\Z`, must match _SEMVER_RE in
+        # concordia/attestation.py) does not. Report the gap as a schema
+        # error so a schema-only consumer never passes a version the
+        # verifier rejects.
+        return [
+            "$.concordia_attestation: violates "
+            "draft-newton-agreement-evidence-00 version grammar"
+        ]
     if _LEGACY_FLOOR_VERSION <= version <= _IMPLEMENTED_ATTESTATION_VERSION:
         try:
             _validate_attestation_structure(attestation)

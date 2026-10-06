@@ -74,10 +74,18 @@ def evaluate_outcome_binding(
                           reason; callers MUST surface it (fail-closed).
     """
     ver = att.get("concordia_attestation", "")
+    if not isinstance(ver, str) or not _SEMVER_RE.match(ver):
+        # A malformed or absent version is an error, never "legacy unbound":
+        # the unbound lane skips every countersignature check, so routing a
+        # version the JSON Schema's `$` tolerates (a trailing newline) into
+        # it would let an outcome-tampered artifact pass verify_bundle with
+        # valid=True. Matches -00 section 10 step 2 (malformed version is
+        # not-bound before any signature work).
+        return "error", "concordia_attestation is malformed; outcome not bound"
     if not _attestation_version_at_least(ver, *_OUTCOME_BINDING_MIN):
-        # Legacy / pre-C-H2 (or malformed version): outcome is prover-asserted.
-        # Recorded as unbound, NOT an error (mixed-version handling is the
-        # caller's job).
+        # Legacy / pre-C-H2 (well-formed version below the floor): outcome is
+        # prover-asserted. Recorded as unbound, NOT an error (mixed-version
+        # handling is the caller's job).
         return "unbound", None
 
     cs = att.get("countersignatures")

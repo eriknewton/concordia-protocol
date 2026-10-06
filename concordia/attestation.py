@@ -999,6 +999,11 @@ def evaluate_receipt_set_binding(
         not match the supplied transcript.
     """
     ver = attestation.get("concordia_attestation", "")
+    if not isinstance(ver, str) or not _SEMVER_RE.match(ver):
+        # Malformed or absent version: an error, not legacy set-unbound, for
+        # the same reason as evaluate_outcome_binding in receipt_bundle.py
+        # (the unbound lane skips every check).
+        return "error", ["concordia_attestation is malformed; set not bound"]
     if not _attestation_version_at_least(ver, *_SET_BINDING_MIN):
         return "legacy_set_unbound", []
 
@@ -1349,75 +1354,96 @@ def verify_attestation(
             public_keys = {}
 
         version_value = attestation.get("concordia_attestation")
-        if isinstance(version_value, str) and _SEMVER_RE.match(version_value):
-            version = _version_tuple(version_value)
-            well_formed_below_floor = version < _LEGACY_FLOOR_VERSION
-            if version >= _LEGACY_FLOOR_VERSION:
-                payload = json.dumps(
-                    attestation,
-                    separators=(",", ":"),
-                    sort_keys=True,
-                    ensure_ascii=False,
-                ).encode("utf-8", "surrogatepass")
-                terminal = verify_attestation_artifact(
-                    payload,
-                    lambda agent_id: public_keys.get(agent_id),
-                    expected_session_id=expected_session_id,
-                    expected_party_ids=expected_party_ids,
-                    revocation_checker=revocation_checker,
-                )
-                procedure_errors = (
-                    terminal.errors if terminal.terminal_state == "not-bound" else []
-                )
-                if (
-                    terminal.terminal_state == "not-bound"
-                    and terminal.signature_checks > 0
-                    and any("countersignature" in e for e in procedure_errors)
-                ):
-                    signature_errors = procedure_errors
-                else:
-                    schema_errors = procedure_errors
-                if transcript is not None:
-                    try:
-                        evaluated_set_binding_state, set_binding_errors = (
-                            evaluate_receipt_set_binding(attestation, transcript)
-                        )
-                    except Exception:
-                        evaluated_set_binding_state = "error"
-                        set_binding_errors = ["transcript could not be evaluated"]
-                    set_binding_state = (
-                        evaluated_set_binding_state
-                        if terminal.terminal_state in {"current", "bound-only"}
-                        else "error"
+        if not isinstance(version_value, str) or not _SEMVER_RE.match(
+            version_value
+        ):
+            # -00 section 10 step 2: a malformed or absent version is rejected
+            # here with the terminal state not-bound before any signature,
+            # binding or legacy check runs. The early return is load-bearing:
+            # the legacy checks below never cover the version member, so a
+            # version the JSON Schema's `$` tolerates (a trailing newline)
+            # would otherwise have every signature it does check verify and
+            # the wrapper would report valid=True with terminal_state
+            # not-bound.
+            malformed = (
+                "concordia_attestation must be three dot-separated "
+                "non-negative integers without leading zeros"
+            )
+            return AttestationVerifyResult(
+                valid=False,
+                errors=[malformed],
+                schema_errors=[malformed],
+                set_binding_state="error",
+                terminal_state="not-bound",
+            )
+        version = _version_tuple(version_value)
+        well_formed_below_floor = version < _LEGACY_FLOOR_VERSION
+        if version >= _LEGACY_FLOOR_VERSION:
+            payload = json.dumps(
+                attestation,
+                separators=(",", ":"),
+                sort_keys=True,
+                ensure_ascii=False,
+            ).encode("utf-8", "surrogatepass")
+            terminal = verify_attestation_artifact(
+                payload,
+                lambda agent_id: public_keys.get(agent_id),
+                expected_session_id=expected_session_id,
+                expected_party_ids=expected_party_ids,
+                revocation_checker=revocation_checker,
+            )
+            procedure_errors = (
+                terminal.errors if terminal.terminal_state == "not-bound" else []
+            )
+            if (
+                terminal.terminal_state == "not-bound"
+                and terminal.signature_checks > 0
+                and any("countersignature" in e for e in procedure_errors)
+            ):
+                signature_errors = procedure_errors
+            else:
+                schema_errors = procedure_errors
+            if transcript is not None:
+                try:
+                    evaluated_set_binding_state, set_binding_errors = (
+                        evaluate_receipt_set_binding(attestation, transcript)
                     )
-                elif terminal.terminal_state in {"current", "bound-only"}:
-                    set_binding_state = "bound"
-                    set_binding_errors = []
-                else:
-                    set_binding_state = "error"
-                    set_binding_errors = []
-                errors = [
-                    *schema_errors,
-                    *signature_errors,
-                    *set_binding_errors,
-                ]
-                warnings = (
-                    ["attestation revocation status is undetermined"]
-                    if terminal.terminal_state == "bound-only"
-                    else []
+                except Exception:
+                    evaluated_set_binding_state = "error"
+                    set_binding_errors = ["transcript could not be evaluated"]
+                set_binding_state = (
+                    evaluated_set_binding_state
+                    if terminal.terminal_state in {"current", "bound-only"}
+                    else "error"
                 )
-                return AttestationVerifyResult(
-                    valid=terminal.terminal_state in {"current", "bound-only"}
-                    and not set_binding_errors,
-                    errors=errors,
-                    warnings=warnings,
-                    schema_errors=schema_errors,
-                    signature_errors=signature_errors,
-                    set_binding_errors=set_binding_errors,
-                    verified_parties=terminal.verified_parties,
-                    set_binding_state=set_binding_state,
-                    terminal_state=terminal.terminal_state,
-                )
+            elif terminal.terminal_state in {"current", "bound-only"}:
+                set_binding_state = "bound"
+                set_binding_errors = []
+            else:
+                set_binding_state = "error"
+                set_binding_errors = []
+            errors = [
+                *schema_errors,
+                *signature_errors,
+                *set_binding_errors,
+            ]
+            warnings = (
+                ["attestation revocation status is undetermined"]
+                if terminal.terminal_state == "bound-only"
+                else []
+            )
+            return AttestationVerifyResult(
+                valid=terminal.terminal_state in {"current", "bound-only"}
+                and not set_binding_errors,
+                errors=errors,
+                warnings=warnings,
+                schema_errors=schema_errors,
+                signature_errors=signature_errors,
+                set_binding_errors=set_binding_errors,
+                verified_parties=terminal.verified_parties,
+                set_binding_state=set_binding_state,
+                terminal_state=terminal.terminal_state,
+            )
 
         from .schema_validator import validate_attestation
 
@@ -1507,10 +1533,9 @@ def verify_attestation(
             signature_errors=signature_errors,
             set_binding_errors=set_binding_errors,
             verified_parties=verified_parties,
-            set_binding_state=(
-                set_binding_state if well_formed_below_floor else "error"
-            ),
-            terminal_state="legacy" if well_formed_below_floor else "not-bound",
+            set_binding_state=set_binding_state,
+            # Only a well-formed below-floor version reaches this return.
+            terminal_state="legacy",
         )
     except Exception:
         signature_errors.append("attestation verification failed closed")
