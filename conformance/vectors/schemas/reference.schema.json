@@ -12,51 +12,49 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 256,
-      "pattern": "^\\S+$",
-      "description": "Identifier of the referenced artifact. URN-shaped where possible (see SPEC §11.5.7). Free-form non-empty whitespace-free strings of at most 256 chars are accepted for backward-compatibility; whitespace is rejected so prose deal terms cannot ride in identifier fields (SPEC §9.6.6)."
+      "pattern": "^[^\\s\\u0000-\\u001F\\u007F-\\u009F\\u200B-\\u200F\\u2028-\\u202E]+$",
+      "description": "Identifier of the referenced artifact. URN-shaped where possible (see SPEC §11.5.7). Free-form non-empty strings of at most 256 chars are accepted for backward-compatibility; the v0.6.0 pattern rejects whitespace and control or format characters so prose deal terms cannot ride in identifier fields (SPEC §9.6.6)."
     },
 
     "type": {
       "type": "string",
       "minLength": 1,
       "maxLength": 64,
-      "pattern": "^\\S+$",
-      "description": "Kind of artifact referenced. Canonical emit vocabulary is receipt, chain_session, predicate, mandate. Read-side validators accept non-empty whitespace-free strings and MUST preserve unknown values as opaque strings per SPEC §11.5.5 and §11.5.8 forward-compat."
+      "pattern": "^[^\\s\\u0000-\\u001F\\u007F-\\u009F\\u200B-\\u200F\\u2028-\\u202E]+$",
+      "description": "Kind of artifact referenced. Canonical emit vocabulary is receipt, chain_session, predicate, mandate. Read-side validators accept non-empty strings with the v0.6.0 forbidden-character rule and MUST preserve unknown values as opaque strings per SPEC §11.5.5 and §11.5.8 forward-compat."
     },
 
     "relationship": {
       "type": "string",
       "minLength": 1,
       "maxLength": 64,
-      "pattern": "^\\S+$",
-      "description": "Semantic relationship per SPEC §11.5.5. Canonical emit vocabulary is supersedes, extends, fulfills, references. Read-side validators accept non-empty whitespace-free strings and MUST preserve unknown values as opaque strings per SPEC §11.5.8 forward-compat."
+      "pattern": "^[^\\s\\u0000-\\u001F\\u007F-\\u009F\\u200B-\\u200F\\u2028-\\u202E]+$",
+      "description": "Semantic relationship per SPEC §11.5.5. Canonical emit vocabulary is supersedes, extends, fulfills, references. Read-side validators accept non-empty strings with the v0.6.0 forbidden-character rule and MUST preserve unknown values as opaque strings per SPEC §11.5.8."
     },
 
     "version": {
       "type": "string",
+      "minLength": 1,
       "maxLength": 256,
-      "pattern": "^\\S+$",
-      "description": "Optional. Version of the referenced artifact when known. Whitespace-free (semver-shaped identifiers never contain whitespace)."
+      "pattern": "^[^\\s\\u0000-\\u001F\\u007F-\\u009F\\u200B-\\u200F\\u2028-\\u202E]+$",
+      "description": "Optional. Version of the referenced artifact when known. Empty values, whitespace and the v0.6.0 forbidden characters are rejected."
     },
 
     "signed_at": {
       "type": "string",
       "format": "date-time",
+      "minLength": 1,
       "maxLength": 256,
       "pattern": "^\\S+$",
-      "description": "Optional. Timestamp of the referenced artifact's signature when known. Whitespace-free (ISO 8601 timestamps never contain whitespace)."
+      "description": "Optional. Timestamp of the referenced artifact's signature when known. Empty values and whitespace are rejected."
     },
 
     "signer_did": {
       "type": "string",
+      "minLength": 1,
       "maxLength": 256,
-      "pattern": "^\\S+$",
-      "description": "Optional. DID of the signer of the referenced artifact when known. Whitespace-free (DIDs never contain whitespace)."
-    },
-
-    "extensions": {
-      "type": "object",
-      "description": "Optional. Forward-compatibility map for v0.x extension keys, capped at 2048 canonical-JSON bytes at issuance. Implementations SHOULD preserve unknown keys verbatim across roundtrips."
+      "pattern": "^[^\\s\\u0000-\\u001F\\u007F-\\u009F\\u200B-\\u200F\\u2028-\\u202E]+$",
+      "description": "Optional. DID of the signer of the referenced artifact when known. Empty values, whitespace and the v0.6.0 forbidden characters are rejected."
     }
   }
 }

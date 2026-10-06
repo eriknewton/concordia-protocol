@@ -175,8 +175,8 @@ _VALUE_RANGE_PATTERN = re.compile(
 MAX_CATEGORY_LENGTH = 64
 _CATEGORY_PATTERN = re.compile(r"^[a-z0-9_-]+(?:\.[a-z0-9_-]+)*\Z")
 
-# references[] caps (L3 + exhaustion lens): bound the count, each string
-# field, and the serialized size of the opaque extensions escape hatch.
+# references[] caps (L3 + exhaustion lens): bound the count and each string
+# field. The -00 verifier rejects reference-level extensions at 0.5.0+.
 MAX_REFERENCES = 32
 MAX_REFERENCE_TYPE_LENGTH = 64
 MAX_REFERENCE_RELATIONSHIP_LENGTH = 64
@@ -200,11 +200,9 @@ def _reference_string(
             no_whitespace=True,
         )
     except _AttestationStructureError as exc:
-        if "too short" in str(exc):
-            raise ValueError(
-                f"{path} must be a non-empty whitespace-free string per SPEC §11.5.6"
-            ) from exc
-        raise
+        raise ValueError(
+            f"{path} must be a non-empty whitespace-free string per SPEC §11.5.6"
+        ) from exc
 
 def _version_tuple(value: str) -> tuple[int, int, int]:
     if not isinstance(value, str) or not _SEMVER_RE.match(value):
@@ -615,7 +613,8 @@ def _validate_reference(ref: Any, index: int) -> dict[str, Any]:
     L3 hardening (security audit 2026-06-09): every string field is
     length-capped and whitespace-banned (legitimate identifiers such as
     UUIDs, DIDs, URNs, ISO timestamps, and semver never contain
-    whitespace, so any \\s indicates prose). Legacy ``extensions`` are
+    whitespace, so any \\s indicates prose). Reference ``extensions`` are
+    rejected by the closed -00 member set for 0.5.0 and later.
     """
     if not isinstance(ref, dict):
         raise ValueError(
@@ -657,11 +656,10 @@ def _validate_reference(ref: Any, index: int) -> dict[str, Any]:
     for optional_key in ("version", "signed_at", "signer_did"):
         if optional_key in ref:
             value = ref[optional_key]
-            min_octets = 1 if optional_key == "signer_did" else None
             normalized[optional_key] = _reference_string(
                 value,
                 f"references[{index}].{optional_key}",
-                min_octets=min_octets,
+                min_octets=1,
                 max_octets=MAX_REFERENCE_OPTIONAL_STRING_LENGTH,
             )
     return normalized
@@ -1320,11 +1318,13 @@ def verify_attestation(
             version = _version_tuple(version_value)
             if version >= _LEGACY_FLOOR_VERSION:
                 parties = attestation.get("parties")
-                expected_parties = {
-                    party.get("agent_id")
-                    for party in parties
-                    if isinstance(party, dict) and isinstance(party.get("agent_id"), str)
-                } if isinstance(parties, list) else set()
+                expected_parties: set[str] = set()
+                if isinstance(parties, list):
+                    for party in parties:
+                        if isinstance(party, dict):
+                            agent_id = party.get("agent_id")
+                            if isinstance(agent_id, str):
+                                expected_parties.add(agent_id)
                 session_id = attestation.get("session_id")
                 payload = json.dumps(
                     attestation,
