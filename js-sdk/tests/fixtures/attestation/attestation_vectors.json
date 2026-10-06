@@ -1295,7 +1295,7 @@
       "attestation": {},
       "now_iso": "2026-01-01T00:00:00Z",
       "now_ms": 1767225600000,
-      "expected": true
+      "expected": false
     },
     {
       "name": "v05_missing_required_constraint",

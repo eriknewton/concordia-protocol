@@ -805,9 +805,10 @@ export function validateValidityTemporal(vt: unknown): ValidityTemporal {
  * Return `true` if the attestation's `validity_temporal` contains `now`,
  * mirroring Python `is_valid_now`.
  *
- * - A pre-0.5 legacy artifact with no `validity_temporal` field -> `true` so
- *   callers may inspect legacy signals. A 0.5+ artifact missing the required
- *   field -> `false`, even if this helper is called before schema validation.
+ * - A well-formed pre-0.5 legacy artifact with no `validity_temporal` field ->
+ *   `true` so callers may inspect legacy signals. A 0.5+ artifact missing the
+ *   required field -> `false`, even if this helper is called before schema
+ *   validation. A malformed or absent version with no field -> `false`.
  * - A `validity_temporal` that is not a dict, or a dict missing `mode` -> `false`.
  * - `absolute`: `from <= now < until`.
  * - `relative`: `from <= now < from + duration_seconds`.
@@ -819,10 +820,21 @@ export function validateValidityTemporal(vt: unknown): ValidityTemporal {
  *   `validity_temporal`).
  * @param now Epoch milliseconds for "now". Defaults to `Date.now()`.
  */
+// Must match `_SEMVER_RE` in concordia/attestation.py: ASCII digits, no
+// leading zeros, no trailing newline (JavaScript `$` without the `m` flag
+// never matches before a final newline, unlike Python's).
+const STRICT_VERSION_PATTERN = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
+
 export function isValidNow(attestation: Record<string, unknown>, now?: number): boolean {
   const vt = attestation.validity_temporal;
   if (vt === undefined || vt === null) {
-    return !attestationVersionAtLeast(attestation.concordia_attestation, 0, 5);
+    const version = attestation.concordia_attestation;
+    // A malformed or absent version is never a legacy signal; fail closed
+    // here as Python `is_valid_now` does (parity fixture `no_constraint`).
+    if (typeof version !== 'string' || !STRICT_VERSION_PATTERN.test(version)) {
+      return false;
+    }
+    return !attestationVersionAtLeast(version, 0, 5);
   }
   if (!isPlainObject(vt) || !('mode' in vt)) {
     return false;
