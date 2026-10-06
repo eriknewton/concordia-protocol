@@ -1,11 +1,10 @@
-"""v0.5 hard gate: forward-compat. v0.4-shaped artifacts validate.
+"""v0.6 hard gate: forward-compat. v0.4-shaped artifacts validate.
 
-Per SPEC §11.5: v0.5 ratifies the references[] shape introduced in
-v0.4.0. Existing v0.4-shaped attestations and envelopes MUST validate
-cleanly against the v0.5 JSON Schema.
+Existing v0.4-shaped attestations and envelopes validate cleanly against
+the v0.6 attestation JSON Schema.
 
-This test feeds explicitly-v0.4-shaped artifacts (no v0.5 optional
-fields, no v0.5 extension keys) to the validator and asserts they pass.
+This test feeds explicitly-v0.4-shaped artifacts to the validator and
+asserts they pass.
 """
 
 from __future__ import annotations
@@ -45,8 +44,8 @@ def _key_pairs(seller, buyer):
     }
 
 
-class TestV04ReferencesValidateUnderV05Schema:
-    """v0.4-shaped attestation references parse cleanly under v0.5 schema."""
+class TestV04ReferencesValidateUnderV06Schema:
+    """v0.4-shaped attestation references parse cleanly under v0.6 schema."""
 
     def test_v04_minimal_reference_validates(self, agreed_session):
         """The v0.4 baseline shape: only {type, id, relationship}."""
@@ -69,25 +68,24 @@ class TestV04ReferencesValidateUnderV05Schema:
         assert is_valid_attestation(att)
 
 
-class TestV05ReferencesValidateUnderV05Schema:
-    """v0.5-shaped attestation references with optional fields validate."""
+class TestV06ReferencesValidateUnderV06Schema:
+    """v0.6-shaped attestation references with optional fields validate."""
 
-    def test_v05_full_reference_validates(self, agreed_session):
-        """v0.5 adds optional version, signed_at, signer_did, extensions."""
+    def test_v06_full_reference_validates(self, agreed_session):
+        """v0.6 keeps version, signed_at, signer_did and removes extensions."""
         session, seller, buyer = agreed_session
-        v05_refs = [
+        v06_refs = [
             {
                 "type": "receipt",
-                "id": "att_v05_1",
+                "id": "att_v06_1",
                 "relationship": "extends",
-                "version": "0.5.0",
+                "version": "0.6.0",
                 "signed_at": "2026-05-11T00:00:00Z",
                 "signer_did": "did:web:example.org:signer-1",
-                "extensions": {"custom_key": "custom_value"},
             },
         ]
         att = generate_attestation(
-            session, _key_pairs(seller, buyer), references=v05_refs
+            session, _key_pairs(seller, buyer), references=v06_refs
         )
         assert is_valid_attestation(att)
 

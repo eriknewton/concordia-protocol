@@ -1,16 +1,14 @@
-"""v0.5 spec tests: attestation.schema.json $id and forward-compat with v0.4.
+"""v0.6 spec tests: attestation.schema.json $id and forward-compat with v0.4.
 
 Validates that:
 
 1. schemas/attestation.schema.json $id is bumped to
-   urn:concordia:schema:attestation:v0.5.
+   urn:concordia:schema:attestation:v0.6.
 2. Root attestation.schema.json mirrors schemas/attestation.schema.json
    byte-for-byte (sync verification; SDK loads schemas/, the root copy is
    maintained for downstream consumers that point at the repo root).
-3. The schema validates a fresh v0.5-shape attestation produced by the SDK
-   (with new optional reference-object fields).
-4. v0.4-shape attestations (without the new optional fields) still validate
-   under v0.5 (forward-compat).
+3. The schema validates a fresh v0.6-shape attestation produced by the SDK.
+4. v0.4-shape attestations still validate under v0.6 (forward-compat).
 
 Spec reference: SPEC.md §11.5.
 """
@@ -40,13 +38,13 @@ def attestation_validator(attestation_schema: dict) -> Draft202012Validator:
 
 
 class TestSchemaIdentity:
-    def test_schemas_attestation_id_is_v05(self, attestation_schema: dict) -> None:
+    def test_schemas_attestation_id_is_v06(self, attestation_schema: dict) -> None:
         assert (
             attestation_schema.get("$id")
-            == "urn:concordia:schema:attestation:v0.5"
+            == "urn:concordia:schema:attestation:v0.6"
         ), (
-            "schemas/attestation.schema.json $id must be bumped to v0.5 per SPEC "
-            "§11.5 ratification."
+            "schemas/attestation.schema.json $id must be bumped to v0.6 per "
+            "draft-newton-agreement-evidence-00."
         )
 
     def test_root_and_schemas_dir_are_in_sync(self) -> None:
@@ -67,9 +65,7 @@ class TestSchemaIdentity:
 
 
 class TestEmbeddedReferenceDef:
-    """The attestation schema has an embedded `reference` $def that mirrors
-    schemas/reference.schema.json. Both must accept the same shape.
-    """
+    """The attestation schema has an embedded `reference` $def for 0.6.0."""
 
     def test_embedded_reference_required_keys_match_v05(
         self, attestation_schema: dict
@@ -95,21 +91,23 @@ class TestEmbeddedReferenceDef:
         assert ref_type["minLength"] == 1
         assert "enum" not in ref_type
 
-    def test_embedded_reference_optional_v05_fields_present(
+    def test_embedded_reference_optional_v06_fields_present(
         self, attestation_schema: dict
     ) -> None:
         ref_def = attestation_schema["$defs"]["reference"]
         props = ref_def["properties"]
-        for key in ("version", "signed_at", "signer_did", "extensions"):
+        for key in ("version", "signed_at", "signer_did"):
             assert key in props, (
-                f"v0.5 optional reference field '{key}' missing from "
-                "schemas/attestation.schema.json $defs.reference per SPEC §11.5.6."
+                f"v0.6 optional reference field '{key}' missing from "
+                "schemas/attestation.schema.json $defs.reference."
             )
+        assert "extensions" not in props
 
 
 def _minimal_v04_attestation() -> dict:
-    """A minimal valid v0.4-shape attestation (no v0.5 optional reference fields).
-    Establishes forward-compat: v0.4 attestations must still validate under v0.5.
+    """A minimal valid v0.4-shape attestation.
+
+    Establishes forward-compat: v0.4 attestations must still validate under v0.6.
     """
     return {
         "concordia_attestation": "0.4.0",
@@ -126,13 +124,13 @@ def _minimal_v04_attestation() -> dict:
                 "agent_id": "a1",
                 "role": "initiator",
                 "behavior": {},
-                "signature": "sig1",
+                "signature": "A" * 86 + "==",
             },
             {
                 "agent_id": "a2",
                 "role": "responder",
                 "behavior": {},
-                "signature": "sig2",
+                "signature": "A" * 86 + "==",
             },
         ],
         "meta": {},
@@ -143,13 +141,17 @@ def _minimal_v04_attestation() -> dict:
     }
 
 
-def _v05_shape_attestation() -> dict:
-    """A v0.5-shape attestation that exercises the new optional reference
-    fields (version, signed_at, signer_did, extensions).
-    """
+def _v06_shape_attestation() -> dict:
+    """A v0.6-shape attestation that exercises optional reference fields."""
     att = _minimal_v04_attestation()
-    att["concordia_attestation"] = "0.5.0"
-    att["attestation_id"] = "att_v05_full"
+    att["concordia_attestation"] = "0.6.0"
+    att["attestation_id"] = "att_v06_full"
+    att["chain_head"] = "sha256:" + "1" * 64
+    att["message_count"] = 3
+    att["countersignatures"] = {
+        "a1": "A" * 86 + "==",
+        "a2": "A" * 86 + "==",
+    }
     att["validity_temporal"] = {
         "mode": "absolute",
         "from": "2026-04-20T12:00:00Z",
@@ -163,7 +165,6 @@ def _v05_shape_attestation() -> dict:
             "version": "0.4.0",
             "signed_at": "2026-04-20T12:00:00Z",
             "signer_did": "did:web:example.org:agent-x",
-            "extensions": {"future_field": "opaque"},
         },
         {
             "id": "urn:concordia:mandate:mnd_x",
@@ -180,15 +181,15 @@ class TestForwardCompat:
     ) -> None:
         attestation_validator.validate(_minimal_v04_attestation())
 
-    def test_v05_shape_attestation_validates(
+    def test_v06_shape_attestation_validates(
         self, attestation_validator: Draft202012Validator
     ) -> None:
-        attestation_validator.validate(_v05_shape_attestation())
+        attestation_validator.validate(_v06_shape_attestation())
 
-    def test_v05_shape_without_validity_temporal_is_rejected(
+    def test_v06_shape_without_validity_temporal_is_rejected(
         self, attestation_validator: Draft202012Validator
     ) -> None:
-        attestation = _v05_shape_attestation()
+        attestation = _v06_shape_attestation()
         del attestation["validity_temporal"]
         errors = list(attestation_validator.iter_errors(attestation))
         assert any(
@@ -201,6 +202,7 @@ class TestForwardCompat:
         [
             ("0.4.0", False),   # legacy: below the 0.5 boundary, no requirement
             ("0.5.0", True),    # exact boundary: required
+            ("0.6.0", True),    # current issuance version
             ("0.10.0", True),   # later minor: required
             ("1.0.0", True),    # future major: required
         ],

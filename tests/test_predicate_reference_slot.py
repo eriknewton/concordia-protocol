@@ -50,7 +50,7 @@ def test_predicate_reference_preserved_by_emit_and_schema(agreed_session):
         "type": "predicate",
         "id": "urn:concordia:predicate:age_gate:v0",
         "relationship": "references",
-        "extensions": {"profile": "opaque-authority-gate"},
+        "version": "0.6.0",
     }
     att = generate_attestation(
         session,

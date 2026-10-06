@@ -3098,11 +3098,11 @@
       "verification_profile": "fulfillment-attestation-v1"
     },
     {
-      "accept": 3,
+      "accept": 0,
       "battery_name": "synthetic/attestation/attestation.json::attestation-countersign-v1",
       "object_name": "attestation_countersign",
       "record_type": "attestation",
-      "reject": 108,
+      "reject": 111,
       "source_fixture": "synthetic/attestation",
       "total": 111,
       "verification_profile": "attestation-countersign-v1"
@@ -3119,11 +3119,11 @@
       "verification_profile": "attestation-v1"
     },
     {
-      "accept": 33,
+      "accept": 30,
       "battery_name": "synthetic/attestation/attestation.json::attestation-v1",
       "object_name": "attestation",
       "record_type": "attestation",
-      "reject": 78,
+      "reject": 81,
       "source_fixture": "synthetic/attestation",
       "total": 111,
       "verification_profile": "attestation-v1"

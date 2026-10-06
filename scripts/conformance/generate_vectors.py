@@ -1732,8 +1732,8 @@ CHAIN_POSITION_RESIGNED_SPLICE_TOLERANCE_NOTE = (
     "tolerated-accept: per-message signatures authenticate links, not the complete message set"
 )
 EXPECTED_MUTATION_TOTAL = 1488
-EXPECTED_MUTATION_REJECTS = 1443
-EXPECTED_MUTATION_ACCEPTS = 45
+EXPECTED_MUTATION_REJECTS = 1449
+EXPECTED_MUTATION_ACCEPTS = 39
 EXPECTED_CANARY_TOTAL = 5
 EXPECTED_RAW_TYPED_DIVERGENCES = (
     MutationDivergence(
@@ -1754,10 +1754,10 @@ EXPECTED_MUTATION_BATTERY_COUNTS: dict[str, tuple[int, int, int]] = {
     "1920/fulfillment_attestation.json": (63, 63, 0),
     "synthetic/attestation/attestation.json::attestation-countersign-v1": (
         111,
-        108,
-        3,
+        111,
+        0,
     ),
-    "synthetic/attestation/attestation.json::attestation-v1": (111, 78, 33),
+    "synthetic/attestation/attestation.json::attestation-v1": (111, 81, 30),
     "synthetic/attestation/attestation.json::attestation-v05-validity": (4, 4, 0),
     "synthetic/cosign/cosigned_receipt.json": (42, 42, 0),
     "synthetic/cmpc_bilateral/primitives/atomic_activation_proof.json": (30, 30, 0),

@@ -56,7 +56,7 @@ class TestAttestationGeneration:
             category="electronics.cameras",
             value_range="100-500_USD",
         )
-        assert att["concordia_attestation"] == "0.5.0"
+        assert att["concordia_attestation"] == "0.6.0"
         assert att["outcome"]["status"] == "agreed"
         assert att["outcome"]["rounds"] >= 1
         assert att["outcome"]["resolution_mechanism"] == "direct"
@@ -64,7 +64,7 @@ class TestAttestationGeneration:
         assert att["transcript_hash"].startswith("sha256:")
         assert att["chain_head"] == compute_hash(session.transcript[-1])
         assert att["message_count"] == len(session.transcript)
-        assert att["fulfillment"] is None
+        assert "fulfillment" not in att
 
     def test_party_signatures_valid(self, agreed_session):
         session, seller, buyer = agreed_session

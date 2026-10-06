@@ -209,7 +209,7 @@ An agreement contains:
 - An expiration (after which the agreement is void if not settled)
 - References to settlement protocols (how payment will occur)
 
-**The agreement's schema-citable signed form.** The list above describes an agreement conceptually. Two different signed artifacts carry it on the wire, for two different audiences, and this specification does not define a third, standalone "agreement record" schema distinct from either. The parties themselves hold the actual term values in the final `negotiate.commit` messages (§4.1, §4.2), Ed25519-signed and hash-chained into the transcript (§9.2, §9.3, §9.2.1); this is where the real price, delivery date, and other term values live. A third party verifying that an agreement was reached, without needing or wanting to see those term values, uses the Reputation Attestation instead (§9.6.2, schema `$id` `urn:concordia:schema:attestation:v0.5`, `schemas/attestation.schema.json`): its `outcome`, `parties[*]`, `transcript_hash`, `chain_head`, and `message_count` fields, bound by the outcome-binding countersignature (§9.6.5a) and the receipt set-binding (§9.6.5b), are the standalone, schema-defined proof that a specific set of parties reached a specific outcome over a specific transcript, deliberately without exposing what was agreed (§9.6.6). Where a citable, third-party-verifiable evidence object for an agreement is needed and the audience is not a negotiating party, the attestation is that object.
+**The agreement's schema-citable signed form.** The list above describes an agreement conceptually. Two different signed artifacts carry it on the wire, for two different audiences, and this specification does not define a third, standalone "agreement record" schema distinct from either. The parties themselves hold the actual term values in the final `negotiate.commit` messages (§4.1, §4.2), Ed25519-signed and hash-chained into the transcript (§9.2, §9.3, §9.2.1); this is where the real price, delivery date, and other term values live. A third party verifying that an agreement was reached, without needing or wanting to see those term values, uses the Reputation Attestation instead (§9.6.2, schema `$id` `urn:concordia:schema:attestation:v0.6`, `schemas/attestation.schema.json`): its `outcome`, `parties[*]`, `transcript_hash`, `chain_head`, and `message_count` fields, bound by the outcome-binding countersignature (§9.6.5a) and the receipt set-binding (§9.6.5b), are the standalone, schema-defined proof that a specific set of parties reached a specific outcome over a specific transcript, deliberately without exposing what was agreed (§9.6.6). Where a citable, third-party-verifiable evidence object for an agreement is needed and the audience is not a negotiating party, the attestation is that object.
 
 ---
 
@@ -751,7 +751,7 @@ Every completed negotiation session (regardless of outcome) MUST produce an atte
 
 ```json
 {
-  "concordia_attestation": "0.5.0",
+  "concordia_attestation": "0.6.0",
   "attestation_id": "att_a1b2c3d4",
   "session_id": "ses_9d4e8f01",
   "timestamp": "2026-03-21T14:04:00Z",
@@ -808,8 +808,6 @@ Every completed negotiation session (regardless of outcome) MUST produce an atte
   "chain_head": "sha256:8f42d9c0b7a6...",
   "message_count": 8,
 
-  "fulfillment": null,
-
   "validity_temporal": {
     "mode": "absolute",
     "from": "2026-03-21T14:04:00Z",
@@ -824,6 +822,8 @@ Every completed negotiation session (regardless of outcome) MUST produce an atte
 ```
 
 The `countersignatures` map (added in v0.2.0, C-H2) is what makes the outcome trustworthy rather than merely prover-asserted. Each present party signs the canonical issuance snapshot (RFC 8785 JCS, §9.2.1) of the WHOLE attestation (every `signature` field stripped recursively, and the `countersignatures` map itself excluded), so the `outcome`, `meta`, `session_id`, `transcript_hash`, `chain_head`, and `message_count` are bound at issuance. See §9.6.5.
+
+0.6.0 is the current issuance version. 0.5.0 artifacts remain verifiable when they meet the verification floor, but 0.6.0 removes exactly three members from the attestation line: the root `fulfillment` member, the `extensions` member of each `references[]` element, and the `window` mode of `validity_temporal`. A verifier rejects those removed members in a 0.6.0 artifact, rejects any undefined member at any depth, and rejects malformed structure or encoding at the structure step before signature verification. New structure-step rejections include leading-zero versions, non-NFC strings, disallowed whitespace in identifier fields, non-`Z` timestamps or timestamps with more than three fractional digits, malformed 88-character padded base64url signatures, `message_count` outside 1 to 10000, and the resource caps in §11.7 of `draft-newton-agreement-evidence-00`.
 
 #### 9.6.3 Attestation Fields
 
@@ -867,9 +867,17 @@ The `countersignatures` map (added in v0.2.0, C-H2) is what makes the outcome tr
 | `chain_head` | The §9.3 message hash of the final transcript message: `sha256(canonical_json(message))` using the §9.2.1 canonical JSON rules, over the full final message, including its `signature`, rendered as `sha256:` plus 64 lowercase hex characters |
 | `message_count` | Number of messages in the transcript, integer >= 1 |
 
+**Temporal and reference fields** are closed in 0.6.0:
+
+| Field | Description |
+|-------|-------------|
+| `validity_temporal` | Required at 0.5.0 and later. Mode is `absolute` with `from` and `until`, or `relative` with `from` and `duration_seconds`. The former `window` mode is rejected for 0.6.0 issuance and verification. |
+| `references[]` | Optional, capped at 32 entries. Each entry carries only `id`, `type`, `relationship`, and optional `version`, `signed_at`, `signer_did`. The former reference `extensions` member is rejected for 0.6.0. |
+| `summary` | Optional free text capped at 1024 Unicode scalar values. It remains subject to the privacy invariant in §9.6.6. |
+
 #### 9.6.4 Fulfillment Attestations
 
-The initial attestation is produced at session conclusion. A **Fulfillment Attestation** is appended after settlement, recording whether the agreed terms were actually honored:
+The base 0.6.0 agreement attestation is produced at session conclusion and carries no root `fulfillment` member. Fulfillment evidence is represented as a separate artifact that references the agreement attestation it fulfills. The historical in-line block below is retained only to document the status vocabulary mapping used by older 0.5-era consumers:
 
 ```json
 {
@@ -899,15 +907,12 @@ Fulfillment status values:
 | `disputed` | Parties disagree on fulfillment status |
 | `pending` | Settlement in progress, not yet confirmed |
 
-The in-line block is the right shape when settlement and the
-negotiation outcome land on the same record and both parties
-countersign one combined artifact. For settlement protocols that
-fire a discrete delivery-acknowledged event you want to attest at
-that boundary, or where the signing party at delivery is not the
-original negotiation counterparty, Concordia v0.5 ships a
-standalone Fulfillment Attestation artifact (§9.6.4a). Both shapes
-coexist; the canonical mapping between their status enums is in
-`docs/A2CN_FULFILLMENT.md`.
+For settlement protocols that fire a discrete delivery-acknowledged
+event you want to attest at that boundary, or where the signing party
+at delivery is not the original negotiation counterparty, Concordia
+ships a standalone Fulfillment Attestation artifact (§9.6.4a). The
+canonical mapping between the historical in-line status enum and the
+standalone status enum is in `docs/A2CN_FULFILLMENT.md`.
 
 #### 9.6.4a Standalone Fulfillment Attestation (v0.5)
 
@@ -946,10 +951,9 @@ Status enum mapping to the §9.6.4 in-line block:
 | `failed` | `unfulfilled` |
 | `disputed_unresolved` | `disputed` |
 
-Producers picking the standalone shape MUST NOT also embed an
-in-line `fulfillment` block on the same logical settlement to avoid
-double-counting in reputation scoring. The standalone artifact is
-authoritative once emitted.
+Producers MUST NOT embed an in-line `fulfillment` block on a 0.6.0
+agreement attestation. The standalone artifact is authoritative once
+emitted.
 
 Full integrator walkthrough with worked JSON examples:
 `docs/A2CN_FULFILLMENT.md`.
@@ -1155,7 +1159,7 @@ vector: `docs/interop/a2a-1404-receipt-revocation-vector/`
 Attestations inherit the security properties of the transcript:
 
 - They are derived deterministically from the signed message chain, so any party can independently recompute the attestation from the transcript and verify it matches
-- Both parties MUST countersign the attestation before it is considered valid
+- All listed parties MUST countersign the attestation before it is considered valid
 - If parties disagree on the attestation (e.g., one party disputes the `concession_magnitude` calculation), the raw transcript is the authoritative source
 - Attestations are self-contained; they can be verified without access to the full transcript, but the transcript can be produced as evidence if the attestation is challenged
 
@@ -1164,10 +1168,10 @@ Attestations inherit the security properties of the transcript:
 Through v0.1.0, each party's signature covered only its own behavior record. The top-level `outcome`, `meta`, and `transcript_hash` were derived from the transcript but not bound by any signature, so a holder could rewrite the outcome (for example, flip `rejected` to `agreed`) without invalidating any party signature. A bundle verifier that re-derived its summary from the rewritten outcome would then report it as accurate. C-H2 closes this.
 
 - **Payload.** The countersignature payload is `canonical_json(strip_signatures(attestation_without_countersignatures))`, where `canonical_json` is RFC 8785 JCS per §9.2.1 and `strip_signatures` is Concordia's own recursive removal rule: the fully assembled attestation with every `signature` field stripped recursively AND the top-level `countersignatures` map excluded. Stripping every `signature` (the same rule the co-signature lane uses) plus excluding the `countersignatures` map means a countersignature never covers itself or a sibling's countersignature, and all parties sign byte-identical, mutually independent payload bytes.
-- **Map.** `countersignatures` is a top-level object mapping each party `agent_id` to its base64url-padded Ed25519 signature over that payload. There is one entry per party that held a signing key at issuance; a party with no key gets no entry (an empty string is never used). A single-key issuance therefore yields a one-entry map, which is exactly as strong as a single-signed co-signed receipt for the present signer.
+- **Map.** `countersignatures` is a top-level object mapping each party `agent_id` to its base64url-padded Ed25519 signature over that payload. For 0.5.0 and later, the member names are exactly the agent identifiers in `parties[]`.
 - **Version-gated dual-accept (verifier MUST).** Before crediting a `concordia_attestation` >= `0.2.0` outcome as integrity-bound, a verifier MUST require a `countersignatures` map in which EVERY party listed in `parties[]` has a present signature that verifies under that party's resolved key; if any listed party's countersignature is absent, its key cannot be resolved, or its signature fails, the outcome MUST NOT be credited as bound (fail-closed). The "every listed party" rule is what makes the binding meaningful: a single holder is itself a party, so "at least one party signed" would let the holder rewrite `outcome.status` (e.g. flip `rejected` to `agreed`), drop the counterparty's countersignature, and re-sign with its OWN key alone, the precise C-H2 threat. Requiring every listed party closes that self-rebind. A genuine single-party attestation (only one entry in `parties[]`) binds with its one countersignature, exactly as strong as a single-signed co-signed receipt. An attestation below `0.2.0` (or with a malformed version) is read as legacy: its outcome is prover-asserted and MUST NOT be credited as outcome-bound, but its presence is NOT an error. This lets pre-C-H2 history remain verifiable for its party-level signals while never silently crediting an unbound outcome.
-- **What is bound.** The issuance snapshot: `concordia_attestation`, `attestation_id`, `session_id`, `timestamp`, `outcome`, `parties[*]` (signatures stripped), `meta`, `transcript_hash`, `chain_head`, `message_count`, `references`, `validity_temporal`, `summary`, and `fulfillment` AS IT STOOD AT ISSUANCE (`null`).
-- **Fulfillment residual.** A `fulfillment` block populated AFTER issuance (for example via an A2CN dispute-resolved flow) is NOT covered by the issuance countersignature. A verifier MUST NOT treat post-issuance fulfillment as integrity-bound on the strength of the issuance countersignature; it is bound only when the fulfillment block's own `counterparty_attestation.signature` verifies under the confirming counterparty's key. Defining and wiring the producer side of that fulfillment confirmation signature is future work.
+- **What is bound.** The issuance snapshot: `concordia_attestation`, `attestation_id`, `session_id`, `timestamp`, `outcome`, `parties[*]` (signatures stripped), `meta`, `transcript_hash`, `chain_head`, `message_count`, `references`, `validity_temporal`, and `summary`.
+- **Fulfillment boundary.** 0.6.0 agreement attestations carry no root `fulfillment` member. Fulfillment evidence is a separate artifact that references the agreement attestation it fulfills.
 
 ##### 9.6.5b Receipt Set-Binding (v0.3.0)
 
@@ -1303,9 +1307,9 @@ A signature over a deterministic artifact proves who signed it and exactly which
 - A relying party MUST NOT treat a currently-valid signature as proof that the signed claim remains true.
 - Where this specification defines a signer-asserted validity window (§9.7.3), that window is the signer's own ceiling on the claim, not a floor the relying party is obligated to accept in full; a relying party MAY apply a tighter bound of its own.
 
-The relying side additionally carries a bounded clock-skew obligation. When a signer-asserted anchor timestamp, a `from`, `start`, `timestamp`, or `issued_at` value, is future-dated beyond a bounded clock-skew allowance, the relying party MUST reject the artifact outright rather than accept it with a warning. The allowance's exact size is an implementation parameter; exceeding it MUST fail closed, since an unbounded allowance for clock disagreement lets a signer manufacture apparent freshness by asserting a timestamp that has not yet arrived.
+The relying side additionally carries a bounded clock-skew obligation. When a signer-asserted anchor timestamp, a `from`, `timestamp`, or `issued_at` value, is future-dated beyond a bounded clock-skew allowance, the relying party MUST reject the artifact outright rather than accept it with a warning. The allowance's exact size is an implementation parameter; exceeding it MUST fail closed, since an unbounded allowance for clock disagreement lets a signer manufacture apparent freshness by asserting a timestamp that has not yet arrived.
 
-The generating side carries a matching obligation, distinct from the relying-side bounds above. A signer MUST NOT sign a validity window whose lifetime (the span the window covers regardless of mode: `until` minus `from` for `absolute`, `duration_seconds` for `relative`, `end` minus `start` for `window`) exceeds a maximum lifetime the signer's own policy states in advance. A relying party likewise MUST reject a window whose lifetime exceeds the maximum lifetime the relying party's own policy states, whatever the signer's policy declares. The relying-side bullets above govern what a relying party will accept; this clamp governs what a signer may assert in the first place, so a window's trust duration is bounded on both sides of the exchange rather than selected by the signer alone.
+The generating side carries a matching obligation, distinct from the relying-side bounds above. A signer MUST NOT sign a validity interval whose lifetime, `until` minus `from` for `absolute` or `duration_seconds` for `relative`, exceeds a maximum lifetime the signer's own policy states in advance. A relying party likewise MUST reject an interval whose lifetime exceeds the maximum lifetime the relying party's own policy states, whatever the signer's policy declares. The relying-side bullets above govern what a relying party will accept; this clamp governs what a signer may assert in the first place, so an interval's trust duration is bounded on both sides of the exchange rather than selected by the signer alone.
 
 This is a general discipline, not a single mechanism. §9.7.2 names where it is already enforced structurally; §9.7.3 resolves the one place in this specification where enforcement is currently uneven.
 
@@ -1319,11 +1323,11 @@ Several artifacts already enforce §9.7.1 structurally:
 
 #### 9.7.3 `validity_temporal` Is REQUIRED on the Base Attestation
 
-The base Reputation Attestation (§9.6.2) carries a `validity_temporal` field (added v0.4.0, WP3): a tagged union over three modes, `absolute` (`from`/`until`), `relative` (`from`/`duration_seconds`), and `window` (`start`/`end`/`duration_seconds`, bounded within the `[start, end]` span). Before this revision, `validity_temporal` was the one artifact family in §9.6 where freshness coverage was uneven: ApprovalReceipt's `expires_at` is present-when-supplied and MUST be honored; the base attestation's equivalent field was optional, leaving a verifier that only checked signature validity nothing forcing it to also check currency.
+The base Reputation Attestation (§9.6.2) carries a `validity_temporal` field (added v0.4.0, WP3): a tagged union over two modes, `absolute` (`from`/`until`) and `relative` (`from`/`duration_seconds`). The former `window` mode is rejected in 0.6.0. Before the 0.5.0 line, `validity_temporal` was the one artifact family in §9.6 where freshness coverage was uneven: ApprovalReceipt's `expires_at` is present-when-supplied and MUST be honored; the base attestation's equivalent field was optional, leaving a verifier that only checked signature validity nothing forcing it to also check currency.
 
 `validity_temporal` is REQUIRED on every base attestation: an attestation issued without a `validity_temporal` value carries no signer-asserted bound on its own currency, leaving every consuming relying party to either invent its own convention or skip the §9.7.1 freshness check entirely for that artifact. Making the field required does not by itself satisfy §9.7.1's relying-side obligation, since the relying party's own bound is still required regardless; it removes the ambiguity of an attestation that carries no signer-asserted window to bound against in the first place. The §9.6.2 worked example carries a `validity_temporal` value to match this requirement.
 
-*Implementation note (ruling: REQUIRED, Erik, 2026-08-16; executable 2026-08-21).* The v0.5 schema, Python reference SDK, JavaScript reference SDK, and conformance suite now enforce this requirement for newly issued v0.5 attestations. Both reference issuers default to an absolute 90-day window anchored at the attestation timestamp and refuse a caller-supplied window whose overall lifetime exceeds that declared issuer maximum. Pre-v0.5 artifacts remain readable as legacy signals, but they are not evidence that satisfies the v0.5 freshness requirement.
+*Implementation note (ruling: REQUIRED, Erik, 2026-08-16; executable 2026-08-21).* The 0.6.0 schema and Python reference SDK enforce this requirement for newly issued attestations. The reference issuer defaults to an absolute 90-day interval anchored at the attestation timestamp and refuses a caller-supplied interval whose overall lifetime exceeds that declared issuer maximum. Pre-v0.5 artifacts remain readable as legacy signals, but they are not evidence that satisfies the 0.5 and later freshness requirement.
 
 ### 9.8 Security Considerations by Threat Actor
 

@@ -47,6 +47,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   force Intel Mac adopters to a source build for a surface Concordia never
   reaches.
 
+### Changed
+
+- Implemented agreement attestation format 0.6.0 for Python issuance and
+  verification. New attestations emit `concordia_attestation: "0.6.0"`,
+  remove the root `fulfillment` member, remove reference-level
+  `extensions`, and reject the removed `validity_temporal` `window` mode.
+  The new byte-level verifier reports only `current`, `bound-only`,
+  `legacy`, or `not-bound`, applies the structure, freshness, binding,
+  revocation, and expected-session checks from
+  `draft-newton-agreement-evidence-00`, and keeps well-formed artifacts
+  below 0.5.0 on the `legacy` exit before any signature check.
+
 ### Added
 
 - **A2A #1734 interop fixture: a signed receipt that binds its decision
