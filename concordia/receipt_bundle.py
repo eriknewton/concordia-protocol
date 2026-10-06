@@ -36,8 +36,10 @@ _SEMVER_RE = re.compile(
 
 def _attestation_version_at_least(ver: str, major: int, minor: int) -> bool:
     """True iff ``ver`` is a well-formed ``major.minor.patch`` at or above
-    ``(major, minor)``. Malformed/missing versions are treated as BELOW (i.e.
-    legacy/unbound) -- never an error, just not credited."""
+    ``(major, minor)``. A version that fails the grammar returns False; the
+    callers in this module check ``_SEMVER_RE`` first and report a malformed
+    version as an error, never as unbound. A component past CPython's int()
+    digit limit raises ValueError, which the callers turn into an error."""
     if not isinstance(ver, str) or not _SEMVER_RE.match(ver):
         return False
     parts = ver.split(".")
@@ -66,8 +68,9 @@ def evaluate_outcome_binding(
 
     Returns ``(state, error)`` where ``state`` is one of:
       - ``"bound"``     : >=0.2.0, every listed party countersigned and verified.
-      - ``"unbound"``   : legacy <0.2.0 / malformed version -- prover-asserted,
+      - ``"unbound"``   : well-formed version below 0.2.0 -- prover-asserted,
                           NOT an error (mixed-version handling lives in callers).
+                          A malformed or absent version is ``"error"``.
       - ``"error"``     : >=0.2.0 but the dual-accept binding could not be
                           confirmed (missing map, missing/unresolvable/invalid
                           party countersignature). ``error`` is a human-readable
@@ -82,7 +85,11 @@ def evaluate_outcome_binding(
         # valid=True. Matches -00 section 10 step 2 (malformed version is
         # not-bound before any signature work).
         return "error", "concordia_attestation is malformed; outcome not bound"
-    if not _attestation_version_at_least(ver, *_OUTCOME_BINDING_MIN):
+    try:
+        at_least = _attestation_version_at_least(ver, *_OUTCOME_BINDING_MIN)
+    except ValueError:
+        return "error", "concordia_attestation component is too long"
+    if not at_least:
         # Legacy / pre-C-H2 (well-formed version below the floor): outcome is
         # prover-asserted. Recorded as unbound, NOT an error (mixed-version
         # handling is the caller's job).
@@ -567,7 +574,7 @@ def verify_bundle(
         if state == "bound":
             outcome_bound_count += 1
         elif state == "unbound":
-            # Legacy / pre-C-H2 (or malformed version): outcome is
+            # Legacy / pre-C-H2 (well-formed version below 0.2.0): outcome is
             # prover-asserted. Reported as unbound, NOT credited, NOT an error.
             outcome_unbound_attestations.append(att_id)
         else:  # state == "error"

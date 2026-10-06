@@ -220,7 +220,17 @@ def _version_tuple(value: str) -> tuple[int, int, int]:
             "integers without leading zeros"
         )
     parts = value.split(".")
-    return (int(parts[0]), int(parts[1]), int(parts[2]))
+    try:
+        return (int(parts[0]), int(parts[1]), int(parts[2]))
+    except ValueError as exc:
+        # The grammar bounds neither digit count nor magnitude; CPython raises
+        # on int() past sys.get_int_max_str_digits() (4300). That is a
+        # structure error like any other malformed version, never a raw
+        # exception at a composition boundary and never a route into a
+        # legacy lane.
+        raise _AttestationStructureError(
+            "concordia_attestation component is too long"
+        ) from exc
 
 
 def _contains_forbidden_whitespace(value: str) -> bool:
@@ -597,9 +607,15 @@ def is_valid_now(
     """
     vt = attestation.get("validity_temporal")
     if vt is None:
-        return not _attestation_version_at_least(
-            attestation.get("concordia_attestation", ""), 0, 5
-        )
+        ver = attestation.get("concordia_attestation", "")
+        if not isinstance(ver, str) or not _SEMVER_RE.match(ver):
+            # A malformed version is never a legacy signal; fail closed here
+            # as the binding evaluators do.
+            return False
+        try:
+            return not _attestation_version_at_least(ver, 0, 5)
+        except ValueError:
+            return False
     if not isinstance(vt, dict) or "mode" not in vt:
         return False
     now_dt = now or datetime.now(timezone.utc)
@@ -975,8 +991,10 @@ def _map_state_to_outcome(state: SessionState) -> OutcomeStatus:
 def _attestation_version_at_least(ver: str, major: int, minor: int) -> bool:
     """Return True iff ``ver`` is semver-shaped and at least ``major.minor``.
 
-    Malformed or missing versions are treated as legacy for dual-accept
-    read paths: reported as unbound, not raised as a parse error.
+    A version that fails the grammar returns False; callers that must fail
+    closed on a malformed version check ``_SEMVER_RE`` first (every caller
+    in this module does). A component past CPython's int() digit limit
+    raises ValueError, which those callers turn into an error state.
     """
     if not isinstance(ver, str) or not _SEMVER_RE.match(ver):
         return False
@@ -993,10 +1011,10 @@ def evaluate_receipt_set_binding(
     Returns ``(state, errors)`` where ``state`` is one of:
       - ``"bound"``: >=0.3.0 fields are present, well-formed, and, when a
         transcript was supplied, match its final message hash and length.
-      - ``"legacy_set_unbound"``: <0.3.0 or malformed version. This is
+      - ``"legacy_set_unbound"``: well-formed version below 0.3.0. This is
         reported, not an error, and must not be credited as set-bound.
-      - ``"error"``: >=0.3.0 but required fields are missing, malformed, or do
-        not match the supplied transcript.
+      - ``"error"``: malformed or absent version, or >=0.3.0 with required
+        fields missing, malformed, or not matching the supplied transcript.
     """
     ver = attestation.get("concordia_attestation", "")
     if not isinstance(ver, str) or not _SEMVER_RE.match(ver):
@@ -1004,7 +1022,11 @@ def evaluate_receipt_set_binding(
         # the same reason as evaluate_outcome_binding in receipt_bundle.py
         # (the unbound lane skips every check).
         return "error", ["concordia_attestation is malformed; set not bound"]
-    if not _attestation_version_at_least(ver, *_SET_BINDING_MIN):
+    try:
+        at_least = _attestation_version_at_least(ver, *_SET_BINDING_MIN)
+    except ValueError:
+        return "error", ["concordia_attestation component is too long"]
+    if not at_least:
         return "legacy_set_unbound", []
 
     errors: list[str] = []

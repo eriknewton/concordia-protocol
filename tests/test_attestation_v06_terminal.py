@@ -765,3 +765,38 @@ def test_bundle_refuses_trailing_newline_version_with_tampered_outcome() -> None
     assert result.valid is False
     assert result.outcome_bound_count == 0
     assert any("malformed" in error for error in result.errors)
+
+
+def test_overlong_version_component_is_a_structure_error_everywhere() -> None:
+    """A component past CPython's int() digit limit used to escape as a raw
+    ValueError from the schema validator, both binding evaluators and
+    verify_bundle; it must read as a malformed version instead."""
+    from concordia.attestation import evaluate_receipt_set_binding, is_valid_now
+    from concordia.receipt_bundle import (
+        ReceiptBundle,
+        evaluate_outcome_binding,
+        verify_bundle,
+    )
+
+    now = datetime.now(timezone.utc)
+    artifact, keys = _artifact(now)
+    artifact["concordia_attestation"] = "1" * 5000 + ".0.0"
+
+    assert validate_attestation(artifact)
+    assert is_valid_attestation(artifact) is False
+    assert evaluate_outcome_binding(artifact, lambda a: keys[a].public_key) == (
+        "error",
+        "concordia_attestation component is too long",
+    )
+    assert evaluate_receipt_set_binding(artifact)[0] == "error"
+    wrapped = _wrapper_verify(artifact, keys)
+    assert wrapped.valid is False
+    assert wrapped.terminal_state == "not-bound"
+    holder = "did:example:alice"
+    bundle = ReceiptBundle.create(holder, [artifact], keys[holder]).to_dict()
+    result = verify_bundle(bundle, lambda agent_id: keys[agent_id].public_key)
+    assert result.valid is False
+    assert result.outcome_bound_count == 0
+    legacy_no_vt = {"concordia_attestation": "0.6.0\n"}
+    assert is_valid_now(legacy_no_vt) is False
+    assert is_valid_now({"concordia_attestation": "0.4.0"}) is True
