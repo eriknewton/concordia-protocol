@@ -801,6 +801,11 @@ export function validateValidityTemporal(vt: unknown): ValidityTemporal {
   };
 }
 
+// Must match `_SEMVER_RE` in concordia/attestation.py: ASCII digits, no
+// leading zeros, no trailing newline (JavaScript `$` without the `m` flag
+// never matches before a final newline, unlike Python's).
+const STRICT_VERSION_PATTERN = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
+
 /**
  * Return `true` if the attestation's `validity_temporal` contains `now`,
  * mirroring Python `is_valid_now`.
@@ -820,11 +825,6 @@ export function validateValidityTemporal(vt: unknown): ValidityTemporal {
  *   `validity_temporal`).
  * @param now Epoch milliseconds for "now". Defaults to `Date.now()`.
  */
-// Must match `_SEMVER_RE` in concordia/attestation.py: ASCII digits, no
-// leading zeros, no trailing newline (JavaScript `$` without the `m` flag
-// never matches before a final newline, unlike Python's).
-const STRICT_VERSION_PATTERN = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
-
 export function isValidNow(attestation: Record<string, unknown>, now?: number): boolean {
   const vt = attestation.validity_temporal;
   if (vt === undefined || vt === null) {
