@@ -11,20 +11,19 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from concordia.attestation import (
     ATTESTATION_VERSION,
-    AttestationVerificationPolicy,
     MAX_ATTESTATION_ARTIFACT_BYTES,
+    AttestationVerificationPolicy,
     countersign_attestation,
+    verify_attestation,
     verify_attestation_artifact,
 )
 from concordia.schema_validator import is_valid_attestation, validate_attestation
 from concordia.signing import KeyPair, sign_message
-
 
 _RFC8032_SEED_1 = bytes.fromhex(
     "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"
@@ -148,6 +147,26 @@ def _resign(artifact: dict[str, Any], keys: dict[str, KeyPair]) -> None:
         agent_id: countersign_attestation(artifact, key_pair)
         for agent_id, key_pair in keys.items()
     }
+
+
+def _public_keys(keys: dict[str, KeyPair]):
+    return {agent_id: key_pair.public_key for agent_id, key_pair in keys.items()}
+
+
+def _wrapper_verify(
+    artifact: dict[str, Any],
+    keys: dict[str, KeyPair],
+    *,
+    transcript: list[Any] | None = None,
+):
+    return verify_attestation(
+        artifact,
+        _public_keys(keys),
+        transcript=transcript,
+        expected_session_id="sess_v06_positive",
+        expected_party_ids=frozenset(keys),
+        revocation_checker=lambda _: False,
+    )
 
 
 def _not_bound(artifact: dict[str, Any], keys: dict[str, KeyPair], now: datetime) -> None:
@@ -548,3 +567,151 @@ def test_pre_v05_legacy_exits_before_signature_resolution() -> None:
 
     assert result.terminal_state == "legacy"
     assert result.signature_checks == 0
+
+
+@pytest.mark.parametrize(
+    "version_value",
+    ["0.6.0 ", "0.6", "v0.6.0", "06.0.0", "", 5, None, "٠.٦.٠", {}],
+)
+def test_wrapper_malformed_or_absent_version_is_not_bound(version_value: Any) -> None:
+    now = datetime.now(timezone.utc)
+    artifact, keys = _artifact(now)
+    if version_value is None:
+        artifact.pop("concordia_attestation")
+    else:
+        artifact["concordia_attestation"] = version_value
+
+    result = _wrapper_verify(artifact, keys)
+
+    assert result.valid is False
+    assert result.terminal_state == "not-bound"
+    assert result.set_binding_state == "error"
+
+
+def test_wrapper_well_formed_below_floor_version_remains_legacy() -> None:
+    now = datetime.now(timezone.utc)
+    artifact, keys = _artifact(now)
+    artifact["concordia_attestation"] = "0.4.0"
+    _resign(artifact, keys)
+
+    result = _wrapper_verify(artifact, keys)
+
+    assert result.terminal_state == "legacy"
+
+
+@pytest.mark.parametrize(
+    "transcript",
+    [
+        [{"a": float("nan")}],
+        [b"x"],
+        [set()],
+        [{"a": "\ud800"}],
+    ],
+)
+def test_wrapper_unhashable_current_transcript_does_not_change_terminal_state(
+    transcript: list[Any],
+) -> None:
+    now = datetime.now(timezone.utc)
+    artifact, keys = _artifact(now)
+
+    result = _wrapper_verify(artifact, keys, transcript=transcript)
+
+    assert result.valid is False
+    assert result.terminal_state == "current"
+    assert result.set_binding_state == "error"
+    assert result.set_binding_errors == ["transcript could not be evaluated"]
+
+
+@pytest.mark.parametrize(
+    "transcript",
+    [
+        [{"a": float("nan")}],
+        [b"x"],
+        [set()],
+        [{"a": "\ud800"}],
+    ],
+)
+def test_wrapper_unhashable_legacy_transcript_stays_legacy(
+    transcript: list[Any],
+) -> None:
+    now = datetime.now(timezone.utc)
+    artifact, keys = _artifact(now)
+    artifact["concordia_attestation"] = "0.4.0"
+    _resign(artifact, keys)
+
+    result = _wrapper_verify(artifact, keys, transcript=transcript)
+
+    assert result.valid is False
+    assert result.terminal_state == "legacy"
+    assert result.set_binding_state == "error"
+    assert result.set_binding_errors == ["transcript could not be evaluated"]
+
+
+@pytest.mark.parametrize(
+    "parties",
+    [
+        lambda party: [party, "str"],
+        lambda party: [party, 5],
+        lambda party: "not-a-list",
+    ],
+)
+def test_wrapper_legacy_malformed_parties_stay_legacy_with_schema_error(
+    parties,
+) -> None:
+    now = datetime.now(timezone.utc)
+    artifact, keys = _artifact(now)
+    artifact["concordia_attestation"] = "0.4.0"
+    artifact["parties"] = parties(deepcopy(artifact["parties"][0]))
+    _resign(artifact, keys)
+
+    result = _wrapper_verify(artifact, keys)
+
+    assert result.valid is False
+    assert result.terminal_state == "legacy"
+    assert result.schema_errors
+
+
+@pytest.mark.parametrize("version_value", ["00.5.0", "٠.٥.٠"])
+def test_wrapper_receipt_bundle_version_regex_rejects_malformed_versions_before_countersignature_checks(
+    version_value: str,
+) -> None:
+    now = datetime.now(timezone.utc)
+    artifact, keys = _artifact(now)
+    artifact["concordia_attestation"] = version_value
+
+    result = _wrapper_verify(artifact, keys)
+
+    assert result.valid is False
+    assert result.terminal_state == "not-bound"
+    assert not any("countersignature" in error for error in result.signature_errors)
+
+
+def test_countersignature_diagnostic_does_not_echo_long_agent_id() -> None:
+    now = datetime.now(timezone.utc)
+    long_agent_id = "a" * 252
+    artifact, keys = _artifact(now)
+    keys = {
+        long_agent_id: keys["did:example:alice"],
+        "did:example:bob": keys["did:example:bob"],
+    }
+    artifact["parties"][0]["agent_id"] = long_agent_id
+    artifact["parties"][0]["signature"] = sign_message(
+        artifact["parties"][0],
+        keys[long_agent_id],
+    )
+    artifact.pop("countersignatures")
+    artifact["countersignatures"] = {
+        long_agent_id: "malformed",
+        "did:example:bob": countersign_attestation(
+            artifact,
+            keys["did:example:bob"],
+        ),
+    }
+
+    result = _wrapper_verify(artifact, keys)
+    combined = " | ".join(result.errors)
+
+    assert result.valid is False
+    assert result.errors
+    assert all(len(error) < 200 for error in result.errors)
+    assert long_agent_id not in combined

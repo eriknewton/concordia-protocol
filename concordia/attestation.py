@@ -23,7 +23,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from .cosign import canonical_cosign_bytes
 from .message import compute_hash
-from .signing import KeyPair, canonical_json, sign_message, verify_signature
+from .signing import KeyPair, sign_message, verify_signature
 from .types import (
     OutcomeStatus,
     ResolutionMechanism,
@@ -53,6 +53,7 @@ if TYPE_CHECKING:
 # below 0.5.0 exits as legacy before signature, freshness, or revocation work.
 ATTESTATION_VERSION = "0.6.0"
 _SET_BINDING_MIN = (0, 3)
+# Must match ``_SEMVER_RE`` in concordia/receipt_bundle.py.
 _SEMVER_RE = re.compile(
     r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z"
 )
@@ -894,7 +895,10 @@ def _validate_countersignature_shape(
             max_octets=MAX_REFERENCE_ID_LENGTH,
             no_whitespace=True,
         )
-        _decode_strict_signature(signature, f"countersignatures[{agent_id}]")
+        _decode_strict_signature(
+            signature,
+            _diagnostic_path(f"countersignatures[{agent_id}]"),
+        )
 
 
 def _validate_attestation_structure(
@@ -1327,6 +1331,7 @@ def verify_attestation(
     warnings: list[str] = []
     verified_parties: list[str] = []
     set_binding_state = "unknown"
+    well_formed_below_floor = False
 
     try:
         if not isinstance(attestation, dict):
@@ -1346,6 +1351,7 @@ def verify_attestation(
         version_value = attestation.get("concordia_attestation")
         if isinstance(version_value, str) and _SEMVER_RE.match(version_value):
             version = _version_tuple(version_value)
+            well_formed_below_floor = version < _LEGACY_FLOOR_VERSION
             if version >= _LEGACY_FLOOR_VERSION:
                 payload = json.dumps(
                     attestation,
@@ -1372,9 +1378,13 @@ def verify_attestation(
                 else:
                     schema_errors = procedure_errors
                 if transcript is not None:
-                    evaluated_set_binding_state, set_binding_errors = (
-                        evaluate_receipt_set_binding(attestation, transcript)
-                    )
+                    try:
+                        evaluated_set_binding_state, set_binding_errors = (
+                            evaluate_receipt_set_binding(attestation, transcript)
+                        )
+                    except Exception:
+                        evaluated_set_binding_state = "error"
+                        set_binding_errors = ["transcript could not be evaluated"]
                     set_binding_state = (
                         evaluated_set_binding_state
                         if terminal.terminal_state in {"current", "bound-only"}
@@ -1452,24 +1462,36 @@ def verify_attestation(
         # standalone path aligned with bundle and competence-proof verification.
         from .receipt_bundle import evaluate_outcome_binding
 
-        outcome_binding_state, outcome_binding_error = evaluate_outcome_binding(
-            attestation,
-            lambda agent_id: public_keys.get(agent_id),
-        )
-        if outcome_binding_state == "error":
-            signature_errors.append(
-                outcome_binding_error or "attestation outcome binding failed"
+        outcome_binding_exception = False
+        try:
+            outcome_binding_state, outcome_binding_error = evaluate_outcome_binding(
+                attestation,
+                lambda agent_id: public_keys.get(agent_id),
             )
+        except Exception:
+            outcome_binding_exception = True
+            outcome_binding_state = "error"
+            outcome_binding_error = "attestation outcome binding could not be evaluated"
+        if outcome_binding_state == "error":
+            binding_error = outcome_binding_error or "attestation outcome binding failed"
+            if outcome_binding_exception:
+                schema_errors.append(binding_error)
+            else:
+                signature_errors.append(binding_error)
         elif outcome_binding_state == "unbound":
             warnings.append(
                 "attestation is legacy outcome-unbound (<0.2.0); outcome is "
                 "not authenticated"
             )
 
-        set_binding_state, set_binding_errors = evaluate_receipt_set_binding(
-            attestation,
-            transcript,
-        )
+        try:
+            set_binding_state, set_binding_errors = evaluate_receipt_set_binding(
+                attestation,
+                transcript,
+            )
+        except Exception:
+            set_binding_state = "error"
+            set_binding_errors = ["transcript could not be evaluated"]
         if set_binding_state == "legacy_set_unbound":
             warnings.append(
                 "attestation is legacy set-unbound (<0.3.0); chain_head and "
@@ -1485,8 +1507,10 @@ def verify_attestation(
             signature_errors=signature_errors,
             set_binding_errors=set_binding_errors,
             verified_parties=verified_parties,
-            set_binding_state=set_binding_state,
-            terminal_state="legacy",
+            set_binding_state=(
+                set_binding_state if well_formed_below_floor else "error"
+            ),
+            terminal_state="legacy" if well_formed_below_floor else "not-bound",
         )
     except Exception:
         signature_errors.append("attestation verification failed closed")
@@ -1500,7 +1524,7 @@ def verify_attestation(
             set_binding_errors=set_binding_errors,
             verified_parties=verified_parties,
             set_binding_state="error",
-            terminal_state="not-bound",
+            terminal_state="legacy" if well_formed_below_floor else "not-bound",
         )
 
 

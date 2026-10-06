@@ -28,7 +28,10 @@ from .signing import KeyPair, canonical_json, sign_message, verify_signature
 # (fail-closed). Below this version, the outcome is legacy prover-asserted:
 # reported as outcome-unbound and NOT credited, but NOT an error (dual-accept).
 _OUTCOME_BINDING_MIN = (0, 2)
-_SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
+# Must match ``_SEMVER_RE`` in concordia/attestation.py.
+_SEMVER_RE = re.compile(
+    r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z"
+)
 
 
 def _attestation_version_at_least(ver: str, major: int, minor: int) -> bool:

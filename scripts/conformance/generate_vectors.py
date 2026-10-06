@@ -3452,7 +3452,8 @@ def build_synthetic_attestation() -> tuple[dict[str, Any], dict[str, Any]]:
             agent_id: key_pair.public_key
             for agent_id, key_pair in key_by_agent.items()
         },
-        expected_session_id=attestation["session_id"],
+        # The relying party's expectation is never copied from the artifact.
+        expected_session_id="sess_conformance_p2a1_0001",
         expected_party_ids=frozenset(key_by_agent),
         revocation_checker=lambda _: False,
     )
