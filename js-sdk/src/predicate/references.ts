@@ -77,8 +77,8 @@ export const MAX_REFERENCE_EXTENSIONS_NODES = 256;
  * DEL, C1, zero-width controls, and bidi override controls.
  */
 // U+0000..U+001F and U+007F..U+009F are intentional C0/C1 control ranges.
-// eslint-disable-next-line no-control-regex
 const REFERENCE_FORBIDDEN_RE =
+  // eslint-disable-next-line no-control-regex
   /[\p{White_Space}\u0000-\u001F\u007F-\u009F\u200B-\u200F\u2028-\u202E]/u;
 
 function hasLoneSurrogate(value: string): boolean {

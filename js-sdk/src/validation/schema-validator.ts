@@ -185,6 +185,7 @@ const SHA256_HEX_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const SIGNATURE_B64URL_PATTERN = /^[A-Za-z0-9_-]{86}==$/;
 const BASE64URL_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
 const NO_FORBIDDEN_WHITESPACE_PATTERN =
+  // eslint-disable-next-line no-control-regex
   /^[^\p{White_Space}\u0000-\u001F\u007F-\u009F\u200B-\u200F\u2028-\u202E]+$/u;
 const CATEGORY_PATTERN = /^[a-z0-9_-]+(?:\.[a-z0-9_-]+)*$/;
 const VALUE_RANGE_PATTERN =
