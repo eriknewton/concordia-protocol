@@ -66,6 +66,7 @@ import {
   FULFILLMENT_ATTESTATION_SCHEMA,
   FLOAT_CONSTRAINT_PATHS,
 } from './schemas.js';
+import { MAX_RELYING_VALIDITY_LIFETIME_SECONDS } from '../attestation/constants.js';
 
 // Fail fast at module load if a bundled schema introduces a keyword the internal
 // validator does not support (which would silently under-validate vs Python).
@@ -176,9 +177,13 @@ const FREE_TEXT_TERM_ERROR = 'free-text field must not contain obvious raw deal 
 const DRAFT_STRUCTURE_ERROR = '$: violates draft-newton-agreement-evidence-00 structure';
 const DRAFT_VERSION_GRAMMAR_ERROR =
   '$.concordia_attestation: violates draft-newton-agreement-evidence-00 version grammar';
-const IMPLEMENTED_ATTESTATION_VERSION: [number, number, number] = [0, 6, 0];
-const LEGACY_FLOOR_VERSION: [number, number, number] = [0, 5, 0];
+type VersionTuple = readonly [bigint, bigint, bigint];
+const IMPLEMENTED_ATTESTATION_VERSION: VersionTuple = [0n, 6n, 0n];
+const LEGACY_FLOOR_VERSION: VersionTuple = [0n, 5n, 0n];
 const STRICT_SEMVER_PATTERN = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
+// Must match CPython's default int-string limit used by _version_tuple in
+// concordia/attestation.py so malformed component length is classified alike.
+const MAX_VERSION_COMPONENT_DIGITS = 4300;
 const RFC3339_Z_PATTERN =
   /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,3})?Z$/;
 const SHA256_HEX_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -194,7 +199,6 @@ const MAX_SAFE_INT = 2 ** 53 - 1;
 const MAX_PARTIES = 64;
 const MAX_REFERENCES = 32;
 const MAX_SUMMARY_SCALARS = 1024;
-const MAX_ATTESTATION_VALIDITY_SECONDS = 90 * 24 * 60 * 60;
 const RAW_TERM_PATTERNS = [
   /[$€£¥]\s*\d/i,
   /\b(?:USD|EUR|GBP|JPY|CAD|AUD|CHF|CNY|INR)\s*\d/i,
@@ -279,9 +283,13 @@ export function isValidMessage(message: unknown): boolean {
 }
 
 /**
- * Validate a §9.6 Reputation Attestation against `attestation.schema.json`.
- * Mirrors Python `validate_attestation` for schema errors, including asserted
- * `date-time` formats and intra-document `$ref` / `oneOf` applicators.
+ * Validate a §9.6 Reputation Attestation against `attestation.schema.json`
+ * plus the implemented draft-structure surface. Mirrors Python
+ * `validate_attestation` for schema errors, including asserted `date-time`
+ * formats, intra-document `$ref` / `oneOf` applicators, the implemented
+ * version ceiling, and the draft §8.1 reference lifetime ceiling. This is not
+ * a relying-party verdict: signature checks, evidence age, revocation, and
+ * tighter policy limits are enforced by verifier surfaces.
  */
 export function validateAttestation(attestation: unknown): string[] {
   const schemaErrors = format(iterErrors(ATTESTATION_SCHEMA, attestation, conformsFormat));
@@ -423,7 +431,9 @@ function validateAttestationDraftStructure(attestation: unknown): string[] {
     return [DRAFT_VERSION_GRAMMAR_ERROR];
   }
   if (compareVersion(version, LEGACY_FLOOR_VERSION) < 0) return [];
-  if (compareVersion(version, IMPLEMENTED_ATTESTATION_VERSION) > 0) return [];
+  if (compareVersion(version, IMPLEMENTED_ATTESTATION_VERSION) > 0) {
+    return [DRAFT_STRUCTURE_ERROR];
+  }
   return isDraftStructureValid(attestation) ? [] : [DRAFT_STRUCTURE_ERROR];
 }
 
@@ -463,14 +473,15 @@ function isDraftStructureValid(attestation: Record<string, unknown>): boolean {
   return true;
 }
 
-function parseStrictVersion(value: string): [number, number, number] | null {
+function parseStrictVersion(value: string): VersionTuple | null {
   if (!STRICT_SEMVER_PATTERN.test(value)) return null;
-  const parts = value.split('.').map((part) => Number(part));
-  if (parts.length !== 3 || parts.some((part) => !Number.isSafeInteger(part))) return null;
-  return [parts[0]!, parts[1]!, parts[2]!];
+  const stringParts = value.split('.');
+  if (stringParts.length !== 3) return null;
+  if (stringParts.some((part) => part.length > MAX_VERSION_COMPONENT_DIGITS)) return null;
+  return [BigInt(stringParts[0]!), BigInt(stringParts[1]!), BigInt(stringParts[2]!)];
 }
 
-function compareVersion(a: [number, number, number], b: [number, number, number]): number {
+function compareVersion(a: VersionTuple, b: VersionTuple): number {
   for (let i = 0; i < 3; i += 1) {
     if (a[i]! < b[i]!) return -1;
     if (a[i]! > b[i]!) return 1;
@@ -728,7 +739,8 @@ function isValidityTemporalShape(value: unknown): boolean {
       return false;
     }
     if (!isRfc3339Z(value.from) || !isRfc3339Z(value.until)) return false;
-    return epochMs(value.until) > epochMs(value.from);
+    const lifetimeMs = epochMs(value.until) - epochMs(value.from);
+    return lifetimeMs > 0 && lifetimeMs <= MAX_RELYING_VALIDITY_LIFETIME_SECONDS * 1_000;
   }
   if (value.mode === 'relative') {
     if (
@@ -741,7 +753,7 @@ function isValidityTemporalShape(value: unknown): boolean {
       return false;
     }
     if (!isRfc3339Z(value.from)) return false;
-    return isIntInRange(value.duration_seconds, 1, MAX_ATTESTATION_VALIDITY_SECONDS);
+    return isIntInRange(value.duration_seconds, 1, MAX_RELYING_VALIDITY_LIFETIME_SECONDS);
   }
   return false;
 }

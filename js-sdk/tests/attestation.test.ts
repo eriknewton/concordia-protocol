@@ -20,6 +20,7 @@ import {
   ATTESTATION_VERSION,
   DEFAULT_ATTESTATION_VALIDITY_SECONDS,
   MAX_ATTESTATION_VALIDITY_SECONDS,
+  MAX_RELYING_VALIDITY_LIFETIME_SECONDS,
   type GenerateAttestationOptions,
 } from '../src/attestation/index.js';
 import { PartyRole, ResolutionMechanism, SessionState } from '../src/types/index.js';
@@ -834,8 +835,18 @@ describe('Python-generated attestation mutation corpus', () => {
       'reference_add_extensions',
       'version_0_4_0_reference_add_extensions',
       'version_0_5_0_reference_add_extensions',
+      'version_0.5.9007199254740993',
+      'version_0.4.9007199254740993',
+      'version_0.0.9007199254740993',
       'version_0.6.1_duplicate_party_ids',
+      'version_0.9007199254740993.0',
+      'version_0.6.9007199254740993',
+      'version_0.10.0',
       'version_1.0.0_duplicate_party_ids',
+      'version_9007199254740993.0.0',
+      'validity_absolute_past_reference_cap',
+      'validity_absolute_past_reference_cap_one_ms',
+      'validity_absolute_leap_span_past_reference_cap',
     ]) {
       expect(corpusByName.has(name)).toBe(true);
     }
@@ -1187,6 +1198,12 @@ describe('generateAttestation terms_count strictness parity (Finding 3)', () => 
 describe('attestation constants parity', () => {
   it('ATTESTATION_VERSION matches Python', () => {
     expect(ATTESTATION_VERSION).toBe(fixtures.attestation_version);
+  });
+
+  it('issuer validity ceiling fits relying reference ceiling', () => {
+    expect(MAX_ATTESTATION_VALIDITY_SECONDS).toBeLessThanOrEqual(
+      MAX_RELYING_VALIDITY_LIFETIME_SECONDS,
+    );
   });
 });
 

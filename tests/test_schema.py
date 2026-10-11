@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime, timedelta, timezone
 
 from concordia import (
     Agent,
     BasicOffer,
     KeyPair,
+    MAX_ATTESTATION_VALIDITY_SECONDS,
+    MAX_RELYING_VALIDITY_LIFETIME_SECONDS,
     generate_attestation,
     is_valid_attestation,
     is_valid_message,
@@ -94,6 +97,7 @@ class TestAttestationValidation:
             "reasoning_provided": True,
             "withdrawal": False,
         }
+
         return {
             "concordia_attestation": "0.1.0",
             "attestation_id": "att_valid",
@@ -129,6 +133,22 @@ class TestAttestationValidation:
             "transcript_hash": "sha256:" + "a" * 64,
         }
 
+    def _valid_current_attestation(self):
+        att = self._valid_attestation()
+        att["concordia_attestation"] = "0.6.0"
+        att["chain_head"] = "sha256:" + "b" * 64
+        att["message_count"] = 1
+        att["validity_temporal"] = {
+            "mode": "absolute",
+            "from": "2026-03-01T12:34:56Z",
+            "until": "2026-03-02T12:34:56Z",
+        }
+        att["countersignatures"] = {
+            "agent_a": "A" * 86 + "==",
+            "agent_b": "A" * 86 + "==",
+        }
+        return att
+
     def test_valid_attestation(self):
         seller = Agent("seller_01")
         buyer = Agent("buyer_42")
@@ -157,10 +177,68 @@ class TestAttestationValidation:
         errors = validate_attestation(att)
         assert not errors, f"Attestation invalid: {errors}"
 
+    def test_issuer_validity_ceiling_fits_relying_reference_ceiling(self):
+        assert MAX_ATTESTATION_VALIDITY_SECONDS <= MAX_RELYING_VALIDITY_LIFETIME_SECONDS
+
     def test_invalid_attestation_missing_fields(self):
         att = {"concordia_attestation": "0.1.0"}
         errors = validate_attestation(att)
         assert len(errors) > 0
+
+    def test_current_version_accepts_but_above_ceiling_rejects(self):
+        att = self._valid_current_attestation()
+        assert validate_attestation(att) == []
+
+        for version in ("0.6.1", "0.10.0", "1.0.0", "9007199254740993.0.0"):
+            above_ceiling = copy.deepcopy(att)
+            above_ceiling["concordia_attestation"] = version
+            assert validate_attestation(above_ceiling) == [
+                "$: violates draft-newton-agreement-evidence-00 structure"
+            ]
+
+    def test_absent_or_non_string_version_stays_structured_refusal(self):
+        missing = self._valid_current_attestation()
+        missing.pop("concordia_attestation")
+        assert "$: 'concordia_attestation' is a required property" in validate_attestation(
+            missing
+        )
+
+        non_string = self._valid_current_attestation()
+        non_string["concordia_attestation"] = 6
+        assert "$.concordia_attestation: violates 'type' constraint: \"string\"" in (
+            validate_attestation(non_string)
+        )
+
+    def test_absolute_validity_reference_lifetime_boundaries(self):
+        att = self._valid_current_attestation()
+        start = datetime(2026, 3, 1, 12, 34, 56, tzinfo=timezone.utc)
+
+        at_cap = copy.deepcopy(att)
+        at_cap["validity_temporal"] = {
+            "mode": "absolute",
+            "from": "2026-03-01T12:34:56Z",
+            "until": (start + timedelta(seconds=7_776_000)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ),
+        }
+        assert validate_attestation(at_cap) == []
+
+        for until in (
+            (start + timedelta(seconds=7_776_001)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "2026-05-30T12:34:56.001Z",
+            "2024-04-01T00:00:00Z",
+        ):
+            over_cap = copy.deepcopy(att)
+            over_cap["validity_temporal"] = {
+                "mode": "absolute",
+                "from": "2026-03-01T12:34:56Z"
+                if until != "2024-04-01T00:00:00Z"
+                else "2024-01-01T00:00:00Z",
+                "until": until,
+            }
+            assert validate_attestation(over_cap) == [
+                "$: violates draft-newton-agreement-evidence-00 structure"
+            ]
 
     def test_rejects_top_level_raw_term_extra_field(self):
         att = self._valid_attestation()

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- `validateAttestation` now refuses artifacts above the implemented
+  attestation version ceiling before applying draft-structure checks. The
+  validator accepts an otherwise identical `0.6.0` body but returns the
+  `draft_structure` refusal class for `0.6.1`, `0.10.0`, `1.0.0`, and
+  versions whose exact component tuple is above the ceiling, including
+  components beyond the JavaScript safe-integer range.
+- Absolute `validity_temporal` windows now share the reference lifetime ceiling
+  already applied to relative windows. `validateAttestation` returns the
+  `draft_structure` refusal class for an over-reference absolute window;
+  tighter relying-party policy limits still apply later during terminal
+  verification.
 - Read-side validation notes for the 0.6.0 parity line are now explicit:
   root `fulfillment` is accepted below 0.5.0 and refused for every version at
   or above 0.5.0; reference `extensions` and `validity_temporal.window` are

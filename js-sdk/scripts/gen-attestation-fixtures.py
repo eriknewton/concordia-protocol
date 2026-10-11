@@ -1048,18 +1048,46 @@ def main() -> None:
         "Python's whitespace predicate does not classify U+FEFF as whitespace.",
     )
 
-    for version in ("0.5.0", "0.5.9", "0.6.0", "0.6.1", "1.0.0", "00.6.0", "0.6.0\n", "bogus"):
+    above_ceiling_note = "The implemented validation ceiling is the expected refusal reason."
+    version_notes = {
+        "0.6.1": above_ceiling_note,
+        "0.10.0": above_ceiling_note,
+        "1.0.0": above_ceiling_note,
+        "9007199254740993.0.0": above_ceiling_note,
+        "0.9007199254740993.0": above_ceiling_note,
+        "0.6.9007199254740993": above_ceiling_note,
+    }
+    for version in (
+        "0.5.0",
+        "0.5.9",
+        "0.6.0",
+        "0.5.9007199254740993",
+        "0.4.9007199254740993",
+        "0.0.9007199254740993",
+        "0.6.1",
+        "0.10.0",
+        "1.0.0",
+        "9007199254740993.0.0",
+        "0.9007199254740993.0",
+        "0.6.9007199254740993",
+        "00.6.0",
+        "0.6.0\n",
+        "bogus",
+    ):
         _add_mutation(
             "version_" + version.encode("unicode_escape").decode("ascii").replace("\\", "_"),
             lambda a, v=version: a.__setitem__("concordia_attestation", v),
+            version_notes.get(version, ""),
         )
     _add_mutation(
         "version_0.6.1_duplicate_party_ids",
         lambda a: _set_version_with_duplicate_party(a, "0.6.1"),
+        above_ceiling_note,
     )
     _add_mutation(
         "version_1.0.0_duplicate_party_ids",
         lambda a: _set_version_with_duplicate_party(a, "1.0.0"),
+        above_ceiling_note,
     )
 
     for digits in range(1, 10):
@@ -1128,16 +1156,32 @@ def main() -> None:
         "validity_absolute_at_reference_cap",
         lambda a: a.__setitem__(
             "validity_temporal",
-            {"mode": "absolute", "from": "2026-01-01T00:00:00Z", "until": "2026-04-01T00:00:00Z"},
+            {"mode": "absolute", "from": "2026-03-01T12:34:56Z", "until": "2026-05-30T12:34:56Z"},
         ),
     )
     _add_mutation(
-        "validity_absolute_past_reference_cap_python_accept",
+        "validity_absolute_past_reference_cap",
         lambda a: a.__setitem__(
             "validity_temporal",
-            {"mode": "absolute", "from": "2026-01-01T00:00:00Z", "until": "2026-04-01T00:00:01Z"},
+            {"mode": "absolute", "from": "2026-03-01T12:34:56Z", "until": "2026-05-30T12:34:57Z"},
         ),
-        "Python's draft-structure path caps relative lifetimes only.",
+        "Absolute lifetimes share the reference duration ceiling with relative lifetimes.",
+    )
+    _add_mutation(
+        "validity_absolute_past_reference_cap_one_ms",
+        lambda a: a.__setitem__(
+            "validity_temporal",
+            {"mode": "absolute", "from": "2026-03-01T12:34:56Z", "until": "2026-05-30T12:34:56.001Z"},
+        ),
+        "Fractional seconds count toward the reference duration ceiling.",
+    )
+    _add_mutation(
+        "validity_absolute_leap_span_past_reference_cap",
+        lambda a: a.__setitem__(
+            "validity_temporal",
+            {"mode": "absolute", "from": "2024-01-01T00:00:00Z", "until": "2024-04-01T00:00:00Z"},
+        ),
+        "The reference cap is elapsed seconds, not a three-month calendar window.",
     )
     _add_mutation(
         "validity_relative_at_reference_cap",

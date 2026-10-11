@@ -77,7 +77,14 @@ MAX_EXTENSIONS_USED = 16
 MAX_SUMMARY_SCALARS = 1_024
 MIN_MESSAGE_COUNT = 1
 MAX_MESSAGE_COUNT = 10_000
-MAX_RELYING_FRESHNESS_SECONDS = 90 * 24 * 60 * 60
+# draft-newton-agreement-evidence-00 Section 8.1 fixes the reference
+# attestation lifetime as elapsed seconds. Must match
+# REFERENCE_ATTESTATION_VALIDITY_SECONDS in js-sdk/src/attestation/constants.ts.
+# The role aliases below derive from this one value so the issuer never signs a
+# window the relying validator rejects by default.
+REFERENCE_ATTESTATION_VALIDITY_SECONDS = 90 * 24 * 60 * 60
+MAX_RELYING_FRESHNESS_SECONDS = REFERENCE_ATTESTATION_VALIDITY_SECONDS
+MAX_RELYING_VALIDITY_LIFETIME_SECONDS = REFERENCE_ATTESTATION_VALIDITY_SECONDS
 MAX_RELYING_CLOCK_SKEW_SECONDS = 300
 TERMINAL_STATES = ("current", "bound-only", "legacy", "not-bound")
 
@@ -87,7 +94,7 @@ class AttestationVerificationPolicy:
     """Relying-side ceilings for draft-newton-agreement-evidence-00 Section 8."""
 
     max_evidence_age_seconds: int = MAX_RELYING_FRESHNESS_SECONDS
-    max_validity_lifetime_seconds: int = MAX_RELYING_FRESHNESS_SECONDS
+    max_validity_lifetime_seconds: int = MAX_RELYING_VALIDITY_LIFETIME_SECONDS
     clock_skew_seconds: int = MAX_RELYING_CLOCK_SKEW_SECONDS
     max_artifact_bytes: int = MAX_ATTESTATION_ARTIFACT_BYTES
 
@@ -139,7 +146,7 @@ VALIDITY_TEMPORAL_MODES = ("absolute", "relative")
 # Reference-issuer policy for SPEC §9.7.1. The default window matches the
 # specification's worked example. Callers may provide a narrower window, but
 # the reference issuer refuses to sign any window spanning more than 90 days.
-DEFAULT_ATTESTATION_VALIDITY_SECONDS = 90 * 24 * 60 * 60
+DEFAULT_ATTESTATION_VALIDITY_SECONDS = REFERENCE_ATTESTATION_VALIDITY_SECONDS
 MAX_ATTESTATION_VALIDITY_SECONDS = DEFAULT_ATTESTATION_VALIDITY_SECONDS
 
 # L3 hardening (security audit 2026-06-09): attestation meta context is
@@ -227,10 +234,11 @@ def _version_tuple(value: str) -> tuple[int, int, int]:
         return (int(parts[0]), int(parts[1]), int(parts[2]))
     except ValueError as exc:
         # The grammar bounds neither digit count nor magnitude; CPython raises
-        # on int() past sys.get_int_max_str_digits() (4300). That is a
+        # on int() past sys.get_int_max_str_digits() (4300). The JS validator's
+        # MAX_VERSION_COMPONENT_DIGITS must match that default. This is a
         # structure error like any other malformed version, never a raw
-        # exception at a composition boundary and never a route into a
-        # legacy lane.
+        # exception at a composition boundary and never a route into a legacy
+        # lane.
         raise _AttestationStructureError(
             "concordia_attestation component is too long"
         ) from exc
@@ -878,6 +886,8 @@ def _validate_validity_temporal_shape(
         if end <= start:
             raise _AttestationStructureError("validity_temporal interval is empty")
         lifetime = (end - start).total_seconds()
+        if lifetime > MAX_RELYING_VALIDITY_LIFETIME_SECONDS:
+            raise _AttestationStructureError("validity lifetime exceeds maximum")
         return start, end, lifetime
     if mode == "relative":
         _require_closed_keys(
@@ -892,7 +902,7 @@ def _validate_validity_temporal_shape(
             "validity_temporal.duration_seconds",
             minimum=1,
         )
-        if lifetime > MAX_RELYING_FRESHNESS_SECONDS:
+        if lifetime > MAX_RELYING_VALIDITY_LIFETIME_SECONDS:
             raise _AttestationStructureError("validity lifetime exceeds maximum")
         return start, start + timedelta(seconds=lifetime), lifetime
     raise _AttestationStructureError("validity_temporal mode is not defined")
@@ -1162,7 +1172,7 @@ def _policy_error(policy: AttestationVerificationPolicy) -> str | None:
         return "configured artifact size exceeds Section 11.7 cap"
     if policy.max_evidence_age_seconds > MAX_RELYING_FRESHNESS_SECONDS:
         return "configured evidence age exceeds Section 8.1 cap"
-    if policy.max_validity_lifetime_seconds > MAX_RELYING_FRESHNESS_SECONDS:
+    if policy.max_validity_lifetime_seconds > MAX_RELYING_VALIDITY_LIFETIME_SECONDS:
         return "configured validity lifetime exceeds Section 8.1 cap"
     if policy.clock_skew_seconds > MAX_RELYING_CLOCK_SKEW_SECONDS:
         return "configured clock skew exceeds Section 8.1 cap"
