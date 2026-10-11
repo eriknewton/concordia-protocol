@@ -80,7 +80,11 @@ const SET_BINDING_MIN = { major: 0, minor: 3 } as const;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+$/;
 const SHA256_HEX_PATTERN = /^sha256:[a-f0-9]{64}$/;
 
-export type ReceiptSetBindingState = 'bound' | 'legacy_set_unbound' | 'error';
+export type ReceiptSetBindingState =
+  | 'bound'
+  | 'fields_present_unverified'
+  | 'legacy_set_unbound'
+  | 'error';
 
 export interface ReceiptSetBindingResult {
   state: ReceiptSetBindingState;
@@ -114,7 +118,13 @@ export function verifyReceiptSetBinding(
     errors.push(`version ${String(version)} requires message_count as an integer >= 1`);
   }
 
-  if (transcript !== null) {
+  if (transcript === null) {
+    // Set-binding credit requires the caller to present the transcript whose
+    // head and count are named by the receipt fields; field presence alone is
+    // only an unverified claim about an unavailable set. Must match
+    // evaluate_receipt_set_binding in concordia/attestation.py.
+    if (errors.length === 0) return { state: 'fields_present_unverified', errors: [] };
+  } else {
     if (!Array.isArray(transcript)) {
       errors.push('transcript must be a list when verifying set binding');
     } else if (transcript.length === 0) {

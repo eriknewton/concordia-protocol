@@ -1009,8 +1009,10 @@ def evaluate_receipt_set_binding(
     """Validate the v0.3.0 receipt set-binding fields.
 
     Returns ``(state, errors)`` where ``state`` is one of:
-      - ``"bound"``: >=0.3.0 fields are present, well-formed, and, when a
-        transcript was supplied, match its final message hash and length.
+      - ``"bound"``: >=0.3.0 fields are present, well-formed, and match the
+        supplied transcript's final message hash and length.
+      - ``"fields_present_unverified"``: >=0.3.0 fields are present and
+        well-formed, but the caller supplied no transcript to compare.
       - ``"legacy_set_unbound"``: well-formed version below 0.3.0. This is
         reported, not an error, and must not be credited as set-bound.
       - ``"error"``: malformed or absent version, or >=0.3.0 with required
@@ -1044,7 +1046,13 @@ def evaluate_receipt_set_binding(
     ):
         errors.append(f"version {ver} requires message_count as an integer >= 1")
 
-    if transcript is not None:
+    if transcript is None:
+        # Set-binding credit requires the caller to present the transcript whose
+        # head and count are named by the receipt fields; field presence alone
+        # is only an unverified claim about an unavailable set.
+        if not errors:
+            return "fields_present_unverified", []
+    else:
         if not isinstance(transcript, list):
             errors.append("transcript must be a list when verifying set binding")
         elif not transcript:
@@ -1425,22 +1433,15 @@ def verify_attestation(
                 signature_errors = procedure_errors
             else:
                 schema_errors = procedure_errors
-            if transcript is not None:
-                try:
-                    evaluated_set_binding_state, set_binding_errors = (
-                        evaluate_receipt_set_binding(attestation, transcript)
-                    )
-                except Exception:
-                    evaluated_set_binding_state = "error"
-                    set_binding_errors = ["transcript could not be evaluated"]
-                set_binding_state = (
-                    evaluated_set_binding_state
-                    if terminal.terminal_state in {"current", "bound-only"}
-                    else "error"
+            try:
+                evaluated_set_binding_state, set_binding_errors = (
+                    evaluate_receipt_set_binding(attestation, transcript)
                 )
-            elif terminal.terminal_state in {"current", "bound-only"}:
-                set_binding_state = "bound"
-                set_binding_errors = []
+            except Exception:
+                evaluated_set_binding_state = "error"
+                set_binding_errors = ["transcript could not be evaluated"]
+            if terminal.terminal_state in {"current", "bound-only"}:
+                set_binding_state = evaluated_set_binding_state
             else:
                 set_binding_state = "error"
                 set_binding_errors = []

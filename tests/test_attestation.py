@@ -1,6 +1,8 @@
 """Tests for attestation generation (§9.6)."""
 
+import json
 from copy import deepcopy
+from pathlib import Path
 
 import pytest
 
@@ -16,6 +18,10 @@ from concordia import (
 from concordia.attestation import countersign_attestation
 from concordia.message import compute_hash, validate_chain
 from concordia.signing import sign_message
+
+SET_BINDING_TRANSCRIPT_VECTOR = json.loads(
+    Path("tests/fixtures/receipt_set_binding_transcript_cases.json").read_text()
+)
 
 
 @pytest.fixture
@@ -180,8 +186,44 @@ class TestAttestationVerification:
         assert result.valid is True
         assert result.errors == []
         assert sorted(result.verified_parties) == ["buyer_42", "seller_01"]
-        assert result.set_binding_state == "bound"
+        assert result.set_binding_state == "fields_present_unverified"
         assert result.terminal_state == "current"
+
+    @pytest.mark.parametrize(
+        "case", SET_BINDING_TRANSCRIPT_VECTOR["cases"], ids=lambda c: c["name"]
+    )
+    def test_verify_attestation_set_binding_requires_presented_transcript(
+        self, agreed_session, case
+    ):
+        session, seller, buyer = agreed_session
+        key_pairs = {"seller_01": seller.key_pair, "buyer_42": buyer.key_pair}
+        public_keys = {agent_id: kp.public_key for agent_id, kp in key_pairs.items()}
+        att = generate_attestation(session, key_pairs)
+        kwargs = {
+            "expected_session_id": session.session_id,
+            "expected_party_ids": set(key_pairs),
+            "revocation_checker": lambda _: False,
+        }
+
+        if case["transcript"] == "omit":
+            result = verify_attestation(att, public_keys, **kwargs)
+        else:
+            transcript = _transcript_for_set_binding_case(
+                case["transcript"], session.transcript
+            )
+            result = verify_attestation(
+                att, public_keys, transcript=transcript, **kwargs
+            )
+
+        assert result.set_binding_state == case["expected_state"]
+        assert result.valid is case["expected_valid"]
+        if case["expected_error_contains"] is None:
+            assert result.set_binding_errors == []
+        else:
+            assert any(
+                case["expected_error_contains"] in error
+                for error in result.set_binding_errors
+            )
 
     def test_verify_attestation_rejects_other_session_expectation(
         self, agreed_session
@@ -453,6 +495,20 @@ def _same_signer_splice_fixture():
     assert validate_chain(original) is True
     assert validate_chain(spliced) is True
     return session, spliced, seller, buyer
+
+
+def _transcript_for_set_binding_case(
+    mode: str, transcript: list[dict]
+) -> list[dict]:
+    if mode == "empty":
+        return []
+    if mode == "valid":
+        return transcript
+    if mode == "mismatched":
+        mismatched = deepcopy(transcript)
+        mismatched[-1]["id"] = "msg_mismatched_set_binding"
+        return mismatched
+    raise AssertionError(f"unknown set-binding transcript vector mode: {mode}")
 
 
 def _set_legacy_version(

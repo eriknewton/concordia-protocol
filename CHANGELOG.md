@@ -35,6 +35,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- Receipt set-binding verification now reports well-formed set fields without
+  a supplied transcript as `fields_present_unverified` rather than
+  transcript-set-bound. Python and JavaScript verifiers share one conformance
+  vector covering no transcript, empty transcript, mismatched transcript, and a
+  valid transcript. Receipt bundles that carry attestations alone no longer
+  count those attestations as transcript-set-bound.
 - Pinned `cryptography` to 50.0.0 in `requirements.lock`, clearing
   PYSEC-2026-3552 (CVE-2026-69247, PKCS#7 decryption Bleichenbacher oracle),
   PYSEC-2026-3553 (CVE-2026-69249, x509 chain-building resource exhaustion),
