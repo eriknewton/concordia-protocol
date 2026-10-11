@@ -32,8 +32,8 @@ the rest of the engine fixtures target) unless PYTHON is overridden.
 
 from __future__ import annotations
 
-import json
 import copy
+import json
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -961,6 +961,8 @@ def main() -> None:
         candidate = copy.deepcopy(base_attestation)
         mutate(candidate)
         errors = validate_attestation(candidate)
+        if name.endswith("_python_accept") and errors:
+            raise AssertionError(f"{name} must be accepted by Python: {errors}")
         mutation_corpus.append(
             {
                 "name": name,
@@ -971,6 +973,45 @@ def main() -> None:
                 "note": note,
             }
         )
+
+    def _refresh_party_countersignatures(candidate: dict) -> None:
+        countersignatures = {}
+        for index, party in enumerate(candidate["parties"]):
+            agent_id = party.get("agent_id")
+            if not isinstance(agent_id, str) or agent_id in countersignatures:
+                continue
+            key_pair = (KP_A, KP_B)[index]
+            countersignatures[agent_id] = att.countersign_attestation(candidate, key_pair)
+        candidate["countersignatures"] = countersignatures
+
+    def _set_party_agent_id(candidate: dict, index: int, agent_id: str) -> None:
+        candidate["parties"][index]["agent_id"] = agent_id
+        _refresh_party_countersignatures(candidate)
+
+    def _duplicate_party_agent_id(candidate: dict) -> None:
+        candidate["parties"][1]["agent_id"] = candidate["parties"][0]["agent_id"]
+        _refresh_party_countersignatures(candidate)
+
+    def _set_version_with_duplicate_party(candidate: dict, version: str) -> None:
+        candidate["concordia_attestation"] = version
+        _duplicate_party_agent_id(candidate)
+
+    def _set_version_and_mutate(candidate: dict, version: str, mutate) -> None:
+        candidate["concordia_attestation"] = version
+        mutate(candidate)
+
+    def _add_root_fulfillment(candidate: dict) -> None:
+        candidate["fulfillment"] = None
+
+    def _set_validity_window_mode(candidate: dict) -> None:
+        candidate["validity_temporal"] = {
+            "mode": "window",
+            "from": "2026-01-01T00:00:00Z",
+            "until": "2026-01-02T00:00:00Z",
+        }
+
+    def _add_reference_extensions(candidate: dict) -> None:
+        candidate["references"][0]["extensions"] = {}
 
     _add_mutation("valid_baseline", lambda _: None)
 
@@ -1012,6 +1053,14 @@ def main() -> None:
             "version_" + version.encode("unicode_escape").decode("ascii").replace("\\", "_"),
             lambda a, v=version: a.__setitem__("concordia_attestation", v),
         )
+    _add_mutation(
+        "version_0.6.1_duplicate_party_ids",
+        lambda a: _set_version_with_duplicate_party(a, "0.6.1"),
+    )
+    _add_mutation(
+        "version_1.0.0_duplicate_party_ids",
+        lambda a: _set_version_with_duplicate_party(a, "1.0.0"),
+    )
 
     for digits in range(1, 10):
         frac = "1" * digits
@@ -1028,11 +1077,11 @@ def main() -> None:
 
     _add_mutation("parties_remove_agent_id", lambda a: a["parties"][0].pop("agent_id", None))
     _add_mutation("parties_extra_member", lambda a: a["parties"][0].__setitem__("extra", True))
-    _add_mutation("parties_duplicate_agent_ids", lambda a: a["parties"][1].__setitem__("agent_id", a["parties"][0]["agent_id"]))
-    _add_mutation("party_agent_id_256_ascii_octets", lambda a: a["parties"][0].__setitem__("agent_id", "p" * 256))
-    _add_mutation("party_agent_id_257_ascii_octets", lambda a: a["parties"][0].__setitem__("agent_id", "p" * 257))
-    _add_mutation("party_agent_id_zero_width", lambda a: a["parties"][0].__setitem__("agent_id", "agent\u200b"))
-    _add_mutation("party_agent_id_bom_python_accept", lambda a: a["parties"][0].__setitem__("agent_id", "agent\ufeff"))
+    _add_mutation("parties_duplicate_agent_ids", _duplicate_party_agent_id)
+    _add_mutation("party_agent_id_256_ascii_octets", lambda a: _set_party_agent_id(a, 0, "p" * 256))
+    _add_mutation("party_agent_id_257_ascii_octets", lambda a: _set_party_agent_id(a, 0, "p" * 257))
+    _add_mutation("party_agent_id_zero_width", lambda a: _set_party_agent_id(a, 0, "agent\u200b"))
+    _add_mutation("party_agent_id_bom_python_accept", lambda a: _set_party_agent_id(a, 0, "agent\ufeff"))
     _add_mutation("party_signature_noncanonical_final", lambda a: a["parties"][0].__setitem__("signature", a["parties"][0]["signature"][:85] + "B=="))
     _add_mutation("party_signature_canonical_final_A", lambda a: a["parties"][0].__setitem__("signature", a["parties"][0]["signature"][:85] + "A=="))
 
@@ -1042,7 +1091,21 @@ def main() -> None:
     _add_mutation("meta_extension_64_octets", lambda a: a["meta"].__setitem__("extensions_used", ["e" * 64]))
     _add_mutation("meta_extension_65_octets", lambda a: a["meta"].__setitem__("extensions_used", ["e" * 65]))
 
+    _add_mutation("root_add_fulfillment", _add_root_fulfillment)
+    for version in ("0.4.0", "0.5.0"):
+        version_name = version.replace(".", "_")
+        _add_mutation(
+            f"version_{version_name}_root_add_fulfillment",
+            lambda a, v=version: _set_version_and_mutate(a, v, _add_root_fulfillment),
+        )
     _add_mutation("reference_extra_member", lambda a: a["references"][0].__setitem__("extra", True))
+    _add_mutation("reference_add_extensions", _add_reference_extensions)
+    for version in ("0.4.0", "0.5.0"):
+        version_name = version.replace(".", "_")
+        _add_mutation(
+            f"version_{version_name}_reference_add_extensions",
+            lambda a, v=version: _set_version_and_mutate(a, v, _add_reference_extensions),
+        )
     _add_mutation("reference_extra_and_missing_order", lambda a: (a["references"][0].pop("type", None), a["references"][0].__setitem__("extra", True)))
     _add_mutation("reference_remove_type", lambda a: a["references"][0].pop("type", None))
     _add_mutation("reference_id_256_ascii_octets", lambda a: a["references"][0].__setitem__("id", "r" * 256))
@@ -1090,6 +1153,13 @@ def main() -> None:
             {"mode": "relative", "from": "2026-01-01T00:00:00Z", "duration_seconds": 7_776_001},
         ),
     )
+    _add_mutation("validity_window_mode", _set_validity_window_mode)
+    for version in ("0.4.0", "0.5.0"):
+        version_name = version.replace(".", "_")
+        _add_mutation(
+            f"version_{version_name}_validity_window_mode",
+            lambda a, v=version: _set_version_and_mutate(a, v, _set_validity_window_mode),
+        )
 
     _add_mutation("countersignature_remove_signer", lambda a: a["countersignatures"].pop(a["parties"][0]["agent_id"], None))
     _add_mutation("countersignature_extra_signer", lambda a: a["countersignatures"].__setitem__("did:concordia:agent:gamma", a["countersignatures"][a["parties"][0]["agent_id"]]))

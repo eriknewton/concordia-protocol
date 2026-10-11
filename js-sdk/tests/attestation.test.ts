@@ -699,21 +699,102 @@ describe('shared conformance attestation vector', () => {
       }
       const countersignatures = vector.input.countersignatures as
         Record<string, string> | undefined;
-      const accepted =
-        countersignatures !== undefined &&
-        vector.context.countersigners.every((signer) =>
-          verifyAttestationCountersignature(
-            vector.input,
-            countersignatures[signer] ?? '',
-            fromBase64Url(vector.context.public_keys_b64url[signer]!),
-          ),
+      const failures = vector.context.countersigners.flatMap((signer) => {
+        expect(Object.hasOwn(vector.context.public_keys_b64url, signer)).toBe(true);
+        if (countersignatures === undefined || !Object.hasOwn(countersignatures, signer)) {
+          return [{ signer, reason: 'missing_countersignature' }];
+        }
+        const accepted = verifyAttestationCountersignature(
+          vector.input,
+          countersignatures[signer]!,
+          fromBase64Url(vector.context.public_keys_b64url[signer]!),
         );
-      expect(accepted).toBe(false);
+        return accepted ? [] : [{ signer, reason: 'invalid_countersignature' }];
+      });
+
+      expect({
+        expectedReasonClass: vector.expected_reason_class,
+        failures,
+      }).toMatchObject({
+        failures: expect.arrayContaining([
+          expect.objectContaining({
+            signer: expect.any(String),
+            reason: expect.stringMatching(/^(missing|invalid)_countersignature$/),
+          }),
+        ]),
+      });
+      if (vector.expected_reason_class === 'digest') {
+        expect(failures).toEqual(
+          expect.arrayContaining([expect.objectContaining({ reason: 'invalid_countersignature' })]),
+        );
+        expect(failures.every((failure) => failure.reason === 'invalid_countersignature')).toBe(
+          true,
+        );
+      }
     }
   });
 });
 
 describe('Python-generated attestation mutation corpus', () => {
+  const corpusByName = new Map(fixtures.mutation_corpus.map((vector) => [vector.name, vector]));
+
+  it('keeps Python-acceptance vector names aligned with generated verdicts', () => {
+    const pythonAcceptVectors = fixtures.mutation_corpus.filter((vector) =>
+      vector.name.endsWith('_python_accept'),
+    );
+
+    expect(pythonAcceptVectors.length).toBeGreaterThan(0);
+    for (const vector of pythonAcceptVectors) {
+      expect({
+        name: vector.name,
+        expected: vector.expected,
+        errors: vector.expected_errors,
+      }).toMatchObject({
+        expected: 'accept',
+      });
+    }
+  });
+
+  it('keeps party-id mutation vectors isolated from countersignature map drift', () => {
+    for (const name of [
+      'party_agent_id_256_ascii_octets',
+      'party_agent_id_bom_python_accept',
+      'parties_duplicate_agent_ids',
+    ]) {
+      const vector = corpusByName.get(name);
+      expect(vector).toBeDefined();
+      const parties = (vector?.input.parties ?? []) as Array<Record<string, unknown>>;
+      const countersignatures = (vector?.input.countersignatures ?? {}) as Record<string, string>;
+      const partyNameSet = new Set(parties.map((party) => party.agent_id));
+      expect({
+        name,
+        partyNames: [...partyNameSet],
+        countersignatureNames: Object.keys(countersignatures),
+      }).toMatchObject({
+        partyNames: expect.arrayContaining(Object.keys(countersignatures)),
+      });
+      expect(new Set(Object.keys(countersignatures))).toEqual(partyNameSet);
+    }
+  });
+
+  it('pins removed-field and above-ceiling companion behavior in the corpus', () => {
+    for (const name of [
+      'root_add_fulfillment',
+      'version_0_4_0_root_add_fulfillment',
+      'version_0_5_0_root_add_fulfillment',
+      'validity_window_mode',
+      'version_0_4_0_validity_window_mode',
+      'version_0_5_0_validity_window_mode',
+      'reference_add_extensions',
+      'version_0_4_0_reference_add_extensions',
+      'version_0_5_0_reference_add_extensions',
+      'version_0.6.1_duplicate_party_ids',
+      'version_1.0.0_duplicate_party_ids',
+    ]) {
+      expect(corpusByName.has(name)).toBe(true);
+    }
+  });
+
   it('matches Python validate_attestation accept/reject and reason class', () => {
     expect(fixtures.mutation_corpus.length).toBeGreaterThan(50);
     for (const vector of fixtures.mutation_corpus) {

@@ -9,10 +9,11 @@
   key entry, generated records use the closed draft-newton-agreement-evidence-00
   member set, and reference strings follow Python's NFC, UTF-8 byte-length, and
   reference-control rules.
-- Root `fulfillment`, reference `extensions`, and `validity_temporal.window` are
-  rejected for implemented 0.5/0.6 attestation artifacts. Reference extensions
-  are also rejected by the shared predicate/reference parser used during
-  issuance.
+- Root `fulfillment` is version-gated off for implemented 0.5.x and 0.6.0
+  attestation artifacts. Reference `extensions` and `validity_temporal.window`
+  are rejected by the shared `$defs` path for 0.4.x, 0.5.x, and 0.6.0; reference
+  extensions are also rejected by the shared predicate/reference parser used
+  during issuance.
 - The Python-generated attestation fixture now includes the
   `mutation_corpus` differential oracle; the JS suite checks accept/reject and
   reason-class parity for those 0.6.0 validation mutations.
