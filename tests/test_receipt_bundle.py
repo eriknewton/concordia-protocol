@@ -676,8 +676,7 @@ class TestBundleSummary:
 
 class TestMcpToolIntegration:
 
-    def _setup_negotiation(self):
-        """Run a complete negotiation and return context for bundle testing."""
+    def _reset_mcp_state(self) -> None:
         from concordia.mcp_server import (
             _attestation_store,
             _auth,
@@ -685,10 +684,8 @@ class TestMcpToolIntegration:
             _key_registry,
             _registry,
             _store,
-            handle_tool_call,
         )
 
-        # Reset state
         _store._sessions.clear()
         _registry._agents.clear()
         _auth._agent_tokens.clear()
@@ -702,10 +699,23 @@ class TestMcpToolIntegration:
         _bundle_store._bundles.clear()
         _bundle_store._by_agent.clear()
 
+    def _setup_negotiation(
+        self,
+        *,
+        seller_id: str = "seller_01",
+        buyer_id: str = "buyer_01",
+        reset: bool = True,
+    ):
+        """Run a complete negotiation and return context for bundle testing."""
+        from concordia.mcp_server import _auth, handle_tool_call
+
+        if reset:
+            self._reset_mcp_state()
+
         # Open a session
         result = handle_tool_call("concordia_open_session", {
-            "initiator_id": "seller_01",
-            "responder_id": "buyer_01",
+            "initiator_id": seller_id,
+            "responder_id": buyer_id,
             "terms": {"price": {"type": "numeric", "label": "Price USD"}},
         })
         session_id = result["session_id"]
@@ -731,12 +741,11 @@ class TestMcpToolIntegration:
         attestation = receipt["receipt"]
 
         # Register agent token for seller (needed for agent-scoped tools)
-        from concordia.mcp_server import _auth
-        agent_token = _auth.register_agent_token("seller_01")
+        agent_token = _auth.register_agent_token(seller_id)
 
         # Ingest attestation (requires agent-scoped auth)
         ingest_result = handle_tool_call("concordia_ingest_attestation", {
-            "agent_id": "seller_01",
+            "agent_id": seller_id,
             "attestation": attestation,
             "auth_token": agent_token,
         })
@@ -769,6 +778,83 @@ class TestMcpToolIntegration:
             if k not in ("agent_signature", "concordia_receipt_bundle", "message")
         }
         bundle["agent_signature"] = sign_message(signable, key_pair)
+
+    def _resign_bundle_with_session_key(
+        self,
+        bundle: dict[str, Any],
+        session_id: str,
+    ) -> None:
+        key_pair = self._session_key_pairs(session_id)[bundle["agent_id"]]
+        signable = {
+            k: v for k, v in bundle.items()
+            if k not in ("agent_signature", "concordia_receipt_bundle", "message")
+        }
+        bundle["agent_signature"] = sign_message(signable, key_pair)
+
+    def _recountersign_attestation(self, attestation: dict[str, Any]) -> None:
+        from concordia.attestation import countersign_attestation
+
+        key_pairs = self._session_key_pairs(attestation["session_id"])
+        attestation["countersignatures"] = {
+            agent_id: countersign_attestation(attestation, key_pair)
+            for agent_id, key_pair in key_pairs.items()
+        }
+
+    def _direct_library_result(self, bundle: dict[str, Any]):
+        from concordia.mcp_server import _key_registry, _store
+
+        bundle_to_verify = {
+            k: v for k, v in bundle.items() if k != "message"
+        }
+        session_keys = {
+            ctx.session.session_id: {
+                ctx.initiator.agent_id: ctx.initiator_key.public_key,
+                ctx.responder.agent_id: ctx.responder_key.public_key,
+            }
+            for ctx in _store._sessions.values()
+        }
+
+        def resolve_bundle_key(agent_id: str) -> Ed25519PublicKey | None:
+            return _key_registry.get(agent_id)
+
+        def resolve_attestation_key(
+            agent_id: str,
+            session_id: str,
+        ) -> Ed25519PublicKey | None:
+            keys_for_session = session_keys.get(session_id)
+            if keys_for_session is not None:
+                return keys_for_session.get(agent_id)
+            return _key_registry.get(agent_id)
+
+        return verify_bundle(
+            bundle_to_verify,
+            resolve_bundle_key,
+            resolve_attestation_key,
+        )
+
+    def _assert_tool_matches_library(self, bundle: dict[str, Any]) -> None:
+        from concordia.mcp_server import handle_tool_call
+
+        library = self._direct_library_result(bundle)
+        tool = handle_tool_call("concordia_verify_receipt_bundle", {
+            "bundle": bundle,
+        })
+
+        assert "error" not in tool
+        assert tool["valid"] == library.valid
+        assert tool["errors"] == library.errors
+        assert tool["warnings"] == library.warnings
+        assert tool["summary_accurate"] == library.summary_accurate
+        assert tool["sybil_flags"] == library.sybil_flags
+        assert tool["verified_counterparties"] == library.verified_counterparties
+        assert tool["unverified_counterparties"] == library.unverified_counterparties
+        assert tool["outcome_bound_count"] == library.outcome_bound_count
+        assert (
+            tool["outcome_unbound_attestations"]
+            == library.outcome_unbound_attestations
+        )
+        assert tool["set_bound_count"] == library.set_bound_count
+        assert tool["set_unbound_attestations"] == library.set_unbound_attestations
 
     def test_create_bundle_via_tool(self):
         """Create a receipt bundle through the MCP tool."""
@@ -877,9 +963,10 @@ class TestMcpToolIntegration:
             "outcome_unbound_attestations",
             [],
         )
+        self._assert_tool_matches_library(bundle_result)
 
-    def test_verify_bundle_via_tool_reports_above_ceiling_version_unbound(self):
-        """An unsupported attestation version is invalid and receives no bound outcome credit."""
+    def test_verify_bundle_via_tool_reports_version_status_from_library(self):
+        """Version status is reported from the shared verifier."""
         from concordia.attestation import countersign_attestation
         from concordia.mcp_server import handle_tool_call
 
@@ -898,16 +985,142 @@ class TestMcpToolIntegration:
         }
         self._resign_bundle_response(bundle_result)
 
+        self._assert_tool_matches_library(bundle_result)
+
+    def test_verify_bundle_via_tool_rejects_prior_session_bundle_key(self):
+        """The bundle signature uses the registered bundle key, not another session."""
+        from concordia.mcp_server import handle_tool_call
+
+        ctx_s1 = self._setup_negotiation()
+        bundle_s1 = handle_tool_call("concordia_create_receipt_bundle", {
+            "agent_id": "seller_01",
+            "auth_token": ctx_s1["agent_token"],
+        })
+        assert "error" not in bundle_s1
+        self._setup_negotiation(
+            seller_id="seller_01",
+            buyer_id="buyer_02",
+            reset=False,
+        )
+
         verify_result = handle_tool_call("concordia_verify_receipt_bundle", {
-            "bundle": bundle_result,
+            "bundle": bundle_s1,
         })
 
         assert verify_result["valid"] is False
-        assert verify_result.get("outcome_bound_count") == 0
-        assert attestation["attestation_id"] in verify_result.get(
-            "outcome_unbound_attestations",
-            [],
+        assert "Bundle signature verification failed" in verify_result["errors"]
+
+    def test_verify_bundle_via_tool_rejects_party_key_from_other_session(self):
+        """A party signature must match the attestation's own session key."""
+        from concordia.mcp_server import (
+            _key_registry,
+            handle_tool_call,
         )
+
+        ctx_s1 = self._setup_negotiation()
+        ctx_s2 = self._setup_negotiation(
+            seller_id="seller_01",
+            buyer_id="buyer_02",
+            reset=False,
+        )
+        bundle_s2 = handle_tool_call("concordia_create_receipt_bundle", {
+            "agent_id": "seller_01",
+            "auth_token": ctx_s2["agent_token"],
+        })
+        bundle_s2 = json.loads(json.dumps(bundle_s2))
+        bundle_s2["attestations"] = [
+            att
+            for att in bundle_s2["attestations"]
+            if att["session_id"] == ctx_s2["session_id"]
+        ]
+        bundle_s2["summary"] = _compute_summary(
+            bundle_s2["agent_id"],
+            bundle_s2["attestations"],
+        ).to_dict()
+
+        s2_keys = self._session_key_pairs(ctx_s2["session_id"])
+        _key_registry["seller_01"] = s2_keys["seller_01"].public_key
+        self._resign_bundle_with_session_key(bundle_s2, ctx_s2["session_id"])
+
+        legitimate = handle_tool_call("concordia_verify_receipt_bundle", {
+            "bundle": bundle_s2,
+        })
+        assert legitimate["valid"] is True, legitimate.get("errors")
+
+        changed = json.loads(json.dumps(bundle_s2))
+        party = changed["attestations"][0]["parties"][0]
+        signable_party = {k: v for k, v in party.items() if k != "signature"}
+        s1_keys = self._session_key_pairs(ctx_s1["session_id"])
+        party["signature"] = sign_message(signable_party, s1_keys["seller_01"])
+        self._resign_bundle_with_session_key(changed, ctx_s2["session_id"])
+
+        verify_result = handle_tool_call("concordia_verify_receipt_bundle", {
+            "bundle": changed,
+        })
+
+        assert verify_result["valid"] is False
+        assert any("invalid signature" in error for error in verify_result["errors"])
+
+    @pytest.mark.parametrize(
+        "version",
+        ["0.6.1", "1.0.0", "v1.0.0"],
+    )
+    def test_verify_bundle_via_tool_matches_library_for_version_status(
+        self,
+        version: str,
+    ):
+        """MCP version handling reports the shared verifier's result exactly."""
+        from concordia.mcp_server import handle_tool_call
+
+        ctx = self._setup_negotiation()
+        bundle_result = handle_tool_call("concordia_create_receipt_bundle", {
+            "agent_id": "seller_01",
+            "auth_token": ctx["agent_token"],
+        })
+        bundle_result = json.loads(json.dumps(bundle_result))
+        attestation = bundle_result["attestations"][0]
+        attestation["concordia_attestation"] = version
+        self._recountersign_attestation(attestation)
+        self._resign_bundle_response(bundle_result)
+
+        self._assert_tool_matches_library(bundle_result)
+
+    @pytest.mark.parametrize(
+        ("field", "value", "expected_error"),
+        [
+            ("chain_head", None, "requires chain_head"),
+            ("message_count", 0, "requires message_count as an integer >= 1"),
+        ],
+    )
+    def test_verify_bundle_via_tool_matches_library_for_set_binding_status(
+        self,
+        field: str,
+        value: Any,
+        expected_error: str,
+    ):
+        """MCP set-binding status reports the shared verifier's result exactly."""
+        from concordia.mcp_server import handle_tool_call
+
+        ctx = self._setup_negotiation()
+        bundle_result = handle_tool_call("concordia_create_receipt_bundle", {
+            "agent_id": "seller_01",
+            "auth_token": ctx["agent_token"],
+        })
+        bundle_result = json.loads(json.dumps(bundle_result))
+        attestation = bundle_result["attestations"][0]
+        if value is None:
+            del attestation[field]
+        else:
+            attestation[field] = value
+        self._recountersign_attestation(attestation)
+        self._resign_bundle_response(bundle_result)
+
+        self._assert_tool_matches_library(bundle_result)
+        verify_result = handle_tool_call("concordia_verify_receipt_bundle", {
+            "bundle": bundle_result,
+        })
+        assert verify_result["valid"] is False
+        assert any(expected_error in error for error in verify_result["errors"])
 
     def test_create_bundle_auth_required(self):
         """Bundle creation requires valid auth token."""

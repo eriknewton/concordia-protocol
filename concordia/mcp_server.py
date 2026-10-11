@@ -89,12 +89,7 @@ from .agent import Agent
 from .agent_profile import AgentProfileStore
 from .agent_profile.tools import register_discovery_tools
 from .approval_receipt import verify_approval_receipt
-from .attestation import (
-    _AttestationStructureError,
-    _IMPLEMENTED_ATTESTATION_VERSION,
-    _version_tuple,
-    generate_attestation,
-)
+from .attestation import generate_attestation
 from .auth import AuthTokenStore
 from .competence_proof import (
     CompetenceProof,
@@ -2982,69 +2977,6 @@ def _find_agent_key_pair(agent_id: str) -> KeyPair | None:
     return None
 
 
-def _attestation_exceeds_implemented_version(attestation: dict[str, Any]) -> bool:
-    try:
-        # Must match concordia.receipt_bundle.evaluate_outcome_binding: MCP uses
-        # the attestation parser's ceiling so an unsupported version cannot
-        # retain bound-outcome credit while the sibling library fix composes in.
-        return (
-            _version_tuple(attestation.get("concordia_attestation", ""))
-            > _IMPLEMENTED_ATTESTATION_VERSION
-        )
-    except _AttestationStructureError:
-        return False
-
-
-class _SessionAnyOfEd25519PublicKey(Ed25519PublicKey):
-    def __init__(self, keys: list[Ed25519PublicKey]):
-        self._keys = keys
-
-    def verify(self, signature: bytes, data: bytes) -> None:
-        last_error: Exception | None = None
-        for key in self._keys:
-            try:
-                key.verify(signature, data)
-                return
-            except Exception as exc:  # pragma: no cover - exact type is backend-specific.
-                last_error = exc
-        if last_error is not None:
-            raise last_error
-
-    def public_bytes(self, *args: Any, **kwargs: Any) -> bytes:
-        return self._keys[0].public_bytes(*args, **kwargs)
-
-    def public_bytes_raw(self) -> bytes:
-        return self._keys[0].public_bytes_raw()
-
-    def __copy__(self) -> "_SessionAnyOfEd25519PublicKey":
-        return self
-
-    def __eq__(self, other: object) -> bool:
-        return any(key == other for key in self._keys)
-
-
-def _mcp_public_keys_for_agent(agent_id: str) -> list[Ed25519PublicKey]:
-    keys: list[Ed25519PublicKey] = []
-    seen: set[bytes] = set()
-
-    def add_key(key: Ed25519PublicKey | None) -> None:
-        if key is None:
-            return
-        raw = key.public_bytes_raw()
-        if raw in seen:
-            return
-        seen.add(raw)
-        keys.append(key)
-
-    add_key(_key_registry.get(agent_id))
-    for ctx in _store._sessions.values():
-        if agent_id == ctx.initiator.agent_id:
-            add_key(ctx.initiator_key.public_key)
-        if agent_id == ctx.responder.agent_id:
-            add_key(ctx.responder_key.public_key)
-    return keys
-
-
 # ---------------------------------------------------------------------------
 # Tool: verify_receipt_bundle
 # ---------------------------------------------------------------------------
@@ -3068,37 +3000,35 @@ def tool_verify_receipt_bundle(
     """Verify a received receipt bundle."""
     bundle_to_verify = _unwrap_receipt_bundle_response(bundle)
 
-    # Build a resolver for the shared receipt-bundle verifier. The bundle
-    # signer may be in the global registry, while in-process tool tests and
-    # session-local receipts resolve participant keys from live sessions.
-    def resolve_key(aid: str) -> Ed25519PublicKey | None:
-        keys = _mcp_public_keys_for_agent(aid)
-        if not keys:
-            return None
-        if len(keys) == 1:
-            return keys[0]
-        # One agent may have multiple historical session keys in this in-memory
-        # MCP process. The shared verifier asks by agent_id only, so this
-        # adapter preserves the prior session-aware acceptance rule while still
-        # routing every signature decision through receipt_bundle.verify_bundle.
-        return _SessionAnyOfEd25519PublicKey(keys)
+    session_keys: dict[str, dict[str, Ed25519PublicKey]] = {}
+    for ctx in _store._sessions.values():
+        session_keys[ctx.session.session_id] = {
+            ctx.initiator.agent_id: ctx.initiator_key.public_key,
+            ctx.responder.agent_id: ctx.responder_key.public_key,
+        }
 
-    result = verify_bundle(bundle_to_verify, resolve_key)
-    for i, attestation in enumerate(bundle_to_verify.get("attestations", [])):
-        if not _attestation_exceeds_implemented_version(attestation):
-            continue
-        attestation_id = attestation.get("attestation_id", "")
-        if attestation_id not in result.outcome_unbound_attestations:
-            result.outcome_unbound_attestations.append(attestation_id)
-            if result.outcome_bound_count > 0:
-                result.outcome_bound_count -= 1
-        error = (
-            f"Attestation {i}: concordia_attestation exceeds the implemented "
-            f"attestation version; outcome not bound"
-        )
-        if error not in result.errors:
-            result.errors.append(error)
-        result.valid = False
+    def resolve_bundle_key(agent_id: str) -> Ed25519PublicKey | None:
+        # Bundle signatures verify against the registry key only; accepting a
+        # historical session key here would make a stale bundle signer current.
+        return _key_registry.get(agent_id)
+
+    def resolve_attestation_key(
+        agent_id: str,
+        session_id: str,
+    ) -> Ed25519PublicKey | None:
+        keys_for_session = session_keys.get(session_id)
+        if keys_for_session is not None:
+            # Must match the deleted MCP verifier branch in origin/main:
+            # attestation party signatures bind to their own session's key; a
+            # later session for the same agent must never satisfy this check.
+            return keys_for_session.get(agent_id)
+        return _key_registry.get(agent_id)
+
+    result = verify_bundle(
+        bundle_to_verify,
+        resolve_bundle_key,
+        resolve_attestation_key,
+    )
     is_fresh, freshness_msg = check_freshness(bundle_to_verify, max_age_hours)
 
     if not is_fresh:
