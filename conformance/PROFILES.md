@@ -18,6 +18,8 @@ Checks covered by this profile:
 - receipt party signatures and countersignatures;
 - `message_count` against the presented transcript length;
 - `chain_head` against the final message hash;
+- strict three-component attestation-version grammar and the 0.3.0
+  set-binding floor;
 - legacy receipts below attestation 0.3.0 reported as `legacy_set_unbound`;
   set-bound credit starts at attestation 0.3.0.
 

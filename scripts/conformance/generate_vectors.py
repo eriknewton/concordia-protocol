@@ -122,14 +122,12 @@ from concordia.schema_validator import (  # noqa: E402
 )
 from concordia.signing import KeyPair, canonical_json, sign_message  # noqa: E402
 
-# Must match _SEMVER_RE, _IMPLEMENTED_ATTESTATION_VERSION, and
-# MAX_ATTESTATION_VERSION_COMPONENT_DIGITS in concordia/attestation.py. The
-# generated vectors exercise the same boundary the clean-room runners enforce.
+# Same grammar as _SEMVER_RE in concordia/attestation.py. The generated vectors
+# exercise the same protocol boundary the clean-room runners enforce.
 ATTESTATION_VERSION_RE = re.compile(
     r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z"
 )
-IMPLEMENTED_ATTESTATION_VERSION = (0, 6, 0)
-MAX_ATTESTATION_VERSION_COMPONENT_DIGITS = 4300
+SET_BINDING_VERSION_FLOOR = ("0", "3", "0")
 SHA256_HEX_RE = re.compile(r"^sha256:[a-f0-9]{64}\Z")
 
 ReasonClass: TypeAlias = Literal[
@@ -1311,16 +1309,30 @@ def message_chain_messages(input_data: dict[str, Any]) -> list[dict[str, Any]] |
     return normalized
 
 
-def parse_attestation_version(value: Any) -> tuple[int, int, int] | None:
+def parse_attestation_version(value: Any) -> tuple[str, str, str] | None:
     if not isinstance(value, str) or ATTESTATION_VERSION_RE.match(value) is None:
         return None
-    parts = value.split(".")
-    if any(len(part) > MAX_ATTESTATION_VERSION_COMPONENT_DIGITS for part in parts):
-        return None
-    try:
-        return (int(parts[0]), int(parts[1]), int(parts[2]))
-    except Exception:
-        return None
+    part0, part1, part2 = value.split(".")
+    return (part0, part1, part2)
+
+
+def compare_decimal_text(left: str, right: str) -> int:
+    if len(left) != len(right):
+        return -1 if len(left) < len(right) else 1
+    if left == right:
+        return 0
+    return -1 if left < right else 1
+
+
+def compare_attestation_version(
+    left: tuple[str, str, str],
+    right: tuple[str, str, str],
+) -> int:
+    for left_part, right_part in zip(left, right, strict=True):
+        comparison = compare_decimal_text(left_part, right_part)
+        if comparison != 0:
+            return comparison
+    return 0
 
 
 def evaluate_message_chain_receipt_binding(
@@ -1340,9 +1352,7 @@ def evaluate_message_chain_receipt_binding(
     version = parse_attestation_version(receipt.get("concordia_attestation"))
     if version is None:
         return Evaluation(False, "binding")
-    if version > IMPLEMENTED_ATTESTATION_VERSION:
-        return Evaluation(False, "binding")
-    if version[:2] < (0, 3):
+    if compare_attestation_version(version, SET_BINDING_VERSION_FLOOR) < 0:
         return Evaluation(False, "binding")
     if not isinstance(receipt.get("chain_head"), str) or not SHA256_HEX_RE.match(
         receipt["chain_head"]
@@ -1748,8 +1758,8 @@ RECEIPT_BUNDLE_VERSION_TOLERANCE_NOTE = (
 CHAIN_POSITION_RESIGNED_SPLICE_TOLERANCE_NOTE = (
     "tolerated-accept: per-message signatures authenticate links, not the complete message set"
 )
-EXPECTED_MUTATION_TOTAL = 1493
-EXPECTED_MUTATION_REJECTS = 1454
+EXPECTED_MUTATION_TOTAL = 1488
+EXPECTED_MUTATION_REJECTS = 1449
 EXPECTED_MUTATION_ACCEPTS = 39
 EXPECTED_CANARY_TOTAL = 5
 EXPECTED_RAW_TYPED_DIVERGENCES = (
@@ -1786,7 +1796,7 @@ EXPECTED_MUTATION_BATTERY_COUNTS: dict[str, tuple[int, int, int]] = {
     "synthetic/longtail/competence_proof.json": (157, 155, 2),
     "synthetic/longtail/message_chain.json": (99, 99, 0),
     "synthetic/longtail/message_chain_position.json": (4, 3, 1),
-    "synthetic/longtail/receipt_set_binding.json": (9, 9, 0),
+    "synthetic/longtail/receipt_set_binding.json": (4, 4, 0),
     "synthetic/longtail/receipt_bundle.json": (256, 255, 1),
     "synthetic/mandate/delegated_mandate.json": (82, 82, 0),
     "synthetic/mandate/mandate.json": (51, 51, 0),
@@ -2708,50 +2718,6 @@ def build_receipt_set_binding_mutation_vectors(
         "messages": receipt_set_binding_resigned_splice(base_messages),
         "receipt": copy.deepcopy(base_receipt),
     }
-    trailing_newline_version = {
-        "messages": copy.deepcopy(base_messages),
-        "receipt": receipt_with_resigned_snapshot(
-            base_receipt,
-            {"concordia_attestation": "0.3.0\n"},
-        ),
-    }
-    leading_zero_version = {
-        "messages": copy.deepcopy(base_messages),
-        "receipt": receipt_with_resigned_snapshot(
-            base_receipt,
-            {"concordia_attestation": "0.03.0"},
-        ),
-    }
-    at_cap_version = {
-        "messages": copy.deepcopy(base_messages),
-        "receipt": receipt_with_resigned_snapshot(
-            base_receipt,
-            {
-                "concordia_attestation": ("9" * MAX_ATTESTATION_VERSION_COMPONENT_DIGITS)
-                + ".0.0"
-            },
-        ),
-    }
-    over_cap_version = {
-        "messages": copy.deepcopy(base_messages),
-        "receipt": receipt_with_resigned_snapshot(
-            base_receipt,
-            {
-                "concordia_attestation": (
-                    "9" * (MAX_ATTESTATION_VERSION_COMPONENT_DIGITS + 1)
-                )
-                + ".0.0"
-            },
-        ),
-    }
-    future_version = {
-        "messages": copy.deepcopy(base_messages),
-        "receipt": draft_receipt_with_resigned_snapshot(
-            base_receipt,
-            {"concordia_attestation": "0.6.1"},
-        ),
-    }
-
     vectors = [
         receipt_set_binding_vector(
             vector_id="mut-synthetic-receipt-set-binding-0001",
@@ -2778,41 +2744,6 @@ def build_receipt_set_binding_mutation_vectors(
             vector_id="mut-synthetic-receipt-set-binding-0004",
             title="receipt_set_binding: re-signed deletion splice presented with original receipt",
             input_data=resigned_splice,
-            context=context,
-            expected_reason_class="binding",
-        ),
-        receipt_set_binding_vector(
-            vector_id="mut-synthetic-receipt-set-binding-0005",
-            title="receipt_set_binding: attestation version with trailing newline",
-            input_data=trailing_newline_version,
-            context=context,
-            expected_reason_class="binding",
-        ),
-        receipt_set_binding_vector(
-            vector_id="mut-synthetic-receipt-set-binding-0006",
-            title="receipt_set_binding: attestation version with leading zero",
-            input_data=leading_zero_version,
-            context=context,
-            expected_reason_class="binding",
-        ),
-        receipt_set_binding_vector(
-            vector_id="mut-synthetic-receipt-set-binding-0007",
-            title="receipt_set_binding: attestation version component at digit cap",
-            input_data=at_cap_version,
-            context=context,
-            expected_reason_class="binding",
-        ),
-        receipt_set_binding_vector(
-            vector_id="mut-synthetic-receipt-set-binding-0008",
-            title="receipt_set_binding: attestation version component over digit cap",
-            input_data=over_cap_version,
-            context=context,
-            expected_reason_class="binding",
-        ),
-        receipt_set_binding_vector(
-            vector_id="mut-synthetic-receipt-set-binding-0009",
-            title="receipt_set_binding: attestation version above implemented ceiling",
-            input_data=future_version,
             context=context,
             expected_reason_class="binding",
         ),

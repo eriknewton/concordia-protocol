@@ -31,13 +31,13 @@ Whether the retained bytes prove that the resolved signing keys approved the sam
 
 - [`SPEC.md`](SPEC.md) (9.6.5b Receipt Set-Binding (v0.3.0)): Defines the countersigned closing receipt, chain_head, message_count, and the legacy set-unbound case.
 - [`conformance/RUNNER_CONTRACT.md`](conformance/RUNNER_CONTRACT.md) (message-chain-v1): Requires every listed party's countersignature and compares the receipt's chain head and message count to the presented transcript.
-- [`tests/test_conformance_reference_runner.py`](tests/test_conformance_reference_runner.py) (EXPECTED_FULL_SUMMARY): The first-party Python runner verifies 1,551 vectors with zero failures.
-- [`tests/test_conformance_js_runner.py`](tests/test_conformance_js_runner.py) (EXPECTED_FULL_SUMMARY): The first-party Node.js runner verifies the same 1,551 vectors with zero failures.
+- [`tests/test_conformance_reference_runner.py`](tests/test_conformance_reference_runner.py) (EXPECTED_FULL_SUMMARY): The first-party Python runner verifies 1,546 vectors with zero failures.
+- [`tests/test_conformance_js_runner.py`](tests/test_conformance_js_runner.py) (EXPECTED_FULL_SUMMARY): The first-party Node.js runner verifies the same 1,546 vectors with zero failures.
 - [`docs/interop/a2a-1920-fulfillment-sample/README.md`](docs/interop/a2a-1920-fulfillment-sample/README.md) (Second-implementation reproductions): One external implementation reproduced one FulfillmentAttestation digest and verified its signature and tamper rejection.
 
 ### Limitations
 
-- The Python and Node.js conformance runners are different runtimes but are both first-party authored. Their 1,551-vector zero-divergence result is cross-runtime parity, not an independent implementation of Concordia.
+- The Python and Node.js conformance runners are different runtimes but are both first-party authored. Their 1,546-vector zero-divergence result is cross-runtime parity, not an independent implementation of Concordia.
 - The sole external reproduction covers one FulfillmentAttestation record, not the whole protocol or the receipt-set-binding profile.
 - A FulfillmentAttestation proves what its signer asserted and bound to the artifact. It does not objectively prove that physical or external-world fulfillment occurred.
 

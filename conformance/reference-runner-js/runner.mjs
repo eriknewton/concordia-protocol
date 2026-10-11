@@ -10,6 +10,7 @@ import {
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { pathToFileURL } from "node:url";
 
 const VECTOR_SCHEMA_VERSION = "concordia-conformance-vector/v1-draft";
 const PROFILE_ORDER = new Set([
@@ -141,12 +142,10 @@ const AGENT_PROFILE_ENDPOINT_FIELDS = new Set([
 ]);
 const AGENT_PROFILE_LOCATION_FIELDS = new Set(["regions", "jurisdictions"]);
 const GENESIS_HASH = `sha256:${"0".repeat(64)}`;
-// Must match _SEMVER_RE, _IMPLEMENTED_ATTESTATION_VERSION, and
-// MAX_ATTESTATION_VERSION_COMPONENT_DIGITS in concordia/attestation.py. This
-// clean-room runner keeps the rule local instead of importing Concordia.
+// Same grammar as _SEMVER_RE in concordia/attestation.py; this clean-room
+// runner keeps the protocol rule local instead of importing Concordia.
 const ATTESTATION_VERSION_RE = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/u;
-const IMPLEMENTED_ATTESTATION_VERSION = [0n, 6n, 0n];
-const MAX_ATTESTATION_VERSION_COMPONENT_DIGITS = 4300;
+const SET_BINDING_VERSION_FLOOR = ["0", "3", "0"];
 const SHA256_HEX_RE = /^sha256:[a-f0-9]{64}$/u;
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 const ED25519_PKCS8_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
@@ -1451,24 +1450,24 @@ function parseAttestationVersion(value) {
   if (match === null || match[0] !== value) {
     return null;
   }
-  const parts = value.split(".");
-  if (parts.some((part) => part.length > MAX_ATTESTATION_VERSION_COMPONENT_DIGITS)) {
-    return null;
+  return value.split(".");
+}
+
+function compareDecimalText(left, right) {
+  if (left.length !== right.length) {
+    return left.length < right.length ? -1 : 1;
   }
-  try {
-    return parts.map((item) => BigInt(item));
-  } catch {
-    return null;
+  if (left === right) {
+    return 0;
   }
+  return left < right ? -1 : 1;
 }
 
 function compareAttestationVersion(left, right) {
   for (let index = 0; index < 3; index += 1) {
-    if (left[index] < right[index]) {
-      return -1;
-    }
-    if (left[index] > right[index]) {
-      return 1;
+    const comparison = compareDecimalText(left[index], right[index]);
+    if (comparison !== 0) {
+      return comparison;
     }
   }
   return 0;
@@ -1484,10 +1483,7 @@ function verifyMessageChainReceiptBinding(suiteBase, inputData, messages, contex
   if (version === null) {
     reject("receipt concordia_attestation is malformed");
   }
-  if (compareAttestationVersion(version, IMPLEMENTED_ATTESTATION_VERSION) > 0) {
-    reject("receipt concordia_attestation is unsupported");
-  }
-  if (version[0] === 0n && version[1] < 3n) {
+  if (compareAttestationVersion(version, SET_BINDING_VERSION_FLOOR) < 0) {
     reject("receipt is legacy set-unbound");
   }
   if (typeof receipt.chain_head !== "string" || !SHA256_HEX_RE.test(receipt.chain_head)) {
@@ -1770,9 +1766,13 @@ function main(argv) {
   return runSuite(argv[0], activeRegression());
 }
 
-try {
-  process.exitCode = main(process.argv.slice(2));
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  try {
+    process.exitCode = main(process.argv.slice(2));
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 }
+
+export { parseAttestationVersion, compareAttestationVersion, SET_BINDING_VERSION_FLOOR };

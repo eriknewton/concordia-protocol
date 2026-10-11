@@ -56,7 +56,7 @@ def test_registry_preserves_load_bearing_claim_bounds() -> None:
         [dimensions["agreement_integrity"]["bounded_claim"], *dimensions["agreement_integrity"]["limitations"]]
     ).lower()
     assert "0.3.0" in integrity
-    assert "1,551" in integrity
+    assert "1,546" in integrity
     assert "first-party" in integrity
     assert "not an independent implementation" in integrity
     assert "does not objectively prove" in integrity

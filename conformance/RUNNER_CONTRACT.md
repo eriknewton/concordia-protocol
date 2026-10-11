@@ -870,7 +870,8 @@ top-level signature)`.
 
 Checks, in order:
 
-1. Require the input object to contain only `messages`.
+1. Require the input object to contain only `messages`, or `messages` and
+   `receipt`.
 2. If `context.expected_message_count` is present, require it to equal
    `len(input.messages)`.
 3. Require `input.messages[0].prev_hash == GENESIS_HASH`.
@@ -884,11 +885,15 @@ Checks, in order:
 7. If `context.expected_message_hashes` is present, recompute
    `MessageHash(message)` for every message and require exact array equality.
 8. If `input.receipt` is present, validate it against
-   `attestation.schema.json`, parse `/concordia_attestation` using the product
-   attestation-version rule (strict three-component grammar, no leading zeros,
-   no trailing newline, per-component digit cap, and no version above the
-   implemented attestation version), require the parsed version to be at least
-   `0.3.0` by semver comparison, require `/chain_head` to match
+   `attestation.schema.json`, parse `/concordia_attestation` as a string that
+   matches `^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$` at the
+   true end of input, and reject empty components, leading zeros other than the
+   literal `0`, or trailing bytes including a newline. Compare canonical
+   non-leading-zero decimal components by component length and then
+   lexicographically, without converting unbounded components to host numeric
+   types, and require the parsed version to be at least `0.3.0`. The draft's
+   implemented-version ceiling belongs to each verifier's own supported format
+   set and is not exercised by this profile. Then require `/chain_head` to match
    `^sha256:[a-f0-9]{64}$`, and require `/message_count` to be an integer
    greater than or equal to 1.
 9. For every receipt party, resolve `/agent_id` in

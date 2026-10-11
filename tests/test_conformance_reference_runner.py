@@ -14,13 +14,13 @@ from typing import Any, cast
 
 import pytest
 
-from concordia.attestation import MAX_ATTESTATION_VERSION_COMPONENT_DIGITS
 from scripts.conformance import generate_vectors as vector_generator
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNNER = REPO_ROOT / "conformance" / "reference-runner" / "runner.py"
 FULL_SUITE = REPO_ROOT / "conformance" / "vectors"
-EXPECTED_FULL_SUMMARY = "[SUMMARY] positive=53 mutation=1493 canary=5 ok=1551 fail=0"
+EXPECTED_FULL_SUMMARY = "[SUMMARY] positive=53 mutation=1488 canary=5 ok=1546 fail=0"
+LONG_VERSION_COMPONENT_DIGITS = 5_000
 CANARY_REGRESSIONS = {
     "canary-chain-splice": "skip-linkage-walk",
     "canary-preimage-includes-signature": "preimage-includes-signature",
@@ -77,6 +77,42 @@ def run_runner(
     )
 
 
+def run_version_parser_probe(tmp_path: Path, version: str) -> dict[str, Any]:
+    clean_site = clean_site_packages(tmp_path)
+    script = """
+import importlib.util
+import json
+import sys
+
+spec = importlib.util.spec_from_file_location("runner_probe", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+parsed = module.parse_attestation_version(sys.argv[2])
+print(json.dumps({
+    "parsed": parsed,
+    "floor_comparison": None
+    if parsed is None
+    else module.compare_attestation_version(parsed, module.SET_BINDING_VERSION_FLOOR),
+}))
+"""
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONPATH": str(clean_site),
+    }
+    result = subprocess.run(
+        [sys.executable, "-S", "-c", script, str(RUNNER), version],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    return cast(dict[str, Any], json.loads(result.stdout))
+
+
 def copy_vector_file(tmp_root: Path, rel_path: str) -> None:
     source = REPO_ROOT / rel_path
     dest = tmp_root / rel_path
@@ -111,22 +147,23 @@ def write_minimal_suite(tmp_path: Path, canary_id: str) -> Path:
     return tmp_root / "conformance" / "vectors"
 
 
-def write_receipt_version_suite(tmp_path: Path, version: str, vector_id: str) -> Path:
+def write_receipt_version_suite(
+    tmp_path: Path,
+    version: str,
+    vector_id: str,
+    *,
+    expected: str = "reject",
+) -> Path:
     manifest = load_json(REPO_ROOT / "conformance" / "vectors" / "manifest.json")
     files = cast(dict[str, list[str]], manifest["files"])
     pair = vector_generator.build_receipt_set_binding_fixture()
     messages = copy.deepcopy(pair["messages"])
     key_by_agent = vector_generator.receipt_set_binding_key_by_agent()
-    if version == "0.6.1":
-        receipt_input = copy.deepcopy(pair["receipt"])
-        receipt_input["concordia_attestation"] = version
-        receipt_input["validity_temporal"] = {
-            "mode": "absolute",
-            "from": "2026-05-10T16:05:00Z",
-            "until": "2026-05-11T16:05:00Z",
-        }
-        receipt_input.pop("fulfillment", None)
-        receipt = vector_generator.resign_attestation(receipt_input, key_by_agent)
+    if expected == "accept":
+        receipt = vector_generator.draft_receipt_with_resigned_snapshot(
+            pair["receipt"],
+            {"concordia_attestation": version},
+        )
     else:
         receipt = vector_generator.receipt_with_resigned_snapshot(
             pair["receipt"],
@@ -149,7 +186,7 @@ def write_receipt_version_suite(tmp_path: Path, version: str, vector_id: str) ->
                 for agent_id, key_pair in sorted(key_by_agent.items())
             },
         },
-        expected="reject",
+        expected=cast(Any, expected),
         expected_reason_class="binding",
         notes="version syntax is checked before receipt set-binding is credited",
     )
@@ -157,7 +194,8 @@ def write_receipt_version_suite(tmp_path: Path, version: str, vector_id: str) ->
     tmp_root = tmp_path / "suite"
     for rel_path in files["schemas"]:
         copy_vector_file(tmp_root, rel_path)
-    vector_rel_path = f"conformance/vectors/mutation/{vector_id}.json"
+    section = "positive" if expected == "accept" else "mutation"
+    vector_rel_path = f"conformance/vectors/{section}/{vector_id}.json"
     vector_path = tmp_root / vector_rel_path
     vector_path.parent.mkdir(parents=True, exist_ok=True)
     vector_path.write_text(
@@ -166,12 +204,12 @@ def write_receipt_version_suite(tmp_path: Path, version: str, vector_id: str) ->
     )
 
     mini_manifest = copy.deepcopy(manifest)
-    mini_manifest["counts"]["positive"] = 0
-    mini_manifest["counts"]["mutation"] = 1
+    mini_manifest["counts"]["positive"] = 1 if expected == "accept" else 0
+    mini_manifest["counts"]["mutation"] = 0 if expected == "accept" else 1
     mini_manifest["counts"]["canary"] = 0
     mini_manifest["counts"]["diag_canonical_bytes"] = 0
-    mini_manifest["files"]["positive"] = []
-    mini_manifest["files"]["mutation"] = [vector_rel_path]
+    mini_manifest["files"]["positive"] = [vector_rel_path] if expected == "accept" else []
+    mini_manifest["files"]["mutation"] = [] if expected == "accept" else [vector_rel_path]
     mini_manifest["files"]["canary"] = []
     mini_manifest["files"]["diag_canonical_bytes"] = []
     manifest_path = tmp_root / "conformance" / "vectors" / "manifest.json"
@@ -222,25 +260,36 @@ def test_reference_runner_rejects_tampered_vector(tmp_path: Path) -> None:
     assert "[FAIL] pos-1404-decision-id expected=accept got=reject" in result.stdout
 
 
-@pytest.mark.parametrize(
-    ("version", "vector_id"),
-    [
-        ("0.3.0\n", "mut-test-receipt-version-trailing-newline"),
-        ("0.6.1", "mut-test-receipt-version-implemented-ceiling"),
-        (
-            "0." + ("9" * (MAX_ATTESTATION_VERSION_COMPONENT_DIGITS + 1)) + ".0",
-            "mut-test-receipt-version-component-length",
-        ),
-    ],
-)
-def test_reference_runner_rejects_receipt_version_boundary(
-    tmp_path: Path,
-    version: str,
-    vector_id: str,
-) -> None:
-    suite = write_receipt_version_suite(tmp_path, version, vector_id)
+def test_reference_runner_accepts_long_valid_version_component(tmp_path: Path) -> None:
+    version = "0." + ("9" * LONG_VERSION_COMPONENT_DIGITS) + ".0"
+    vector_id = "pos-test-receipt-version-long-minor"
+    suite = write_receipt_version_suite(tmp_path, version, vector_id, expected="accept")
 
     result = run_runner(tmp_path / "run", suite)
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert f"[OK] {vector_id}" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("version", "expected_parsed", "floor_comparison"),
+    [
+        ("0.3.0", ["0", "3", "0"], 0),
+        ("0." + ("9" * LONG_VERSION_COMPONENT_DIGITS) + ".0", None, 1),
+        ("0.3.0\n", None, None),
+        ("0.03.0", None, None),
+        ("0.2.9", ["0", "2", "9"], -1),
+    ],
+)
+def test_reference_runner_version_parser_uses_protocol_rule(
+    tmp_path: Path,
+    version: str,
+    expected_parsed: list[str] | None,
+    floor_comparison: int | None,
+) -> None:
+    parsed = run_version_parser_probe(tmp_path, version)
+
+    if expected_parsed is None and floor_comparison is not None:
+        expected_parsed = version.split(".")
+    assert parsed["parsed"] == expected_parsed
+    assert parsed["floor_comparison"] == floor_comparison
