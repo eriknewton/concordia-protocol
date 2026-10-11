@@ -11,6 +11,7 @@ Covers:
     - Agent can only bundle attestations where it appears as a party
     - Freshness: bundles older than a configurable threshold get flagged
 """
+# CONCORDIA-MCP-BUNDLE-OUTCOME-UNCHECKED-01
 
 from __future__ import annotations
 
@@ -749,6 +750,26 @@ class TestMcpToolIntegration:
             "attestation": attestation,
         }
 
+    def _session_key_pairs(self, session_id: str):
+        from concordia.mcp_server import _store
+
+        session_ctx = _store._sessions[session_id]
+        return {
+            session_ctx.initiator.agent_id: session_ctx.initiator_key,
+            session_ctx.responder.agent_id: session_ctx.responder_key,
+        }
+
+    def _resign_bundle_response(self, bundle: dict[str, Any]) -> None:
+        from concordia.mcp_server import _find_agent_key_pair
+
+        key_pair = _find_agent_key_pair(bundle["agent_id"])
+        assert key_pair is not None
+        signable = {
+            k: v for k, v in bundle.items()
+            if k not in ("agent_signature", "concordia_receipt_bundle", "message")
+        }
+        bundle["agent_signature"] = sign_message(signable, key_pair)
+
     def test_create_bundle_via_tool(self):
         """Create a receipt bundle through the MCP tool."""
         from concordia.mcp_server import handle_tool_call
@@ -793,6 +814,33 @@ class TestMcpToolIntegration:
         verify_result = handle_tool_call("concordia_verify_receipt_bundle", {
             "bundle": bundle_result,
         })
+        attestation_id = bundle_result["attestations"][0]["attestation_id"]
+        assert verify_result == {
+            "valid": True,
+            "errors": [],
+            "warnings": [],
+            "summary_accurate": True,
+            "sybil_flags": {
+                "low_counterparty_diversity": False,
+                "timing_anomaly": False,
+                "symmetric_concessions": False,
+                "self_dealing": False,
+                "flagged": False,
+            },
+            "verified_counterparties": 1,
+            "unverified_counterparties": [],
+            "outcome_bound_count": 1,
+            "outcome_unbound_attestations": [],
+            "set_bound_count": 0,
+            "set_unbound_attestations": [attestation_id],
+            "claimed_counterparties": 1,
+            "freshness": {
+                "fresh": True,
+                "message": "Bundle is 0.0 hours old (within 720h threshold)",
+            },
+            "attestation_count": 1,
+            "agent_id": "seller_01",
+        }
         assert verify_result["valid"], f"Errors: {verify_result.get('errors')}"
         # The tool surfaces the trustworthy counterparty count. In this in-process
         # negotiation both parties' keys resolve from the session, so the one
@@ -800,6 +848,66 @@ class TestMcpToolIntegration:
         assert verify_result["verified_counterparties"] == 1
         assert verify_result["unverified_counterparties"] == []
         assert verify_result["claimed_counterparties"] == verify_result["verified_counterparties"]
+
+    def test_verify_bundle_via_tool_reports_changed_outcome_unbound(self):
+        """A changed issued outcome is invalid and receives no bound outcome credit."""
+        from concordia.mcp_server import handle_tool_call
+
+        ctx = self._setup_negotiation()
+        bundle_result = handle_tool_call("concordia_create_receipt_bundle", {
+            "agent_id": "seller_01",
+            "auth_token": ctx["agent_token"],
+        })
+        bundle_result = json.loads(json.dumps(bundle_result))
+        attestation = bundle_result["attestations"][0]
+        attestation["outcome"]["status"] = "rejected"
+        bundle_result["summary"] = _compute_summary(
+            bundle_result["agent_id"],
+            bundle_result["attestations"],
+        ).to_dict()
+        self._resign_bundle_response(bundle_result)
+
+        verify_result = handle_tool_call("concordia_verify_receipt_bundle", {
+            "bundle": bundle_result,
+        })
+
+        assert verify_result["valid"] is False
+        assert verify_result.get("outcome_bound_count") == 0
+        assert attestation["attestation_id"] in verify_result.get(
+            "outcome_unbound_attestations",
+            [],
+        )
+
+    def test_verify_bundle_via_tool_reports_above_ceiling_version_unbound(self):
+        """An unsupported attestation version is invalid and receives no bound outcome credit."""
+        from concordia.attestation import countersign_attestation
+        from concordia.mcp_server import handle_tool_call
+
+        ctx = self._setup_negotiation()
+        bundle_result = handle_tool_call("concordia_create_receipt_bundle", {
+            "agent_id": "seller_01",
+            "auth_token": ctx["agent_token"],
+        })
+        bundle_result = json.loads(json.dumps(bundle_result))
+        attestation = bundle_result["attestations"][0]
+        attestation["concordia_attestation"] = "1.0.0"
+        key_pairs = self._session_key_pairs(ctx["session_id"])
+        attestation["countersignatures"] = {
+            agent_id: countersign_attestation(attestation, key_pair)
+            for agent_id, key_pair in key_pairs.items()
+        }
+        self._resign_bundle_response(bundle_result)
+
+        verify_result = handle_tool_call("concordia_verify_receipt_bundle", {
+            "bundle": bundle_result,
+        })
+
+        assert verify_result["valid"] is False
+        assert verify_result.get("outcome_bound_count") == 0
+        assert attestation["attestation_id"] in verify_result.get(
+            "outcome_unbound_attestations",
+            [],
+        )
 
     def test_create_bundle_auth_required(self):
         """Bundle creation requires valid auth token."""
