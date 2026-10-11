@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -25,6 +25,7 @@ import {
 import { PartyRole, ResolutionMechanism, SessionState } from '../src/types/index.js';
 import { KeyPair, verify } from '../src/crypto/signing.js';
 import { fromBase64Url } from '../src/crypto/base64url.js';
+import { validateAttestation } from '../src/validation/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -569,6 +570,16 @@ describe('generateAttestation 0.6.0 issuance refusals', () => {
       'Cannot generate attestation: every listed party must have a signing key',
     );
   });
+
+  it('refuses prototype-named parties through the same missing-key contract', () => {
+    const c = fixtures.cases[0]!;
+    const session = rebuildSession(c.session);
+    session.parties.set('constructor', PartyRole.WITNESS);
+
+    expect(() => generateAttestation(session, keyPairsFromCase(c), optionsFromCase(c))).toThrow(
+      'Cannot generate attestation: every listed party must have a signing key',
+    );
+  });
 });
 
 describe('shared conformance attestation vector', () => {
@@ -590,6 +601,7 @@ describe('shared conformance attestation vector', () => {
     };
 
     expect(vector.input.concordia_attestation).toBe('0.6.0');
+    expect(validateAttestation(vector.input)).toEqual([]);
     expect('fulfillment' in vector.input).toBe(false);
     for (const ref of vector.input.references as Array<Record<string, unknown>>) {
       expect('extensions' in ref).toBe(false);
@@ -605,6 +617,54 @@ describe('shared conformance attestation vector', () => {
           fromBase64Url(vector.context.public_keys_b64url[signer]!),
         ),
       ).toBe(true);
+    }
+  });
+
+  it('rejects shared attestation mutation vectors with schema reason class', () => {
+    const dir = join(__dirname, '../../conformance/vectors/mutation');
+    const vectors = readdirSync(dir)
+      .filter((name) => /^mut-synthetic-attestation-\d+\.json$/.test(name))
+      .map((name) => JSON.parse(readFileSync(join(dir, name), 'utf8')) as Record<string, unknown>)
+      .filter((vector) => vector.expected === 'reject' && vector.expected_reason_class === 'schema');
+
+    expect(vectors.length).toBeGreaterThan(0);
+    for (const vector of vectors) {
+      expect(validateAttestation(vector.input)).not.toEqual([]);
+    }
+  });
+
+  it('rejects shared countersignature mutation vectors by schema or countersignature check', () => {
+    const dir = join(__dirname, '../../conformance/vectors/mutation');
+    const vectors = readdirSync(dir)
+      .filter((name) => /^mut-synthetic-attestation-countersign-\d+\.json$/.test(name))
+      .map((name) => JSON.parse(readFileSync(join(dir, name), 'utf8')) as {
+        expected: string;
+        expected_reason_class: string;
+        input: Record<string, unknown>;
+        context: {
+          countersigners: string[];
+          public_keys_b64url: Record<string, string>;
+        };
+      });
+
+    expect(vectors.length).toBeGreaterThan(0);
+    for (const vector of vectors) {
+      expect(vector.expected).toBe('reject');
+      if (vector.expected_reason_class === 'schema') {
+        expect(validateAttestation(vector.input)).not.toEqual([]);
+        continue;
+      }
+      const countersignatures = vector.input.countersignatures as Record<string, string> | undefined;
+      const accepted =
+        countersignatures !== undefined &&
+        vector.context.countersigners.every((signer) =>
+          verifyAttestationCountersignature(
+            vector.input,
+            countersignatures[signer] ?? '',
+            fromBase64Url(vector.context.public_keys_b64url[signer]!),
+          ),
+        );
+      expect(accepted).toBe(false);
     }
   });
 });

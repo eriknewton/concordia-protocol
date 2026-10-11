@@ -891,7 +891,7 @@ export function generateAttestation(
   // Build party records with signatures (parties in registration order; the
   // Map preserves insertion order, matching Python's insertion-ordered dict).
   const missingPartyKeys = [...session.parties.keys()].filter(
-    (agentId) => keyPairs[agentId] === undefined,
+    (agentId) => !Object.hasOwn(keyPairs, agentId),
   );
   if (missingPartyKeys.length > 0) {
     throw new AttestationError(
@@ -985,18 +985,16 @@ export function generateAttestation(
   // Attach a plaintext 4-line summary for quick human/agent inspection.
   attestation.summary = generateReceiptSummary(attestation);
 
-  // C-H2 outcome-binding (Option B): one issuance countersignature per party
-  // that has a signing key, over the FULLY-ASSEMBLED snapshot (after summary).
+  // C-H2 outcome-binding (Option B): the missing-key guard above proves every
+  // listed party has an own signing key before any signature bytes are emitted.
+  // One issuance countersignature is written per party over the FULLY-ASSEMBLED
+  // snapshot (after summary).
   // Added LAST so the payload excludes the map (countersignPayload also drops
   // it explicitly). Parties iterate in insertion order (the Map mirrors
   // Python's insertion-ordered dict), so the JS map keys reproduce Python's.
-  // Parties without a key get NO entry (matches Python).
   const countersignatures: Record<string, string> = {};
   for (const [agentId] of session.parties) {
-    const kp = keyPairs[agentId];
-    if (kp !== undefined) {
-      countersignatures[agentId] = countersignAttestation(attestation, kp);
-    }
+    countersignatures[agentId] = countersignAttestation(attestation, keyPairs[agentId]!);
   }
   attestation.countersignatures = countersignatures;
 

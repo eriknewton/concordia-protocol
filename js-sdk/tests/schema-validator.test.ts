@@ -423,6 +423,44 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
     expect(isValidAttestation(attestation)).toBe(true);
   });
 
+  it('rejects draft-structure strings Python 0.6 refuses', () => {
+    const cases: Array<[string, (attestation: Record<string, unknown>) => void]> = [
+      [
+        'non-NFC structural string',
+        (attestation) => {
+          attestation.attestation_id = 'att_e\u0301';
+        },
+      ],
+      [
+        'UTF-8 byte cap, not only code point count',
+        (attestation) => {
+          attestation.session_id = '界'.repeat(100);
+        },
+      ],
+      [
+        'unpaired surrogate',
+        (attestation) => {
+          attestation.session_id = 'session_\ud800';
+        },
+      ],
+      [
+        'non-canonical Ed25519 signature encoding',
+        (attestation) => {
+          const parties = attestation.parties as Array<Record<string, unknown>>;
+          parties[0].signature = `${'A'.repeat(85)}B==`;
+        },
+      ],
+    ];
+
+    for (const [, mutate] of cases) {
+      const attestation = validAttestation();
+      mutate(attestation);
+      expect(validateAttestation(attestation)).toContain(
+        '$: violates draft-newton-agreement-evidence-00 structure',
+      );
+    }
+  });
+
   it('rejects the removed root fulfillment member for 0.6 attestations', () => {
     const attestation = validAttestation();
     attestation.fulfillment = null;

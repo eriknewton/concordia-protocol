@@ -57,7 +57,7 @@ import {
   type FormatChecker,
   type SchemaError,
 } from '../internal/jsonschema.js';
-import { isCpythonIsoDateTime } from '../internal/iso-datetime.js';
+import { isCpythonIsoDateTime, cpythonIsoDateTimeToEpochMs } from '../internal/iso-datetime.js';
 import { pyJsonDumps, type FloatConstraintMap } from '../internal/py-json.js';
 import {
   MESSAGE_SCHEMA,
@@ -183,6 +183,7 @@ const RFC3339_Z_PATTERN =
   /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,3})?Z$/;
 const SHA256_HEX_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const SIGNATURE_B64URL_PATTERN = /^[A-Za-z0-9_-]{86}==$/;
+const BASE64URL_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
 const NO_FORBIDDEN_WHITESPACE_PATTERN =
   /^[^\s\u0000-\u001F\u007F-\u009F\u200B-\u200F\u2028-\u202E]+$/u;
 const CATEGORY_PATTERN = /^[a-z0-9_-]+(?:\.[a-z0-9_-]+)*$/;
@@ -454,7 +455,7 @@ function isDraftStructureValid(attestation: Record<string, unknown>): boolean {
   if (!isIntInRange(attestation.message_count, 1, 10000)) return false;
   if (!isValidityTemporalShape(attestation.validity_temporal)) return false;
   if (!isCountersignatureShape(attestation.countersignatures, agentIds)) return false;
-  if ('summary' in attestation && !isBoundedString(attestation.summary, 0, MAX_SUMMARY_SCALARS)) {
+  if ('summary' in attestation && !isSummaryString(attestation.summary)) {
     return false;
   }
   if ('references' in attestation && !isReferencesShape(attestation.references)) return false;
@@ -491,9 +492,31 @@ function isBoundedString(
   noWhitespace = false,
 ): value is string {
   if (typeof value !== 'string') return false;
-  if (value.length < minLength || value.length > maxLength) return false;
+  if (hasLoneSurrogate(value) || value.normalize('NFC') !== value) return false;
+  const octets = Buffer.byteLength(value, 'utf8');
+  if (octets < minLength || octets > maxLength) return false;
   if (noWhitespace && !NO_FORBIDDEN_WHITESPACE_PATTERN.test(value)) return false;
   return true;
+}
+
+function isSummaryString(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  if (hasLoneSurrogate(value) || value.normalize('NFC') !== value) return false;
+  return Array.from(value).length <= MAX_SUMMARY_SCALARS;
+}
+
+function hasLoneSurrogate(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(i + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
+      i += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function isIntInRange(value: unknown, minimum: number, maximum = MAX_SAFE_INT): boolean {
@@ -517,11 +540,11 @@ function isNumberInRange(value: unknown, minimum: number, maximum?: number): boo
 
 function isRfc3339Z(value: unknown): value is string {
   if (typeof value !== 'string' || !RFC3339_Z_PATTERN.test(value)) return false;
-  return Number.isFinite(Date.parse(value));
+  return value.normalize('NFC') === value && cpythonIsoDateTimeToEpochMs(value) !== null;
 }
 
 function epochMs(value: string): number {
-  return Date.parse(value);
+  return cpythonIsoDateTimeToEpochMs(value) ?? Number.NaN;
 }
 
 function isDigest(value: unknown): value is string {
@@ -529,7 +552,11 @@ function isDigest(value: unknown): value is string {
 }
 
 function isSignature(value: unknown): value is string {
-  return typeof value === 'string' && SIGNATURE_B64URL_PATTERN.test(value);
+  return (
+    typeof value === 'string' &&
+    SIGNATURE_B64URL_PATTERN.test(value) &&
+    (BASE64URL_ALPHABET.indexOf(value[85]!) & 0x0f) === 0
+  );
 }
 
 function isOutcomeShape(value: unknown): boolean {
@@ -543,15 +570,21 @@ function isOutcomeShape(value: unknown): boolean {
   ) {
     return false;
   }
-  if (!['agreed', 'rejected', 'expired', 'withdrawn'].includes(String(value.status))) return false;
+  if (
+    typeof value.status !== 'string' ||
+    !['agreed', 'rejected', 'expired', 'withdrawn'].includes(value.status)
+  ) {
+    return false;
+  }
   if (!isIntInRange(value.rounds, 0)) return false;
   if (!isIntInRange(value.duration_seconds, 0)) return false;
   if ('terms_count' in value && !isIntInRange(value.terms_count, 1)) return false;
   if (
     'resolution_mechanism' in value &&
-    !['direct', 'split', 'foa', 'tradeoff', 'escalation', 'none'].includes(
-      String(value.resolution_mechanism),
-    )
+    (typeof value.resolution_mechanism !== 'string' ||
+      !['direct', 'split', 'foa', 'tradeoff', 'escalation', 'none'].includes(
+        value.resolution_mechanism,
+      ))
   ) {
     return false;
   }
@@ -612,8 +645,12 @@ function getPartyAgentIds(value: unknown): string[] | null {
       return null;
     }
     if (!isBoundedString(party.agent_id, 1, 256, true)) return null;
-    if (!['initiator', 'responder', 'mediator', 'witness'].includes(String(party.role)))
+    if (
+      typeof party.role !== 'string' ||
+      !['initiator', 'responder', 'mediator', 'witness'].includes(party.role)
+    ) {
       return null;
+    }
     if (!isBehaviorShape(party.behavior)) return null;
     if (!isSignature(party.signature)) return null;
     agentIds.push(party.agent_id);

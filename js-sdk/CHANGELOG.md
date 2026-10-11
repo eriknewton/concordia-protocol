@@ -4,18 +4,24 @@
 
 ## 0.0.1-alpha.13 -- 2026-10-10
 
-- JavaScript attestation issuance now matches Python attestation format 0.6.0:
-  `ATTESTATION_VERSION` is `0.6.0`, every listed party must have a signing key,
-  and generated records use the closed draft-newton-agreement-evidence-00 member
-  set.
+- JavaScript attestation issuance now targets Python attestation format 0.6.0:
+  `ATTESTATION_VERSION` is `0.6.0`, every listed party must have an own signing
+  key entry, generated records use the closed draft-newton-agreement-evidence-00
+  member set, and reference strings follow Python's NFC, UTF-8 byte-length, and
+  reference-control rules.
 - Root `fulfillment`, reference `extensions`, and `validity_temporal.window` are
-  rejected for 0.6 attestations while older-version read behavior remains
-  unchanged.
-- Countersignature canonical bytes, validation, and refusal classes are pinned by
-  Python-generated fixtures plus a shared conformance vector consumed by the JS
-  suite.
-- The bundled schema validator now supports JSON Schema `not` and the Python
-  draft-structure companion check for implemented 0.5/0.6 artifacts.
+  rejected for implemented 0.5/0.6 attestation artifacts. Reference extensions
+  are also rejected by the shared predicate/reference parser used during
+  issuance.
+- Countersignature canonical bytes, validation, schema refusal classes, and
+  mutation vectors are pinned by shared conformance files consumed by both the
+  Python and JS suites.
+- The bundled schema validator now supports JSON Schema `not`, the Python
+  draft-structure companion check for implemented 0.5/0.6 artifacts, canonical
+  Ed25519 signature encoding checks, and Python-style string normalization for
+  the attestation draft-structure path.
+- The terminal nine-step attestation verifier remains deferred; this release
+  ports issuance, structure validation, and countersignature vector checks only.
 
 ## 0.0.1-alpha.12 -- 2026-08-02
 
