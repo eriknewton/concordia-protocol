@@ -62,7 +62,6 @@ import {
   compareVersion,
   IMPLEMENTED_ATTESTATION_VERSION,
   LEGACY_FLOOR_VERSION,
-  MAX_ATTESTATION_VERSION_COMPONENT_DIGITS,
   parseStrictVersion,
 } from '../attestation/constants.js';
 export { MAX_ATTESTATION_VERSION_COMPONENT_DIGITS } from '../attestation/constants.js';
