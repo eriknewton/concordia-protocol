@@ -20,7 +20,11 @@ from concordia.message import compute_hash, validate_chain
 from concordia.signing import sign_message
 
 SET_BINDING_TRANSCRIPT_VECTOR = json.loads(
-    Path("tests/fixtures/receipt_set_binding_transcript_cases.json").read_text()
+    (
+        Path(__file__).parent
+        / "fixtures"
+        / "receipt_set_binding_transcript_cases.json"
+    ).read_text()
 )
 
 
@@ -185,6 +189,9 @@ class TestAttestationVerification:
 
         assert result.valid is True
         assert result.errors == []
+        assert result.warnings == [
+            "set-binding fields are present but not verified; no transcript supplied"
+        ]
         assert sorted(result.verified_parties) == ["buyer_42", "seller_01"]
         assert result.set_binding_state == "fields_present_unverified"
         assert result.terminal_state == "current"
@@ -250,6 +257,30 @@ class TestAttestationVerification:
         assert result.terminal_state == "not-bound"
         assert result.set_binding_state == "error"
         assert result.schema_errors
+
+    def test_verify_attestation_preserves_set_errors_on_not_bound_terminal(
+        self, agreed_session
+    ):
+        session, seller, buyer = agreed_session
+        key_pairs = {"seller_01": seller.key_pair, "buyer_42": buyer.key_pair}
+        public_keys = {agent_id: kp.public_key for agent_id, kp in key_pairs.items()}
+        att = generate_attestation(session, key_pairs)
+        truncated = session.transcript[:-1]
+
+        result = verify_attestation(
+            att,
+            public_keys,
+            transcript=truncated,
+            expected_session_id="sess_other",
+            expected_party_ids=set(key_pairs),
+            revocation_checker=lambda _: False,
+        )
+
+        assert result.valid is False
+        assert result.terminal_state == "not-bound"
+        assert result.set_binding_state == "error"
+        assert result.schema_errors
+        assert any("message_count mismatch" in e for e in result.set_binding_errors)
 
     def test_verify_attestation_rejects_party_tamper(self, agreed_session):
         session, seller, buyer = agreed_session

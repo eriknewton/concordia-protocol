@@ -121,8 +121,9 @@ export function verifyReceiptSetBinding(
   if (transcript === null) {
     // Set-binding credit requires the caller to present the transcript whose
     // head and count are named by the receipt fields; field presence alone is
-    // only an unverified claim about an unavailable set. Must match
-    // evaluate_receipt_set_binding in concordia/attestation.py.
+    // only an unverified claim about an unavailable set. This no-transcript
+    // branch must match evaluate_receipt_set_binding in
+    // concordia/attestation.py.
     if (errors.length === 0) return { state: 'fields_present_unverified', errors: [] };
   } else {
     if (!Array.isArray(transcript)) {

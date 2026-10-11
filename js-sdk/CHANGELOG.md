@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `verifyReceiptSetBinding()` now reports well-formed set-binding fields
+  without a supplied transcript as `fields_present_unverified` instead of
+  `bound`; the exported `ReceiptSetBindingState` union includes the new value.
 - `isValidNow` fails closed on a malformed or absent `concordia_attestation` when `validity_temporal` is missing, mirroring Python `is_valid_now`; the `no_constraint` parity case now expects `false`. Full 0.6.0 parity (closed member set, the three removals, the nine-step verifier) is a separate build; the fixture generator does not run against this Python until then.
 
 
