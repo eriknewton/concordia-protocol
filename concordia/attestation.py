@@ -234,10 +234,11 @@ def _version_tuple(value: str) -> tuple[int, int, int]:
         return (int(parts[0]), int(parts[1]), int(parts[2]))
     except ValueError as exc:
         # The grammar bounds neither digit count nor magnitude; CPython raises
-        # on int() past sys.get_int_max_str_digits() (4300). That is a
+        # on int() past sys.get_int_max_str_digits() (4300). The JS validator's
+        # MAX_VERSION_COMPONENT_DIGITS must match that default. This is a
         # structure error like any other malformed version, never a raw
-        # exception at a composition boundary and never a route into a
-        # legacy lane.
+        # exception at a composition boundary and never a route into a legacy
+        # lane.
         raise _AttestationStructureError(
             "concordia_attestation component is too long"
         ) from exc
@@ -1171,7 +1172,7 @@ def _policy_error(policy: AttestationVerificationPolicy) -> str | None:
         return "configured artifact size exceeds Section 11.7 cap"
     if policy.max_evidence_age_seconds > MAX_RELYING_FRESHNESS_SECONDS:
         return "configured evidence age exceeds Section 8.1 cap"
-    if policy.max_validity_lifetime_seconds > MAX_RELYING_FRESHNESS_SECONDS:
+    if policy.max_validity_lifetime_seconds > MAX_RELYING_VALIDITY_LIFETIME_SECONDS:
         return "configured validity lifetime exceeds Section 8.1 cap"
     if policy.clock_skew_seconds > MAX_RELYING_CLOCK_SKEW_SECONDS:
         return "configured clock skew exceeds Section 8.1 cap"

@@ -1048,14 +1048,28 @@ def main() -> None:
         "Python's whitespace predicate does not classify U+FEFF as whitespace.",
     )
 
+    above_ceiling_note = "The implemented validation ceiling is the expected refusal reason."
+    version_notes = {
+        "0.6.1": above_ceiling_note,
+        "0.10.0": above_ceiling_note,
+        "1.0.0": above_ceiling_note,
+        "9007199254740993.0.0": above_ceiling_note,
+        "0.9007199254740993.0": above_ceiling_note,
+        "0.6.9007199254740993": above_ceiling_note,
+    }
     for version in (
         "0.5.0",
         "0.5.9",
         "0.6.0",
+        "0.5.9007199254740993",
+        "0.4.9007199254740993",
+        "0.0.9007199254740993",
         "0.6.1",
         "0.10.0",
         "1.0.0",
         "9007199254740993.0.0",
+        "0.9007199254740993.0",
+        "0.6.9007199254740993",
         "00.6.0",
         "0.6.0\n",
         "bogus",
@@ -1063,14 +1077,17 @@ def main() -> None:
         _add_mutation(
             "version_" + version.encode("unicode_escape").decode("ascii").replace("\\", "_"),
             lambda a, v=version: a.__setitem__("concordia_attestation", v),
+            version_notes.get(version, ""),
         )
     _add_mutation(
         "version_0.6.1_duplicate_party_ids",
         lambda a: _set_version_with_duplicate_party(a, "0.6.1"),
+        above_ceiling_note,
     )
     _add_mutation(
         "version_1.0.0_duplicate_party_ids",
         lambda a: _set_version_with_duplicate_party(a, "1.0.0"),
+        above_ceiling_note,
     )
 
     for digits in range(1, 10):

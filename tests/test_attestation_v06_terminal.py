@@ -173,6 +173,41 @@ def _attestation_fixture_vector(name: str) -> dict[str, Any]:
     raise AssertionError(f"missing attestation fixture vector {name}")
 
 
+def test_mutation_corpus_pins_version_ceiling_edges() -> None:
+    fixture_path = (
+        Path(__file__).resolve().parents[1]
+        / "js-sdk/tests/fixtures/attestation/attestation_vectors.json"
+    )
+    fixture = json.loads(fixture_path.read_text())
+    corpus = {vector["name"]: vector for vector in fixture["mutation_corpus"]}
+
+    expected = {
+        "version_0.5.9007199254740993": ("accept", None),
+        "version_0.4.9007199254740993": ("accept", None),
+        "version_0.0.9007199254740993": ("accept", None),
+        "version_0.9007199254740993.0": ("reject", "draft_structure"),
+        "version_0.6.9007199254740993": ("reject", "draft_structure"),
+        "version_9007199254740993.0.0": ("reject", "draft_structure"),
+    }
+    for name, (verdict, reason_class) in expected.items():
+        vector = corpus[name]
+        assert vector["expected"] == verdict
+        assert vector["expected_reason_class"] == reason_class
+
+    above_ceiling_note = "The implemented validation ceiling is the expected refusal reason."
+    for name in (
+        "version_0.6.1",
+        "version_0.10.0",
+        "version_1.0.0",
+        "version_0.9007199254740993.0",
+        "version_0.6.9007199254740993",
+        "version_9007199254740993.0.0",
+        "version_0.6.1_duplicate_party_ids",
+        "version_1.0.0_duplicate_party_ids",
+    ):
+        assert corpus[name]["note"] == above_ceiling_note
+
+
 def _wrapper_verify(
     artifact: dict[str, Any],
     keys: dict[str, KeyPair],

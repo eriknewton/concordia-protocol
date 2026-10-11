@@ -427,12 +427,29 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
     const attestation = validAttestation();
     expect(validateAttestation(attestation)).toEqual([]);
 
-    for (const version of ['0.6.1', '0.10.0', '1.0.0', '9007199254740993.0.0']) {
+    for (const version of [
+      '0.6.1',
+      '0.10.0',
+      '1.0.0',
+      '9007199254740993.0.0',
+      '0.9007199254740993.0',
+      '0.6.9007199254740993',
+    ]) {
       const aboveCeiling = structuredClone(attestation);
       aboveCeiling.concordia_attestation = version;
       expect(validateAttestation(aboveCeiling)).toEqual([
         '$: violates draft-newton-agreement-evidence-00 structure',
       ]);
+    }
+
+    for (const version of [
+      '0.5.9007199254740993',
+      '0.4.9007199254740993',
+      '0.0.9007199254740993',
+    ]) {
+      const atOrBelowCeiling = structuredClone(attestation);
+      atOrBelowCeiling.concordia_attestation = version;
+      expect(validateAttestation(atOrBelowCeiling)).toEqual([]);
     }
   });
 

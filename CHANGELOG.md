@@ -39,7 +39,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   attestation version ceiling before applying draft-structure checks. The
   validator accepts an otherwise identical `0.6.0` body but returns
   `$: violates draft-newton-agreement-evidence-00 structure` for `0.6.1`,
-  `0.10.0`, `1.0.0`, and safe-integer-overflow version components.
+  `0.10.0`, `1.0.0`, and versions whose exact component tuple is above the
+  ceiling, including components beyond the JavaScript safe-integer range.
 - Absolute `validity_temporal` windows now share the reference lifetime ceiling
   already applied to relative windows. An over-reference absolute window fails
   at structure validation, before signature checks, with
