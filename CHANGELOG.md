@@ -35,6 +35,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- Receipt-bundle and competence-proof outcome binding now share the attestation
+  version grammar and implemented-version ceiling used by attestation
+  validation.
 - Python attestation validation now refuses artifacts above the implemented
   attestation version ceiling before applying draft-structure checks. The
   validator accepts an otherwise identical `0.6.0` body but returns

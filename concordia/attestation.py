@@ -67,6 +67,8 @@ _TIMESTAMP_Z_RE = re.compile(
 )
 _SIGNATURE_B64URL_RE = re.compile(r"^[A-Za-z0-9_-]{86}==\Z")
 _BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+# Must match receipt-bundle outcome binding: concordia.receipt_bundle imports
+# this ceiling and _version_tuple directly so verifier surfaces cannot drift.
 _IMPLEMENTED_ATTESTATION_VERSION = (0, 6, 0)
 _LEGACY_FLOOR_VERSION = (0, 5, 0)
 _MAX_SAFE_INTEGER = (2**53) - 1

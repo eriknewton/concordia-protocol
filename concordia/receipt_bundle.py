@@ -9,7 +9,6 @@ Implements Viral Strategy item #18: session receipts as portable proof.
 
 from __future__ import annotations
 
-import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -18,6 +17,9 @@ from typing import Any, Callable
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from .attestation import (
+    _IMPLEMENTED_ATTESTATION_VERSION,
+    _AttestationStructureError,
+    _version_tuple,
     evaluate_receipt_set_binding,
     verify_attestation_countersignature,
 )
@@ -27,23 +29,7 @@ from .signing import KeyPair, canonical_json, sign_message, verify_signature
 # carry a valid issuance ``countersignatures`` map or the bundle is rejected
 # (fail-closed). Below this version, the outcome is legacy prover-asserted:
 # reported as outcome-unbound and NOT credited, but NOT an error (dual-accept).
-_OUTCOME_BINDING_MIN = (0, 2)
-# Must match ``_SEMVER_RE`` in concordia/attestation.py.
-_SEMVER_RE = re.compile(
-    r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z"
-)
-
-
-def _attestation_version_at_least(ver: str, major: int, minor: int) -> bool:
-    """True iff ``ver`` is a well-formed ``major.minor.patch`` at or above
-    ``(major, minor)``. A version that fails the grammar returns False; the
-    callers in this module check ``_SEMVER_RE`` first and report a malformed
-    version as an error, never as unbound. A component past CPython's int()
-    digit limit raises ValueError, which the callers turn into an error."""
-    if not isinstance(ver, str) or not _SEMVER_RE.match(ver):
-        return False
-    parts = ver.split(".")
-    return (int(parts[0]), int(parts[1])) >= (major, minor)
+_OUTCOME_BINDING_MIN = (0, 2, 0)
 
 
 def evaluate_outcome_binding(
@@ -77,19 +63,26 @@ def evaluate_outcome_binding(
                           reason; callers MUST surface it (fail-closed).
     """
     ver = att.get("concordia_attestation", "")
-    if not isinstance(ver, str) or not _SEMVER_RE.match(ver):
+    try:
+        # Version parsing and the implemented ceiling are imported from
+        # concordia.attestation so receipt bundles and direct attestation
+        # verification fail closed on the same format boundary.
+        version = _version_tuple(ver)
+    except _AttestationStructureError as exc:
         # A malformed or absent version is an error, never "legacy unbound":
         # the unbound lane skips every countersignature check, so routing a
         # version the JSON Schema's `$` tolerates (a trailing newline) into
         # it would let an outcome-tampered artifact pass verify_bundle with
         # valid=True. Matches -00 section 10 step 2 (malformed version is
         # not-bound before any signature work).
-        return "error", "concordia_attestation is malformed; outcome not bound"
-    try:
-        at_least = _attestation_version_at_least(ver, *_OUTCOME_BINDING_MIN)
-    except ValueError:
-        return "error", "concordia_attestation component is too long"
-    if not at_least:
+        return "error", f"{exc}; outcome not bound"
+    if version > _IMPLEMENTED_ATTESTATION_VERSION:
+        return (
+            "error",
+            "concordia_attestation exceeds the implemented attestation version; "
+            "outcome not bound",
+        )
+    if version < _OUTCOME_BINDING_MIN:
         # Legacy / pre-C-H2 (well-formed version below the floor): outcome is
         # prover-asserted. Recorded as unbound, NOT an error (mixed-version
         # handling is the caller's job).

@@ -15,6 +15,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -835,6 +836,20 @@ from concordia import Agent, generate_attestation  # noqa: E402
 from concordia import BasicOffer as _BasicOffer  # noqa: E402
 from concordia.attestation import countersign_attestation  # noqa: E402
 
+_INT_DIGIT_LIMIT = sys.get_int_max_str_digits()
+_OVERSIZED_VERSION_COMPONENT = "1" * (
+    (_INT_DIGIT_LIMIT if _INT_DIGIT_LIMIT > 0 else 4300) + 1
+)
+_UNSUPPORTED_ATTESTATION_VERSIONS = [
+    ("patch_next", "0.6.1"),
+    ("major_next", "1.0.0"),
+    ("major_component_size", f"{_OVERSIZED_VERSION_COMPONENT}.6.0"),
+    ("minor_component_size", f"0.{_OVERSIZED_VERSION_COMPONENT}.0"),
+    ("patch_component_size", f"0.6.{_OVERSIZED_VERSION_COMPONENT}"),
+    ("grammar", "0.6.0\n"),
+]
+_SUPPORTED_ATTESTATION_VERSIONS = ["0.2.0", "0.5.9", "0.6.0"]
+
 
 def _mint_bound_attestation(
     seller_id: str,
@@ -869,6 +884,19 @@ def _mint_bound_attestation(
     key_pairs = {seller_id: seller.key_pair, buyer_id: buyer.key_pair}
     att = generate_attestation(session, key_pairs, category=category)
     return att, seller_id, buyer_id
+
+
+def _set_version_and_countersign(
+    att: dict[str, Any],
+    version: str,
+    party_ids: tuple[str, str],
+) -> dict[str, Any]:
+    att["concordia_attestation"] = version
+    att["countersignatures"] = {
+        party_id: countersign_attestation(att, _KEY_REGISTRY[party_id])
+        for party_id in party_ids
+    }
+    return att
 
 
 class TestOutcomeBindingBundle:
@@ -1064,3 +1092,48 @@ class TestOutcomeBindingBundle:
         assert not any(
             "not cryptographically bound" in w.lower() for w in result.warnings
         ), f"unexpected unbound-outcome warning on a fully bound bundle: {result.warnings}"
+
+    @pytest.mark.parametrize(
+        ("case_name", "version"),
+        _UNSUPPORTED_ATTESTATION_VERSIONS,
+        ids=[case_name for case_name, _ in _UNSUPPORTED_ATTESTATION_VERSIONS],
+    )
+    def test_versions_outside_implemented_range_are_not_credited(
+        self,
+        case_name: str,
+        version: str,
+    ):
+        """Versions outside the implemented attestation range are not outcome-bound."""
+        att, seller_id, buyer_id = _mint_bound_attestation(
+            f"ceil_bundle_s_{case_name}",
+            f"ceil_bundle_b_{case_name}",
+        )
+        _set_version_and_countersign(att, version, (seller_id, buyer_id))
+        kp = _KEY_REGISTRY[seller_id]
+        bundle = ReceiptBundle.create(seller_id, [att], kp)
+
+        result = verify_bundle(bundle.to_dict(), _test_resolver)
+
+        assert result.valid is False
+        assert result.outcome_bound_count == 0
+        assert att["attestation_id"] in result.outcome_unbound_attestations
+
+    @pytest.mark.parametrize("version", _SUPPORTED_ATTESTATION_VERSIONS)
+    def test_versions_at_or_below_implemented_range_keep_binding(
+        self,
+        version: str,
+    ):
+        """Implemented and prior outcome-binding versions keep existing credit."""
+        att, seller_id, buyer_id = _mint_bound_attestation(
+            f"ceil_ok_s_{version.replace('.', '_')}",
+            f"ceil_ok_b_{version.replace('.', '_')}",
+        )
+        _set_version_and_countersign(att, version, (seller_id, buyer_id))
+        kp = _KEY_REGISTRY[seller_id]
+        bundle = ReceiptBundle.create(seller_id, [att], kp)
+
+        result = verify_bundle(bundle.to_dict(), _test_resolver)
+
+        assert result.valid is True, result.errors
+        assert result.outcome_bound_count == 1
+        assert att["attestation_id"] not in result.outcome_unbound_attestations
