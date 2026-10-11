@@ -884,8 +884,11 @@ Checks, in order:
 7. If `context.expected_message_hashes` is present, recompute
    `MessageHash(message)` for every message and require exact array equality.
 8. If `input.receipt` is present, validate it against
-   `attestation.schema.json`, require `/concordia_attestation >= "0.3.0"` by
-   semver major/minor comparison, require `/chain_head` to match
+   `attestation.schema.json`, parse `/concordia_attestation` using the product
+   attestation-version rule (strict three-component grammar, no leading zeros,
+   no trailing newline, per-component digit cap, and no version above the
+   implemented attestation version), require the parsed version to be at least
+   `0.3.0` by semver comparison, require `/chain_head` to match
    `^sha256:[a-f0-9]{64}$`, and require `/message_count` to be an integer
    greater than or equal to 1.
 9. For every receipt party, resolve `/agent_id` in

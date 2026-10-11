@@ -35,6 +35,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- Conformance reference runners now apply the same attestation-version grammar,
+  digit cap, and implemented-version ceiling as the SDKs for receipt
+  set-binding checks.
 - Receipt-bundle and competence-proof outcome binding now share the attestation
   version grammar and implemented-version ceiling used by attestation
   validation.

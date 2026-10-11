@@ -12,10 +12,13 @@ from typing import Any, cast
 
 import pytest
 
+from concordia.attestation import MAX_ATTESTATION_VERSION_COMPONENT_DIGITS
+from scripts.conformance import generate_vectors as vector_generator
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNNER = REPO_ROOT / "conformance" / "reference-runner-js" / "runner.mjs"
 FULL_SUITE = REPO_ROOT / "conformance" / "vectors"
-EXPECTED_FULL_SUMMARY = "[SUMMARY] positive=53 mutation=1488 canary=5 ok=1546 fail=0"
+EXPECTED_FULL_SUMMARY = "[SUMMARY] positive=53 mutation=1493 canary=5 ok=1551 fail=0"
 CANARY_REGRESSIONS = {
     "canary-chain-splice": "skip-linkage-walk",
     "canary-preimage-includes-signature": "preimage-includes-signature",
@@ -90,6 +93,77 @@ def write_minimal_suite(tmp_path: Path, canary_id: str) -> Path:
     return tmp_root / "conformance" / "vectors"
 
 
+def write_receipt_version_suite(tmp_path: Path, version: str, vector_id: str) -> Path:
+    manifest = load_json(REPO_ROOT / "conformance" / "vectors" / "manifest.json")
+    files = cast(dict[str, list[str]], manifest["files"])
+    pair = vector_generator.build_receipt_set_binding_fixture()
+    messages = copy.deepcopy(pair["messages"])
+    key_by_agent = vector_generator.receipt_set_binding_key_by_agent()
+    if version == "0.6.1":
+        receipt_input = copy.deepcopy(pair["receipt"])
+        receipt_input["concordia_attestation"] = version
+        receipt_input["validity_temporal"] = {
+            "mode": "absolute",
+            "from": "2026-05-10T16:05:00Z",
+            "until": "2026-05-11T16:05:00Z",
+        }
+        receipt_input.pop("fulfillment", None)
+        receipt = vector_generator.resign_attestation(receipt_input, key_by_agent)
+    else:
+        receipt = vector_generator.receipt_with_resigned_snapshot(
+            pair["receipt"],
+            {"concordia_attestation": version},
+        )
+    vector = vector_generator.Vector(
+        vector_id=vector_id,
+        title="receipt set-binding rejects unsupported attestation version syntax",
+        source_fixture="synthetic/longtail/receipt_set_binding.json",
+        record_type="message_chain",
+        verification_profile="message-chain-v1",
+        input_data={"messages": messages, "receipt": receipt},
+        context={
+            "expected_message_count": len(messages),
+            "expected_message_hashes": [
+                vector_generator.compute_hash(message) for message in messages
+            ],
+            "public_keys_b64url": {
+                agent_id: key_pair.public_key_b64()
+                for agent_id, key_pair in sorted(key_by_agent.items())
+            },
+        },
+        expected="reject",
+        expected_reason_class="binding",
+        notes="version syntax is checked before receipt set-binding is credited",
+    )
+
+    tmp_root = tmp_path / "suite"
+    for rel_path in files["schemas"]:
+        copy_vector_file(tmp_root, rel_path)
+    vector_rel_path = f"conformance/vectors/mutation/{vector_id}.json"
+    vector_path = tmp_root / vector_rel_path
+    vector_path.parent.mkdir(parents=True, exist_ok=True)
+    vector_path.write_text(
+        json.dumps(vector.to_json(), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    mini_manifest = copy.deepcopy(manifest)
+    mini_manifest["counts"]["positive"] = 0
+    mini_manifest["counts"]["mutation"] = 1
+    mini_manifest["counts"]["canary"] = 0
+    mini_manifest["counts"]["diag_canonical_bytes"] = 0
+    mini_manifest["files"]["positive"] = []
+    mini_manifest["files"]["mutation"] = [vector_rel_path]
+    mini_manifest["files"]["canary"] = []
+    mini_manifest["files"]["diag_canonical_bytes"] = []
+    manifest_path = tmp_root / "conformance" / "vectors" / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(mini_manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return tmp_root / "conformance" / "vectors"
+
+
 def test_js_reference_runner_accepts_real_suite() -> None:
     result = run_runner(FULL_SUITE)
 
@@ -127,3 +201,27 @@ def test_js_reference_runner_rejects_tampered_vector(tmp_path: Path) -> None:
 
     assert result.returncode == 1, result.stderr + result.stdout
     assert "[FAIL] pos-1404-decision-id expected=accept got=reject" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("version", "vector_id"),
+    [
+        ("0.3.0\n", "mut-test-js-receipt-version-trailing-newline"),
+        ("0.6.1", "mut-test-js-receipt-version-implemented-ceiling"),
+        (
+            "0." + ("9" * (MAX_ATTESTATION_VERSION_COMPONENT_DIGITS + 1)) + ".0",
+            "mut-test-js-receipt-version-component-length",
+        ),
+    ],
+)
+def test_js_reference_runner_rejects_receipt_version_boundary(
+    tmp_path: Path,
+    version: str,
+    vector_id: str,
+) -> None:
+    suite = write_receipt_version_suite(tmp_path, version, vector_id)
+
+    result = run_runner(suite)
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"[OK] {vector_id}" in result.stdout

@@ -141,7 +141,12 @@ const AGENT_PROFILE_ENDPOINT_FIELDS = new Set([
 ]);
 const AGENT_PROFILE_LOCATION_FIELDS = new Set(["regions", "jurisdictions"]);
 const GENESIS_HASH = `sha256:${"0".repeat(64)}`;
-const SEMVER_RE = /^\d+\.\d+\.\d+$/u;
+// Must match _SEMVER_RE, _IMPLEMENTED_ATTESTATION_VERSION, and
+// MAX_ATTESTATION_VERSION_COMPONENT_DIGITS in concordia/attestation.py. This
+// clean-room runner keeps the rule local instead of importing Concordia.
+const ATTESTATION_VERSION_RE = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/u;
+const IMPLEMENTED_ATTESTATION_VERSION = [0n, 6n, 0n];
+const MAX_ATTESTATION_VERSION_COMPONENT_DIGITS = 4300;
 const SHA256_HEX_RE = /^sha256:[a-f0-9]{64}$/u;
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 const ED25519_PKCS8_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
@@ -1438,12 +1443,35 @@ function messageHash(message) {
   return sha256Jcs(message);
 }
 
-function attestationVersionAtLeast(value, major, minor) {
-  if (typeof value !== "string" || !SEMVER_RE.test(value)) {
-    return false;
+function parseAttestationVersion(value) {
+  if (typeof value !== "string") {
+    return null;
   }
-  const [actualMajor, actualMinor] = value.split(".").map((item) => Number(item));
-  return actualMajor > major || (actualMajor === major && actualMinor >= minor);
+  const match = ATTESTATION_VERSION_RE.exec(value);
+  if (match === null || match[0] !== value) {
+    return null;
+  }
+  const parts = value.split(".");
+  if (parts.some((part) => part.length > MAX_ATTESTATION_VERSION_COMPONENT_DIGITS)) {
+    return null;
+  }
+  try {
+    return parts.map((item) => BigInt(item));
+  } catch {
+    return null;
+  }
+}
+
+function compareAttestationVersion(left, right) {
+  for (let index = 0; index < 3; index += 1) {
+    if (left[index] < right[index]) {
+      return -1;
+    }
+    if (left[index] > right[index]) {
+      return 1;
+    }
+  }
+  return 0;
 }
 
 function verifyMessageChainReceiptBinding(suiteBase, inputData, messages, context) {
@@ -1452,7 +1480,14 @@ function verifyMessageChainReceiptBinding(suiteBase, inputData, messages, contex
   }
   const receipt = requireObject(inputData.receipt, "message chain receipt");
   validateSchema(suiteBase, "attestation.schema.json", receipt);
-  if (!attestationVersionAtLeast(receipt.concordia_attestation, 0, 3)) {
+  const version = parseAttestationVersion(receipt.concordia_attestation);
+  if (version === null) {
+    reject("receipt concordia_attestation is malformed");
+  }
+  if (compareAttestationVersion(version, IMPLEMENTED_ATTESTATION_VERSION) > 0) {
+    reject("receipt concordia_attestation is unsupported");
+  }
+  if (version[0] === 0n && version[1] < 3n) {
     reject("receipt is legacy set-unbound");
   }
   if (typeof receipt.chain_head !== "string" || !SHA256_HEX_RE.test(receipt.chain_head)) {
