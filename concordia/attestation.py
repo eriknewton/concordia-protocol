@@ -1016,19 +1016,6 @@ def _map_state_to_outcome(state: SessionState) -> OutcomeStatus:
     return mapping.get(state, OutcomeStatus.REJECTED)
 
 
-def _attestation_version_at_least(ver: str, major: int, minor: int) -> bool:
-    """Return True iff ``ver`` is semver-shaped and at least ``major.minor``.
-
-    A version that fails the shared grammar returns False; callers that must
-    fail closed use ``_version_tuple`` directly and surface the structure error.
-    """
-    try:
-        version = _version_tuple(ver)
-    except _AttestationStructureError:
-        return False
-    return version[:2] >= (major, minor)
-
-
 def evaluate_receipt_set_binding(
     attestation: dict[str, Any],
     transcript: list[dict[str, Any]] | None = None,
@@ -1053,6 +1040,8 @@ def evaluate_receipt_set_binding(
     except _AttestationStructureError as exc:
         if exc.reason == "version_component_too_long":
             return "error", [_VERSION_COMPONENT_TOO_LONG_ERROR_TEXT]
+        # Must match the grammar sentence in verifyReceiptSetBinding
+        # (js-sdk/src/attestation/attestation.ts).
         return "error", ["concordia_attestation is malformed; set not bound"]
     if version > _IMPLEMENTED_ATTESTATION_VERSION:
         return (

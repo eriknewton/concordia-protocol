@@ -115,7 +115,8 @@ export function verifyReceiptSetBinding(
       errors: [
         parsedVersion.reason === 'component_too_long'
           ? VERSION_COMPONENT_TOO_LONG_ERROR
-          : 'concordia_attestation must be three dot-separated non-negative integers without leading zeros',
+          : // Must match the set-binding grammar sentence in evaluate_receipt_set_binding (concordia/attestation.py).
+            'concordia_attestation is malformed; set not bound',
       ],
     };
   }

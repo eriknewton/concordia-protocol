@@ -18,8 +18,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from .attestation import (
     _IMPLEMENTED_ATTESTATION_VERSION,
-    _AttestationStructureError,
     _VERSION_COMPONENT_TOO_LONG_ERROR_TEXT,
+    _AttestationStructureError,
     _version_tuple,
     evaluate_receipt_set_binding,
     verify_attestation_countersignature,
@@ -30,6 +30,8 @@ from .signing import KeyPair, canonical_json, sign_message, verify_signature
 # carry a valid issuance ``countersignatures`` map or the bundle is rejected
 # (fail-closed). Below this version, the outcome is legacy prover-asserted:
 # reported as outcome-unbound and NOT credited, but NOT an error (dual-accept).
+# A malformed version, or one above the implemented attestation version, is an
+# error on either side of this floor.
 _OUTCOME_BINDING_MIN = (0, 2)
 
 

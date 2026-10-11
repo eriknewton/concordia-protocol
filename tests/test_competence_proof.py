@@ -15,7 +15,6 @@ Covers:
 from __future__ import annotations
 
 import json
-import sys
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -977,12 +976,12 @@ class TestAggregateHonesty:
 
 from concordia import Agent, generate_attestation  # noqa: E402
 from concordia import BasicOffer as _BasicOffer  # noqa: E402
-from concordia.attestation import countersign_attestation  # noqa: E402
-
-_INT_DIGIT_LIMIT = sys.get_int_max_str_digits()
-_OVERSIZED_VERSION_COMPONENT = "1" * (
-    (_INT_DIGIT_LIMIT if _INT_DIGIT_LIMIT > 0 else 4300) + 1
+from concordia.attestation import (  # noqa: E402
+    MAX_ATTESTATION_VERSION_COMPONENT_DIGITS,
+    countersign_attestation,
 )
+
+_OVERSIZED_VERSION_COMPONENT = "1" * (MAX_ATTESTATION_VERSION_COMPONENT_DIGITS + 1)
 _UNSUPPORTED_ATTESTATION_VERSIONS = [
     ("patch_next", "0.6.1"),
     ("major_next", "1.0.0"),
