@@ -87,6 +87,7 @@ interface Fixtures {
 const fixtures: Fixtures = JSON.parse(
   readFileSync(join(__dirname, 'fixtures/validation/schema_validator_vectors.json'), 'utf8'),
 );
+const SCHEMA_VALID_SIGNATURE = `${'A'.repeat(86)}==`;
 
 /** Parse a fixture `now` ISO string to epoch ms (the offset is explicit). */
 function nowMs(iso: string): number {
@@ -363,7 +364,7 @@ function validAttestation(): Record<string, unknown> {
     withdrawal: false,
   };
   return {
-    concordia_attestation: '0.1.0',
+    concordia_attestation: '0.6.0',
     attestation_id: 'att_valid',
     session_id: 'ses_valid',
     timestamp: '2026-05-10T14:22:08Z',
@@ -379,13 +380,13 @@ function validAttestation(): Record<string, unknown> {
         agent_id: 'agent_a',
         role: 'initiator',
         behavior,
-        signature: 'sig_a',
+        signature: SCHEMA_VALID_SIGNATURE,
       },
       {
         agent_id: 'agent_b',
         role: 'responder',
         behavior,
-        signature: 'sig_b',
+        signature: SCHEMA_VALID_SIGNATURE,
       },
     ],
     meta: {
@@ -395,7 +396,17 @@ function validAttestation(): Record<string, unknown> {
       mediator_invoked: false,
     },
     transcript_hash: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-    fulfillment: null,
+    chain_head: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    message_count: 3,
+    validity_temporal: {
+      mode: 'absolute',
+      from: '2026-05-10T14:22:08Z',
+      until: '2026-05-11T14:22:08Z',
+    },
+    countersignatures: {
+      agent_a: SCHEMA_VALID_SIGNATURE,
+      agent_b: SCHEMA_VALID_SIGNATURE,
+    },
   };
 }
 
@@ -406,32 +417,64 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
     expect(validateAttestation(d.bad_oneof_attestation)).toEqual(d.bad_oneof_expected);
   });
 
-  it('accepts a valid §9.6 attestation with null fulfillment', () => {
+  it('accepts a valid §9.6 attestation without root fulfillment', () => {
     const attestation = validAttestation();
     expect(validateAttestation(attestation)).toEqual([]);
     expect(isValidAttestation(attestation)).toBe(true);
   });
 
-  it('accepts a valid in-line fulfillment block through $ref/oneOf', () => {
+  it('rejects draft-structure strings Python 0.6 refuses', () => {
+    const cases: Array<[string, (attestation: Record<string, unknown>) => void]> = [
+      [
+        'non-NFC structural string',
+        (attestation) => {
+          attestation.attestation_id = 'att_e\u0301';
+        },
+      ],
+      [
+        'UTF-8 byte cap, not only code point count',
+        (attestation) => {
+          attestation.session_id = '界'.repeat(100);
+        },
+      ],
+      [
+        'unpaired surrogate',
+        (attestation) => {
+          attestation.session_id = 'session_\ud800';
+        },
+      ],
+      [
+        'non-canonical Ed25519 signature encoding',
+        (attestation) => {
+          const parties = attestation.parties as Array<Record<string, unknown>>;
+          parties[0].signature = `${'A'.repeat(85)}B==`;
+        },
+      ],
+    ];
+
+    for (const [, mutate] of cases) {
+      const attestation = validAttestation();
+      mutate(attestation);
+      expect(validateAttestation(attestation)).toContain(
+        '$: violates draft-newton-agreement-evidence-00 structure',
+      );
+    }
+  });
+
+  it('rejects the removed root fulfillment member for 0.6 attestations', () => {
     const attestation = validAttestation();
-    attestation.fulfillment = {
-      status: 'fulfilled',
-      settled_at: '2026-05-11T00:00:00Z',
-      fulfilled_at: '2026-05-11T00:05:00Z',
-      settlement_protocol: 'acp',
-      delivery_confirmed: true,
-      disputes: [],
-      counterparty_attestation: {
-        agent_id: 'agent_b',
-        confirms_fulfillment: true,
-        signature: 'sig_fulfillment',
-      },
-    };
-    expect(validateAttestation(attestation)).toEqual([]);
+    attestation.fulfillment = null;
+    expect(validateAttestation(attestation)).toEqual([
+      '$: violates \'not\' constraint: {"required": ["fulfillment"]}',
+      '$: violates draft-newton-agreement-evidence-00 structure',
+    ]);
   });
 
   it('rejects malformed and unknown attestations instead of failing open', () => {
-    expect(validateAttestation(null)).toEqual(['$: violates \'type\' constraint: "object"']);
+    expect(validateAttestation(null)).toEqual([
+      '$: violates \'type\' constraint: "object"',
+      '$: violates \'not\' constraint: {"required": ["fulfillment"]}',
+    ]);
     expect(validateAttestation({})).toEqual([
       "$: 'concordia_attestation' is a required property",
       "$: 'attestation_id' is a required property",
@@ -451,6 +494,8 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
     // string is not echoed (mirrors Python post-#95).
     expect(validateAttestation(attestation)).toEqual([
       '$.timestamp: violates \'format\' constraint: "date-time"',
+      '$.timestamp: violates \'pattern\' constraint: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\\\.[0-9]{1,3})?Z$"',
+      '$: violates draft-newton-agreement-evidence-00 structure',
     ]);
   });
 
@@ -505,9 +550,7 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
       },
     ];
     const errors = validateAttestation(attestation);
-    expect(errors).toContain(
-      "$.references[0].extensions: violates 'additionalProperties' constraint: false",
-    );
+    expect(errors).toContain("$.references[0]: violates 'additionalProperties' constraint: false");
     expect(errors.some((e) => e.includes('1900') || e.includes('quantity'))).toBe(false);
   });
 
@@ -556,7 +599,10 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
     const attestation = validAttestation();
     attestation.summary = 'x'.repeat(1025);
     const errors = validateAttestation(attestation);
-    expect(errors).toEqual(["$.summary: violates 'maxLength' constraint: 1024"]);
+    expect(errors).toEqual([
+      "$.summary: violates 'maxLength' constraint: 1024",
+      '$: violates draft-newton-agreement-evidence-00 structure',
+    ]);
     // Non-echo: the oversized instance string never rides in the error
     // (mirrors Python test_rejects_overlong_attestation_free_text).
     expect(errors.some((e) => e.includes('xxxx'))).toBe(false);
@@ -565,33 +611,8 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
   it('rejects obvious raw terms in attestation free text without echoing them', () => {
     const attestation = validAttestation();
     attestation.summary = 'Raw terms: price 1900 USD, quantity 2';
-    attestation.fulfillment = {
-      status: 'disputed',
-      settled_at: '2026-05-11T00:00:00Z',
-      delivery_confirmed: false,
-      disputes: [
-        {
-          term_id: 'delivery',
-          complainant_agent_id: 'agent_a',
-          description: 'Counterparty asked for qty: 2',
-          resolution: 'unresolved',
-        },
-      ],
-      counterparty_attestation: {
-        agent_id: 'agent_b',
-        confirms_fulfillment: false,
-        notes: 'Asked for $1900 before delivery.',
-        signature: 'sig_fulfillment',
-      },
-    };
     const errors = validateAttestation(attestation);
     expect(errors).toContain('$.summary: free-text field must not contain obvious raw deal terms');
-    expect(errors).toContain(
-      '$.fulfillment.disputes[0].description: free-text field must not contain obvious raw deal terms',
-    );
-    expect(errors).toContain(
-      '$.fulfillment.counterparty_attestation.notes: free-text field must not contain obvious raw deal terms',
-    );
     expect(
       errors.some((e) => e.includes('1900') || e.includes('quantity 2') || e.includes('$1900')),
     ).toBe(false);
@@ -606,11 +627,12 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
     // reports them.
     expect(validateAttestation(attestation)).toEqual([
       "$.references[0].id: violates 'minLength' constraint: 1",
-      '$.references[0].id: violates \'pattern\' constraint: "^\\\\S+$"',
+      '$.references[0].id: violates \'pattern\' constraint: "^[^\\\\s\\\\u0000-\\\\u001F\\\\u007F-\\\\u009F\\\\u200B-\\\\u200F\\\\u2028-\\\\u202E]+$"',
       "$.references[0].type: violates 'minLength' constraint: 1",
-      '$.references[0].type: violates \'pattern\' constraint: "^\\\\S+$"',
+      '$.references[0].type: violates \'pattern\' constraint: "^[^\\\\s\\\\u0000-\\\\u001F\\\\u007F-\\\\u009F\\\\u200B-\\\\u200F\\\\u2028-\\\\u202E]+$"',
       "$.references[0].relationship: violates 'minLength' constraint: 1",
-      '$.references[0].relationship: violates \'pattern\' constraint: "^\\\\S+$"',
+      '$.references[0].relationship: violates \'pattern\' constraint: "^[^\\\\s\\\\u0000-\\\\u001F\\\\u007F-\\\\u009F\\\\u200B-\\\\u200F\\\\u2028-\\\\u202E]+$"',
+      '$: violates draft-newton-agreement-evidence-00 structure',
     ]);
   });
 
@@ -623,13 +645,16 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
       "$.validity_temporal: violates 'oneOf' constraint: " +
         '[{"additionalProperties": false, "description": "Absolute ' +
         'clock-bounded validity. Added in v0.4.0 (WP3).", "properties":...',
+      '$: violates draft-newton-agreement-evidence-00 structure',
     ]);
 
-    const badFulfillment = validAttestation();
-    badFulfillment.fulfillment = { status: 'fulfilled' };
-    expect(validateAttestation(badFulfillment)).toEqual([
+    const removedFulfillment = validAttestation();
+    removedFulfillment.fulfillment = { status: 'fulfilled' };
+    expect(validateAttestation(removedFulfillment)).toEqual([
       "$.fulfillment: violates 'oneOf' constraint: " +
         '[{"type": "null"}, {"$ref": "#/$defs/fulfillment_attestation"}]',
+      '$: violates \'not\' constraint: {"required": ["fulfillment"]}',
+      '$: violates draft-newton-agreement-evidence-00 structure',
     ]);
   });
 });
@@ -660,9 +685,9 @@ describe('schema-validation errors never echo the instance (Python #95 parity)',
       (x) => x.name === 'concession_magnitude_below_float_minimum',
     );
     expect(c).toBeDefined();
-    expect(c?.expected).toEqual([
+    expect(c?.expected).toContain(
       "$.parties[0].behavior.concession_magnitude: violates 'minimum' constraint: 0.0",
-    ]);
+    );
   });
 
   it('truncates long constraint renderings at 120 characters + "..."', () => {

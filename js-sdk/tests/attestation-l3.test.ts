@@ -8,15 +8,11 @@
  * - REGEX ANCHORING: Python anchors with `\Z`; the TS port uses a
  *   non-multiline `$`, which (unlike Python's `$`) has no trailing-newline
  *   allowance. A trailing `\n` must reject.
- * - UNICODE WHITESPACE: Python `\s` and JS `\s` are DIFFERENT sets (Python
- *   adds U+001C..U+001F and U+0085; JS adds U+FEFF). The port bans the UNION
- *   (stricter than both); every member of either set must reject.
- * - BYTE-LENGTH vs UTF-16 LENGTH: the 2048 extensions cap counts UTF-8 bytes
- *   of canonical JSON, never `String.prototype.length`.
+ * - REFERENCE CONTROLS: Python 0.6 bans whitespace, C0/C1 controls,
+ *   zero-width controls, and bidi overrides in reference strings.
+ * - BYTE-LENGTH vs UTF-16 LENGTH: reference string caps count UTF-8 bytes.
  * - NO SILENT COERCION: malformed inputs throw; nothing is truncated,
  *   stringified, or dropped to produce an attestation anyway.
- * - EXOTIC OBJECTS: a `Date`/`Map` inside extensions must not slip through
- *   `stableStringify` as `{}` (Python's canonical_json raises TypeError).
  *
  * Cross-language byte parity of accept/reject for JSON-representable inputs
  * is covered by the Python-generated fixtures (`l3_meta_cases`,
@@ -45,9 +41,6 @@ import {
   MAX_REFERENCE_RELATIONSHIP_LENGTH,
   MAX_REFERENCE_ID_LENGTH,
   MAX_REFERENCE_OPTIONAL_STRING_LENGTH,
-  MAX_REFERENCE_EXTENSIONS_BYTES,
-  MAX_REFERENCE_EXTENSIONS_DEPTH,
-  MAX_REFERENCE_EXTENSIONS_NODES,
 } from '../src/predicate/index.js';
 import { PartyRole, SessionState } from '../src/types/index.js';
 import { KeyPair, verify } from '../src/crypto/signing.js';
@@ -314,6 +307,16 @@ describe('L3 references caps at issuance', () => {
     });
   }
 
+  it('rejects zero-width and bidi reference ids at issuance', () => {
+    for (const value of ['urn:concordia:receipt:a\u200bb', 'urn:concordia:receipt:a\u202eb']) {
+      const bad = ref();
+      bad.id = value;
+      const err = captureError(() => generate({ references: [bad] }));
+      expect(err).toBeInstanceOf(ReferenceValidationError);
+      expect(err.message).toContain('references[0].id');
+    }
+  });
+
   it('never echoes a rejected reference value', () => {
     const bad = ref();
     bad.id = 'EVIL_MARKER price=4350 USD qty=1';
@@ -324,9 +327,9 @@ describe('L3 references caps at issuance', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Whitespace ban: the documented UNION of Python \s and JS \s.
+// Whitespace ban: Python whitespace plus the 0.6 reference control set.
 // ---------------------------------------------------------------------------
-describe('L3 whitespace ban (union of Python \\s and JS \\s)', () => {
+describe('L3 whitespace ban (Python reference-string parity)', () => {
   const FIELDS = ['type', 'id', 'relationship', 'version', 'signed_at', 'signer_did'] as const;
 
   // ASCII whitespace: in BOTH languages' \s.
@@ -348,13 +351,9 @@ describe('L3 whitespace ban (union of Python \\s and JS \\s)', () => {
   // Python-ONLY \s members (JS \s does NOT match these): the port must still
   // reject them or it would be more lenient than the Python reference.
   const pythonOnlyWs = ['\u001c', '\u001d', '\u001e', '\u001f', '\u0085'];
-  // JS-ONLY \s member (Python ACCEPTS a U+FEFF in identifiers): rejected here
-  // by the documented stricter-union decision.
-  const jsOnlyWs = ['\ufeff'];
-
   for (const field of FIELDS) {
     it(`rejects every banned whitespace class embedded in ${field}`, () => {
-      for (const ws of [...asciiWs, ...bothWs, ...pythonOnlyWs, ...jsOnlyWs]) {
+      for (const ws of [...asciiWs, ...bothWs, ...pythonOnlyWs]) {
         const bad = ref();
         bad[field] = `a${ws}b`;
         const err = captureError(() => validateReference(bad, 0));
@@ -387,136 +386,47 @@ describe('L3 whitespace ban (union of Python \\s and JS \\s)', () => {
       expect(validateReference(r, 0)[field]).toBe(ok);
     }
   });
-});
 
-// ---------------------------------------------------------------------------
-// extensions: structural pre-check, byte cap, serializability.
-// ---------------------------------------------------------------------------
-describe('L3 extensions structure and byte caps', () => {
-  /** n nested single-key dicts; the innermost holds a scalar. */
-  function chain(nDicts: number): unknown {
-    let value: unknown = 0;
-    for (let i = 0; i < nDicts; i += 1) value = { a: value };
-    return value;
-  }
-
-  function withExtensions(extensions: unknown): Record<string, unknown> {
+  it('rejects format 0.6 reference extensions in the shared parser', () => {
     const r = ref();
-    r.extensions = extensions;
-    return r;
-  }
-
-  it('accepts depth exactly at the bound', () => {
-    const ext = chain(MAX_REFERENCE_EXTENSIONS_DEPTH - 1);
-    expect(validateReference(withExtensions(ext), 0).extensions).toEqual(ext);
+    r.extensions = { chain_depth: 2 };
+    const err = captureError(() => validateReference(r, 0));
+    expect(err).toBeInstanceOf(ReferenceValidationError);
+    expect(err.message).toContain('undefined member');
   });
 
-  it('rejects depth one over the bound', () => {
-    const ext = chain(MAX_REFERENCE_EXTENSIONS_DEPTH);
-    expect(() => validateReference(withExtensions(ext), 0)).toThrow(/nesting depth/);
-  });
-
-  it('rejects a deeply nested array chain', () => {
-    let value: unknown = [0];
-    for (let i = 0; i < MAX_REFERENCE_EXTENSIONS_DEPTH; i += 1) {
-      value = [value];
+  it('rejects non-NFC, multibyte-over-cap, zero-width, and bidi reference strings', () => {
+    const cases = [
+      'urn:concordia:receipt:e\u0301',
+      '界'.repeat(100),
+      'urn:concordia:receipt:a\u200bb',
+      'urn:concordia:receipt:a\u202eb',
+    ];
+    for (const value of cases) {
+      const r = ref();
+      r.id = value;
+      const err = captureError(() => validateReference(r, 0));
+      expect(err).toBeInstanceOf(ReferenceValidationError);
+      expect(err.message).toContain('whitespace-free string per SPEC §11.5.6');
     }
-    expect(() => validateReference(withExtensions({ a: value }), 0)).toThrow(/nesting depth/);
-  });
-
-  it('accepts the node count exactly at the bound', () => {
-    // Nodes: extensions dict (1) + array (1) + 254 scalars = 256.
-    const ext = { a: new Array(MAX_REFERENCE_EXTENSIONS_NODES - 2).fill(0) };
-    expect(validateReference(withExtensions(ext), 0).extensions).toEqual(ext);
-  });
-
-  it('rejects the node count one over the bound', () => {
-    const ext = { a: new Array(MAX_REFERENCE_EXTENSIONS_NODES - 1).fill(0) };
-    expect(() => validateReference(withExtensions(ext), 0)).toThrow(/nodes/);
-  });
-
-  it('rejects a wide flat object via the cheap node bound, not the byte cap', () => {
-    const ext: Record<string, number> = {};
-    for (let i = 0; i < 10_000; i += 1) ext[`k${i}`] = 0;
-    expect(() => validateReference(withExtensions(ext), 0)).toThrow(/nodes/);
-  });
-
-  it('rejects a non-object extensions value', () => {
-    expect(() => validateReference(withExtensions('free text deal terms: $4,350'), 0)).toThrow(
-      /extensions must be an object/,
-    );
-  });
-
-  it('round-trips a small extensions object', () => {
-    const out = validateReference(withExtensions({ chain_depth: 2 }), 0);
-    expect(out.extensions).toEqual({ chain_depth: 2 });
-  });
-
-  it('enforces the cap in UTF-8 BYTES of canonical JSON, not UTF-16 length', () => {
-    // 1200 x U+00E9 (2 UTF-8 bytes each): the canonical JSON string is ~1211
-    // UTF-16 units (WELL UNDER 2048) but ~2411 UTF-8 bytes (OVER 2048). An
-    // implementation that measured `String.prototype.length` would ACCEPT
-    // this -- a fail-open the Python byte semantics forbid.
-    const overByBytesOnly = { blob: 'é'.repeat(1200) };
-    const err = captureError(() => validateReference(withExtensions(overByBytesOnly), 0));
-    expect(err.message).toBe(
-      `references[0].extensions exceeds ${MAX_REFERENCE_EXTENSIONS_BYTES} canonical-JSON bytes`,
-    );
-    // And the same payload sized under the BYTE cap is accepted.
-    const underBytes = { blob: 'é'.repeat(1000) }; // ~2011 UTF-8 bytes
-    expect(validateReference(withExtensions(underBytes), 0).extensions).toEqual(underBytes);
-  });
-
-  it('rejects an ASCII payload over the byte cap', () => {
-    const ext = { blob: 'x'.repeat(MAX_REFERENCE_EXTENSIONS_BYTES + 1) };
-    expect(() => validateReference(withExtensions(ext), 0)).toThrow(/canonical-JSON bytes/);
-  });
-
-  it('rejects non-canonically-serializable numeric values (NaN/Infinity)', () => {
-    for (const bad of [NaN, Infinity, -Infinity]) {
-      expect(() => validateReference(withExtensions({ bad }), 0)).toThrow(
-        /not canonically serializable/,
-      );
-    }
-  });
-
-  it('rejects exotic objects (Date/Map) instead of serializing them as {}', () => {
-    // Python's canonical_json raises TypeError for these; JS stableStringify
-    // would silently emit "{}" for a Date (fail-open). The walk flags them.
-    for (const exotic of [new Date(), new Map()]) {
-      expect(() => validateReference(withExtensions({ v: exotic }), 0)).toThrow(
-        /not canonically serializable/,
-      );
-    }
-  });
-
-  it('never echoes rejected extensions content', () => {
-    const err = captureError(() =>
-      validateReference(withExtensions({ secret: 'SECRET_TERMS $4,350 ' + 'x'.repeat(3000) }), 0),
-    );
-    expect(err.message).not.toContain('SECRET_TERMS');
-    expect(err.message).not.toContain('4,350');
   });
 });
 
 // ---------------------------------------------------------------------------
-// Length caps count CODE POINTS (Python len), not UTF-16 units.
+// Length caps count UTF-8 bytes, not code points or UTF-16 units.
 // ---------------------------------------------------------------------------
-describe('L3 length caps use code points (Python len parity)', () => {
-  it('accepts an id of MAX_REFERENCE_ID_LENGTH astral code points', () => {
-    // U+1D11E MUSICAL SYMBOL G CLEF: 1 code point, 2 UTF-16 units. Python
-    // len() counts 256; a UTF-16 .length check would see 512 and over-reject,
-    // breaking byte parity with the Python reference.
-    const astralId = '\u{1d11e}'.repeat(MAX_REFERENCE_ID_LENGTH);
+describe('L3 length caps use UTF-8 bytes (Python _require_string parity)', () => {
+  it('accepts an ASCII id at the byte cap', () => {
+    const asciiId = 'x'.repeat(MAX_REFERENCE_ID_LENGTH);
     const r = ref();
-    r.id = astralId;
-    expect(validateReference(r, 0).id).toBe(astralId);
+    r.id = asciiId;
+    expect(validateReference(r, 0).id).toBe(asciiId);
   });
 
-  it('rejects an id one astral code point over the cap', () => {
+  it('rejects a multibyte id over the byte cap', () => {
     const r = ref();
-    r.id = '\u{1d11e}'.repeat(MAX_REFERENCE_ID_LENGTH + 1);
-    expect(() => validateReference(r, 0)).toThrow(/at most 256 chars/);
+    r.id = '\u{1d11e}'.repeat(65);
+    expect(() => validateReference(r, 0)).toThrow(/per SPEC §11\.5\.6/);
   });
 });
 
@@ -575,26 +485,6 @@ describe('L3 reference snapshot semantics (no getters, no echo, no TOCTOU)', () 
     expect(err.message).not.toContain('4350');
   }
 
-  it('a throwing getter inside extensions is rejected without ever running', () => {
-    let invoked = false;
-    const ext: Record<string, unknown> = {};
-    Object.defineProperty(ext, 'leak', {
-      enumerable: true,
-      configurable: true,
-      get(): string {
-        invoked = true;
-        throw new Error(SECRET);
-      },
-    });
-    const r = ref();
-    r.extensions = ext;
-    const err = captureError(() => validateReference(r, 0));
-    expectSanitized(err);
-    // The descriptor walk never performs [[Get]], so the hostile getter (and
-    // therefore its throw) cannot execute at all.
-    expect(invoked).toBe(false);
-  });
-
   it('a throwing getter on a top-level reference field is rejected without running', () => {
     let invoked = false;
     const r = ref();
@@ -612,62 +502,16 @@ describe('L3 reference snapshot semantics (no getters, no echo, no TOCTOU)', () 
     expect(invoked).toBe(false);
   });
 
-  it('an accessor TOCTOU probe is rejected, never sampled', () => {
-    // The classic probe: answer benignly on the first read, smuggle deal
-    // terms on every later read. Rejecting accessors outright (instead of
-    // snapshotting their first answer) means the probe never runs once.
-    let reads = 0;
-    const ext: Record<string, unknown> = {};
-    Object.defineProperty(ext, 'note', {
-      enumerable: true,
-      configurable: true,
-      get(): string {
-        reads += 1;
-        return reads === 1 ? 'benign' : SECRET;
-      },
-    });
-    const r = ref();
-    r.extensions = ext;
-    const err = captureError(() => validateReference(r, 0));
-    expectSanitized(err);
-    expect(reads).toBe(0);
-  });
-
   it('the normalized reference is detached: post-validation mutation cannot reach it', () => {
-    const inner = { a: 1 };
-    const ext: Record<string, unknown> = { inner, list: [1, 2] };
     const r = ref();
-    r.extensions = ext;
+    r.version = 'v1';
     const out = validateReference(r, 0);
     expect(out).not.toBe(r);
-    expect(out.extensions).not.toBe(ext);
-    expect((out.extensions as Record<string, unknown>).inner).not.toBe(inner);
-    // Mutate every layer of the caller's tree AFTER validation.
-    inner.a = 999;
-    (ext.list as number[]).push(4350);
-    ext.smuggled = SECRET;
+    // Mutate the caller's object AFTER validation.
     (r as Record<string, unknown>).id = SECRET;
     const serialized = JSON.stringify(out);
     expect(serialized).not.toContain('SECRET_TERMS');
-    expect(serialized).not.toContain('999');
-    expect(serialized).not.toContain('4350');
-    expect(out.extensions).toEqual({ inner: { a: 1 }, list: [1, 2] });
-  });
-
-  it('a Proxy whose traps throw is sanitized (extensions)', () => {
-    const hostile = new Proxy(
-      {},
-      {
-        ownKeys(): ArrayLike<string | symbol> {
-          throw new Error(SECRET);
-        },
-      },
-    );
-    const r = ref();
-    r.extensions = hostile;
-    const err = captureError(() => validateReference(r, 0));
-    expectSanitized(err);
-    expect(err.message).toBe('references[0].extensions could not be safely inspected');
+    expect(out.version).toBe('v1');
   });
 
   it('a Proxy whose traps throw is sanitized (the reference itself)', () => {
@@ -692,70 +536,16 @@ describe('L3 reference snapshot semantics (no getters, no echo, no TOCTOU)', () 
     expect(err.message).toBe('references[0] could not be safely inspected');
   });
 
-  it('symbol-keyed properties are rejected (reference and extensions)', () => {
+  it('symbol-keyed properties are rejected', () => {
     const r1 = ref();
     (r1 as Record<symbol | string, unknown>)[Symbol('smuggle')] = SECRET;
     expectSanitized(captureError(() => validateReference(r1, 0)));
-
-    const r2 = ref();
-    r2.extensions = { [Symbol('smuggle')]: SECRET } as Record<string, unknown>;
-    expectSanitized(captureError(() => validateReference(r2, 0)));
   });
 
-  it('non-enumerable own properties are rejected (reference and extensions)', () => {
+  it('non-enumerable own properties are rejected', () => {
     const r1 = ref();
     Object.defineProperty(r1, 'hidden', { enumerable: false, value: SECRET });
     expectSanitized(captureError(() => validateReference(r1, 0)));
-
-    const ext: Record<string, unknown> = { ok: 1 };
-    Object.defineProperty(ext, 'hidden', { enumerable: false, value: SECRET });
-    const r2 = ref();
-    r2.extensions = ext;
-    expectSanitized(captureError(() => validateReference(r2, 0)));
-  });
-
-  it('an array hole inside extensions is rejected as not canonically serializable', () => {
-    const holey = new Array<number>(2);
-    holey[0] = 1; // index 1 stays a hole
-    const r = ref();
-    r.extensions = { list: holey };
-    expect(() => validateReference(r, 0)).toThrow(/not canonically serializable/);
-  });
-
-  it('a non-index own property on an array inside extensions is rejected', () => {
-    const arr: number[] = [1, 2];
-    (arr as unknown as Record<string, unknown>).smuggle = SECRET;
-    const r = ref();
-    r.extensions = { list: arr };
-    expectSanitized(captureError(() => validateReference(r, 0)));
-  });
-
-  it('an accessor-backed array element inside extensions is rejected without running', () => {
-    let invoked = false;
-    const arr: unknown[] = [0];
-    Object.defineProperty(arr, 0, {
-      enumerable: true,
-      configurable: true,
-      get(): string {
-        invoked = true;
-        return SECRET;
-      },
-    });
-    const r = ref();
-    r.extensions = { list: arr };
-    expectSanitized(captureError(() => validateReference(r, 0)));
-    expect(invoked).toBe(false);
-  });
-
-  it('frozen plain data is still accepted (non-writable DATA props are fine)', () => {
-    const r = ref();
-    r.extensions = Object.freeze({
-      a: Object.freeze([1, 2]),
-      b: Object.freeze({ c: 'x' }),
-    });
-    Object.freeze(r);
-    const out = validateReference(r, 0);
-    expect(out.extensions).toEqual({ a: [1, 2], b: { c: 'x' } });
   });
 
   it('generateAttestation: a throwing index getter on references[] never runs and never echoes', () => {
@@ -800,15 +590,14 @@ describe('L3 reference snapshot semantics (no getters, no echo, no TOCTOU)', () 
   });
 
   it('the attested references carry the snapshot, not the caller objects', () => {
-    const ext: Record<string, unknown> = { chain_depth: 2 };
     const r = ref();
-    r.extensions = ext;
+    r.version = 'v1';
     const att = generate({ references: [r] });
     const attRefs = att.references as Array<Record<string, unknown>>;
     expect(attRefs[0]).not.toBe(r);
-    expect(attRefs[0]!.extensions).not.toBe(ext);
+    expect(attRefs[0]!.version).toBe('v1');
     // Post-issuance mutation of the caller's object cannot alter the record.
-    ext.smuggled = SECRET;
+    r.version = SECRET;
     expect(JSON.stringify(att)).not.toContain('SECRET_TERMS');
   });
 });

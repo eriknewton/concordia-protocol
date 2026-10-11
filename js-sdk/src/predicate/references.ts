@@ -21,73 +21,42 @@
  *   so the order in the message is type, then id, then relationship.
  * - `type` and `relationship` values OUTSIDE the canonical vocabularies are
  *   PRESERVED as opaque strings (§11.5.8 forward-compat MUST), not rejected.
- * - Optional keys `version`, `signed_at`, `signer_did`, `extensions` are passed
- *   through when present; ALL OTHER keys are DROPPED from the normalized output
- *   (Python rebuilds a fresh dict with only the known keys).
+ * - Optional keys `version`, `signed_at`, and `signer_did` are passed through
+ *   when present. Python 0.6 closes the member set, so `extensions` and every
+ *   other extra key are rejected before normalized output is built.
  *
  * L3 hardening (security audit 2026-06-09; port of Python PR #95): every
- * string field is length-capped and whitespace-banned (legitimate identifiers
- * such as UUIDs, DIDs, URNs, ISO timestamps, and semver never contain
- * whitespace, so any whitespace indicates prose deal terms), and `extensions`
- * is structure-capped (nesting depth, node count) BEFORE being size-capped
- * (canonical-JSON UTF-8 bytes), so the §11.5.8 opaque-string forward-compat
- * clause cannot be used to smuggle free-text deal terms or unbounded payloads
- * into a signed attestation. Fail-closed: oversize or wrongly-typed values
- * throw {@link ReferenceValidationError}; invalid values are NEVER echoed back
- * in the error text (content-injection lens: these errors can land in logs and
- * MCP responses), and nothing is ever silently truncated or coerced.
+ * string field is NFC-normalized, UTF-8-octet-capped, and forbidden-control /
+ * whitespace-banned. Fail-closed: oversize or wrongly-typed values throw
+ * {@link ReferenceValidationError}; invalid values are NEVER echoed back in the
+ * error text (content-injection lens: these errors can land in logs and MCP
+ * responses), and nothing is ever silently truncated or coerced.
  *
  * SNAPSHOT SEMANTICS (adversarial-review fix, 2026-06-12): validation runs
  * against a defensive plain-data SNAPSHOT of the input, never against the
- * caller's live object, and the normalized result (including `extensions`) is
- * that snapshot, never a reference to caller-owned data. Concretely:
+ * caller's source object, and the normalized result is that snapshot, never a
+ * reference to caller-owned data. Concretely:
  * - Property values are read via `Object.getOwnPropertyDescriptor(...).value`,
- *   so a GETTER IS NEVER EXECUTED. The previous walk used `Object.values()`,
- *   which invokes enumerable getters; a getter that throws leaked its
- *   attacker-controlled error text verbatim (no-echo violation), and a getter
- *   that answers differently across reads could pass validation with one value
- *   and serialize another later (TOCTOU). Accessor properties are REJECTED
- *   outright rather than sampled: Python's plain-dict model cannot represent
- *   an accessor, so nothing legitimate is lost, and rejecting (instead of
- *   snapshotting the getter's current answer) means hostile code is never run
- *   at all.
+ *   so a GETTER IS NEVER EXECUTED. Accessor properties are REJECTED outright
+ *   rather than sampled: Python's plain-dict model cannot represent an
+ *   accessor, and rejecting keeps validation side-effect-free.
  * - Symbol keys, non-enumerable own properties, array holes, non-index array
  *   properties, and array subclasses are likewise rejected (none is
  *   representable in canonical JSON or in a Python dict). Non-writable DATA
  *   properties (e.g. a frozen input) remain accepted.
  * - The ENTIRE inspection is wrapped so that ANY foreign throw (a Proxy trap,
- *   a revoked proxy, a hostile prototype) is converted to a sanitized
+ *   a revoked proxy, an unusual prototype) is converted to a sanitized
  *   {@link ReferenceValidationError} that includes NEITHER the caught error
  *   text NOR any input value.
- * - The canonical-byte cap is measured over the SNAPSHOT, and the snapshot is
- *   what callers get back, so the bytes that were capped are exactly the bytes
- *   any later serialization will emit.
+ * - The snapshot is what callers get back, so no caller-owned mutation can
+ *   change the validated reference after the check.
  *
  * JS/Python divergence decisions (each resolved in the STRICTER, fail-closed
  * direction, and each pinned by a test):
- * - WHITESPACE: Python's `\s` on `str` patterns matches Unicode whitespace
- *   INCLUDING U+001C..U+001F (FS/GS/RS/US separators) and U+0085 (NEL), but
- *   NOT U+FEFF. JS `\s` matches U+FEFF (zero-width no-break space / BOM) but
- *   NOT U+001C..U+001F / U+0085. Neither set contains the other, so
- *   {@link WHITESPACE_RE} is the UNION of both: everything Python rejects is
- *   rejected here, plus U+FEFF which only JS rejects (over-strict, safe).
- * - LENGTH CAPS count Unicode CODE POINTS (Python `len(str)` semantics), NOT
- *   UTF-16 code units (`String.prototype.length`), so a cap boundary behaves
- *   identically in both languages even for astral characters.
- * - The extensions BYTE cap counts UTF-8 BYTES of the canonical JSON (Python
- *   `len(canonical_json(...))` over `bytes`), NEVER the UTF-16 string length:
- *   a multibyte payload that is under 2048 UTF-16 units but over 2048 UTF-8
- *   bytes is REJECTED, exactly as Python.
- * - A non-JSON exotic object inside `extensions` (a `Date`, `Map`, class
- *   instance) is rejected as not canonically serializable, matching Python's
- *   `canonical_json` TypeError path; JS's `stableStringify` alone would have
- *   silently serialized e.g. a `Date` as `{}` (fail-open), so the structural
- *   walk flags exotics explicitly and rejects AFTER the structural bounds
- *   (preserving Python's error ordering: depth/node errors fire during the
- *   walk; serializability errors fire after it).
+ * - LENGTH CAPS count UTF-8 OCTETS, matching Python `_require_string`.
+ *   Multibyte identifiers over the octet cap are rejected even when they are
+ *   under the JSON Schema code-point cap.
  */
-
-import { canonicalizeJcs } from '../canonical/canonicalize.js';
 
 // L3 hardening caps, value-identical to the Python constants in
 // `concordia/attestation.py` and to the shared schemas
@@ -96,45 +65,38 @@ export const MAX_REFERENCE_TYPE_LENGTH = 64;
 export const MAX_REFERENCE_RELATIONSHIP_LENGTH = 64;
 export const MAX_REFERENCE_ID_LENGTH = 256;
 export const MAX_REFERENCE_OPTIONAL_STRING_LENGTH = 256;
+// Retained as exported alpha API constants for older callers; Python 0.6
+// rejects reference-level `extensions` before these caps are reached.
 export const MAX_REFERENCE_EXTENSIONS_BYTES = 2048;
-
-// Structural pre-check bounds for extensions (Python review fix, finding 4):
-// the canonical-byte cap alone is enforced only AFTER full canonical
-// serialization, so a huge or deeply nested extensions object would be fully
-// walked before rejection (DoS lens). These bounds are checked with a cheap
-// early-bailing walk BEFORE canonicalization, mirroring Python
-// `_check_extensions_structure`.
 export const MAX_REFERENCE_EXTENSIONS_DEPTH = 8;
 export const MAX_REFERENCE_EXTENSIONS_NODES = 256;
 
 /**
- * Whitespace ban for identifier-shaped reference string fields.
- *
- * UNION of Python's Unicode `\s` and JS `\s` (see the module-header divergence
- * note): JS `\s` already covers tab/LF/VT/FF/CR/space, NBSP, OGHAM space,
- * U+2000..U+200A, LS/PS, NNBSP, MMSP, ideographic space, and U+FEFF; the
- * explicit ranges add the Python-only U+001C..U+001F (file/group/record/unit
- * separators) and U+0085 (NEL). The union is stricter than either language
- * alone -- fail-closed.
+ * Forbidden reference identifier controls. Must match the Python
+ * `_reference_string` path in `concordia/attestation.py`: whitespace plus C0,
+ * DEL, C1, zero-width controls, and bidi override controls.
  */
-// U+001C..U+001F are intentional: the cross-language whitespace ban must match
-// Python's file/group/record/unit separators to stay byte-for-byte fail-closed
-// (see the JSDoc above).
-// eslint-disable-next-line no-control-regex
-const WHITESPACE_RE = /[\s\u001c-\u001f\u0085]/;
+// U+0000..U+001F and U+007F..U+009F are intentional C0/C1 control ranges.
+const REFERENCE_FORBIDDEN_RE =
+  // eslint-disable-next-line no-control-regex
+  /[\p{White_Space}\u0000-\u001F\u007F-\u009F\u200B-\u200F\u2028-\u202E]/u;
 
-/**
- * Python `len(str)` semantics: the number of Unicode CODE POINTS, not UTF-16
- * code units. `for..of` iterates by code point. Early-bails via the UTF-16
- * length: a code point occupies at most 2 UTF-16 units, so a string whose
- * `.length` exceeds `2 * cap` has more than `cap` code points without needing
- * the O(n) walk (keeps pathological multi-megabyte inputs cheap to reject).
- */
-function pyLen(s: string, capHint: number): number {
-  if (s.length > 2 * capHint) return s.length; // already > capHint code points
-  let n = 0;
-  for (const _cp of s) n += 1;
-  return n;
+function hasLoneSurrogate(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(i + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
+      i += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function utf8ByteLength(value: string): number {
+  return Buffer.byteLength(value, 'utf8');
 }
 
 /** The three optional STRING reference keys, in Python's iteration order. */
@@ -199,27 +161,26 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 /**
  * True when the value is an identifier-shaped string acceptable for a
- * reference field: a non-empty whitespace-free string of at most `cap` code
- * points. Mirrors the Python compound condition
- * `isinstance(v, str) and v and len(v) <= cap and not _WHITESPACE_RE.search(v)`.
+ * reference field: a non-empty NFC string of at most `cap` UTF-8 octets with
+ * no whitespace, C0/C1 controls, zero-width controls, or bidi overrides.
+ * Mirrors Python `_reference_string`, which wraps `_require_string`.
  */
 function isValidIdentifierString(value: unknown, cap: number): value is string {
   return (
     typeof value === 'string' &&
-    value.length > 0 &&
-    pyLen(value, cap) <= cap &&
-    !WHITESPACE_RE.test(value)
+    !hasLoneSurrogate(value) &&
+    value.normalize('NFC') === value &&
+    utf8ByteLength(value) > 0 &&
+    utf8ByteLength(value) <= cap &&
+    !REFERENCE_FORBIDDEN_RE.test(value)
   );
 }
 
 /**
  * Sanitized rejection for ANY error thrown by foreign code while the input is
- * being inspected (a Proxy trap, a revoked proxy, a hostile prototype). The
- * caught error's text is NEVER included: a thrown message is attacker-
- * controlled content, and echoing it would reopen the no-echo invariant the
- * rest of this module enforces (probe: a trap throwing
- * `Error("SECRET_TERMS price=4350")` must not surface those bytes in logs or
- * MCP responses).
+ * being inspected (a Proxy trap, a revoked proxy, an unusual prototype). The
+ * caught error's text is NEVER included; thrown messages are caller-controlled
+ * content, and the no-echo invariant requires sanitized diagnostics.
  */
 function sanitizedInspectionError(label: string): ReferenceValidationError {
   return new ReferenceValidationError(`${label} could not be safely inspected`);
@@ -318,27 +279,20 @@ export interface PlainDataSnapshotOptions {
 
 /**
  * Single-pass defensive deep copy of a plain-data tree (adversarial-review
- * fix; supersedes the separate `checkExtensionsStructure` pre-walk, which
- * read values with `Object.values()` and therefore EXECUTED enumerable
- * getters). Shared by the reference `extensions` validator (via
- * {@link snapshotExtensionsTree}) and by `Predicate.fromDict`, whose
+ * fix). Shared by reference validation and by `Predicate.fromDict`, whose
  * `{ ...data }` spread had the same accessor-execution / throw-echo exposure.
  *
  * In one descriptor-based walk this:
  * - enforces the optional structural bounds (`maxDepth`, `maxNodes`),
- *   bailing out as soon as either bound is crossed (a byte cap alone would
- *   only fire after a full canonical serialization -- DoS lens, Python
- *   `_check_extensions_structure` parity);
+ *   bailing out as soon as either bound is crossed;
  * - rejects accessor properties, non-enumerable own properties, symbol keys,
  *   array holes, non-index array properties, and array subclasses WITHOUT
  *   invoking any of them (see {@link snapshotOwnData} for the rationale;
  *   holes and array subclasses are non-JSON LEAVES handled per `nonJson`
  *   rather than shape rejections);
- * - copies every accepted value into a fresh plain-data tree, so the caller
- *   can canonicalize, byte-cap, and RETURN the snapshot with the guarantee
- *   that no later read can observe content that was not validated, and that
- *   no later MUTATION of the caller's tree can reach the snapshot (TOCTOU
- *   closure).
+ * - copies every accepted value into a fresh plain-data tree, so no later read
+ *   can observe content that was not validated, and no later mutation of the
+ *   caller's tree can reach the snapshot.
  *
  * Invalid input is never echoed back. Foreign throws are converted to a
  * sanitized error by the CALLER's wrapper, not here.
@@ -466,35 +420,16 @@ export function snapshotPlainData(
 }
 
 /**
- * Defensive deep copy of a reference's `extensions` tree: the
- * {@link snapshotPlainData} walk under the L3 structural bounds
- * ({@link MAX_REFERENCE_EXTENSIONS_DEPTH} / {@link MAX_REFERENCE_EXTENSIONS_NODES})
- * with the reference-scoped error label. Kept as a named wrapper so
- * `validateReference` reads at the same altitude as before.
- */
-function snapshotExtensionsTree(
-  extensions: Record<string, unknown>,
-  index: number,
-): PlainDataSnapshot {
-  return snapshotPlainData(extensions, {
-    label: `references[${index}].extensions`,
-    maxDepth: MAX_REFERENCE_EXTENSIONS_DEPTH,
-    maxNodes: MAX_REFERENCE_EXTENSIONS_NODES,
-  });
-}
-
-/**
  * Validate and normalize a single attestation-level reference per SPEC §11.5.
  * Mirrors Python `concordia.attestation._validate_reference(ref, index)`,
- * including the L3 hardening (length caps, whitespace ban, extensions
- * structure + canonical-byte caps). See the module header for the parity
- * contract and the JS/Python strictness decisions.
+ * including the 0.6 string hardening (NFC, UTF-8 byte caps, and forbidden
+ * controls). See the module header for the parity contract.
  *
  * Validation runs against a defensive plain-data SNAPSHOT of `ref` (see the
  * module header, SNAPSHOT SEMANTICS): getters are never executed, accessor /
  * non-enumerable / symbol-keyed properties are rejected, any foreign throw is
- * converted to a sanitized error, and the returned object (including its
- * `extensions`) is the snapshot, never the caller's object.
+ * converted to a sanitized error, and the returned object is the snapshot,
+ * never the caller's object.
  *
  * @param ref The reference value (expected to be a plain object).
  * @param index The reference's position, used verbatim in error messages.
@@ -521,9 +456,15 @@ export function validateReference(ref: unknown, index: number): Record<string, u
     if (err instanceof ReferenceValidationError) {
       throw err;
     }
-    // A Proxy trap (or revoked proxy / hostile prototype) threw. Never echo
-    // the caught error text: it is attacker-controlled content.
+    // A Proxy trap or revoked proxy threw. Never echo the caught error text:
+    // it is caller-controlled content.
     throw sanitizedInspectionError(`references[${index}]`);
+  }
+  const allowedKeys = new Set(['id', 'type', 'relationship', 'version', 'signed_at', 'signer_did']);
+  if (Object.keys(snap).some((key) => !allowedKeys.has(key))) {
+    throw new ReferenceValidationError(
+      `references[${index}] contains undefined member(s) for attestation format 0.6.0`,
+    );
   }
   const missing = ['type', 'id', 'relationship'].filter((k) => !(k in snap));
   if (missing.length > 0) {
@@ -538,23 +479,17 @@ export function validateReference(ref: unknown, index: number): Record<string, u
   const relationship = snap.relationship;
   if (!isValidIdentifierString(refType, MAX_REFERENCE_TYPE_LENGTH)) {
     throw new ReferenceValidationError(
-      `references[${index}].type must be a non-empty whitespace-free ` +
-        `string of at most ${MAX_REFERENCE_TYPE_LENGTH} chars ` +
-        `per SPEC §11.5.6`,
+      `references[${index}].type must be a non-empty whitespace-free string per SPEC §11.5.6`,
     );
   }
   if (!isValidIdentifierString(refId, MAX_REFERENCE_ID_LENGTH)) {
     throw new ReferenceValidationError(
-      `references[${index}].id must be a non-empty whitespace-free ` +
-        `string of at most ${MAX_REFERENCE_ID_LENGTH} chars ` +
-        `per SPEC §11.5.6`,
+      `references[${index}].id must be a non-empty whitespace-free string per SPEC §11.5.6`,
     );
   }
   if (!isValidIdentifierString(relationship, MAX_REFERENCE_RELATIONSHIP_LENGTH)) {
     throw new ReferenceValidationError(
-      `references[${index}].relationship must be a non-empty ` +
-        `whitespace-free string of at most ` +
-        `${MAX_REFERENCE_RELATIONSHIP_LENGTH} chars per SPEC §11.5.6`,
+      `references[${index}].relationship must be a non-empty whitespace-free string per SPEC §11.5.6`,
     );
   }
   const normalized: Record<string, unknown> = {
@@ -567,56 +502,11 @@ export function validateReference(ref: unknown, index: number): Record<string, u
       const value = snap[key];
       if (!isValidIdentifierString(value, MAX_REFERENCE_OPTIONAL_STRING_LENGTH)) {
         throw new ReferenceValidationError(
-          `references[${index}].${key} must be a ` +
-            `non-empty whitespace-free string of at most ` +
-            `${MAX_REFERENCE_OPTIONAL_STRING_LENGTH} chars`,
+          `references[${index}].${key} must be a non-empty whitespace-free string per SPEC §11.5.6`,
         );
       }
       normalized[key] = value;
     }
-  }
-  if ('extensions' in snap) {
-    // The extensions VALUE came out of the top-level snapshot, but its own
-    // tree is still caller-owned (and possibly accessor-backed or a Proxy):
-    // deep-copy it under the same sanitized wrapper before anything reads it.
-    const extensions = snap.extensions;
-    let walked: PlainDataSnapshot;
-    try {
-      if (!isPlainObject(extensions)) {
-        throw new ReferenceValidationError(`references[${index}].extensions must be an object`);
-      }
-      walked = snapshotExtensionsTree(extensions, index);
-    } catch (err) {
-      if (err instanceof ReferenceValidationError) {
-        throw err;
-      }
-      throw sanitizedInspectionError(`references[${index}].extensions`);
-    }
-    if (walked.sawNonJson) {
-      // Python's canonical_json raises TypeError on a non-JSON object; JS's
-      // stableStringify would silently emit `{}` for a Date/Map (fail-open),
-      // so reject explicitly with the same error Python's catch produces.
-      throw new ReferenceValidationError(
-        `references[${index}].extensions is not canonically serializable`,
-      );
-    }
-    // From here on, only the plain-data snapshot is read: the byte cap is
-    // measured over EXACTLY the bytes a later serialization will emit.
-    let extensionsBytes: number;
-    try {
-      extensionsBytes = canonicalizeJcs(walked.snapshot).length;
-    } catch {
-      throw new ReferenceValidationError(
-        `references[${index}].extensions is not canonically serializable`,
-      );
-    }
-    if (extensionsBytes > MAX_REFERENCE_EXTENSIONS_BYTES) {
-      throw new ReferenceValidationError(
-        `references[${index}].extensions exceeds ` +
-          `${MAX_REFERENCE_EXTENSIONS_BYTES} canonical-JSON bytes`,
-      );
-    }
-    normalized.extensions = walked.snapshot;
   }
   return normalized;
 }

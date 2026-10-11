@@ -32,6 +32,7 @@ the rest of the engine fixtures target) unless PYTHON is overridden.
 
 from __future__ import annotations
 
+import copy
 import json
 import sys
 from datetime import datetime, timedelta, timezone
@@ -40,6 +41,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from concordia import attestation as att
 from concordia import signing
+from concordia.schema_validator import validate_attestation
 from concordia.message import GENESIS_HASH, compute_hash
 from concordia.session import Session
 from concordia.types import (
@@ -196,6 +198,18 @@ def _key_b64_map():
     }
 
 
+def _attestation_reason_class(errors: list[str]) -> str | None:
+    if not errors:
+        return None
+    if any("draft-newton-agreement-evidence-00 version grammar" in error for error in errors):
+        return "version_grammar"
+    if any("draft-newton-agreement-evidence-00 structure" in error for error in errors):
+        return "draft_structure"
+    if any("free-text field must not contain obvious raw deal terms" in error for error in errors):
+        return "privacy"
+    return "schema"
+
+
 def main() -> None:
     cases = []
 
@@ -237,8 +251,9 @@ def main() -> None:
         _attestation_case("decline_session", s, {AGENT_A: KP_A, AGENT_B: KP_B})
     )
 
-    # Case 3: AGREED but only ONE agent supplied a key -> the other party gets an
-    # empty-string signature. Exercises the keyPairs-miss branch.
+    # Case 3: AGREED with split resolution. Since attestation 0.6.0, every
+    # listed party must have a signing key; the keyless refusal is covered by a
+    # dedicated JS test rather than a successful fixture case.
     s = _build_concluded_session(
         "partial_keys",
         [
@@ -250,9 +265,9 @@ def main() -> None:
     )
     cases.append(
         _attestation_case(
-            "partial_keys",
+            "split_resolution",
             s,
-            {AGENT_A: KP_A},  # B intentionally omitted
+            {AGENT_A: KP_A, AGENT_B: KP_B},
             kwargs={"resolution_mechanism": ResolutionMechanism.SPLIT},
         )
     )
@@ -304,7 +319,6 @@ def main() -> None:
                         "relationship": "fulfills",
                         "version": "1.0",
                         "signer_did": AGENT_A,
-                        "ignored_extra_key": "DROP_ME",
                     },
                     {
                         # unknown type + relationship preserved as opaque strings
@@ -627,48 +641,6 @@ def main() -> None:
         "relative",
         {"mode": "relative", "from": "2026-01-01T00:00:00Z", "duration_seconds": 3600},
     )
-    _vt_norm(
-        "window",
-        {
-            "mode": "window",
-            "start": "2026-01-01T00:00:00Z",
-            "end": "2026-01-02T00:00:00Z",
-            "duration_seconds": 3600,
-        },
-    )
-    # naive (no offset) timestamps -> treated as UTC; still normalizes/round-trips.
-    _vt_norm(
-        "absolute_naive",
-        {"mode": "absolute", "from": "2026-01-01T00:00:00", "until": "2026-02-01T00:00:00"},
-    )
-    # Alternate VALID ISO-8601 spellings `fromisoformat` accepts -- the strict
-    # parser must NOT over-reject these legitimate forms (no regression from the
-    # fail-open fix). Explicit +HH:MM offset, +HHMM (no colon) offset, and a
-    # comma fractional-second second all parse to real instants in BOTH runtimes.
-    _vt_norm(
-        "absolute_explicit_offset",
-        {
-            "mode": "absolute",
-            "from": "2026-01-01T00:00:00+00:00",
-            "until": "2026-02-01T00:00:00+00:00",
-        },
-    )
-    _vt_norm(
-        "absolute_offset_no_colon",
-        {
-            "mode": "absolute",
-            "from": "2026-01-01T00:00:00+0000",
-            "until": "2026-02-01T00:00:00+0000",
-        },
-    )
-    _vt_norm(
-        "absolute_comma_fraction",
-        {
-            "mode": "absolute",
-            "from": "2026-01-01T00:00:00,500Z",
-            "until": "2026-02-01T00:00:00Z",
-        },
-    )
 
     vt_error_cases = []
 
@@ -700,53 +672,37 @@ def main() -> None:
         "relative_float_duration",
         {"mode": "relative", "from": "2026-01-01T00:00:00Z", "duration_seconds": 1.5},
     )
-    _vt_err("window_missing", {"mode": "window", "start": "2026-01-01T00:00:00Z"})
-    _vt_err(
-        "window_end_not_after",
-        {
-            "mode": "window",
-            "start": "2026-01-02T00:00:00Z",
-            "end": "2026-01-01T00:00:00Z",
-            "duration_seconds": 60,
-        },
-    )
-    _vt_err(
-        "window_duration_exceeds_span",
-        {
-            "mode": "window",
-            "start": "2026-01-01T00:00:00Z",
-            "end": "2026-01-01T01:00:00Z",  # 3600s span
-            "duration_seconds": 7200,
-        },
-    )
-    # SUB-MILLISECOND span fail-open (fixed 2026-06-01; residual left out of scope
-    # by the PR #43 RFC-822 fix). The real span is 0.999001s, so Python compares
-    # `1 > (end - start).total_seconds()` == `1 > 0.999001` -> True -> REJECT. A TS
-    # port that FLOORS both endpoints to whole epoch ms reads a flat 1.000s span
-    # and wrongly ACCEPTS (`1 > 1.0` is False). The fix recomputes the window span
-    # at microsecond precision (cpythonIsoDateTimeToEpochMicros). These two cases
-    # pin the dot- and comma-fraction spellings -- both reject identically here.
-    _vt_err(
-        "window_duration_exceeds_span_subms",
-        {
-            "mode": "window",
-            "start": "2026-06-01T00:00:00.000999Z",  # 999 microseconds
-            "end": "2026-06-01T00:00:01.000000Z",
-            "duration_seconds": 1,  # 0.999001s real span < 1s
-        },
-    )
-    _vt_err(
-        "window_duration_exceeds_span_subms_comma",
-        {
-            "mode": "window",
-            "start": "2026-06-01T00:00:00,000999Z",  # comma fractional spelling
-            "end": "2026-06-01T00:00:01.000000Z",
-            "duration_seconds": 1,
-        },
-    )
     _vt_err(
         "from_not_string",
         {"mode": "absolute", "from": 123, "until": "2026-02-01T00:00:00Z"},
+    )
+    _vt_err(
+        "absolute_naive",
+        {"mode": "absolute", "from": "2026-01-01T00:00:00", "until": "2026-02-01T00:00:00"},
+    )
+    _vt_err(
+        "absolute_explicit_offset",
+        {
+            "mode": "absolute",
+            "from": "2026-01-01T00:00:00+00:00",
+            "until": "2026-02-01T00:00:00+00:00",
+        },
+    )
+    _vt_err(
+        "absolute_offset_no_colon",
+        {
+            "mode": "absolute",
+            "from": "2026-01-01T00:00:00+0000",
+            "until": "2026-02-01T00:00:00+0000",
+        },
+    )
+    _vt_err(
+        "absolute_comma_fraction",
+        {
+            "mode": "absolute",
+            "from": "2026-01-01T00:00:00,500Z",
+            "until": "2026-02-01T00:00:00Z",
+        },
     )
     # FAIL-OPEN FIX (2026-06-01): RFC-822 / RFC-1123 / locale date spellings that
     # JS `Date.parse` ACCEPTS but Python `datetime.fromisoformat` REJECTS with a
@@ -775,15 +731,6 @@ def main() -> None:
         {"mode": "relative", "from": "June 1, 2026", "duration_seconds": 3600},
     )
     _vt_err(
-        "window_slash_date_start",
-        {
-            "mode": "window",
-            "start": "2026/06/01",
-            "end": "2026-06-02T00:00:00Z",
-            "duration_seconds": 60,
-        },
-    )
-    _vt_err(
         "absolute_over_reference_maximum",
         {
             "mode": "absolute",
@@ -797,15 +744,6 @@ def main() -> None:
             "mode": "relative",
             "from": "2026-01-01T00:00:00Z",
             "duration_seconds": 7_776_001,
-        },
-    )
-    _vt_err(
-        "window_over_reference_maximum",
-        {
-            "mode": "window",
-            "start": "2026-01-01T00:00:00Z",
-            "end": "2026-04-02T00:00:01Z",
-            "duration_seconds": 1,
         },
     )
 
@@ -837,7 +775,7 @@ def main() -> None:
     _valid_now("absolute_before", ABS, "2025-12-31T23:59:59Z")
     _valid_now("absolute_after", ABS, "2026-02-01T00:00:01Z")
     _valid_now("absolute_at_from", ABS, "2026-01-01T00:00:00Z")  # inclusive
-    _valid_now("absolute_at_until", ABS, "2026-02-01T00:00:00Z")  # exclusive
+    _valid_now("absolute_at_until", ABS, "2026-02-01T00:00:00Z")  # inclusive
 
     REL = {
         "validity_temporal": {
@@ -848,18 +786,6 @@ def main() -> None:
     }
     _valid_now("relative_inside", REL, "2026-01-01T12:00:00Z")
     _valid_now("relative_after", REL, "2026-01-02T00:00:01Z")
-
-    WIN = {
-        "validity_temporal": {
-            "mode": "window",
-            "start": "2026-01-01T00:00:00Z",
-            "end": "2026-01-02T00:00:00Z",
-            "duration_seconds": 3600,
-        }
-    }
-    _valid_now("window_fits", WIN, "2026-01-01T12:00:00Z")
-    _valid_now("window_tail_too_short", WIN, "2026-01-01T23:30:00Z")  # <3600s left
-    _valid_now("window_before", WIN, "2025-12-31T00:00:00Z")
 
     _valid_now("no_constraint", {}, "2026-01-01T00:00:00Z")
     _valid_now(
@@ -900,39 +826,6 @@ def main() -> None:
         }
     }
     _valid_now("relative_str_int_inside", REL_STR, "2026-01-01T12:00:00Z")
-    # window fractional duration -> int(3600.9) == 3600.
-    WIN_FRAC = {
-        "validity_temporal": {
-            "mode": "window",
-            "start": "2026-01-01T00:00:00Z",
-            "end": "2026-01-02T00:00:00Z",
-            "duration_seconds": 3600.9,
-        }
-    }
-    _valid_now("window_frac_fits", WIN_FRAC, "2026-01-01T12:00:00Z")
-    # window string-int duration.
-    WIN_STR = {
-        "validity_temporal": {
-            "mode": "window",
-            "start": "2026-01-01T00:00:00Z",
-            "end": "2026-01-02T00:00:00Z",
-            "duration_seconds": "3600",
-        }
-    }
-    _valid_now("window_str_int_fits", WIN_STR, "2026-01-01T12:00:00Z")
-    # window mode SHORT-CIRCUITS before reading duration when now is outside the
-    # [start, end] range -> a bad duration is NOT evaluated -> returns False
-    # WITHOUT raising. Parity-critical: the int() coercion must sit AFTER the
-    # range check, exactly as Python.
-    WIN_BAD_DUR_OUTSIDE = {
-        "validity_temporal": {
-            "mode": "window",
-            "start": "2026-01-01T00:00:00Z",
-            "end": "2026-01-02T00:00:00Z",
-            "duration_seconds": "not-a-number",
-        }
-    }
-    _valid_now("window_bad_dur_but_now_before", WIN_BAD_DUR_OUTSIDE, "2025-12-31T00:00:00Z")
 
     # is_valid_now cases where Python's int(duration_seconds) RAISES (a
     # non-integer-formatted string -> ValueError; None -> TypeError). The TS
@@ -979,7 +872,7 @@ def main() -> None:
                 "duration_seconds": "1.5",
             }
         },
-        "2026-01-01T00:00:00.5Z",
+        "2026-01-01T00:00:00.500Z",
     )
     # relative, None -> int(None) TypeError.
     _valid_now_err(
@@ -989,20 +882,6 @@ def main() -> None:
                 "mode": "relative",
                 "from": "2026-01-01T00:00:00Z",
                 "duration_seconds": None,
-            }
-        },
-        "2026-01-01T12:00:00Z",
-    )
-    # window, bad string -- but now MUST be inside [start, end] so the duration
-    # read is reached (outside short-circuits before the read, see case above).
-    _valid_now_err(
-        "window_str_bad_now_inside",
-        {
-            "validity_temporal": {
-                "mode": "window",
-                "start": "2026-01-01T00:00:00Z",
-                "end": "2026-01-02T00:00:00Z",
-                "duration_seconds": "xyz",
             }
         },
         "2026-01-01T12:00:00Z",
@@ -1067,6 +946,285 @@ def main() -> None:
         },
     )
 
+    # ------------------------------------------------------------------
+    # Attestation validation mutation corpus. Every verdict is produced by
+    # Python `validate_attestation`; JS consumes the same vectors and compares
+    # accept/reject plus the reason class. This deliberately covers the fields
+    # read by the 0.6.0 draft-structure companion, not only JSON Schema.
+    # ------------------------------------------------------------------
+    base_attestation = copy.deepcopy(
+        next(case["expected"] for case in cases if case["name"] == "with_refs_vt")
+    )
+    mutation_corpus = []
+
+    def _add_mutation(name: str, mutate, note: str = "") -> None:
+        candidate = copy.deepcopy(base_attestation)
+        mutate(candidate)
+        errors = validate_attestation(candidate)
+        if name.endswith("_python_accept") and errors:
+            raise AssertionError(f"{name} must be accepted by Python: {errors}")
+        mutation_corpus.append(
+            {
+                "name": name,
+                "input": candidate,
+                "expected": "accept" if not errors else "reject",
+                "expected_reason_class": _attestation_reason_class(errors),
+                "expected_errors": errors,
+                "note": note,
+            }
+        )
+
+    def _refresh_party_countersignatures(candidate: dict) -> None:
+        countersignatures = {}
+        for index, party in enumerate(candidate["parties"]):
+            agent_id = party.get("agent_id")
+            if not isinstance(agent_id, str) or agent_id in countersignatures:
+                continue
+            key_pair = (KP_A, KP_B)[index]
+            countersignatures[agent_id] = att.countersign_attestation(candidate, key_pair)
+        candidate["countersignatures"] = countersignatures
+
+    def _set_party_agent_id(candidate: dict, index: int, agent_id: str) -> None:
+        candidate["parties"][index]["agent_id"] = agent_id
+        _refresh_party_countersignatures(candidate)
+
+    def _duplicate_party_agent_id(candidate: dict) -> None:
+        candidate["parties"][1]["agent_id"] = candidate["parties"][0]["agent_id"]
+        _refresh_party_countersignatures(candidate)
+
+    def _set_version_with_duplicate_party(candidate: dict, version: str) -> None:
+        candidate["concordia_attestation"] = version
+        _duplicate_party_agent_id(candidate)
+
+    def _set_version_and_mutate(candidate: dict, version: str, mutate) -> None:
+        candidate["concordia_attestation"] = version
+        mutate(candidate)
+
+    def _add_root_fulfillment(candidate: dict) -> None:
+        candidate["fulfillment"] = None
+
+    def _set_validity_window_mode(candidate: dict) -> None:
+        candidate["validity_temporal"] = {
+            "mode": "window",
+            "from": "2026-01-01T00:00:00Z",
+            "until": "2026-01-02T00:00:00Z",
+        }
+
+    def _add_reference_extensions(candidate: dict) -> None:
+        candidate["references"][0]["extensions"] = {}
+
+    _add_mutation("valid_baseline", lambda _: None)
+
+    for key in (
+        "concordia_attestation",
+        "attestation_id",
+        "session_id",
+        "timestamp",
+        "outcome",
+        "parties",
+        "meta",
+        "transcript_hash",
+        "chain_head",
+        "message_count",
+        "validity_temporal",
+        "countersignatures",
+        "summary",
+        "references",
+    ):
+        _add_mutation(f"root_remove_{key}", lambda a, k=key: a.pop(k, None))
+    _add_mutation("root_extra_member", lambda a: a.__setitem__("extra_member", True))
+
+    _add_mutation("attestation_id_256_ascii_octets", lambda a: a.__setitem__("attestation_id", "a" * 256))
+    _add_mutation("attestation_id_257_ascii_octets", lambda a: a.__setitem__("attestation_id", "a" * 257))
+    _add_mutation("session_id_85_cjk_255_octets", lambda a: a.__setitem__("session_id", "界" * 85))
+    _add_mutation("session_id_86_cjk_258_octets", lambda a: a.__setitem__("session_id", "界" * 86))
+    _add_mutation("attestation_id_non_nfc", lambda a: a.__setitem__("attestation_id", "att_e\u0301"))
+    _add_mutation("attestation_id_lone_surrogate", lambda a: a.__setitem__("attestation_id", "att_\ud800"))
+    _add_mutation("attestation_id_zero_width", lambda a: a.__setitem__("attestation_id", "att_\u200b"))
+    _add_mutation("attestation_id_bidi_override", lambda a: a.__setitem__("attestation_id", "att_\u202e"))
+    _add_mutation(
+        "attestation_id_bom_python_accept",
+        lambda a: a.__setitem__("attestation_id", "att_\ufeff"),
+        "Python's whitespace predicate does not classify U+FEFF as whitespace.",
+    )
+
+    for version in ("0.5.0", "0.5.9", "0.6.0", "0.6.1", "1.0.0", "00.6.0", "0.6.0\n", "bogus"):
+        _add_mutation(
+            "version_" + version.encode("unicode_escape").decode("ascii").replace("\\", "_"),
+            lambda a, v=version: a.__setitem__("concordia_attestation", v),
+        )
+    _add_mutation(
+        "version_0.6.1_duplicate_party_ids",
+        lambda a: _set_version_with_duplicate_party(a, "0.6.1"),
+    )
+    _add_mutation(
+        "version_1.0.0_duplicate_party_ids",
+        lambda a: _set_version_with_duplicate_party(a, "1.0.0"),
+    )
+
+    for digits in range(1, 10):
+        frac = "1" * digits
+        _add_mutation(
+            f"timestamp_fraction_{digits}",
+            lambda a, f=frac: a.__setitem__("timestamp", f"2026-05-29T12:00:00.{f}Z"),
+        )
+    _add_mutation("timestamp_no_fraction", lambda a: a.__setitem__("timestamp", "2026-05-29T12:00:00Z"))
+
+    _add_mutation("outcome_remove_status", lambda a: a["outcome"].pop("status", None))
+    _add_mutation("outcome_extra_member", lambda a: a["outcome"].__setitem__("extra", True))
+    _add_mutation("outcome_rounds_float", lambda a: a["outcome"].__setitem__("rounds", 1.5))
+    _add_mutation("outcome_terms_count_zero", lambda a: a["outcome"].__setitem__("terms_count", 0))
+
+    _add_mutation("parties_remove_agent_id", lambda a: a["parties"][0].pop("agent_id", None))
+    _add_mutation("parties_extra_member", lambda a: a["parties"][0].__setitem__("extra", True))
+    _add_mutation("parties_duplicate_agent_ids", _duplicate_party_agent_id)
+    _add_mutation("party_agent_id_256_ascii_octets", lambda a: _set_party_agent_id(a, 0, "p" * 256))
+    _add_mutation("party_agent_id_257_ascii_octets", lambda a: _set_party_agent_id(a, 0, "p" * 257))
+    _add_mutation("party_agent_id_zero_width", lambda a: _set_party_agent_id(a, 0, "agent\u200b"))
+    _add_mutation("party_agent_id_bom_python_accept", lambda a: _set_party_agent_id(a, 0, "agent\ufeff"))
+    _add_mutation("party_signature_noncanonical_final", lambda a: a["parties"][0].__setitem__("signature", a["parties"][0]["signature"][:85] + "B=="))
+    _add_mutation("party_signature_canonical_final_A", lambda a: a["parties"][0].__setitem__("signature", a["parties"][0]["signature"][:85] + "A=="))
+
+    _add_mutation("meta_extra_member", lambda a: a["meta"].__setitem__("extra", True))
+    _add_mutation("meta_extensions_used_at_cap", lambda a: a["meta"].__setitem__("extensions_used", [f"e{i}" for i in range(16)]))
+    _add_mutation("meta_extensions_used_over_cap", lambda a: a["meta"].__setitem__("extensions_used", [f"e{i}" for i in range(17)]))
+    _add_mutation("meta_extension_64_octets", lambda a: a["meta"].__setitem__("extensions_used", ["e" * 64]))
+    _add_mutation("meta_extension_65_octets", lambda a: a["meta"].__setitem__("extensions_used", ["e" * 65]))
+
+    _add_mutation("root_add_fulfillment", _add_root_fulfillment)
+    for version in ("0.4.0", "0.5.0"):
+        version_name = version.replace(".", "_")
+        _add_mutation(
+            f"version_{version_name}_root_add_fulfillment",
+            lambda a, v=version: _set_version_and_mutate(a, v, _add_root_fulfillment),
+        )
+    _add_mutation("reference_extra_member", lambda a: a["references"][0].__setitem__("extra", True))
+    _add_mutation("reference_add_extensions", _add_reference_extensions)
+    for version in ("0.4.0", "0.5.0"):
+        version_name = version.replace(".", "_")
+        _add_mutation(
+            f"version_{version_name}_reference_add_extensions",
+            lambda a, v=version: _set_version_and_mutate(a, v, _add_reference_extensions),
+        )
+    _add_mutation("reference_extra_and_missing_order", lambda a: (a["references"][0].pop("type", None), a["references"][0].__setitem__("extra", True)))
+    _add_mutation("reference_remove_type", lambda a: a["references"][0].pop("type", None))
+    _add_mutation("reference_id_256_ascii_octets", lambda a: a["references"][0].__setitem__("id", "r" * 256))
+    _add_mutation("reference_id_257_ascii_octets", lambda a: a["references"][0].__setitem__("id", "r" * 257))
+    _add_mutation("reference_id_85_cjk_255_octets", lambda a: a["references"][0].__setitem__("id", "界" * 85))
+    _add_mutation("reference_id_86_cjk_258_octets", lambda a: a["references"][0].__setitem__("id", "界" * 86))
+    _add_mutation("reference_id_non_nfc", lambda a: a["references"][0].__setitem__("id", "ref_e\u0301"))
+    _add_mutation("reference_id_lone_surrogate", lambda a: a["references"][0].__setitem__("id", "ref_\ud800"))
+    _add_mutation("reference_id_zero_width", lambda a: a["references"][0].__setitem__("id", "ref\u200b"))
+    _add_mutation("reference_id_bidi_override", lambda a: a["references"][0].__setitem__("id", "ref\u202e"))
+    _add_mutation("reference_id_bom_python_accept", lambda a: a["references"][0].__setitem__("id", "ref\ufeff"))
+    for digits in range(1, 10):
+        frac = "1" * digits
+        _add_mutation(
+            f"reference_signed_at_fraction_{digits}",
+            lambda a, f=frac: a["references"][0].__setitem__("signed_at", f"2026-05-29T12:00:00.{f}Z"),
+        )
+
+    _add_mutation(
+        "validity_absolute_at_reference_cap",
+        lambda a: a.__setitem__(
+            "validity_temporal",
+            {"mode": "absolute", "from": "2026-01-01T00:00:00Z", "until": "2026-04-01T00:00:00Z"},
+        ),
+    )
+    _add_mutation(
+        "validity_absolute_past_reference_cap_python_accept",
+        lambda a: a.__setitem__(
+            "validity_temporal",
+            {"mode": "absolute", "from": "2026-01-01T00:00:00Z", "until": "2026-04-01T00:00:01Z"},
+        ),
+        "Python's draft-structure path caps relative lifetimes only.",
+    )
+    _add_mutation(
+        "validity_relative_at_reference_cap",
+        lambda a: a.__setitem__(
+            "validity_temporal",
+            {"mode": "relative", "from": "2026-01-01T00:00:00Z", "duration_seconds": 7_776_000},
+        ),
+    )
+    _add_mutation(
+        "validity_relative_past_reference_cap",
+        lambda a: a.__setitem__(
+            "validity_temporal",
+            {"mode": "relative", "from": "2026-01-01T00:00:00Z", "duration_seconds": 7_776_001},
+        ),
+    )
+    _add_mutation("validity_window_mode", _set_validity_window_mode)
+    for version in ("0.4.0", "0.5.0"):
+        version_name = version.replace(".", "_")
+        _add_mutation(
+            f"version_{version_name}_validity_window_mode",
+            lambda a, v=version: _set_version_and_mutate(a, v, _set_validity_window_mode),
+        )
+
+    _add_mutation("countersignature_remove_signer", lambda a: a["countersignatures"].pop(a["parties"][0]["agent_id"], None))
+    _add_mutation("countersignature_extra_signer", lambda a: a["countersignatures"].__setitem__("did:concordia:agent:gamma", a["countersignatures"][a["parties"][0]["agent_id"]]))
+    _add_mutation("countersignature_name_bidi", lambda a: a["countersignatures"].__setitem__("did:concordia:agent:\u202egamma", a["countersignatures"].pop(a["parties"][0]["agent_id"])))
+    _add_mutation("countersignature_value_noncanonical_final", lambda a: a["countersignatures"].__setitem__(a["parties"][0]["agent_id"], a["countersignatures"][a["parties"][0]["agent_id"]][:85] + "B=="))
+
+    issuance_reference_cases = []
+
+    def _issuance_ref_case(name: str, references) -> None:
+        s_local = _build_concluded_session(
+            f"issueref_{name}",
+            [
+                {"sender": AGENT_A, "type": MessageType.OPEN, "body": OPEN_BODY},
+                {"sender": AGENT_B, "type": MessageType.ACCEPT_SESSION, "body": {}},
+                {"sender": AGENT_A, "type": MessageType.OFFER, "body": OFFER_BODY_1},
+                {"sender": AGENT_B, "type": MessageType.ACCEPT, "body": {}},
+            ],
+        )
+        entry = {
+            "name": name,
+            "session": {
+                "session_id": s_local.session_id,
+                "parties": [
+                    {"agent_id": aid, "role": role.value}
+                    for aid, role in s_local.parties.items()
+                ],
+                "transcript": s_local.transcript,
+                "created_at_ms": int(T0.timestamp() * 1000),
+                "concluded_at_ms": int(s_local.concluded_at.timestamp() * 1000),
+                "state": s_local.state.value,
+            },
+            "references": references,
+        }
+        try:
+            r = att.generate_attestation(
+                s_local,
+                {AGENT_A: KP_A, AGENT_B: KP_B},
+                references=references,
+            )
+            validation_errors = validate_attestation(r)
+            entry["expected_references"] = r["references"]
+            entry["expected_error"] = None
+            entry["expected_validate_errors"] = validation_errors
+            entry["expected_validate_reason_class"] = _attestation_reason_class(validation_errors)
+        except Exception as e:  # noqa: BLE001
+            entry["expected_references"] = None
+            entry["expected_error"] = str(e)
+            entry["expected_error_type"] = type(e).__name__
+            entry["expected_validate_errors"] = None
+            entry["expected_validate_reason_class"] = None
+        issuance_reference_cases.append(entry)
+
+    _issuance_ref_case(
+        "bom_id_round_trips_to_validator",
+        [{"type": "receipt", "id": "ref\ufeff", "relationship": "fulfills"}],
+    )
+    _issuance_ref_case(
+        "extra_and_missing_reports_extra_first",
+        [{"id": "ref_extra_missing", "relationship": "fulfills", "extra": True}],
+    )
+    _issuance_ref_case(
+        "reference_extensions_rejected_by_shared_parser",
+        [{"type": "receipt", "id": "ref_extensions", "relationship": "fulfills", "extensions": {}}],
+    )
+
     doc = {
         "_comment": (
             "Generated by js-sdk/scripts/gen-attestation-fixtures.py from "
@@ -1094,9 +1252,13 @@ def main() -> None:
         # L3 meta hardening (Python PR #95): value_range bucket vocabulary +
         # category taxonomy, captured accept/reject from the Python reference.
         "l3_meta_cases": l3_meta_cases,
+        "mutation_corpus": mutation_corpus,
+        "issuance_reference_cases": issuance_reference_cases,
     }
 
-    json.dump(doc, sys.stdout, ensure_ascii=False, indent=2)
+    # The mutation corpus intentionally includes escaped lone-surrogate cases;
+    # ensure_ascii=True keeps those vectors representable as JSON bytes.
+    json.dump(doc, sys.stdout, ensure_ascii=True, indent=2)
     sys.stdout.write("\n")
 
 

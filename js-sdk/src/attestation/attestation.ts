@@ -58,10 +58,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { canonicalizeJcs, canonicalCosignBytes } from '../canonical/canonicalize.js';
 import { toBase64Url, fromBase64Url } from '../crypto/base64url.js';
 import { sign, KeyPair } from '../crypto/signing.js';
-import {
-  cpythonIsoDateTimeToEpochMs,
-  cpythonIsoDateTimeToEpochMicros,
-} from '../internal/iso-datetime.js';
+import { cpythonIsoDateTimeToEpochMs } from '../internal/iso-datetime.js';
 import {
   OutcomeStatus,
   ResolutionMechanism,
@@ -72,13 +69,18 @@ import { validateReference } from '../predicate/references.js';
 import { computeHash, type Session } from '../session/index.js';
 
 /** Attestation schema version, byte-identical to Python `ATTESTATION_VERSION`. */
-export const ATTESTATION_VERSION = '0.5.0';
+export const ATTESTATION_VERSION = '0.6.0';
 /** Reference issuer's default and maximum attestation lifetime: 90 days. */
 export const DEFAULT_ATTESTATION_VALIDITY_SECONDS = 90 * 24 * 60 * 60;
 export const MAX_ATTESTATION_VALIDITY_SECONDS = DEFAULT_ATTESTATION_VALIDITY_SECONDS;
 const SET_BINDING_MIN = { major: 0, minor: 3 } as const;
-const SEMVER_PATTERN = /^\d+\.\d+\.\d+$/;
+// Must match `_SEMVER_RE` in concordia/attestation.py: ASCII digits, no leading
+// zeros and no trailing newline. The version grammar is a structure gate, not a
+// coercion site.
+const STRICT_VERSION_PATTERN = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
 const SHA256_HEX_PATTERN = /^sha256:[a-f0-9]{64}$/;
+const RFC3339_Z_PATTERN =
+  /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,3})?Z$/;
 
 export type ReceiptSetBindingState =
   'bound' | 'fields_present_unverified' | 'legacy_set_unbound' | 'error';
@@ -89,7 +91,7 @@ export interface ReceiptSetBindingResult {
 }
 
 function attestationVersionAtLeast(version: unknown, major: number, minor: number): boolean {
-  if (typeof version !== 'string' || !SEMVER_PATTERN.test(version)) return false;
+  if (typeof version !== 'string' || !STRICT_VERSION_PATTERN.test(version)) return false;
   const parts = version.split('.');
   const gotMajor = Number.parseInt(parts[0] ?? '0', 10);
   const gotMinor = Number.parseInt(parts[1] ?? '0', 10);
@@ -208,11 +210,10 @@ export function verifyAttestationCountersignature(
 }
 
 /**
- * The three validity_temporal modes, mirroring Python `VALIDITY_TEMPORAL_MODES`.
- * Distinct from the mandate-layer `ValidityWindow` (sequence/windowed/state_bound);
- * these are the WP3 attestation-level temporal modes.
+ * The validity_temporal modes, mirroring Python `VALIDITY_TEMPORAL_MODES`.
+ * Distinct from the mandate-layer `ValidityWindow` (sequence/windowed/state_bound).
  */
-export const VALIDITY_TEMPORAL_MODES = ['absolute', 'relative', 'window'] as const;
+export const VALIDITY_TEMPORAL_MODES = ['absolute', 'relative'] as const;
 
 /** Error raised when an attestation cannot be generated or its inputs are invalid. */
 export class AttestationError extends Error {
@@ -353,53 +354,23 @@ function validateCategory(category: unknown): string {
 }
 
 /**
- * Parse an ISO 8601 UTC timestamp string, mirroring Python `_parse_iso8601`.
+ * Parse a validity timestamp after the shared RFC 3339 gate.
  *
- * Returns the parsed instant as epoch milliseconds (a number is sufficient for
- * the ordering / span comparisons the validators perform; we never re-emit it).
- * Parity contract:
- * - A non-string input raises {@link AttestationError} with Python's
- *   `<field_name> must be an ISO 8601 string`.
- * - A trailing `Z` is accepted (Python replaces it with `+00:00`).
- * - A value that does not parse raises
- *   `<field_name> is not a valid ISO 8601 timestamp: <detail>`. The `<detail>`
- *   half is the underlying parser's message and is NOT asserted for byte-parity
- *   (CPython's `datetime.fromisoformat` and our port produce different detail
- *   text); the prefix up to and including the colon is the stable, asserted part.
- * - A timestamp with no timezone offset is treated as UTC (Python's
- *   `tzinfo is None -> replace(tzinfo=utc)`), so naive and `Z`-suffixed forms of
- *   the same wall-clock instant compare equal.
- *
- * FAIL-CLOSED PARSE (Python parity, not lenient `Date.parse`). The prior
- * implementation normalized a naive form to UTC and then handed the string to
- * JS `Date.parse`. `Date.parse` is FAR more permissive than Python's
- * `datetime.fromisoformat`: it accepts RFC-822 / RFC-1123 forms like
- * `"Mon, 01 Jun 2026 00:00:00 GMT"`, `"June 1, 2026"`, and `"2026/06/01"`, all
- * of which `fromisoformat` REJECTS with a `ValueError`. That was a fail-OPEN: an
- * attestation carrying such a `validity_temporal` timestamp would be HONORED by
- * the TS SDK while the Python reference rejects it outright. We now delegate to
- * the shared CPython-3.12-`fromisoformat`-faithful parser
- * ({@link cpythonIsoDateTimeToEpochMs}, the same source of truth the schema
- * validator and approval-receipt verifier use), so anything Python's
- * `fromisoformat` rejects is rejected here too, while every valid ISO-8601
- * spelling (extended/basic, `Z` / `±HH:MM` / `±HHMM` / `±HH` offsets, comma or
- * dot fractional seconds, naive-is-UTC) still parses to the identical instant.
+ * The validator accepts only `Z`-offset date-times with at most three fractional
+ * digits, then delegates to the CPython-faithful parser for calendar validity
+ * and epoch-millisecond conversion. The two stable diagnostics are
+ * `<field_name> must be RFC 3339 date-time with Z offset and at most three fractional digits`
+ * for shape/type failures and `<field_name> is not a valid timestamp` for
+ * calendar failures.
  */
 function parseIso8601(ts: unknown, fieldName: string): number {
-  if (typeof ts !== 'string') {
-    throw new AttestationError(`${fieldName} must be an ISO 8601 string`);
+  const structureError = `${fieldName} must be RFC 3339 date-time with Z offset and at most three fractional digits`;
+  if (typeof ts !== 'string' || !RFC3339_Z_PATTERN.test(ts)) {
+    throw new AttestationError(structureError);
   }
-  // Python `_parse_iso8601`: `ts.replace("Z", "+00:00") if ts.endswith("Z")
-  // else ts`, then `datetime.fromisoformat(...)`, then naive -> UTC. The shared
-  // strict parser does the `Z -> +00:00` substitution internally and interprets
-  // a naive value as UTC, so passing the raw string reproduces Python exactly --
-  // and, unlike `Date.parse`, it REJECTS any form `fromisoformat` rejects
-  // (RFC-822 / RFC-1123 / locale date spellings), closing the fail-open.
   const ms = cpythonIsoDateTimeToEpochMs(ts);
   if (ms === null) {
-    throw new AttestationError(
-      `${fieldName} is not a valid ISO 8601 timestamp: invalid isoformat string: ${jsRepr(ts)}`,
-    );
+    throw new AttestationError(`${fieldName} is not a valid timestamp`);
   }
   return ms;
 }
@@ -432,11 +403,10 @@ function pyTypeName(value: unknown): string {
   return typeof value;
 }
 
-/** A normalized validity_temporal tagged union (the three WP3 modes). */
+/** A normalized validity_temporal tagged union (the validity_temporal modes). */
 export type ValidityTemporal =
   | { mode: 'absolute'; from: string; until: string }
-  | { mode: 'relative'; from: string; duration_seconds: number }
-  | { mode: 'window'; start: string; end: string; duration_seconds: number };
+  | { mode: 'relative'; from: string; duration_seconds: number };
 
 /**
  * Strict plain-object test mirroring Python's `isinstance(x, dict)`. A loose
@@ -455,15 +425,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 /**
  * Python's `isinstance(x, int)` semantics for the `duration_seconds` field.
  *
- * Python requires a true `int` (NOT a float): `isinstance(duration, int)`. A
- * Python `bool` is an `int` subclass, so `True`/`False` would pass the isinstance
- * gate, but then fail the `< 1` magnitude check unless it is `True` (== 1).
- * Mirror this exactly: a JS number that is an integer (and not NaN/Infinity)
- * counts; a JS boolean counts as 1/0 (Python `bool` -> int); everything else
- * (a float with a fractional part, a string, null, object) does NOT.
+ * Python 0.6 requires a true `int` and explicitly excludes `bool` for the
+ * issuance validator. A JS number that is an integer counts; booleans do not.
  */
 function pyIntValue(value: unknown): number | null {
-  if (typeof value === 'boolean') return value ? 1 : 0;
   if (typeof value === 'number') {
     return Number.isInteger(value) ? value : null;
   }
@@ -675,9 +640,9 @@ function normalizeReferences(references: unknown): Array<Record<string, unknown>
     // caught error text: it is attacker-controlled content.
     throw new AttestationError('references[] could not be safely inspected');
   }
-  // OUTSIDE the sanitizing wrapper: per-element validation errors
-  // (ReferenceValidationError) carry Python-identical text and must propagate
-  // unchanged. They never echo input either.
+  // OUTSIDE the sanitizing wrapper: the shared parser owns the closed member
+  // set and error ordering. Keeping one parser prevents issuance from signing a
+  // reference that validator-side draft structure rejects.
   return elements.map((ref, i) => validateReference(ref, i));
 }
 
@@ -692,13 +657,17 @@ export function validateValidityTemporal(vt: unknown): ValidityTemporal {
     throw new AttestationError('validity_temporal must be a dict');
   }
   const mode = vt.mode;
-  if (mode !== 'absolute' && mode !== 'relative' && mode !== 'window') {
+  if (mode !== 'absolute' && mode !== 'relative') {
     throw new AttestationError(
-      `validity_temporal.mode ${pyReprValue(mode)} not in ` + `('absolute', 'relative', 'window')`,
+      `validity_temporal.mode ${pyReprValue(mode)} not in ` + `('absolute', 'relative')`,
     );
   }
 
   if (mode === 'absolute') {
+    const extra = Object.keys(vt).filter((k) => !['mode', 'from', 'until'].includes(k));
+    if (extra.length > 0) {
+      throw new AttestationError('validity_temporal carries undefined member(s)');
+    }
     const missing = ['from', 'until'].filter((k) => !(k in vt));
     if (missing.length > 0) {
       throw new AttestationError(`validity_temporal[absolute] missing: ${pyListRepr(missing)}`);
@@ -718,6 +687,10 @@ export function validateValidityTemporal(vt: unknown): ValidityTemporal {
   }
 
   if (mode === 'relative') {
+    const extra = Object.keys(vt).filter((k) => !['mode', 'from', 'duration_seconds'].includes(k));
+    if (extra.length > 0) {
+      throw new AttestationError('validity_temporal carries undefined member(s)');
+    }
     const missing = ['from', 'duration_seconds'].filter((k) => !(k in vt));
     if (missing.length > 0) {
       throw new AttestationError(`validity_temporal[relative] missing: ${pyListRepr(missing)}`);
@@ -741,78 +714,9 @@ export function validateValidityTemporal(vt: unknown): ValidityTemporal {
       duration_seconds: duration,
     };
   }
-
-  // window
-  const missing = ['start', 'end', 'duration_seconds'].filter((k) => !(k in vt));
-  if (missing.length > 0) {
-    throw new AttestationError(`validity_temporal[window] missing: ${pyListRepr(missing)}`);
-  }
-  const start = parseIso8601(vt.start, 'validity_temporal.start');
-  const end = parseIso8601(vt.end, 'validity_temporal.end');
-  if (end <= start) {
-    throw new AttestationError('validity_temporal[window]: end must be after start');
-  }
-  const duration = pyIntValue(vt.duration_seconds);
-  if (duration === null || duration < 1) {
-    throw new AttestationError('validity_temporal[window].duration_seconds must be a positive int');
-  }
-  // Python compares `duration_seconds` against `(end - start).total_seconds()`,
-  // which carries MICROSECOND precision (a Python `datetime`'s resolution). The
-  // ms-floored `start`/`end` above are correct for the ordering check, but using
-  // them for the SPAN floors a sub-millisecond fractional second down to the whole
-  // ms -- INFLATING the apparent span to the next ms and ACCEPTING a window Python
-  // REJECTS (fail-OPEN; e.g. start=...00.000999Z / end=...01.000000Z is a
-  // 0.999001s span that floors to a flat 1.000s, so duration_seconds=1 wrongly
-  // passes `1 > 1.0`, while Python's `1 > 0.999001` rejects). Recompute the span
-  // at EXACT microsecond precision (bigint, exact across the full year 1..9999
-  // datetime range) so the comparison is byte-identical to Python's
-  // `total_seconds()`. Using bigint -- rather than a number with a safe-integer
-  // fallback to the coarse-ms span -- is deliberate: that fallback would reopen
-  // this same fail-open for valid far-future windows (> ~year 2255). `vt.start`/
-  // `vt.end` are strings here (`parseIso8601` above already rejected a non-string
-  // or unparseable value), so the micros parse cannot be null; treat null
-  // defensively as fail-closed rather than falling back to a coarser span.
-  const startMicros = cpythonIsoDateTimeToEpochMicros(vt.start as string);
-  const endMicros = cpythonIsoDateTimeToEpochMicros(vt.end as string);
-  if (startMicros === null || endMicros === null) {
-    throw new AttestationError(
-      'validity_temporal[window] start/end not parseable at microsecond precision',
-    );
-  }
-  // Compare at EXACT integer-microsecond precision: `duration_seconds > span`
-  // is equivalent to `duration_seconds * 1_000_000 (micros) > (end - start)
-  // micros`, an all-bigint comparison with NO floating point. This is the
-  // ground-truth rational comparison, so no rounding can let a sub-span window
-  // through at ANY datetime range. (Narrowing the bigint delta to a Number and
-  // dividing -- as an earlier draft did -- rounds the delta to a double BEFORE
-  // dividing for spans beyond ~285 years, which diverges from Python and reopened
-  // the fail-open for a near-full-range window.) The only residual vs Python's
-  // lossy float `total_seconds()` is at extreme (>285-year) spans and is in the
-  // over-STRICT (fail-closed, safe) direction -- the same residual class the ms
-  // ordering check above already carries. `duration` is a validated positive int.
-  if (BigInt(duration) * 1_000_000n > endMicros - startMicros) {
-    throw new AttestationError(
-      'validity_temporal[window].duration_seconds exceeds the window span',
-    );
-  }
-  if (endMicros - startMicros > BigInt(MAX_ATTESTATION_VALIDITY_SECONDS) * 1_000_000n) {
-    throw new AttestationError(
-      'validity_temporal[window] exceeds the reference issuer ' +
-        'maximum lifetime of 7776000 seconds',
-    );
-  }
-  return {
-    mode: 'window',
-    start: vt.start as string,
-    end: vt.end as string,
-    duration_seconds: duration,
-  };
+  const exhaustiveMode: never = mode;
+  return exhaustiveMode;
 }
-
-// Must match `_SEMVER_RE` in concordia/attestation.py: ASCII digits, no
-// leading zeros, no trailing newline (JavaScript `$` without the `m` flag
-// never matches before a final newline, unlike Python's).
-const STRICT_VERSION_PATTERN = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
 
 /**
  * Return `true` if the attestation's `validity_temporal` contains `now`,
@@ -823,10 +727,8 @@ const STRICT_VERSION_PATTERN = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9
  *   required field -> `false`, even if this helper is called before schema
  *   validation. A malformed or absent version with no field -> `false`.
  * - A `validity_temporal` that is not a dict, or a dict missing `mode` -> `false`.
- * - `absolute`: `from <= now < until`.
- * - `relative`: `from <= now < from + duration_seconds`.
- * - `window`: `start <= now < end` AND a `duration_seconds`-sized window anchored
- *   at `now` still fits before `end` (`end - now >= duration_seconds`).
+ * - `absolute`: `from <= now <= until`.
+ * - `relative`: `from <= now <= from + duration_seconds`.
  * - Any unknown mode -> `false`.
  *
  * @param attestation The attestation object (or any dict with an optional
@@ -852,7 +754,7 @@ export function isValidNow(attestation: Record<string, unknown>, now?: number): 
   if (mode === 'absolute') {
     const frm = parseIso8601(vt.from, 'validity_temporal.from');
     const until = parseIso8601(vt.until, 'validity_temporal.until');
-    return frm <= nowMs && nowMs < until;
+    return frm <= nowMs && nowMs <= until;
   }
   if (mode === 'relative') {
     const frm = parseIso8601(vt.from, 'validity_temporal.from');
@@ -860,18 +762,7 @@ export function isValidNow(attestation: Record<string, unknown>, now?: number): 
     // Python-`int()` coercion (truncate-toward-zero / reject non-int-coercible),
     // NOT the lenient `Number(...)` which accepted "1.5" and produced NaN.
     const until = frm + pyIntCoerce(vt.duration_seconds) * 1000;
-    return frm <= nowMs && nowMs < until;
-  }
-  if (mode === 'window') {
-    const start = parseIso8601(vt.start, 'validity_temporal.start');
-    const end = parseIso8601(vt.end, 'validity_temporal.end');
-    if (!(start <= nowMs && nowMs < end)) {
-      return false;
-    }
-    // Python: `timedelta(seconds=int(vt["duration_seconds"]))`. Mirror Python's
-    // `int()` coercion exactly (truncate / reject), not the lenient `Number()`.
-    const durationMs = pyIntCoerce(vt.duration_seconds) * 1000;
-    return end - nowMs >= durationMs;
+    return frm <= nowMs && nowMs <= until;
   }
   return false;
 }
@@ -900,7 +791,7 @@ export interface GenerateAttestationOptions {
   resolutionMechanism?: ResolutionMechanism;
   /** Optional attestation-level references per SPEC §11.5. */
   references?: Array<Record<string, unknown>> | null;
-  /** Temporal validity window (three-mode tagged union); defaults to 90 days. */
+  /** Temporal validity window (two-mode tagged union: absolute or relative); defaults to 90 days. */
   validityTemporal?: Record<string, unknown> | null;
   /**
    * Override for the random `attestation_id` suffix. Defaults to a fresh random
@@ -971,6 +862,14 @@ export function generateAttestation(
 
   // Build party records with signatures (parties in registration order; the
   // Map preserves insertion order, matching Python's insertion-ordered dict).
+  const missingPartyKeys = [...session.parties.keys()].filter(
+    (agentId) => !Object.hasOwn(keyPairs, agentId),
+  );
+  if (missingPartyKeys.length > 0) {
+    throw new AttestationError(
+      'Cannot generate attestation: every listed party must have a signing key',
+    );
+  }
   const parties: Array<Record<string, unknown>> = [];
   for (const [agentId, role] of session.parties) {
     const behavior = session.getBehavior(agentId);
@@ -982,12 +881,8 @@ export function generateAttestation(
     // Sign the party's behavioral record. The record has no `signature` key yet,
     // so the signed bytes are `{agent_id, role, behavior}` -- identical to
     // Python (whose `sign_message` would strip `signature` anyway).
-    const kp = keyPairs[agentId];
-    if (kp !== undefined) {
-      partyRecord.signature = sign(partyRecord, kp);
-    } else {
-      partyRecord.signature = '';
-    }
+    const kp = keyPairs[agentId]!;
+    partyRecord.signature = sign(partyRecord, kp);
     parties.push(partyRecord);
   }
 
@@ -1055,7 +950,6 @@ export function generateAttestation(
     transcript_hash: transcriptHash,
     chain_head: chainHead,
     message_count: messageCount,
-    fulfillment: null,
     references: normalizedRefs,
     validity_temporal: normalizedVt,
   };
@@ -1063,18 +957,16 @@ export function generateAttestation(
   // Attach a plaintext 4-line summary for quick human/agent inspection.
   attestation.summary = generateReceiptSummary(attestation);
 
-  // C-H2 outcome-binding (Option B): one issuance countersignature per party
-  // that has a signing key, over the FULLY-ASSEMBLED snapshot (after summary).
+  // C-H2 outcome-binding (Option B): the missing-key guard above proves every
+  // listed party has an own signing key before any signature bytes are emitted.
+  // One issuance countersignature is written per party over the FULLY-ASSEMBLED
+  // snapshot (after summary).
   // Added LAST so the payload excludes the map (countersignPayload also drops
   // it explicitly). Parties iterate in insertion order (the Map mirrors
   // Python's insertion-ordered dict), so the JS map keys reproduce Python's.
-  // Parties without a key get NO entry (matches Python).
   const countersignatures: Record<string, string> = {};
   for (const [agentId] of session.parties) {
-    const kp = keyPairs[agentId];
-    if (kp !== undefined) {
-      countersignatures[agentId] = countersignAttestation(attestation, kp);
-    }
+    countersignatures[agentId] = countersignAttestation(attestation, keyPairs[agentId]!);
   }
   attestation.countersignatures = countersignatures;
 
