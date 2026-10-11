@@ -6,7 +6,10 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
+
 from scripts.claims.receipt_set_binding_vectors import RECEIPT_SET_BINDING_MUTATION_IDS
+from scripts.conformance import generate_vectors as vector_generator
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 EXPECTED_REASON_CLASSES = {
@@ -141,6 +144,46 @@ def test_receipt_set_binding_mutation_set_matches_claim_script_and_docs() -> Non
         doc = doc_path.read_text(encoding="utf-8")
         assert RECEIPT_SET_BINDING_MUTATION_IDS[0] in doc
         assert RECEIPT_SET_BINDING_MUTATION_IDS[-1] in doc
+
+
+def test_receipt_set_binding_reason_class_is_checked_at_generation() -> None:
+    pair = vector_generator.build_receipt_set_binding_fixture()
+    context = vector_generator.receipt_set_binding_context(
+        vector_generator.build_synthetic_fixtures()
+    )
+    altered = {
+        "messages": pair["messages"],
+        "receipt": vector_generator.receipt_with_resigned_snapshot(
+            pair["receipt"],
+            {"chain_head": "sha256:" + ("d4" * 32)},
+        ),
+    }
+
+    with pytest.raises(vector_generator.GenerationError, match="expected reason schema"):
+        vector_generator.receipt_set_binding_vector(
+            vector_id="mut-test-receipt-set-binding-reason-check",
+            title="receipt_set_binding: reason check regression probe",
+            input_data=altered,
+            context=context,
+            expected_reason_class="schema",
+        )
+
+
+def test_receipt_set_binding_recent_vectors_name_rejection_boundary() -> None:
+    notes_by_id = {
+        vector["id"]: vector["notes"]
+        for vector in mutation_vectors()
+        if vector["id"] in RECEIPT_SET_BINDING_MUTATION_IDS[-4:]
+    }
+
+    assert notes_by_id == {
+        "mut-synthetic-receipt-set-binding-0005": (
+            "0.2.0 receipt is not set-bound under the 0.3.0 floor"
+        ),
+        "mut-synthetic-receipt-set-binding-0006": "schema rejects attestation version newline",
+        "mut-synthetic-receipt-set-binding-0007": "schema rejects transcript_hash newline",
+        "mut-synthetic-receipt-set-binding-0008": "schema rejects chain_head newline",
+    }
 
 
 def test_mutation_vectors_pin_d1_raw_vs_sdk_divergence() -> None:

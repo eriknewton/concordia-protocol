@@ -12,6 +12,7 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_PATH = REPO_ROOT / "docs" / "assurance.json"
+MANIFEST_PATH = REPO_ROOT / "conformance" / "vectors" / "manifest.json"
 OUTPUT_PATHS = {
     REPO_ROOT / "ASSURANCE_MATRIX.md": "matrix",
     REPO_ROOT / "docs" / "ASSURANCE_ROADMAP.md": "roadmap",
@@ -112,6 +113,41 @@ TOP_LEVEL_FIELDS = {
 
 class AssuranceError(ValueError):
     """The assurance source is malformed or overstates its evidence."""
+
+
+def _conformance_counts() -> dict[str, int]:
+    try:
+        manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise AssuranceError(
+            f"cannot load {MANIFEST_PATH.relative_to(REPO_ROOT)}: {exc}"
+        ) from exc
+    counts = manifest.get("counts")
+    if not isinstance(counts, dict):
+        raise AssuranceError("conformance manifest counts must be an object")
+    required = ("positive", "mutation", "canary")
+    result: dict[str, int] = {}
+    for key in required:
+        value = counts.get(key)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise AssuranceError(
+                f"conformance manifest counts.{key} must be a non-negative integer"
+            )
+        result[key] = value
+    result["ok"] = result["positive"] + result["mutation"] + result["canary"]
+    return result
+
+
+def conformance_vector_count_text() -> str:
+    return f"{_conformance_counts()['ok']:,}"
+
+
+def conformance_summary_line() -> str:
+    counts = _conformance_counts()
+    return (
+        f"[SUMMARY] positive={counts['positive']} mutation={counts['mutation']} "
+        f"canary={counts['canary']} ok={counts['ok']} fail=0"
+    )
 
 
 def _nonempty_string(value: Any, field: str) -> str:
@@ -217,7 +253,13 @@ def validate(data: Any) -> dict[str, Any]:
     integrity_text = " ".join(
         [integrity["bounded_claim"], *integrity["limitations"]]
     ).lower()
-    for required in ["0.3.0", "1,550", "first-party", "not an independent implementation"]:
+    vector_count = conformance_vector_count_text()
+    for required in [
+        "0.3.0",
+        vector_count,
+        "first-party",
+        "not an independent implementation",
+    ]:
         if required.lower() not in integrity_text:
             raise AssuranceError(f"agreement_integrity must preserve bound: {required}")
     integrity_exclusions = integrity["not_claimed"].lower()
@@ -364,6 +406,12 @@ def render_roadmap(data: dict[str, Any]) -> str:
 
 def render_vocabulary(data: dict[str, Any]) -> str:
     lines = _header("Concordia Claim Vocabulary")
+    vector_count = conformance_vector_count_text()
+    parity_line = (
+        "- **First-party parity vs. independent implementation:** the Python and "
+        f"Node.js runners agree on {vector_count} vectors with zero divergence, "
+        "but both are first-party authored."
+    )
     lines.extend(
         [
             "Use these terms as separate claim atoms. Passing one dimension never promotes another.",
@@ -387,7 +435,7 @@ def render_vocabulary(data: dict[str, Any]) -> str:
             "- **Authority vs. voluntariness:** an authorized signer may still act under duress, manipulation, or incapacity.",
             "- **Voluntariness vs. justice:** freely signed terms can still be exploitative or harmful to affected non-signers.",
             "- **Integrity vs. objective fulfillment:** a FulfillmentAttestation binds a signer's assertion. It does not prove an external-world event without separate evidence.",
-            "- **First-party parity vs. independent implementation:** the Python and Node.js runners agree on 1,550 vectors with zero divergence, but both are first-party authored.",
+            parity_line,
             "- **Record minimization vs. payload confidentiality:** excluding raw terms from an attestation does not encrypt negotiation messages.",
             "- **Payload confidentiality vs. metadata privacy:** encrypted content would not by itself hide counterparties, timing, routing, or volume.",
             "",

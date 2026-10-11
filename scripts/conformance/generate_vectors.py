@@ -2739,6 +2739,15 @@ def receipt_set_binding_vector(
     evaluation = evaluate_vector(probe)
     if not evaluation.accepted and evaluation.reason_class is None:
         raise GenerationError(f"{vector_id}: reject missing expected_reason_class")
+    if (
+        not evaluation.accepted
+        and expected_reason_class is not None
+        and evaluation.reason_class != expected_reason_class
+    ):
+        raise GenerationError(
+            f"{vector_id}: expected reason {expected_reason_class}, "
+            f"got {evaluation.reason_class}"
+        )
     return Vector(
         vector_id=vector_id,
         title=title,
@@ -2748,7 +2757,11 @@ def receipt_set_binding_vector(
         input_data=input_data,
         context=probe.context,
         expected=outcome_name(evaluation.accepted),
-        expected_reason_class=None if evaluation.accepted else evaluation.reason_class,
+        expected_reason_class=(
+            None
+            if evaluation.accepted
+            else expected_reason_class or evaluation.reason_class
+        ),
         notes=notes,
         canonical_preimage=canonical_json(input_data),
         discriminates=discriminates,
@@ -2892,6 +2905,7 @@ def build_receipt_set_binding_mutation_vectors(
             input_data=legacy_set_unbound,
             context=context,
             expected_reason_class="binding",
+            notes="0.2.0 receipt is not set-bound under the 0.3.0 floor",
         ),
         receipt_set_binding_vector(
             vector_id="mut-synthetic-receipt-set-binding-0006",
@@ -2899,6 +2913,7 @@ def build_receipt_set_binding_mutation_vectors(
             input_data=newline_version,
             context=context,
             expected_reason_class="schema",
+            notes="schema rejects attestation version newline",
         ),
         receipt_set_binding_vector(
             vector_id="mut-synthetic-receipt-set-binding-0007",
@@ -2906,6 +2921,7 @@ def build_receipt_set_binding_mutation_vectors(
             input_data=newline_transcript_hash,
             context=context,
             expected_reason_class="schema",
+            notes="schema rejects transcript_hash newline",
         ),
         receipt_set_binding_vector(
             vector_id="mut-synthetic-receipt-set-binding-0008",
@@ -2913,6 +2929,7 @@ def build_receipt_set_binding_mutation_vectors(
             input_data=newline_chain_head,
             context=context,
             expected_reason_class="schema",
+            notes="schema rejects chain_head newline",
         ),
     ]
     summary = {

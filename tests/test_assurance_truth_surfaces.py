@@ -12,6 +12,7 @@ from types import ModuleType
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SOURCE = REPO_ROOT / "docs" / "assurance.json"
 GENERATOR = REPO_ROOT / "scripts" / "assurance" / "generate.py"
+MANIFEST = REPO_ROOT / "conformance" / "vectors" / "manifest.json"
 EXPECTED_IDS = [
     "agreement_integrity",
     "agreement_authority",
@@ -20,6 +21,23 @@ EXPECTED_IDS = [
     "payload_confidentiality",
     "metadata_privacy",
 ]
+
+
+def _expected_summary() -> str:
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    counts = manifest["counts"]
+    ok = counts["positive"] + counts["mutation"] + counts["canary"]
+    return (
+        f"[SUMMARY] positive={counts['positive']} mutation={counts['mutation']} "
+        f"canary={counts['canary']} ok={ok} fail=0"
+    )
+
+
+def _expected_vector_count_text() -> str:
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    counts = manifest["counts"]
+    ok = counts["positive"] + counts["mutation"] + counts["canary"]
+    return f"{ok:,}"
 
 
 def _load_generator() -> ModuleType:
@@ -55,8 +73,9 @@ def test_registry_preserves_load_bearing_claim_bounds() -> None:
     integrity = " ".join(
         [dimensions["agreement_integrity"]["bounded_claim"], *dimensions["agreement_integrity"]["limitations"]]
     ).lower()
+    vector_count_text = _expected_vector_count_text()
     assert "0.3.0" in integrity
-    assert "1,550" in integrity
+    assert vector_count_text in integrity
     assert "first-party" in integrity
     assert "not an independent implementation" in integrity
     assert "does not objectively prove" in integrity
@@ -106,3 +125,28 @@ def test_generated_truth_surfaces_are_current() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_published_conformance_summaries_match_manifest() -> None:
+    expected_summary = _expected_summary()
+    expected_count = _expected_vector_count_text()
+    stale_counts = {"1,550", "1550", "mutation=1492", "ok=1550"} - {
+        expected_count,
+        expected_count.replace(",", ""),
+    }
+    surfaces = [
+        REPO_ROOT / "README.md",
+        REPO_ROOT / "ASSURANCE_MATRIX.md",
+        REPO_ROOT / "docs" / "CLAIM_VOCABULARY.md",
+        REPO_ROOT / "docs" / "assurance.json",
+        REPO_ROOT / "scripts" / "assurance" / "generate.py",
+    ]
+
+    for surface in surfaces:
+        text = surface.read_text(encoding="utf-8")
+        if surface == GENERATOR:
+            assert "MANIFEST_PATH" in text
+        else:
+            assert expected_count in text or expected_summary in text, surface
+        for stale_count in stale_counts:
+            assert stale_count not in text, f"{surface} still contains {stale_count}"

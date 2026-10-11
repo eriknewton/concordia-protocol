@@ -190,7 +190,7 @@
       "transcript_hash": "sha256:9cd9edfe9d4bd688856a9cbe4c1f92563137b489e373c485adf5344a5725285b\n"
     }
   },
-  "notes": "",
+  "notes": "schema rejects transcript_hash newline",
   "record_type": "message_chain",
   "schema_version": "concordia-conformance-vector/v1-draft",
   "source_fixture": "synthetic/longtail/receipt_set_binding.json",

@@ -82,6 +82,7 @@ def run_version_parser_probe(tmp_path: Path, version: str) -> dict[str, Any]:
     script = """
 import importlib.util
 import json
+import pathlib
 import sys
 
 spec = importlib.util.spec_from_file_location("runner_probe", sys.argv[1])
@@ -118,14 +119,31 @@ def run_chain_head_parser_probe(tmp_path: Path, chain_head: str) -> dict[str, An
     script = """
 import importlib.util
 import json
+import pathlib
 import sys
 
 spec = importlib.util.spec_from_file_location("runner_probe", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(module)
-match = module.SHA256_HEX_RE.match(sys.argv[2])
-print(json.dumps({"matched": match is not None}))
+module.validate_schema = lambda *args, **kwargs: None
+try:
+    module.verify_message_chain_receipt_binding(
+        pathlib.Path("."),
+        {
+            "receipt": {
+                "concordia_attestation": "0.3.0",
+                "chain_head": sys.argv[2],
+                "message_count": 1,
+            }
+        },
+        [],
+        {},
+    )
+except module.Reject as exc:
+    print(json.dumps({"accepted": False, "reason": str(exc)}))
+else:
+    print(json.dumps({"accepted": True, "reason": None}))
 """
     env = {
         "PATH": os.environ.get("PATH", ""),
@@ -506,4 +524,7 @@ def test_reference_runner_chain_head_parser_uses_protocol_rule(tmp_path: Path) -
         "sha256:" + ("a" * 64) + "\n",
     )
 
-    assert parsed == {"matched": False}
+    assert parsed == {
+        "accepted": False,
+        "reason": "receipt chain_head is malformed",
+    }
