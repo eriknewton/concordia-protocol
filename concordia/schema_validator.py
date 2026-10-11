@@ -190,12 +190,14 @@ def validate_message(message: dict[str, Any]) -> list[str]:
 
 
 def validate_attestation(attestation: dict[str, Any]) -> list[str]:
-    """Validate an attestation against attestation.schema.json.
+    """Validate an attestation against schema and draft structure.
 
-    This is schema validation only. Use
+    This is a schema/structure oracle for the implemented draft surface,
+    including the implemented version ceiling and reference lifetime cap. Use
     ``concordia.attestation.verify_attestation`` when a verifier also needs
     to check each party's Ed25519 signature over its own signature-stripped
-    party record.
+    party record, evidence age, revocation status, and any tighter relying
+    policy.
 
     Returns a list of validation error messages (empty if valid).
     """
@@ -241,11 +243,14 @@ def _validate_attestation_v05_shape(attestation: Any) -> list[str]:
             "$.concordia_attestation: violates "
             "draft-newton-agreement-evidence-00 version grammar"
         ]
-    if _LEGACY_FLOOR_VERSION <= version <= _IMPLEMENTED_ATTESTATION_VERSION:
-        try:
-            _validate_attestation_structure(attestation)
-        except (_AttestationStructureError, OverflowError, ValueError):
-            return ["$: violates draft-newton-agreement-evidence-00 structure"]
+    if version < _LEGACY_FLOOR_VERSION:
+        return []
+    if version > _IMPLEMENTED_ATTESTATION_VERSION:
+        return ["$: violates draft-newton-agreement-evidence-00 structure"]
+    try:
+        _validate_attestation_structure(attestation)
+    except (_AttestationStructureError, OverflowError, ValueError):
+        return ["$: violates draft-newton-agreement-evidence-00 structure"]
     return []
 
 

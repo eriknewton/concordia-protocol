@@ -1048,7 +1048,18 @@ def main() -> None:
         "Python's whitespace predicate does not classify U+FEFF as whitespace.",
     )
 
-    for version in ("0.5.0", "0.5.9", "0.6.0", "0.6.1", "1.0.0", "00.6.0", "0.6.0\n", "bogus"):
+    for version in (
+        "0.5.0",
+        "0.5.9",
+        "0.6.0",
+        "0.6.1",
+        "0.10.0",
+        "1.0.0",
+        "9007199254740993.0.0",
+        "00.6.0",
+        "0.6.0\n",
+        "bogus",
+    ):
         _add_mutation(
             "version_" + version.encode("unicode_escape").decode("ascii").replace("\\", "_"),
             lambda a, v=version: a.__setitem__("concordia_attestation", v),
@@ -1128,16 +1139,32 @@ def main() -> None:
         "validity_absolute_at_reference_cap",
         lambda a: a.__setitem__(
             "validity_temporal",
-            {"mode": "absolute", "from": "2026-01-01T00:00:00Z", "until": "2026-04-01T00:00:00Z"},
+            {"mode": "absolute", "from": "2026-03-01T12:34:56Z", "until": "2026-05-30T12:34:56Z"},
         ),
     )
     _add_mutation(
-        "validity_absolute_past_reference_cap_python_accept",
+        "validity_absolute_past_reference_cap",
         lambda a: a.__setitem__(
             "validity_temporal",
-            {"mode": "absolute", "from": "2026-01-01T00:00:00Z", "until": "2026-04-01T00:00:01Z"},
+            {"mode": "absolute", "from": "2026-03-01T12:34:56Z", "until": "2026-05-30T12:34:57Z"},
         ),
-        "Python's draft-structure path caps relative lifetimes only.",
+        "Absolute lifetimes share the reference duration ceiling with relative lifetimes.",
+    )
+    _add_mutation(
+        "validity_absolute_past_reference_cap_one_ms",
+        lambda a: a.__setitem__(
+            "validity_temporal",
+            {"mode": "absolute", "from": "2026-03-01T12:34:56Z", "until": "2026-05-30T12:34:56.001Z"},
+        ),
+        "Fractional seconds count toward the reference duration ceiling.",
+    )
+    _add_mutation(
+        "validity_absolute_leap_span_past_reference_cap",
+        lambda a: a.__setitem__(
+            "validity_temporal",
+            {"mode": "absolute", "from": "2024-01-01T00:00:00Z", "until": "2024-04-01T00:00:00Z"},
+        ),
+        "The reference cap is elapsed seconds, not a three-month calendar window.",
     )
     _add_mutation(
         "validity_relative_at_reference_cap",

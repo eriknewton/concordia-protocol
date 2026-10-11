@@ -67,12 +67,22 @@ import {
 } from '../types/index.js';
 import { validateReference } from '../predicate/references.js';
 import { computeHash, type Session } from '../session/index.js';
+import {
+  DEFAULT_ATTESTATION_VALIDITY_SECONDS,
+  MAX_ATTESTATION_VALIDITY_SECONDS,
+  MAX_RELYING_VALIDITY_LIFETIME_SECONDS,
+  REFERENCE_ATTESTATION_VALIDITY_SECONDS,
+} from './constants.js';
 
 /** Attestation schema version, byte-identical to Python `ATTESTATION_VERSION`. */
 export const ATTESTATION_VERSION = '0.6.0';
 /** Reference issuer's default and maximum attestation lifetime: 90 days. */
-export const DEFAULT_ATTESTATION_VALIDITY_SECONDS = 90 * 24 * 60 * 60;
-export const MAX_ATTESTATION_VALIDITY_SECONDS = DEFAULT_ATTESTATION_VALIDITY_SECONDS;
+export {
+  DEFAULT_ATTESTATION_VALIDITY_SECONDS,
+  MAX_ATTESTATION_VALIDITY_SECONDS,
+  MAX_RELYING_VALIDITY_LIFETIME_SECONDS,
+  REFERENCE_ATTESTATION_VALIDITY_SECONDS,
+};
 const SET_BINDING_MIN = { major: 0, minor: 3 } as const;
 // Must match `_SEMVER_RE` in concordia/attestation.py: ASCII digits, no leading
 // zeros and no trailing newline. The version grammar is a structure gate, not a

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -24,6 +25,7 @@ from concordia.attestation import (
 )
 from concordia.schema_validator import is_valid_attestation, validate_attestation
 from concordia.signing import KeyPair, sign_message
+from concordia.signing import public_key_from_b64url
 
 _RFC8032_SEED_1 = bytes.fromhex(
     "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"
@@ -151,6 +153,24 @@ def _resign(artifact: dict[str, Any], keys: dict[str, KeyPair]) -> None:
 
 def _public_keys(keys: dict[str, KeyPair]):
     return {agent_id: key_pair.public_key for agent_id, key_pair in keys.items()}
+
+
+def _attestation_fixture_vector(name: str) -> dict[str, Any]:
+    fixture_path = (
+        Path(__file__).resolve().parents[1]
+        / "js-sdk/tests/fixtures/attestation/attestation_vectors.json"
+    )
+    fixture = json.loads(fixture_path.read_text())
+    for vector in fixture["mutation_corpus"]:
+        if vector["name"] == name:
+            return {
+                "input": vector["input"],
+                "public_keys": {
+                    agent_id: public_key_from_b64url(public_key)
+                    for agent_id, public_key in fixture["public_keys_b64"].items()
+                },
+            }
+    raise AssertionError(f"missing attestation fixture vector {name}")
 
 
 def _wrapper_verify(
@@ -537,8 +557,8 @@ def test_temporal_expiry_skew_age_and_relative_lifetime_reject() -> None:
 
     old = deepcopy(artifact)
     old["timestamp"] = _iso(now - timedelta(seconds=7_776_001))
-    old["validity_temporal"]["from"] = _iso(now - timedelta(seconds=7_776_001))
-    old["validity_temporal"]["until"] = _iso(now + timedelta(seconds=1))
+    old["validity_temporal"]["from"] = _iso(now - timedelta(seconds=10))
+    old["validity_temporal"]["until"] = _iso(now + timedelta(seconds=10))
     _resign(old, keys)
     _not_bound(old, keys, now)
 
@@ -550,6 +570,133 @@ def test_temporal_expiry_skew_age_and_relative_lifetime_reject() -> None:
     }
     _resign(long_relative, keys)
     _not_bound(long_relative, keys, now)
+
+
+@pytest.mark.parametrize(
+    ("start", "until"),
+    [
+        (
+            datetime(2026, 3, 1, 12, 34, 56, tzinfo=timezone.utc),
+            datetime(2026, 3, 1, 12, 34, 56, tzinfo=timezone.utc)
+            + timedelta(seconds=7_776_001),
+        ),
+        (
+            datetime(2026, 3, 1, 12, 34, 56, tzinfo=timezone.utc),
+            datetime(2026, 3, 1, 12, 34, 56, tzinfo=timezone.utc)
+            + timedelta(seconds=7_776_000, milliseconds=1),
+        ),
+        (
+            datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+            datetime(2024, 4, 1, 0, 0, 0, tzinfo=timezone.utc),
+        ),
+    ],
+)
+def test_absolute_reference_lifetime_over_cap_is_structural(
+    start: datetime,
+    until: datetime,
+) -> None:
+    now = start + timedelta(days=1)
+    artifact, keys = _artifact(now)
+    artifact["timestamp"] = _iso(now)
+    artifact["validity_temporal"] = {
+        "mode": "absolute",
+        "from": _iso_ms(start) if start.microsecond else _iso(start),
+        "until": _iso_ms(until) if until.microsecond else _iso(until),
+    }
+    _resign(artifact, keys)
+
+    result = _verify(artifact, keys, now)
+
+    assert result.terminal_state == "not-bound"
+    assert result.errors == ["validity lifetime exceeds maximum"]
+    assert result.signature_checks == 0
+
+
+def test_absolute_reference_lifetime_at_cap_allows_tighter_policy_later() -> None:
+    start = datetime(2026, 3, 1, 12, 34, 56, tzinfo=timezone.utc)
+    now = start + timedelta(days=1)
+    artifact, keys = _artifact(now)
+    artifact["timestamp"] = _iso(now)
+    artifact["validity_temporal"] = {
+        "mode": "absolute",
+        "from": _iso(start),
+        "until": _iso(start + timedelta(seconds=7_776_000)),
+    }
+    _resign(artifact, keys)
+
+    default_result = _verify(artifact, keys, now)
+    tight_result = verify_attestation_artifact(
+        _bytes(artifact),
+        lambda agent_id: keys[agent_id].public_key,
+        expected_session_id="sess_v06_positive",
+        expected_party_ids={"did:example:alice", "did:example:bob"},
+        now=now,
+        revocation_checker=lambda _: False,
+        policy=AttestationVerificationPolicy(max_validity_lifetime_seconds=60),
+    )
+
+    assert default_result.terminal_state == "current"
+    assert default_result.signature_checks == 2
+    assert tight_result.terminal_state == "not-bound"
+    assert tight_result.errors == ["validity lifetime exceeds relying-party maximum"]
+    assert tight_result.signature_checks == 2
+
+
+@pytest.mark.parametrize(
+    "vector_name",
+    [
+        "validity_absolute_past_reference_cap",
+        "validity_absolute_past_reference_cap_one_ms",
+        "validity_absolute_leap_span_past_reference_cap",
+    ],
+)
+def test_absolute_reference_lifetime_fixture_rows_are_structural(
+    vector_name: str,
+) -> None:
+    vector = _attestation_fixture_vector(vector_name)
+    artifact = vector["input"]
+    result = verify_attestation_artifact(
+        _bytes(artifact),
+        lambda agent_id: vector["public_keys"][agent_id],
+        expected_session_id=artifact["session_id"],
+        expected_party_ids={party["agent_id"] for party in artifact["parties"]},
+        now=datetime(2026, 5, 29, 12, 0, 0, tzinfo=timezone.utc),
+        revocation_checker=lambda _: False,
+        policy=AttestationVerificationPolicy(),
+    )
+
+    assert result.terminal_state == "not-bound"
+    assert result.errors == ["validity lifetime exceeds maximum"]
+    assert result.signature_checks == 0
+
+
+@pytest.mark.parametrize(
+    "vector_name",
+    [
+        "version_0.6.1",
+        "version_0.10.0",
+        "version_1.0.0",
+        "version_9007199254740993.0.0",
+    ],
+)
+def test_above_ceiling_fixture_rows_stop_before_signature_checks(
+    vector_name: str,
+) -> None:
+    vector = _attestation_fixture_vector(vector_name)
+    artifact = vector["input"]
+    result = verify_attestation_artifact(
+        _bytes(artifact),
+        lambda agent_id: vector["public_keys"][agent_id],
+        expected_session_id=artifact["session_id"],
+        expected_party_ids={party["agent_id"] for party in artifact["parties"]},
+        now=datetime(2026, 5, 29, 12, 0, 0, tzinfo=timezone.utc),
+        revocation_checker=lambda _: False,
+        policy=AttestationVerificationPolicy(),
+    )
+
+    assert result.terminal_state == "not-bound"
+    assert result.errors == ["attestation version exceeds implemented ceiling"]
+    assert result.signature_checks == 0
 
 
 def test_pre_v05_legacy_exits_before_signature_resolution() -> None:

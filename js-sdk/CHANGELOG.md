@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- `validateAttestation` now refuses artifacts above the implemented
+  attestation version ceiling before applying draft-structure checks. The
+  validator accepts an otherwise identical `0.6.0` body but returns the
+  `draft_structure` refusal class for `0.6.1`, `0.10.0`, `1.0.0`, and
+  safe-integer-overflow version components, matching Python.
+- Absolute `validity_temporal` windows now share the reference lifetime ceiling
+  already applied to relative windows. An over-reference absolute window fails
+  structure validation before signature checks in the Python terminal verifier
+  with `validity lifetime exceeds maximum`; tighter relying-party policy
+  limits still apply later during terminal verification.
 - Read-side validation notes for the 0.6.0 parity line are now explicit:
   root `fulfillment` is accepted below 0.5.0 and refused for every version at
   or above 0.5.0; reference `extensions` and `validity_temporal.window` are

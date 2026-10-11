@@ -66,6 +66,7 @@ import {
   FULFILLMENT_ATTESTATION_SCHEMA,
   FLOAT_CONSTRAINT_PATHS,
 } from './schemas.js';
+import { MAX_RELYING_VALIDITY_LIFETIME_SECONDS } from '../attestation/constants.js';
 
 // Fail fast at module load if a bundled schema introduces a keyword the internal
 // validator does not support (which would silently under-validate vs Python).
@@ -194,7 +195,6 @@ const MAX_SAFE_INT = 2 ** 53 - 1;
 const MAX_PARTIES = 64;
 const MAX_REFERENCES = 32;
 const MAX_SUMMARY_SCALARS = 1024;
-const MAX_ATTESTATION_VALIDITY_SECONDS = 90 * 24 * 60 * 60;
 const RAW_TERM_PATTERNS = [
   /[$€£¥]\s*\d/i,
   /\b(?:USD|EUR|GBP|JPY|CAD|AUD|CHF|CNY|INR)\s*\d/i,
@@ -279,9 +279,13 @@ export function isValidMessage(message: unknown): boolean {
 }
 
 /**
- * Validate a §9.6 Reputation Attestation against `attestation.schema.json`.
- * Mirrors Python `validate_attestation` for schema errors, including asserted
- * `date-time` formats and intra-document `$ref` / `oneOf` applicators.
+ * Validate a §9.6 Reputation Attestation against `attestation.schema.json`
+ * plus the implemented draft-structure surface. Mirrors Python
+ * `validate_attestation` for schema errors, including asserted `date-time`
+ * formats, intra-document `$ref` / `oneOf` applicators, the implemented
+ * version ceiling, and the draft §8.1 reference lifetime ceiling. This is not
+ * a relying-party verdict: signature checks, evidence age, revocation, and
+ * tighter policy limits are enforced by verifier surfaces.
  */
 export function validateAttestation(attestation: unknown): string[] {
   const schemaErrors = format(iterErrors(ATTESTATION_SCHEMA, attestation, conformsFormat));
@@ -423,7 +427,9 @@ function validateAttestationDraftStructure(attestation: unknown): string[] {
     return [DRAFT_VERSION_GRAMMAR_ERROR];
   }
   if (compareVersion(version, LEGACY_FLOOR_VERSION) < 0) return [];
-  if (compareVersion(version, IMPLEMENTED_ATTESTATION_VERSION) > 0) return [];
+  if (compareVersion(version, IMPLEMENTED_ATTESTATION_VERSION) > 0) {
+    return [DRAFT_STRUCTURE_ERROR];
+  }
   return isDraftStructureValid(attestation) ? [] : [DRAFT_STRUCTURE_ERROR];
 }
 
@@ -465,8 +471,13 @@ function isDraftStructureValid(attestation: Record<string, unknown>): boolean {
 
 function parseStrictVersion(value: string): [number, number, number] | null {
   if (!STRICT_SEMVER_PATTERN.test(value)) return null;
-  const parts = value.split('.').map((part) => Number(part));
-  if (parts.length !== 3 || parts.some((part) => !Number.isSafeInteger(part))) return null;
+  const stringParts = value.split('.');
+  if (stringParts.length !== 3) return null;
+  if (stringParts.some((part) => part.length > 4300)) return null;
+  const parts = stringParts.map((part) => Number(part));
+  if (parts.some((part) => !Number.isSafeInteger(part))) {
+    return [MAX_SAFE_INT, MAX_SAFE_INT, MAX_SAFE_INT];
+  }
   return [parts[0]!, parts[1]!, parts[2]!];
 }
 
@@ -728,7 +739,8 @@ function isValidityTemporalShape(value: unknown): boolean {
       return false;
     }
     if (!isRfc3339Z(value.from) || !isRfc3339Z(value.until)) return false;
-    return epochMs(value.until) > epochMs(value.from);
+    const lifetimeMs = epochMs(value.until) - epochMs(value.from);
+    return lifetimeMs > 0 && lifetimeMs <= MAX_RELYING_VALIDITY_LIFETIME_SECONDS * 1_000;
   }
   if (value.mode === 'relative') {
     if (
@@ -741,7 +753,7 @@ function isValidityTemporalShape(value: unknown): boolean {
       return false;
     }
     if (!isRfc3339Z(value.from)) return false;
-    return isIntInRange(value.duration_seconds, 1, MAX_ATTESTATION_VALIDITY_SECONDS);
+    return isIntInRange(value.duration_seconds, 1, MAX_RELYING_VALIDITY_LIFETIME_SECONDS);
   }
   return false;
 }

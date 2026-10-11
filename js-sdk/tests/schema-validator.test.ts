@@ -423,6 +423,55 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
     expect(isValidAttestation(attestation)).toBe(true);
   });
 
+  it('accepts implemented attestations and refuses above-ceiling versions', () => {
+    const attestation = validAttestation();
+    expect(validateAttestation(attestation)).toEqual([]);
+
+    for (const version of ['0.6.1', '0.10.0', '1.0.0', '9007199254740993.0.0']) {
+      const aboveCeiling = structuredClone(attestation);
+      aboveCeiling.concordia_attestation = version;
+      expect(validateAttestation(aboveCeiling)).toEqual([
+        '$: violates draft-newton-agreement-evidence-00 structure',
+      ]);
+    }
+  });
+
+  it('keeps absent and non-string versions as structured refusals', () => {
+    const missing = validAttestation();
+    delete missing.concordia_attestation;
+    expect(validateAttestation(missing)).toContain(
+      "$: 'concordia_attestation' is a required property",
+    );
+
+    const nonString = validAttestation();
+    nonString.concordia_attestation = 6;
+    expect(validateAttestation(nonString)).toContain(
+      '$.concordia_attestation: violates \'type\' constraint: "string"',
+    );
+  });
+
+  it('enforces absolute validity with duration math', () => {
+    const attestation = validAttestation();
+    attestation.validity_temporal = {
+      mode: 'absolute',
+      from: '2026-03-01T12:34:56Z',
+      until: '2026-05-30T12:34:56Z',
+    };
+    expect(validateAttestation(attestation)).toEqual([]);
+
+    for (const [from, until] of [
+      ['2026-03-01T12:34:56Z', '2026-05-30T12:34:57Z'],
+      ['2026-03-01T12:34:56Z', '2026-05-30T12:34:56.001Z'],
+      ['2024-01-01T00:00:00Z', '2024-04-01T00:00:00Z'],
+    ]) {
+      const overCap = validAttestation();
+      overCap.validity_temporal = { mode: 'absolute', from, until };
+      expect(validateAttestation(overCap)).toContain(
+        '$: violates draft-newton-agreement-evidence-00 structure',
+      );
+    }
+  });
+
   it('rejects draft-structure strings Python 0.6 refuses', () => {
     const cases: Array<[string, (attestation: Record<string, unknown>) => void]> = [
       [

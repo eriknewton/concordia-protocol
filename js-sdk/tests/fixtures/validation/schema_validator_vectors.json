@@ -3260,7 +3260,8 @@
         "$: 'message_count' is a required property",
         "$: 'validity_temporal' is a required property",
         "$: 'countersignatures' is a required property",
-        "$: violates 'not' constraint: {\"required\": [\"fulfillment\"]}"
+        "$: violates 'not' constraint: {\"required\": [\"fulfillment\"]}",
+        "$: violates draft-newton-agreement-evidence-00 structure"
       ]
     },
     {
@@ -3325,7 +3326,8 @@
         "$: 'message_count' is a required property",
         "$: 'validity_temporal' is a required property",
         "$: 'countersignatures' is a required property",
-        "$: violates 'not' constraint: {\"required\": [\"fulfillment\"]}"
+        "$: violates 'not' constraint: {\"required\": [\"fulfillment\"]}",
+        "$: violates draft-newton-agreement-evidence-00 structure"
       ]
     },
     {
