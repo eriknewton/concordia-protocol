@@ -581,7 +581,9 @@ def tool_open_session(
         }
         return json.dumps(error_result, indent=2)
 
-    # Register public keys for bundle verification
+    # Register public keys for bundle verification. Every live session party is
+    # also in the registry; tool_verify_receipt_bundle's key resolution relies on
+    # that to stay no wider than a registry lookup.
     _key_registry[initiator_id] = ctx.initiator_key.public_key
     _key_registry[responder_id] = ctx.responder_key.public_key
 
@@ -3023,7 +3025,9 @@ def tool_verify_receipt_bundle(
             return keys_for_session[agent_id]
         # Any other listed party resolves through the registry, as on main, so
         # its signature is checked and fails rather than being skipped as
-        # unresolvable.
+        # unresolvable. Session parties are always registered too (see the
+        # registration in tool_open_session), so no party falls through to None
+        # here while its session is live.
         return _key_registry.get(agent_id)
 
     result = verify_bundle(

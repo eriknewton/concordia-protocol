@@ -821,9 +821,11 @@ class TestMcpToolIntegration:
             agent_id: str,
             session_id: str,
         ) -> Ed25519PublicKey | None:
+            # Must match resolve_attestation_key in tool_verify_receipt_bundle
+            # (concordia/mcp_server.py).
             keys_for_session = session_keys.get(session_id)
-            if keys_for_session is not None:
-                return keys_for_session.get(agent_id)
+            if keys_for_session is not None and agent_id in keys_for_session:
+                return keys_for_session[agent_id]
             return _key_registry.get(agent_id)
 
         return verify_bundle(
@@ -1145,6 +1147,10 @@ class TestMcpToolIntegration:
         self._resign_bundle_response(bundle_result)
 
         self._assert_tool_matches_library(bundle_result)
+        verify_result = handle_tool_call("concordia_verify_receipt_bundle", {
+            "bundle": bundle_result,
+        })
+        assert verify_result["valid"] is False
 
     @pytest.mark.parametrize(
         ("field", "value", "expected_error"),
