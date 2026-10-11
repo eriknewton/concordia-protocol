@@ -656,23 +656,10 @@ function normalizeReferences(references: unknown): Array<Record<string, unknown>
     // caught error text: it is attacker-controlled content.
     throw new AttestationError('references[] could not be safely inspected');
   }
-  // OUTSIDE the sanitizing wrapper: per-element validation errors
-  // (ReferenceValidationError) carry Python-identical text and must propagate
-  // unchanged. They never echo input either.
-  return elements.map((ref, i) => {
-    if (!isPlainObject(ref)) {
-      return validateReference(ref, i);
-    }
-    const allowed = new Set(['id', 'type', 'relationship', 'version', 'signed_at', 'signer_did']);
-    // Attestation 0.6.0 removes reference-level `extensions` and closes the
-    // member set before signing, so raw terms cannot ride in an opaque map.
-    if (Object.keys(ref).some((key) => !allowed.has(key))) {
-      throw new AttestationError(
-        `references[${i}] contains undefined member(s) for attestation format 0.6.0`,
-      );
-    }
-    return validateReference(ref, i);
-  });
+  // OUTSIDE the sanitizing wrapper: the shared parser owns the closed member
+  // set and error ordering. Keeping one parser prevents issuance from signing a
+  // reference that validator-side draft structure rejects.
+  return elements.map((ref, i) => validateReference(ref, i));
 }
 
 /**

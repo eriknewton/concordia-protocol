@@ -460,18 +460,18 @@ export function validateReference(ref: unknown, index: number): Record<string, u
     // it is caller-controlled content.
     throw sanitizedInspectionError(`references[${index}]`);
   }
+  const allowedKeys = new Set(['id', 'type', 'relationship', 'version', 'signed_at', 'signer_did']);
+  if (Object.keys(snap).some((key) => !allowedKeys.has(key))) {
+    throw new ReferenceValidationError(
+      `references[${index}] contains undefined member(s) for attestation format 0.6.0`,
+    );
+  }
   const missing = ['type', 'id', 'relationship'].filter((k) => !(k in snap));
   if (missing.length > 0) {
     const list = '[' + missing.map((k) => `'${k}'`).join(', ') + ']';
     throw new ReferenceValidationError(
       `references[${index}] missing required keys ${list} ` +
         `per SPEC §11.5.6 (id, type, relationship)`,
-    );
-  }
-  const allowedKeys = new Set(['id', 'type', 'relationship', 'version', 'signed_at', 'signer_did']);
-  if (Object.keys(snap).some((key) => !allowedKeys.has(key))) {
-    throw new ReferenceValidationError(
-      `references[${index}] contains undefined member(s) for attestation format 0.6.0`,
     );
   }
   const refType = snap.type;

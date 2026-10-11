@@ -134,6 +134,24 @@ interface AttestationFixtures {
     expected_error: string | null;
     expected_error_type?: string;
   }>;
+  mutation_corpus: Array<{
+    name: string;
+    input: Record<string, unknown>;
+    expected: 'accept' | 'reject';
+    expected_reason_class: string | null;
+    expected_errors: string[];
+    note: string;
+  }>;
+  issuance_reference_cases: Array<{
+    name: string;
+    session: SessionFixture;
+    references: unknown;
+    expected_references: Array<Record<string, unknown>> | null;
+    expected_error: string | null;
+    expected_error_type?: string;
+    expected_validate_errors: string[] | null;
+    expected_validate_reason_class: string | null;
+  }>;
 }
 
 const fixtures = JSON.parse(
@@ -233,6 +251,26 @@ function keyPairsFromCase(c: AttestationCase): Record<string, KeyPair> {
     if (kp) kps[agentId] = kp;
   }
   return kps;
+}
+
+function attestationReasonClass(errors: string[]): string | null {
+  if (errors.length === 0) return null;
+  if (
+    errors.some((error) => error.includes('draft-newton-agreement-evidence-00 version grammar'))
+  ) {
+    return 'version_grammar';
+  }
+  if (errors.some((error) => error.includes('draft-newton-agreement-evidence-00 structure'))) {
+    return 'draft_structure';
+  }
+  if (
+    errors.some((error) =>
+      error.includes('free-text field must not contain obvious raw deal terms'),
+    )
+  ) {
+    return 'privacy';
+  }
+  return 'schema';
 }
 
 // ---------------------------------------------------------------------------
@@ -625,7 +663,9 @@ describe('shared conformance attestation vector', () => {
     const vectors = readdirSync(dir)
       .filter((name) => /^mut-synthetic-attestation-\d+\.json$/.test(name))
       .map((name) => JSON.parse(readFileSync(join(dir, name), 'utf8')) as Record<string, unknown>)
-      .filter((vector) => vector.expected === 'reject' && vector.expected_reason_class === 'schema');
+      .filter(
+        (vector) => vector.expected === 'reject' && vector.expected_reason_class === 'schema',
+      );
 
     expect(vectors.length).toBeGreaterThan(0);
     for (const vector of vectors) {
@@ -637,15 +677,18 @@ describe('shared conformance attestation vector', () => {
     const dir = join(__dirname, '../../conformance/vectors/mutation');
     const vectors = readdirSync(dir)
       .filter((name) => /^mut-synthetic-attestation-countersign-\d+\.json$/.test(name))
-      .map((name) => JSON.parse(readFileSync(join(dir, name), 'utf8')) as {
-        expected: string;
-        expected_reason_class: string;
-        input: Record<string, unknown>;
-        context: {
-          countersigners: string[];
-          public_keys_b64url: Record<string, string>;
-        };
-      });
+      .map(
+        (name) =>
+          JSON.parse(readFileSync(join(dir, name), 'utf8')) as {
+            expected: string;
+            expected_reason_class: string;
+            input: Record<string, unknown>;
+            context: {
+              countersigners: string[];
+              public_keys_b64url: Record<string, string>;
+            };
+          },
+      );
 
     expect(vectors.length).toBeGreaterThan(0);
     for (const vector of vectors) {
@@ -654,7 +697,8 @@ describe('shared conformance attestation vector', () => {
         expect(validateAttestation(vector.input)).not.toEqual([]);
         continue;
       }
-      const countersignatures = vector.input.countersignatures as Record<string, string> | undefined;
+      const countersignatures = vector.input.countersignatures as
+        Record<string, string> | undefined;
       const accepted =
         countersignatures !== undefined &&
         vector.context.countersigners.every((signer) =>
@@ -665,6 +709,43 @@ describe('shared conformance attestation vector', () => {
           ),
         );
       expect(accepted).toBe(false);
+    }
+  });
+});
+
+describe('Python-generated attestation mutation corpus', () => {
+  it('matches Python validate_attestation accept/reject and reason class', () => {
+    expect(fixtures.mutation_corpus.length).toBeGreaterThan(50);
+    for (const vector of fixtures.mutation_corpus) {
+      const errors = validateAttestation(vector.input);
+      const accepted = errors.length === 0;
+      expect({
+        name: vector.name,
+        expected: vector.expected,
+        reasonClass: attestationReasonClass(errors),
+        errors,
+      }).toMatchObject({
+        name: vector.name,
+        expected: accepted ? 'accept' : 'reject',
+        reasonClass: vector.expected_reason_class,
+      });
+    }
+  });
+
+  it('keeps issuance references on the same parser contract as validation', () => {
+    for (const c of fixtures.issuance_reference_cases) {
+      const session = rebuildSession(c.session);
+      const call = () => generateAttestation(session, KP_BY_AGENT, { references: c.references });
+      if (c.expected_error !== null) {
+        expect(call).toThrow(c.expected_error);
+        continue;
+      }
+
+      const attestation = call();
+      expect(attestation.references).toEqual(c.expected_references);
+      const errors = validateAttestation(attestation);
+      expect(errors).toEqual(c.expected_validate_errors);
+      expect(attestationReasonClass(errors)).toBe(c.expected_validate_reason_class);
     }
   });
 });

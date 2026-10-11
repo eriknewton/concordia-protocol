@@ -423,7 +423,7 @@ function checkPatternProperties(
     return;
   }
   for (const pattern of Object.keys(patternProps)) {
-    const re = new RegExp(pattern);
+    const re = compilePythonPattern(pattern);
     for (const key of Object.keys(instance)) {
       if (re.test(key)) {
         validateNode(patternProps[pattern], instance[key], `${path}${childPath(key)}`, errors, ctx);
@@ -553,13 +553,21 @@ function checkPattern(
   }
   // Python `re.search` semantics (unanchored search). The schemas anchor with
   // ^...$ explicitly, so `search` vs `match` does not differ here.
-  if (new RegExp(pattern).test(instance)) {
+  if (compilePythonPattern(pattern).test(instance)) {
     return;
   }
   errors.push({
     jsonPath: path,
     message: `${pyRepr(instance)} does not match ${pyRepr(pattern)}`,
   });
+}
+
+function compilePythonPattern(pattern: string): RegExp {
+  // Python `re` and JS disagree on `\s`: JS includes U+FEFF, while Python's
+  // Unicode whitespace set does not. The bundled schemas are validated by
+  // Python first, so the JS schema runner compiles `\s` through Unicode
+  // `White_Space` to keep U+FEFF parity without rewriting the generated schema.
+  return new RegExp(pattern.replace(/\\s/g, '\\p{White_Space}'), 'u');
 }
 
 function checkMinimum(limit: number, instance: unknown, path: string, errors: SchemaError[]): void {

@@ -33,6 +33,7 @@ the rest of the engine fixtures target) unless PYTHON is overridden.
 from __future__ import annotations
 
 import json
+import copy
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -40,6 +41,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from concordia import attestation as att
 from concordia import signing
+from concordia.schema_validator import validate_attestation
 from concordia.message import GENESIS_HASH, compute_hash
 from concordia.session import Session
 from concordia.types import (
@@ -194,6 +196,18 @@ def _key_b64_map():
         AGENT_A: KP_A.public_key_b64(),
         AGENT_B: KP_B.public_key_b64(),
     }
+
+
+def _attestation_reason_class(errors: list[str]) -> str | None:
+    if not errors:
+        return None
+    if any("draft-newton-agreement-evidence-00 version grammar" in error for error in errors):
+        return "version_grammar"
+    if any("draft-newton-agreement-evidence-00 structure" in error for error in errors):
+        return "draft_structure"
+    if any("free-text field must not contain obvious raw deal terms" in error for error in errors):
+        return "privacy"
+    return "schema"
 
 
 def main() -> None:
@@ -932,6 +946,215 @@ def main() -> None:
         },
     )
 
+    # ------------------------------------------------------------------
+    # Attestation validation mutation corpus. Every verdict is produced by
+    # Python `validate_attestation`; JS consumes the same vectors and compares
+    # accept/reject plus the reason class. This deliberately covers the fields
+    # read by the 0.6.0 draft-structure companion, not only JSON Schema.
+    # ------------------------------------------------------------------
+    base_attestation = copy.deepcopy(
+        next(case["expected"] for case in cases if case["name"] == "with_refs_vt")
+    )
+    mutation_corpus = []
+
+    def _add_mutation(name: str, mutate, note: str = "") -> None:
+        candidate = copy.deepcopy(base_attestation)
+        mutate(candidate)
+        errors = validate_attestation(candidate)
+        mutation_corpus.append(
+            {
+                "name": name,
+                "input": candidate,
+                "expected": "accept" if not errors else "reject",
+                "expected_reason_class": _attestation_reason_class(errors),
+                "expected_errors": errors,
+                "note": note,
+            }
+        )
+
+    _add_mutation("valid_baseline", lambda _: None)
+
+    for key in (
+        "concordia_attestation",
+        "attestation_id",
+        "session_id",
+        "timestamp",
+        "outcome",
+        "parties",
+        "meta",
+        "transcript_hash",
+        "chain_head",
+        "message_count",
+        "validity_temporal",
+        "countersignatures",
+        "summary",
+        "references",
+    ):
+        _add_mutation(f"root_remove_{key}", lambda a, k=key: a.pop(k, None))
+    _add_mutation("root_extra_member", lambda a: a.__setitem__("extra_member", True))
+
+    _add_mutation("attestation_id_256_ascii_octets", lambda a: a.__setitem__("attestation_id", "a" * 256))
+    _add_mutation("attestation_id_257_ascii_octets", lambda a: a.__setitem__("attestation_id", "a" * 257))
+    _add_mutation("session_id_85_cjk_255_octets", lambda a: a.__setitem__("session_id", "界" * 85))
+    _add_mutation("session_id_86_cjk_258_octets", lambda a: a.__setitem__("session_id", "界" * 86))
+    _add_mutation("attestation_id_non_nfc", lambda a: a.__setitem__("attestation_id", "att_e\u0301"))
+    _add_mutation("attestation_id_lone_surrogate", lambda a: a.__setitem__("attestation_id", "att_\ud800"))
+    _add_mutation("attestation_id_zero_width", lambda a: a.__setitem__("attestation_id", "att_\u200b"))
+    _add_mutation("attestation_id_bidi_override", lambda a: a.__setitem__("attestation_id", "att_\u202e"))
+    _add_mutation(
+        "attestation_id_bom_python_accept",
+        lambda a: a.__setitem__("attestation_id", "att_\ufeff"),
+        "Python's whitespace predicate does not classify U+FEFF as whitespace.",
+    )
+
+    for version in ("0.5.0", "0.5.9", "0.6.0", "0.6.1", "1.0.0", "00.6.0", "0.6.0\n", "bogus"):
+        _add_mutation(
+            "version_" + version.encode("unicode_escape").decode("ascii").replace("\\", "_"),
+            lambda a, v=version: a.__setitem__("concordia_attestation", v),
+        )
+
+    for digits in range(1, 10):
+        frac = "1" * digits
+        _add_mutation(
+            f"timestamp_fraction_{digits}",
+            lambda a, f=frac: a.__setitem__("timestamp", f"2026-05-29T12:00:00.{f}Z"),
+        )
+    _add_mutation("timestamp_no_fraction", lambda a: a.__setitem__("timestamp", "2026-05-29T12:00:00Z"))
+
+    _add_mutation("outcome_remove_status", lambda a: a["outcome"].pop("status", None))
+    _add_mutation("outcome_extra_member", lambda a: a["outcome"].__setitem__("extra", True))
+    _add_mutation("outcome_rounds_float", lambda a: a["outcome"].__setitem__("rounds", 1.5))
+    _add_mutation("outcome_terms_count_zero", lambda a: a["outcome"].__setitem__("terms_count", 0))
+
+    _add_mutation("parties_remove_agent_id", lambda a: a["parties"][0].pop("agent_id", None))
+    _add_mutation("parties_extra_member", lambda a: a["parties"][0].__setitem__("extra", True))
+    _add_mutation("parties_duplicate_agent_ids", lambda a: a["parties"][1].__setitem__("agent_id", a["parties"][0]["agent_id"]))
+    _add_mutation("party_agent_id_256_ascii_octets", lambda a: a["parties"][0].__setitem__("agent_id", "p" * 256))
+    _add_mutation("party_agent_id_257_ascii_octets", lambda a: a["parties"][0].__setitem__("agent_id", "p" * 257))
+    _add_mutation("party_agent_id_zero_width", lambda a: a["parties"][0].__setitem__("agent_id", "agent\u200b"))
+    _add_mutation("party_agent_id_bom_python_accept", lambda a: a["parties"][0].__setitem__("agent_id", "agent\ufeff"))
+    _add_mutation("party_signature_noncanonical_final", lambda a: a["parties"][0].__setitem__("signature", a["parties"][0]["signature"][:85] + "B=="))
+    _add_mutation("party_signature_canonical_final_A", lambda a: a["parties"][0].__setitem__("signature", a["parties"][0]["signature"][:85] + "A=="))
+
+    _add_mutation("meta_extra_member", lambda a: a["meta"].__setitem__("extra", True))
+    _add_mutation("meta_extensions_used_at_cap", lambda a: a["meta"].__setitem__("extensions_used", [f"e{i}" for i in range(16)]))
+    _add_mutation("meta_extensions_used_over_cap", lambda a: a["meta"].__setitem__("extensions_used", [f"e{i}" for i in range(17)]))
+    _add_mutation("meta_extension_64_octets", lambda a: a["meta"].__setitem__("extensions_used", ["e" * 64]))
+    _add_mutation("meta_extension_65_octets", lambda a: a["meta"].__setitem__("extensions_used", ["e" * 65]))
+
+    _add_mutation("reference_extra_member", lambda a: a["references"][0].__setitem__("extra", True))
+    _add_mutation("reference_extra_and_missing_order", lambda a: (a["references"][0].pop("type", None), a["references"][0].__setitem__("extra", True)))
+    _add_mutation("reference_remove_type", lambda a: a["references"][0].pop("type", None))
+    _add_mutation("reference_id_256_ascii_octets", lambda a: a["references"][0].__setitem__("id", "r" * 256))
+    _add_mutation("reference_id_257_ascii_octets", lambda a: a["references"][0].__setitem__("id", "r" * 257))
+    _add_mutation("reference_id_85_cjk_255_octets", lambda a: a["references"][0].__setitem__("id", "界" * 85))
+    _add_mutation("reference_id_86_cjk_258_octets", lambda a: a["references"][0].__setitem__("id", "界" * 86))
+    _add_mutation("reference_id_non_nfc", lambda a: a["references"][0].__setitem__("id", "ref_e\u0301"))
+    _add_mutation("reference_id_lone_surrogate", lambda a: a["references"][0].__setitem__("id", "ref_\ud800"))
+    _add_mutation("reference_id_zero_width", lambda a: a["references"][0].__setitem__("id", "ref\u200b"))
+    _add_mutation("reference_id_bidi_override", lambda a: a["references"][0].__setitem__("id", "ref\u202e"))
+    _add_mutation("reference_id_bom_python_accept", lambda a: a["references"][0].__setitem__("id", "ref\ufeff"))
+    for digits in range(1, 10):
+        frac = "1" * digits
+        _add_mutation(
+            f"reference_signed_at_fraction_{digits}",
+            lambda a, f=frac: a["references"][0].__setitem__("signed_at", f"2026-05-29T12:00:00.{f}Z"),
+        )
+
+    _add_mutation(
+        "validity_absolute_at_reference_cap",
+        lambda a: a.__setitem__(
+            "validity_temporal",
+            {"mode": "absolute", "from": "2026-01-01T00:00:00Z", "until": "2026-04-01T00:00:00Z"},
+        ),
+    )
+    _add_mutation(
+        "validity_absolute_past_reference_cap_python_accept",
+        lambda a: a.__setitem__(
+            "validity_temporal",
+            {"mode": "absolute", "from": "2026-01-01T00:00:00Z", "until": "2026-04-01T00:00:01Z"},
+        ),
+        "Python's draft-structure path caps relative lifetimes only.",
+    )
+    _add_mutation(
+        "validity_relative_at_reference_cap",
+        lambda a: a.__setitem__(
+            "validity_temporal",
+            {"mode": "relative", "from": "2026-01-01T00:00:00Z", "duration_seconds": 7_776_000},
+        ),
+    )
+    _add_mutation(
+        "validity_relative_past_reference_cap",
+        lambda a: a.__setitem__(
+            "validity_temporal",
+            {"mode": "relative", "from": "2026-01-01T00:00:00Z", "duration_seconds": 7_776_001},
+        ),
+    )
+
+    _add_mutation("countersignature_remove_signer", lambda a: a["countersignatures"].pop(a["parties"][0]["agent_id"], None))
+    _add_mutation("countersignature_extra_signer", lambda a: a["countersignatures"].__setitem__("did:concordia:agent:gamma", a["countersignatures"][a["parties"][0]["agent_id"]]))
+    _add_mutation("countersignature_name_bidi", lambda a: a["countersignatures"].__setitem__("did:concordia:agent:\u202egamma", a["countersignatures"].pop(a["parties"][0]["agent_id"])))
+    _add_mutation("countersignature_value_noncanonical_final", lambda a: a["countersignatures"].__setitem__(a["parties"][0]["agent_id"], a["countersignatures"][a["parties"][0]["agent_id"]][:85] + "B=="))
+
+    issuance_reference_cases = []
+
+    def _issuance_ref_case(name: str, references) -> None:
+        s_local = _build_concluded_session(
+            f"issueref_{name}",
+            [
+                {"sender": AGENT_A, "type": MessageType.OPEN, "body": OPEN_BODY},
+                {"sender": AGENT_B, "type": MessageType.ACCEPT_SESSION, "body": {}},
+                {"sender": AGENT_A, "type": MessageType.OFFER, "body": OFFER_BODY_1},
+                {"sender": AGENT_B, "type": MessageType.ACCEPT, "body": {}},
+            ],
+        )
+        entry = {
+            "name": name,
+            "session": {
+                "session_id": s_local.session_id,
+                "parties": [
+                    {"agent_id": aid, "role": role.value}
+                    for aid, role in s_local.parties.items()
+                ],
+                "transcript": s_local.transcript,
+                "created_at_ms": int(T0.timestamp() * 1000),
+                "concluded_at_ms": int(s_local.concluded_at.timestamp() * 1000),
+                "state": s_local.state.value,
+            },
+            "references": references,
+        }
+        try:
+            r = att.generate_attestation(
+                s_local,
+                {AGENT_A: KP_A, AGENT_B: KP_B},
+                references=references,
+            )
+            validation_errors = validate_attestation(r)
+            entry["expected_references"] = r["references"]
+            entry["expected_error"] = None
+            entry["expected_validate_errors"] = validation_errors
+            entry["expected_validate_reason_class"] = _attestation_reason_class(validation_errors)
+        except Exception as e:  # noqa: BLE001
+            entry["expected_references"] = None
+            entry["expected_error"] = str(e)
+            entry["expected_error_type"] = type(e).__name__
+            entry["expected_validate_errors"] = None
+            entry["expected_validate_reason_class"] = None
+        issuance_reference_cases.append(entry)
+
+    _issuance_ref_case(
+        "bom_id_round_trips_to_validator",
+        [{"type": "receipt", "id": "ref\ufeff", "relationship": "fulfills"}],
+    )
+    _issuance_ref_case(
+        "extra_and_missing_reports_extra_first",
+        [{"id": "ref_extra_missing", "relationship": "fulfills", "extra": True}],
+    )
+    _issuance_ref_case(
+        "reference_extensions_rejected_by_shared_parser",
+        [{"type": "receipt", "id": "ref_extensions", "relationship": "fulfills", "extensions": {}}],
+    )
+
     doc = {
         "_comment": (
             "Generated by js-sdk/scripts/gen-attestation-fixtures.py from "
@@ -959,9 +1182,13 @@ def main() -> None:
         # L3 meta hardening (Python PR #95): value_range bucket vocabulary +
         # category taxonomy, captured accept/reject from the Python reference.
         "l3_meta_cases": l3_meta_cases,
+        "mutation_corpus": mutation_corpus,
+        "issuance_reference_cases": issuance_reference_cases,
     }
 
-    json.dump(doc, sys.stdout, ensure_ascii=False, indent=2)
+    # The mutation corpus intentionally includes escaped lone-surrogate cases;
+    # ensure_ascii=True keeps those vectors representable as JSON bytes.
+    json.dump(doc, sys.stdout, ensure_ascii=True, indent=2)
     sys.stdout.write("\n")
 
 

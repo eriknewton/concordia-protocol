@@ -13,13 +13,13 @@
   rejected for implemented 0.5/0.6 attestation artifacts. Reference extensions
   are also rejected by the shared predicate/reference parser used during
   issuance.
-- Countersignature canonical bytes, validation, schema refusal classes, and
-  mutation vectors are pinned by shared conformance files consumed by both the
-  Python and JS suites.
+- The Python-generated attestation fixture now includes the
+  `mutation_corpus` differential oracle; the JS suite checks accept/reject and
+  reason-class parity for those 0.6.0 validation mutations.
 - The bundled schema validator now supports JSON Schema `not`, the Python
   draft-structure companion check for implemented 0.5/0.6 artifacts, canonical
-  Ed25519 signature encoding checks, and Python-style string normalization for
-  the attestation draft-structure path.
+  Ed25519 signature encoding checks, and Python-style string normalization and
+  whitespace semantics for the attestation draft-structure path.
 - The terminal nine-step attestation verifier remains deferred; this release
   ports issuance, structure validation, and countersignature vector checks only.
 
