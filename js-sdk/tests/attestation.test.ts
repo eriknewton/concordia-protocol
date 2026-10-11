@@ -699,6 +699,21 @@ describe('shared conformance attestation vector', () => {
       }
       const countersignatures = vector.input.countersignatures as
         Record<string, string> | undefined;
+      const expectedFailures =
+        vector.expected_reason_class === 'digest'
+          ? vector.context.countersigners.map((signer) => ({
+              signer,
+              reason: 'invalid_countersignature',
+            }))
+          : vector.context.countersigners
+              .filter(
+                (signer) =>
+                  countersignatures === undefined || !Object.hasOwn(countersignatures, signer),
+              )
+              .map((signer) => ({
+                signer,
+                reason: 'missing_countersignature',
+              }));
       const failures = vector.context.countersigners.flatMap((signer) => {
         expect(Object.hasOwn(vector.context.public_keys_b64url, signer)).toBe(true);
         if (countersignatures === undefined || !Object.hasOwn(countersignatures, signer)) {
@@ -712,25 +727,7 @@ describe('shared conformance attestation vector', () => {
         return accepted ? [] : [{ signer, reason: 'invalid_countersignature' }];
       });
 
-      expect({
-        expectedReasonClass: vector.expected_reason_class,
-        failures,
-      }).toMatchObject({
-        failures: expect.arrayContaining([
-          expect.objectContaining({
-            signer: expect.any(String),
-            reason: expect.stringMatching(/^(missing|invalid)_countersignature$/),
-          }),
-        ]),
-      });
-      if (vector.expected_reason_class === 'digest') {
-        expect(failures).toEqual(
-          expect.arrayContaining([expect.objectContaining({ reason: 'invalid_countersignature' })]),
-        );
-        expect(failures.every((failure) => failure.reason === 'invalid_countersignature')).toBe(
-          true,
-        );
-      }
+      expect(failures).toEqual(expectedFailures);
     }
   });
 });

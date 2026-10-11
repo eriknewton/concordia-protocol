@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Read-side validation notes for the 0.6.0 parity line are now explicit:
+  root `fulfillment` is accepted for 0.4.x artifacts and refused for every
+  version at or above 0.5.0; reference `extensions` and
+  `validity_temporal.window` are refused at every version by the shared `$defs`
+  schemas, so 0.4.x artifacts refuse them too. `isValidNow` accepts only
+  `Z`-suffixed timestamps with at most three fractional digits, treats `until`
+  as inclusive, and returns `false` for `mode: "window"`. Unknown reference
+  members are rejected rather than dropped; every bundled schema pattern now
+  gives `\s` Python-compatible Unicode `White_Space` semantics; and
+  approval-receipt plus fulfillment-attestation `signature` objects reject
+  extra properties.
+
 ## 0.0.1-alpha.13 -- 2026-10-10
 
 - JavaScript attestation issuance now targets Python attestation format 0.6.0:
@@ -9,18 +21,17 @@
   key entry, generated records use the closed draft-newton-agreement-evidence-00
   member set, and reference strings follow Python's NFC, UTF-8 byte-length, and
   reference-control rules.
-- Root `fulfillment` is version-gated off for implemented 0.5.x and 0.6.0
-  attestation artifacts. Reference `extensions` and `validity_temporal.window`
-  are rejected by the shared `$defs` path for 0.4.x, 0.5.x, and 0.6.0; reference
-  extensions are also rejected by the shared predicate/reference parser used
-  during issuance.
+- Root `fulfillment` is version-gated off for attestation artifacts at or above
+  0.5.0. Reference `extensions` and `validity_temporal.window` are rejected by
+  the shared `$defs` path; reference extensions are also rejected by the shared
+  predicate/reference parser used during issuance.
 - The Python-generated attestation fixture now includes the
   `mutation_corpus` differential oracle; the JS suite checks accept/reject and
   reason-class parity for those 0.6.0 validation mutations.
 - The bundled schema validator now supports JSON Schema `not`, the Python
   draft-structure companion check for implemented 0.5/0.6 artifacts, canonical
   Ed25519 signature encoding checks, and Python-style string normalization and
-  whitespace semantics for the attestation draft-structure path.
+  whitespace semantics for bundled schema patterns.
 - The terminal nine-step attestation verifier remains deferred; this release
   ports issuance, structure validation, and countersignature vector checks only.
 

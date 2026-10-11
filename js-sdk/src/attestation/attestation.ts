@@ -202,9 +202,8 @@ export function verifyAttestationCountersignature(
 }
 
 /**
- * The three validity_temporal modes, mirroring Python `VALIDITY_TEMPORAL_MODES`.
- * Distinct from the mandate-layer `ValidityWindow` (sequence/windowed/state_bound);
- * these are the WP3 attestation-level temporal modes.
+ * The validity_temporal modes, mirroring Python `VALIDITY_TEMPORAL_MODES`.
+ * Distinct from the mandate-layer `ValidityWindow` (sequence/windowed/state_bound).
  */
 export const VALIDITY_TEMPORAL_MODES = ['absolute', 'relative'] as const;
 
@@ -730,7 +729,8 @@ export function validateValidityTemporal(vt: unknown): ValidityTemporal {
       duration_seconds: duration,
     };
   }
-  throw new AttestationError('validity_temporal mode is not defined');
+  const exhaustiveMode: never = mode;
+  return exhaustiveMode;
 }
 
 /**
