@@ -27,7 +27,7 @@ Vectors:
 
 - positive: `pos-synthetic-receipt-set-binding`;
 - mutations: `mut-synthetic-receipt-set-binding-0001` through
-  `mut-synthetic-receipt-set-binding-0004`;
+  `mut-synthetic-receipt-set-binding-0008`;
 - canary: `canary-receipt-set-unchecked`.
 
 Reference implementations:

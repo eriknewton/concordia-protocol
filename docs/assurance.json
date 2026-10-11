@@ -67,13 +67,13 @@
           "kind": "test",
           "path": "tests/test_conformance_reference_runner.py",
           "anchor": "EXPECTED_FULL_SUMMARY",
-          "summary": "The first-party Python runner verifies 1,546 vectors with zero failures."
+          "summary": "The first-party Python runner verifies 1,551 vectors with zero failures."
         },
         {
           "kind": "test",
           "path": "tests/test_conformance_js_runner.py",
           "anchor": "EXPECTED_FULL_SUMMARY",
-          "summary": "The first-party Node.js runner verifies the same 1,546 vectors with zero failures."
+          "summary": "The first-party Node.js runner verifies the same 1,551 vectors with zero failures."
         },
         {
           "kind": "external_reproduction",
@@ -83,7 +83,7 @@
         }
       ],
       "limitations": [
-        "The Python and Node.js conformance runners are different runtimes but are both first-party authored. Their 1,546-vector zero-divergence result is cross-runtime parity, not an independent implementation of Concordia.",
+        "The Python and Node.js conformance runners are different runtimes but are both first-party authored. Their 1,551-vector zero-divergence result is cross-runtime parity, not an independent implementation of Concordia.",
         "The sole external reproduction covers one FulfillmentAttestation record, not the whole protocol or the receipt-set-binding profile.",
         "A FulfillmentAttestation proves what its signer asserted and bound to the artifact. It does not objectively prove that physical or external-world fulfillment occurred."
       ],

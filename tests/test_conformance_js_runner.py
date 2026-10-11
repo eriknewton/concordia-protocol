@@ -17,7 +17,7 @@ from scripts.conformance import generate_vectors as vector_generator
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNNER = REPO_ROOT / "conformance" / "reference-runner-js" / "runner.mjs"
 FULL_SUITE = REPO_ROOT / "conformance" / "vectors"
-EXPECTED_FULL_SUMMARY = "[SUMMARY] positive=53 mutation=1488 canary=5 ok=1546 fail=0"
+EXPECTED_FULL_SUMMARY = "[SUMMARY] positive=53 mutation=1493 canary=5 ok=1551 fail=0"
 LONG_VERSION_COMPONENT_DIGITS = 5_000
 CANARY_REGRESSIONS = {
     "canary-chain-splice": "skip-linkage-walk",
@@ -72,6 +72,32 @@ console.log(JSON.stringify({
 """
     result = subprocess.run(
         [cast(str, NODE), "--input-type=module", "-e", script, RUNNER.as_uri(), version],
+        cwd=REPO_ROOT,
+        env={"PATH": os.environ.get("PATH", "")},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    return cast(dict[str, Any], json.loads(result.stdout))
+
+
+def run_chain_head_parser_probe(tmp_path: Path, chain_head: str) -> dict[str, Any]:
+    script = """
+const runner = await import(process.argv[1]);
+console.log(JSON.stringify({
+  matched: runner.isSha256Hex(process.argv[2]),
+}));
+"""
+    result = subprocess.run(
+        [
+            cast(str, NODE),
+            "--input-type=module",
+            "-e",
+            script,
+            RUNNER.as_uri(),
+            chain_head,
+        ],
         cwd=REPO_ROOT,
         env={"PATH": os.environ.get("PATH", "")},
         capture_output=True,
@@ -264,6 +290,15 @@ def test_js_reference_runner_version_parser_uses_protocol_rule(
         expected_parsed = version.split(".")
     assert parsed["parsed"] == expected_parsed
     assert parsed["floorComparison"] == floor_comparison
+
+
+def test_js_reference_runner_chain_head_parser_uses_protocol_rule(tmp_path: Path) -> None:
+    parsed = run_chain_head_parser_probe(
+        tmp_path,
+        "sha256:" + ("a" * 64) + "\n",
+    )
+
+    assert parsed == {"matched": False}
 
 
 def test_symlinked_runner_still_runs_every_vector(tmp_path: Path) -> None:

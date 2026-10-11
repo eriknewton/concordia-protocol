@@ -150,6 +150,16 @@ carry explicit timezone information. This rule is scoped only to `date-time`;
 all other JSON Schema formats remain annotations unless a profile states a
 separate explicit check.
 
+Schema `pattern` and `patternProperties` use ECMA-262 regular expression
+semantics. `$` without the `m` flag matches only at the end of the input. A
+runner on an engine where `$` also matches before a final newline must translate
+that anchor, for example to `\Z` in Python `re`; `conformance/json_schema_pattern.py`
+is one such translation, and the reference `runner.py` imports that sibling
+module. ECMA-262 `\d`, `\s`, and `.` semantics are also the reference; engines
+whose classes are wider must narrow them. The Python reference runner currently
+follows Python semantics for those classes, which is a known gap being
+addressed.
+
 Allowed `expected_reason_class` values are `schema`, `signature`, `digest`,
 `binding`, `temporal`, `privacy`, and `transition`.
 
@@ -898,9 +908,10 @@ Checks, in order:
    types, and require the parsed version to be at least `0.3.0`. Rejecting a
    version above the highest attestation format version a verifier implements
    is each verifier's own rule, tied to the formats it supports, and is not
-   exercised by this profile. Then require `/chain_head` to match
-   `^sha256:[a-f0-9]{64}$`, and require `/message_count` to be an integer
-   greater than or equal to 1.
+   exercised by this profile. Then parse `/chain_head` as a string that is
+   fully matched, every byte of it, by `sha256:[a-f0-9]{64}` (Python
+   `re.fullmatch`, `\Z`, or an anchored match whose length equals the input),
+   and require `/message_count` to be an integer greater than or equal to 1.
 9. For every receipt party, resolve `/agent_id` in
    `context.public_keys_b64url`, verify the party signature over
    `JCS(party without top-level signature)`, then verify that party's
@@ -922,12 +933,16 @@ The receipt pair vectors use `message-chain-v1` with both `messages` and
 `receipt` in the input object. Public vectors carry the parsed JSON objects and
 diagnostic canonical bytes live under `conformance/diag/`, which runners do
 not read. The positive vector verifies a countersigned agreed receipt against
-the exact five-message transcript. The mutation vectors reject a countersigned
-wrong `chain_head`, a countersigned off-by-one `message_count`, a truncated
-transcript with the original receipt, and a re-signed deletion splice with the
-original receipt. The canary `canary-receipt-set-unchecked` is accepted only by
-a deliberately regressed runner that skips this receipt comparison after
-checking message links and signatures.
+the exact five-message transcript. The mutation vectors
+`mut-synthetic-receipt-set-binding-0001` through
+`mut-synthetic-receipt-set-binding-0008` reject a countersigned wrong
+`chain_head`, a countersigned off-by-one `message_count`, a truncated
+transcript with the original receipt, a re-signed deletion splice with the
+original receipt, a legacy attestation version, and final-newline forms of the
+attestation version, `transcript_hash` and `chain_head`. The canary
+`canary-receipt-set-unchecked` is accepted only by a deliberately regressed
+runner that skips this receipt comparison after checking message links and
+signatures.
 
 #### Chain position
 

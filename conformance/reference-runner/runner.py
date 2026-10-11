@@ -18,7 +18,7 @@ import os
 import re
 import sys
 import warnings
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -27,9 +27,24 @@ import rfc8785
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", DeprecationWarning)
-    from jsonschema import Draft202012Validator, FormatChecker, RefResolver
+    from jsonschema import (
+        Draft202012Validator,
+        FormatChecker,
+        RefResolver,
+        ValidationError,
+        validators,
+    )
 from nacl.exceptions import BadSignatureError
 from nacl.signing import SigningKey, VerifyKey
+
+CONFORMANCE_ROOT = Path(__file__).resolve().parents[1]
+if str(CONFORMANCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(CONFORMANCE_ROOT))
+
+from json_schema_pattern import (  # noqa: E402
+    json_schema_pattern_for_python,
+    rewrite_json_schema_patterns_for_python,
+)
 
 Json = Any
 Outcome = Literal["accept", "reject"]
@@ -120,6 +135,34 @@ def is_date_time(value: object) -> bool:
     return parsed.tzinfo is not None
 
 
+def json_schema_pattern_validator(
+    validator: Any,
+    pattern: str,
+    instance: Any,
+    schema: Any,
+) -> Iterator[ValidationError]:
+    del validator, schema
+    if not isinstance(instance, str):
+        return
+    try:
+        compiled = re.compile(json_schema_pattern_for_python(pattern))
+    except (re.error, ValueError) as exc:
+        error = ValidationError(f"{pattern!r} is not a valid regular expression")
+        error.__cause__ = exc
+        yield error
+        return
+    # JSON Schema `pattern` is an unanchored search, but ECMA-262 `$` does not
+    # match before a final newline. Python `re` does, so `$` is rewritten above.
+    if compiled.search(instance) is None:
+        yield ValidationError(f"{instance!r} does not match {pattern!r}")
+
+
+JSON_SCHEMA_VALIDATOR = validators.extend(
+    Draft202012Validator,
+    validators={"pattern": json_schema_pattern_validator},
+)
+
+
 class Reject(Exception):
     """The vector does not satisfy its verification profile."""
 
@@ -187,17 +230,22 @@ def schema_store(suite_base: Path) -> dict[str, Json]:
     schemas: dict[str, Json] = {}
     schema_dir = suite_base / "conformance" / "vectors" / "schemas"
     for path in schema_dir.glob("*.json"):
-        schema = load_json(path)
+        schema = rewrite_json_schema_patterns_for_python(load_json(path))
         if isinstance(schema, dict) and isinstance(schema.get("$id"), str):
             schemas[schema["$id"]] = schema
     return schemas
 
 
 def validate_schema(suite_base: Path, schema_name: str, data: Json) -> None:
-    schema = load_json(schema_file(suite_base, schema_name))
+    try:
+        schema = rewrite_json_schema_patterns_for_python(
+            load_json(schema_file(suite_base, schema_name))
+        )
+    except ValueError as exc:
+        raise Reject("schema validation failed") from exc
     resolver = RefResolver.from_schema(schema, store=schema_store(suite_base))
     errors = list(
-        Draft202012Validator(
+        JSON_SCHEMA_VALIDATOR(
             schema,
             resolver=resolver,
             format_checker=FORMAT_CHECKER,
@@ -379,7 +427,7 @@ def validate_json_schema_object(schema: Json) -> None:
     if not isinstance(schema, dict):
         raise Reject("constraint schema is not an object")
     try:
-        Draft202012Validator.check_schema(schema)
+        JSON_SCHEMA_VALIDATOR.check_schema(schema)
     except Exception as exc:
         raise Reject("constraint schema is invalid") from exc
 
@@ -388,7 +436,11 @@ def validate_action(schema: Json, action: Json) -> None:
     if action is None:
         return
     validate_json_schema_object(schema)
-    errors = list(Draft202012Validator(schema).iter_errors(action))
+    try:
+        rewritten = rewrite_json_schema_patterns_for_python(schema)
+    except ValueError as exc:
+        raise Reject("constraint schema is invalid") from exc
+    errors = list(JSON_SCHEMA_VALIDATOR(rewritten).iter_errors(action))
     if errors:
         raise Reject("action violates constraints")
 
@@ -1067,10 +1119,13 @@ AGENT_PROFILE_LOCATION_FIELDS = {"regions", "jurisdictions"}
 GENESIS_HASH = "sha256:" + ("0" * 64)
 # Same grammar as _SEMVER_RE in concordia/attestation.py; this clean-room
 # runner keeps the protocol rule local instead of importing Concordia.
+# Must match ATTESTATION_VERSION_RE in conformance/reference-runner-js/runner.mjs.
 ATTESTATION_VERSION_RE = re.compile(
     r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z"
 )
 SET_BINDING_VERSION_FLOOR = ("0", "3", "0")
+# Must match isSha256Hex in conformance/reference-runner-js/runner.mjs; \Z is
+# load-bearing because check 8 full-matches every byte, including final newlines.
 SHA256_HEX_RE = re.compile(r"^sha256:[a-f0-9]{64}\Z")
 
 
