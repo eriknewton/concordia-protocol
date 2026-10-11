@@ -992,6 +992,7 @@ _UNSUPPORTED_ATTESTATION_VERSIONS = [
     ("grammar", "0.6.0\n"),
 ]
 _SUPPORTED_ATTESTATION_VERSIONS = ["0.2.0", "0.5.9", "0.6.0"]
+_LEGACY_UNBOUND_ATTESTATION_VERSIONS = ["0.1.1", "0.1.999", "0.0.5"]
 
 
 def _mint_bound_attestation(
@@ -1318,6 +1319,37 @@ class TestSoundAggregateVerification:
         result = verify_competence_proof(proof.to_dict(), _test_resolver)
 
         assert result.valid is False
+        assert result.aggregate_verified is False
+        assert result.claims_asserted_not_verified is True
+        assert att["attestation_id"] in result.revealed_outcome_unbound
+        if case_name == "grammar":
+            assert any("is malformed; outcome not bound" in error for error in result.errors)
+        elif "component_size" in case_name:
+            assert any("component is too long" in error for error in result.errors)
+        else:
+            assert any("exceeds the implemented attestation version" in error for error in result.errors)
+
+    @pytest.mark.parametrize("version", _LEGACY_UNBOUND_ATTESTATION_VERSIONS)
+    def test_below_floor_versions_remain_legacy_unbound_in_proofs(
+        self,
+        version: str,
+    ):
+        """Grammar-valid versions below 0.2.0 stay accepted but uncredited."""
+        prover = f"ceil_legacy_prover_{version.replace('.', '_')}"
+        counterparty = f"ceil_legacy_cp_{version.replace('.', '_')}"
+        att = _mint_bound_attestation(prover, counterparty, status="agreed")
+        _set_version_and_countersign(att, version, (prover, counterparty))
+        kp = _KEY_REGISTRY[prover]
+        proof = CompetenceProof.create(
+            prover,
+            [att],
+            kp,
+            reveal_ids=[att["attestation_id"]],
+        )
+
+        result = verify_competence_proof(proof.to_dict(), _test_resolver)
+
+        assert result.valid is True
         assert result.aggregate_verified is False
         assert result.claims_asserted_not_verified is True
         assert att["attestation_id"] in result.revealed_outcome_unbound

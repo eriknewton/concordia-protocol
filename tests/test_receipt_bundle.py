@@ -849,6 +849,7 @@ _UNSUPPORTED_ATTESTATION_VERSIONS = [
     ("grammar", "0.6.0\n"),
 ]
 _SUPPORTED_ATTESTATION_VERSIONS = ["0.2.0", "0.5.9", "0.6.0"]
+_LEGACY_UNBOUND_ATTESTATION_VERSIONS = ["0.1.1", "0.1.999", "0.0.5"]
 
 
 def _mint_bound_attestation(
@@ -1117,6 +1118,30 @@ class TestOutcomeBindingBundle:
         assert result.valid is False
         assert result.outcome_bound_count == 0
         assert att["attestation_id"] in result.outcome_unbound_attestations
+        if case_name == "grammar":
+            assert any("is malformed; outcome not bound" in error for error in result.errors)
+        elif "component_size" in case_name:
+            assert any("component is too long" in error for error in result.errors)
+        else:
+            assert any("exceeds the implemented attestation version" in error for error in result.errors)
+
+    @pytest.mark.parametrize("version", _LEGACY_UNBOUND_ATTESTATION_VERSIONS)
+    def test_below_floor_versions_remain_legacy_unbound(self, version: str):
+        """Grammar-valid versions below 0.2.0 stay accepted but uncredited."""
+        att, seller_id, buyer_id = _mint_bound_attestation(
+            f"ceil_legacy_s_{version.replace('.', '_')}",
+            f"ceil_legacy_b_{version.replace('.', '_')}",
+        )
+        _set_version_and_countersign(att, version, (seller_id, buyer_id))
+        kp = _KEY_REGISTRY[seller_id]
+        bundle = ReceiptBundle.create(seller_id, [att], kp)
+
+        result = verify_bundle(bundle.to_dict(), _test_resolver)
+
+        assert result.valid is True
+        assert result.outcome_bound_count == 0
+        assert att["attestation_id"] in result.outcome_unbound_attestations
+        assert any("not cryptographically bound" in warning.lower() for warning in result.warnings)
 
     @pytest.mark.parametrize("version", _SUPPORTED_ATTESTATION_VERSIONS)
     def test_versions_at_or_below_implemented_range_keep_binding(

@@ -12,6 +12,7 @@ import binascii
 import json
 import math
 import re
+import sys
 import unicodedata
 import uuid
 from collections.abc import Callable, Mapping
@@ -56,9 +57,17 @@ _SET_BINDING_MIN = (0, 3)
 _SET_BINDING_UNVERIFIED_WARNING = (
     "set-binding fields are present but not verified; no transcript supplied"
 )
-# Must match ``_SEMVER_RE`` in concordia/receipt_bundle.py.
+# Must match STRICT_VERSION_PATTERN in js-sdk/src/attestation/attestation.ts
+# and STRICT_SEMVER_PATTERN in js-sdk/src/validation/schema-validator.ts.
 _SEMVER_RE = re.compile(
     r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z"
+)
+# CPython's default int-string guard (4300 decimal digits) is the compatibility
+# ceiling for the wire grammar. Owning the check here keeps hosts that raise or
+# disable their interpreter limit on the same structure-error boundary.
+# Must match MAX_ATTESTATION_VERSION_COMPONENT_DIGITS in the JS SDK parsers.
+MAX_ATTESTATION_VERSION_COMPONENT_DIGITS = getattr(
+    sys.int_info, "default_max_str_digits", 4300
 )
 _SHA256_HEX_RE = re.compile(r"^sha256:[a-f0-9]{64}\Z")
 _TIMESTAMP_Z_RE = re.compile(
@@ -232,15 +241,15 @@ def _version_tuple(value: str) -> tuple[int, int, int]:
             "integers without leading zeros"
         )
     parts = value.split(".")
+    if any(len(part) > MAX_ATTESTATION_VERSION_COMPONENT_DIGITS for part in parts):
+        raise _AttestationStructureError(
+            "concordia_attestation component is too long"
+        )
     try:
         return (int(parts[0]), int(parts[1]), int(parts[2]))
-    except ValueError as exc:
-        # The grammar bounds neither digit count nor magnitude; CPython raises
-        # on int() past sys.get_int_max_str_digits() (4300). The JS validator's
-        # MAX_VERSION_COMPONENT_DIGITS must match that default. This is a
-        # structure error like any other malformed version, never a raw
-        # exception at a composition boundary and never a route into a legacy
-        # lane.
+    except Exception as exc:
+        # Conversion is never allowed to leak a raw exception at composition
+        # boundaries or route a non-convertible version into a legacy lane.
         raise _AttestationStructureError(
             "concordia_attestation component is too long"
         ) from exc
@@ -1006,15 +1015,14 @@ def _map_state_to_outcome(state: SessionState) -> OutcomeStatus:
 def _attestation_version_at_least(ver: str, major: int, minor: int) -> bool:
     """Return True iff ``ver`` is semver-shaped and at least ``major.minor``.
 
-    A version that fails the grammar returns False; callers that must fail
-    closed on a malformed version check ``_SEMVER_RE`` first (every caller
-    in this module does). A component past CPython's int() digit limit
-    raises ValueError, which those callers turn into an error state.
+    A version that fails the shared grammar returns False; callers that must
+    fail closed use ``_version_tuple`` directly and surface the structure error.
     """
-    if not isinstance(ver, str) or not _SEMVER_RE.match(ver):
+    try:
+        version = _version_tuple(ver)
+    except _AttestationStructureError:
         return False
-    parts = ver.split(".")
-    return (int(parts[0]), int(parts[1])) >= (major, minor)
+    return version[:2] >= (major, minor)
 
 
 def evaluate_receipt_set_binding(
@@ -1034,16 +1042,24 @@ def evaluate_receipt_set_binding(
         fields missing, malformed, or not matching the supplied transcript.
     """
     ver = attestation.get("concordia_attestation", "")
-    if not isinstance(ver, str) or not _SEMVER_RE.match(ver):
-        # Malformed or absent version: an error, not legacy set-unbound, for
-        # the same reason as evaluate_outcome_binding in receipt_bundle.py
-        # (the unbound lane skips every check).
-        return "error", ["concordia_attestation is malformed; set not bound"]
     try:
-        at_least = _attestation_version_at_least(ver, *_SET_BINDING_MIN)
-    except ValueError:
-        return "error", ["concordia_attestation component is too long"]
-    if not at_least:
+        # Set-binding and outcome-binding use the same parser and ceiling so
+        # a version cannot be credited by one verifier and refused by another.
+        version = _version_tuple(ver)
+    except _AttestationStructureError as exc:
+        message = str(exc)
+        if message == "concordia_attestation component is too long":
+            return "error", [message]
+        return "error", ["concordia_attestation is malformed; set not bound"]
+    if version > _IMPLEMENTED_ATTESTATION_VERSION:
+        return (
+            "error",
+            [
+                "concordia_attestation exceeds the implemented attestation version; "
+                "set not bound"
+            ],
+        )
+    if version[:2] < _SET_BINDING_MIN:
         return "legacy_set_unbound", []
 
     errors: list[str] = []

@@ -457,6 +457,20 @@ describe('receipt set-binding verifier (v0.3.0)', () => {
     });
   });
 
+  it('refuses set-binding credit above the implemented attestation version', () => {
+    const c = fixtures.cases[0]!;
+    const session = rebuildSession(c.session);
+    const attestation = generateAttestation(session, keyPairsFromCase(c), optionsFromCase(c));
+    attestation.concordia_attestation = '0.6.1';
+
+    const result = verifyReceiptSetBinding(attestation);
+
+    expect(result).toEqual({
+      state: 'error',
+      errors: ['concordia_attestation exceeds the implemented attestation version; set not bound'],
+    });
+  });
+
   for (const vectorCase of setBindingTranscriptVector.cases) {
     it(`applies shared transcript-present rule for ${vectorCase.name}`, () => {
       const c = fixtures.cases[0]!;

@@ -181,9 +181,8 @@ type VersionTuple = readonly [bigint, bigint, bigint];
 const IMPLEMENTED_ATTESTATION_VERSION: VersionTuple = [0n, 6n, 0n];
 const LEGACY_FLOOR_VERSION: VersionTuple = [0n, 5n, 0n];
 const STRICT_SEMVER_PATTERN = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
-// Must match CPython's default int-string limit used by _version_tuple in
-// concordia/attestation.py so malformed component length is classified alike.
-const MAX_VERSION_COMPONENT_DIGITS = 4300;
+// Must match MAX_ATTESTATION_VERSION_COMPONENT_DIGITS in concordia/attestation.py.
+export const MAX_ATTESTATION_VERSION_COMPONENT_DIGITS = 4300;
 const RFC3339_Z_PATTERN =
   /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,3})?Z$/;
 const SHA256_HEX_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -477,7 +476,9 @@ function parseStrictVersion(value: string): VersionTuple | null {
   if (!STRICT_SEMVER_PATTERN.test(value)) return null;
   const stringParts = value.split('.');
   if (stringParts.length !== 3) return null;
-  if (stringParts.some((part) => part.length > MAX_VERSION_COMPONENT_DIGITS)) return null;
+  if (stringParts.some((part) => part.length > MAX_ATTESTATION_VERSION_COMPONENT_DIGITS)) {
+    return null;
+  }
   return [BigInt(stringParts[0]!), BigInt(stringParts[1]!), BigInt(stringParts[2]!)];
 }
 

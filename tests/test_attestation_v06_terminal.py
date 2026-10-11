@@ -7,6 +7,7 @@ draft-newton-agreement-evidence-00 Sections 4, 8, 10, and 11.7.
 from __future__ import annotations
 
 import json
+import sys
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -24,8 +25,7 @@ from concordia.attestation import (
     verify_attestation_artifact,
 )
 from concordia.schema_validator import is_valid_attestation, validate_attestation
-from concordia.signing import KeyPair, sign_message
-from concordia.signing import public_key_from_b64url
+from concordia.signing import KeyPair, public_key_from_b64url, sign_message
 
 _RFC8032_SEED_1 = bytes.fromhex(
     "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"
@@ -982,3 +982,53 @@ def test_overlong_version_component_is_a_structure_error_everywhere() -> None:
     legacy_no_vt = {"concordia_attestation": "0.6.0\n"}
     assert is_valid_now(legacy_no_vt) is False
     assert is_valid_now({"concordia_attestation": "0.4.0"}) is True
+
+
+def test_version_component_bound_holds_when_interpreter_limit_is_disabled() -> None:
+    """The shared version grammar owns its digit bound before integer parsing."""
+    from concordia.attestation import (
+        MAX_ATTESTATION_VERSION_COMPONENT_DIGITS,
+        evaluate_receipt_set_binding,
+    )
+    from concordia.receipt_bundle import evaluate_outcome_binding
+
+    max_digits = MAX_ATTESTATION_VERSION_COMPONENT_DIGITS
+    previous_limit = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(0)
+    try:
+        now = datetime.now(timezone.utc)
+        artifact, keys = _artifact(now)
+        artifact["concordia_attestation"] = "0.1." + ("9" * max_digits)
+        assert evaluate_outcome_binding(artifact, lambda a: keys[a].public_key) == (
+            "unbound",
+            None,
+        )
+        assert evaluate_receipt_set_binding(artifact) == ("legacy_set_unbound", [])
+
+        artifact["concordia_attestation"] = "0.1." + ("9" * (max_digits + 1))
+        assert evaluate_outcome_binding(artifact, lambda a: keys[a].public_key) == (
+            "error",
+            "concordia_attestation component is too long",
+        )
+        assert evaluate_receipt_set_binding(artifact) == (
+            "error",
+            ["concordia_attestation component is too long"],
+        )
+    finally:
+        sys.set_int_max_str_digits(previous_limit)
+
+
+def test_receipt_set_binding_refuses_unimplemented_version() -> None:
+    """Set-binding and outcome-binding share the same implemented ceiling."""
+    from concordia.attestation import evaluate_receipt_set_binding
+
+    now = datetime.now(timezone.utc)
+    artifact, _keys = _artifact(now)
+    artifact["concordia_attestation"] = "0.6.1"
+
+    state, errors = evaluate_receipt_set_binding(artifact)
+
+    assert state == "error"
+    assert errors == [
+        "concordia_attestation exceeds the implemented attestation version; set not bound"
+    ]

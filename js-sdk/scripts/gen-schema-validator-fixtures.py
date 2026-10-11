@@ -26,6 +26,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from concordia import signing
 from concordia.approval_receipt import verify_approval_receipt
+from concordia.attestation import MAX_ATTESTATION_VERSION_COMPONENT_DIGITS
 from concordia.schema_validator import (
     validate_approval_receipt,
     validate_attestation,
@@ -715,6 +716,20 @@ def _attestation_constraint_cases() -> list[dict]:
         # no validity_temporal — must be rejected
 
     add("v100_missing_required_validity_rejected", make_v100_no_validity)
+
+    def make_component_at_digit_bound(attestation):
+        attestation["concordia_attestation"] = (
+            "0.1." + ("9" * MAX_ATTESTATION_VERSION_COMPONENT_DIGITS)
+        )
+
+    add("version_component_at_digit_bound_no_version_error", make_component_at_digit_bound)
+
+    def make_component_past_digit_bound(attestation):
+        attestation["concordia_attestation"] = (
+            "0.1." + ("9" * (MAX_ATTESTATION_VERSION_COMPONENT_DIGITS + 1))
+        )
+
+    add("version_component_past_digit_bound_version_error", make_component_past_digit_bound)
 
     def empty_countersignature_property_name(attestation):
         make_v05(attestation)

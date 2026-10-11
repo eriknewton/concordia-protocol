@@ -29,7 +29,7 @@ from .signing import KeyPair, canonical_json, sign_message, verify_signature
 # carry a valid issuance ``countersignatures`` map or the bundle is rejected
 # (fail-closed). Below this version, the outcome is legacy prover-asserted:
 # reported as outcome-unbound and NOT credited, but NOT an error (dual-accept).
-_OUTCOME_BINDING_MIN = (0, 2, 0)
+_OUTCOME_BINDING_MIN = (0, 2)
 
 
 def evaluate_outcome_binding(
@@ -75,14 +75,17 @@ def evaluate_outcome_binding(
         # it would let an outcome-tampered artifact pass verify_bundle with
         # valid=True. Matches -00 section 10 step 2 (malformed version is
         # not-bound before any signature work).
-        return "error", f"{exc}; outcome not bound"
+        message = str(exc)
+        if message == "concordia_attestation component is too long":
+            return "error", message
+        return "error", "concordia_attestation is malformed; outcome not bound"
     if version > _IMPLEMENTED_ATTESTATION_VERSION:
         return (
             "error",
             "concordia_attestation exceeds the implemented attestation version; "
             "outcome not bound",
         )
-    if version < _OUTCOME_BINDING_MIN:
+    if version[:2] < _OUTCOME_BINDING_MIN:
         # Legacy / pre-C-H2 (well-formed version below the floor): outcome is
         # prover-asserted. Recorded as unbound, NOT an error (mixed-version
         # handling is the caller's job).
