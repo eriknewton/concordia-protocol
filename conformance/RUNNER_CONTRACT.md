@@ -898,9 +898,10 @@ Checks, in order:
    types, and require the parsed version to be at least `0.3.0`. Rejecting a
    version above the highest attestation format version a verifier implements
    is each verifier's own rule, tied to the formats it supports, and is not
-   exercised by this profile. Then require `/chain_head` to match
-   `^sha256:[a-f0-9]{64}$`, and require `/message_count` to be an integer
-   greater than or equal to 1.
+   exercised by this profile. Then parse `/chain_head` as a string that is
+   fully matched, every byte of it, by `sha256:[a-f0-9]{64}` (Python
+   `re.fullmatch`, `\Z`, or an anchored match whose length equals the input),
+   and require `/message_count` to be an integer greater than or equal to 1.
 9. For every receipt party, resolve `/agent_id` in
    `context.public_keys_b64url`, verify the party signature over
    `JCS(party without top-level signature)`, then verify that party's

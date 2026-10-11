@@ -144,9 +144,12 @@ const AGENT_PROFILE_LOCATION_FIELDS = new Set(["regions", "jurisdictions"]);
 const GENESIS_HASH = `sha256:${"0".repeat(64)}`;
 // Same grammar as _SEMVER_RE in concordia/attestation.py; this clean-room
 // runner keeps the protocol rule local instead of importing Concordia.
-const ATTESTATION_VERSION_RE = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/u;
+// Must match ATTESTATION_VERSION_RE in conformance/reference-runner/runner.py.
+const ATTESTATION_VERSION_RE = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)/u;
 const SET_BINDING_VERSION_FLOOR = ["0", "3", "0"];
-const SHA256_HEX_RE = /^sha256:[a-f0-9]{64}$/u;
+// Must match SHA256_HEX_RE in conformance/reference-runner/runner.py; callers
+// compare match length so check 8 full-matches every byte, including newlines.
+const SHA256_HEX_RE = /^sha256:[a-f0-9]{64}/u;
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 const ED25519_PKCS8_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
 
@@ -1453,6 +1456,14 @@ function parseAttestationVersion(value) {
   return value.split(".");
 }
 
+function isSha256Hex(value) {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const match = SHA256_HEX_RE.exec(value);
+  return match !== null && match[0] === value;
+}
+
 function compareDecimalText(left, right) {
   if (left.length !== right.length) {
     return left.length < right.length ? -1 : 1;
@@ -1486,7 +1497,7 @@ function verifyMessageChainReceiptBinding(suiteBase, inputData, messages, contex
   if (compareAttestationVersion(version, SET_BINDING_VERSION_FLOOR) < 0) {
     reject("receipt is legacy set-unbound");
   }
-  if (typeof receipt.chain_head !== "string" || !SHA256_HEX_RE.test(receipt.chain_head)) {
+  if (!isSha256Hex(receipt.chain_head)) {
     reject("receipt chain_head is malformed");
   }
   if (
@@ -1787,4 +1798,9 @@ if (isEntryPoint()) {
   }
 }
 
-export { parseAttestationVersion, compareAttestationVersion, SET_BINDING_VERSION_FLOOR };
+export {
+  parseAttestationVersion,
+  compareAttestationVersion,
+  SET_BINDING_VERSION_FLOOR,
+  isSha256Hex,
+};

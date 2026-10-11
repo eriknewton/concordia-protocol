@@ -217,7 +217,7 @@ def validate(data: Any) -> dict[str, Any]:
     integrity_text = " ".join(
         [integrity["bounded_claim"], *integrity["limitations"]]
     ).lower()
-    for required in ["0.3.0", "1,546", "first-party", "not an independent implementation"]:
+    for required in ["0.3.0", "1,548", "first-party", "not an independent implementation"]:
         if required.lower() not in integrity_text:
             raise AssuranceError(f"agreement_integrity must preserve bound: {required}")
     integrity_exclusions = integrity["not_claimed"].lower()
@@ -387,7 +387,7 @@ def render_vocabulary(data: dict[str, Any]) -> str:
             "- **Authority vs. voluntariness:** an authorized signer may still act under duress, manipulation, or incapacity.",
             "- **Voluntariness vs. justice:** freely signed terms can still be exploitative or harmful to affected non-signers.",
             "- **Integrity vs. objective fulfillment:** a FulfillmentAttestation binds a signer's assertion. It does not prove an external-world event without separate evidence.",
-            "- **First-party parity vs. independent implementation:** the Python and Node.js runners agree on 1,546 vectors with zero divergence, but both are first-party authored.",
+            "- **First-party parity vs. independent implementation:** the Python and Node.js runners agree on 1,548 vectors with zero divergence, but both are first-party authored.",
             "- **Record minimization vs. payload confidentiality:** excluding raw terms from an attestation does not encrypt negotiation messages.",
             "- **Payload confidentiality vs. metadata privacy:** encrypted content would not by itself hide counterparties, timing, routing, or volume.",
             "",

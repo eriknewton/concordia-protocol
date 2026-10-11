@@ -1067,10 +1067,13 @@ AGENT_PROFILE_LOCATION_FIELDS = {"regions", "jurisdictions"}
 GENESIS_HASH = "sha256:" + ("0" * 64)
 # Same grammar as _SEMVER_RE in concordia/attestation.py; this clean-room
 # runner keeps the protocol rule local instead of importing Concordia.
+# Must match ATTESTATION_VERSION_RE in conformance/reference-runner-js/runner.mjs.
 ATTESTATION_VERSION_RE = re.compile(
     r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z"
 )
 SET_BINDING_VERSION_FLOOR = ("0", "3", "0")
+# Must match isSha256Hex in conformance/reference-runner-js/runner.mjs; \Z is
+# load-bearing because check 8 full-matches every byte, including final newlines.
 SHA256_HEX_RE = re.compile(r"^sha256:[a-f0-9]{64}\Z")
 
 

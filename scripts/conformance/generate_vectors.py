@@ -1758,8 +1758,8 @@ RECEIPT_BUNDLE_VERSION_TOLERANCE_NOTE = (
 CHAIN_POSITION_RESIGNED_SPLICE_TOLERANCE_NOTE = (
     "tolerated-accept: per-message signatures authenticate links, not the complete message set"
 )
-EXPECTED_MUTATION_TOTAL = 1488
-EXPECTED_MUTATION_REJECTS = 1449
+EXPECTED_MUTATION_TOTAL = 1490
+EXPECTED_MUTATION_REJECTS = 1451
 EXPECTED_MUTATION_ACCEPTS = 39
 EXPECTED_CANARY_TOTAL = 5
 EXPECTED_RAW_TYPED_DIVERGENCES = (
@@ -1796,7 +1796,7 @@ EXPECTED_MUTATION_BATTERY_COUNTS: dict[str, tuple[int, int, int]] = {
     "synthetic/longtail/competence_proof.json": (157, 155, 2),
     "synthetic/longtail/message_chain.json": (99, 99, 0),
     "synthetic/longtail/message_chain_position.json": (4, 3, 1),
-    "synthetic/longtail/receipt_set_binding.json": (4, 4, 0),
+    "synthetic/longtail/receipt_set_binding.json": (6, 6, 0),
     "synthetic/longtail/receipt_bundle.json": (256, 255, 1),
     "synthetic/mandate/delegated_mandate.json": (82, 82, 0),
     "synthetic/mandate/mandate.json": (51, 51, 0),
@@ -2718,6 +2718,20 @@ def build_receipt_set_binding_mutation_vectors(
         "messages": receipt_set_binding_resigned_splice(base_messages),
         "receipt": copy.deepcopy(base_receipt),
     }
+    legacy_set_unbound = {
+        "messages": copy.deepcopy(base_messages),
+        "receipt": receipt_with_resigned_snapshot(
+            base_receipt,
+            {"concordia_attestation": "0.2.0"},
+        ),
+    }
+    newline_version = {
+        "messages": copy.deepcopy(base_messages),
+        "receipt": receipt_with_resigned_snapshot(
+            base_receipt,
+            {"concordia_attestation": "0.3.0\n"},
+        ),
+    }
     vectors = [
         receipt_set_binding_vector(
             vector_id="mut-synthetic-receipt-set-binding-0001",
@@ -2744,6 +2758,20 @@ def build_receipt_set_binding_mutation_vectors(
             vector_id="mut-synthetic-receipt-set-binding-0004",
             title="receipt_set_binding: re-signed deletion splice presented with original receipt",
             input_data=resigned_splice,
+            context=context,
+            expected_reason_class="binding",
+        ),
+        receipt_set_binding_vector(
+            vector_id="mut-synthetic-receipt-set-binding-0005",
+            title="receipt_set_binding: legacy attestation version is set-unbound",
+            input_data=legacy_set_unbound,
+            context=context,
+            expected_reason_class="binding",
+        ),
+        receipt_set_binding_vector(
+            vector_id="mut-synthetic-receipt-set-binding-0006",
+            title="receipt_set_binding: attestation version has trailing newline",
+            input_data=newline_version,
             context=context,
             expected_reason_class="binding",
         ),

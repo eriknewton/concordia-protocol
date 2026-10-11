@@ -19,7 +19,7 @@ from scripts.conformance import generate_vectors as vector_generator
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNNER = REPO_ROOT / "conformance" / "reference-runner" / "runner.py"
 FULL_SUITE = REPO_ROOT / "conformance" / "vectors"
-EXPECTED_FULL_SUMMARY = "[SUMMARY] positive=53 mutation=1488 canary=5 ok=1546 fail=0"
+EXPECTED_FULL_SUMMARY = "[SUMMARY] positive=53 mutation=1490 canary=5 ok=1548 fail=0"
 LONG_VERSION_COMPONENT_DIGITS = 5_000
 CANARY_REGRESSIONS = {
     "canary-chain-splice": "skip-linkage-walk",
@@ -103,6 +103,37 @@ print(json.dumps({
     }
     result = subprocess.run(
         [sys.executable, "-S", "-c", script, str(RUNNER), version],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    return cast(dict[str, Any], json.loads(result.stdout))
+
+
+def run_chain_head_parser_probe(tmp_path: Path, chain_head: str) -> dict[str, Any]:
+    clean_site = clean_site_packages(tmp_path)
+    script = """
+import importlib.util
+import json
+import sys
+
+spec = importlib.util.spec_from_file_location("runner_probe", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+match = module.SHA256_HEX_RE.match(sys.argv[2])
+print(json.dumps({"matched": match is not None}))
+"""
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONPATH": str(clean_site),
+    }
+    result = subprocess.run(
+        [sys.executable, "-S", "-c", script, str(RUNNER), chain_head],
         cwd=tmp_path,
         env=env,
         capture_output=True,
@@ -297,3 +328,12 @@ def test_reference_runner_version_parser_uses_protocol_rule(
         expected_parsed = version.split(".")
     assert parsed["parsed"] == expected_parsed
     assert parsed["floor_comparison"] == floor_comparison
+
+
+def test_reference_runner_chain_head_parser_uses_protocol_rule(tmp_path: Path) -> None:
+    parsed = run_chain_head_parser_probe(
+        tmp_path,
+        "sha256:" + ("a" * 64) + "\n",
+    )
+
+    assert parsed == {"matched": False}
