@@ -127,6 +127,10 @@ from concordia.schema_validator import (  # noqa: E402
     validate_approval_receipt,
 )
 from concordia.signing import KeyPair, canonical_json, sign_message  # noqa: E402
+from conformance.json_schema_pattern import (  # noqa: E402
+    json_schema_pattern_for_python,
+    rewrite_json_schema_patterns_for_python,
+)
 
 # Same grammar as _SEMVER_RE in concordia/attestation.py. The generated vectors
 # exercise the same protocol boundary the clean-room runners enforce.
@@ -157,9 +161,12 @@ CHECK_COMMAND = "python3 scripts/conformance/generate_vectors.py --check"
 # produce, so "extra file" drift against generated output is the wrong test for
 # them. `erdl-do-v1.5` (the independent ERDL Decision Object v1.5 audit-layer
 # runner) and `erdl-expression-v1` (the independent ERDL expression-layer runner),
-# each with its submission envelope, are authored like the two reference runners,
-# not generated. The check's subject, conformance/vectors/, is unaffected.
+# each with its submission envelope, and `json_schema_pattern.py` (the shared
+# regex translator imported by the Python runner and generator) are authored like
+# the two reference runners, not generated. The check's subject,
+# conformance/vectors/, is unaffected.
 GENERATED_CHECK_EXCLUDED_DIRS = {
+    "__pycache__",
     "reference-runner",
     "reference-runner-js",
     "erdl-do-v1.5",
@@ -169,6 +176,7 @@ GENERATED_CHECK_EXCLUDED_FILES = {
     "IMPLEMENTATIONS.md",
     "PROFILES.md",
     "RUNNER_CONTRACT.md",
+    "json_schema_pattern.py",
 }
 
 INTEROP_1404 = REPO_ROOT / "docs" / "interop" / "a2a-1404-receipt-revocation-vector"
@@ -278,35 +286,6 @@ def is_date_time(value: object) -> bool:
     return parsed.tzinfo is not None
 
 
-def json_schema_pattern_for_python(pattern: str) -> str:
-    """Translate JSON Schema's true-end `$` anchor to Python `re` semantics."""
-    translated: list[str] = []
-    escaped = False
-    in_character_class = False
-    for char in pattern:
-        if escaped:
-            translated.append(char)
-            escaped = False
-            continue
-        if char == "\\":
-            translated.append(char)
-            escaped = True
-            continue
-        if char == "[" and not in_character_class:
-            in_character_class = True
-            translated.append(char)
-            continue
-        if char == "]" and in_character_class:
-            in_character_class = False
-            translated.append(char)
-            continue
-        if char == "$" and not in_character_class:
-            translated.append(r"\Z")
-            continue
-        translated.append(char)
-    return "".join(translated)
-
-
 def json_schema_pattern_validator(
     validator: Any,
     pattern: str,
@@ -318,7 +297,7 @@ def json_schema_pattern_validator(
         return
     try:
         compiled = re.compile(json_schema_pattern_for_python(pattern))
-    except re.error as exc:
+    except (re.error, ValueError) as exc:
         error = ValidationError(f"{pattern!r} is not a valid regular expression")
         error.__cause__ = exc
         yield error
@@ -650,17 +629,23 @@ def mutations(obj: dict[str, Any]) -> Iterator[tuple[str, MutationKind, dict[str
 def schema_store() -> dict[str, dict[str, Any]]:
     schemas: dict[str, dict[str, Any]] = {}
     for source in SCHEMA_COPIES.values():
-        loaded = load_json(source)
+        loaded = rewrite_json_schema_patterns_for_python(load_json(source))
         schema_id = loaded.get("$id")
         if isinstance(schema_id, str):
             schemas[schema_id] = loaded
     mandate_id = MANDATE_JSON_SCHEMA.get("$id")
     if isinstance(mandate_id, str):
-        schemas[mandate_id] = MANDATE_JSON_SCHEMA
+        schemas[mandate_id] = rewrite_json_schema_patterns_for_python(
+            MANDATE_JSON_SCHEMA
+        )
     return schemas
 
 
 def schema_is_valid(schema: dict[str, Any], data: Any) -> bool:
+    try:
+        schema = rewrite_json_schema_patterns_for_python(schema)
+    except ValueError:
+        return False
     resolver = RefResolver.from_schema(schema, store=schema_store())
     return not any(
         JSON_SCHEMA_VALIDATOR(
@@ -1821,8 +1806,8 @@ RECEIPT_BUNDLE_VERSION_TOLERANCE_NOTE = (
 CHAIN_POSITION_RESIGNED_SPLICE_TOLERANCE_NOTE = (
     "tolerated-accept: per-message signatures authenticate links, not the complete message set"
 )
-EXPECTED_MUTATION_TOTAL = 1492
-EXPECTED_MUTATION_REJECTS = 1453
+EXPECTED_MUTATION_TOTAL = 1493
+EXPECTED_MUTATION_REJECTS = 1454
 EXPECTED_MUTATION_ACCEPTS = 39
 EXPECTED_CANARY_TOTAL = 5
 EXPECTED_RAW_TYPED_DIVERGENCES = (
@@ -1864,6 +1849,7 @@ EXPECTED_MUTATION_BATTERY_COUNTS: dict[str, tuple[int, int, int]] = {
     "synthetic/mandate/delegated_mandate.json": (82, 82, 0),
     "synthetic/mandate/mandate.json": (51, 51, 0),
     "synthetic/predicate/vector_02.json": (87, 87, 0),
+    "synthetic/predicate/vector_02.json::reference-id-newline": (1, 1, 0),
 }
 
 
@@ -2568,6 +2554,15 @@ def chain_position_vector(
     evaluation = evaluate_vector(probe)
     if not evaluation.accepted and evaluation.reason_class is None:
         raise GenerationError(f"{vector_id}: reject missing expected_reason_class")
+    if (
+        not evaluation.accepted
+        and expected_reason_class is not None
+        and evaluation.reason_class != expected_reason_class
+    ):
+        raise GenerationError(
+            f"{vector_id}: expected reason {expected_reason_class}, "
+            f"got {evaluation.reason_class}"
+        )
     return Vector(
         vector_id=vector_id,
         title=title,
@@ -2665,6 +2660,63 @@ def build_chain_position_vectors(
     return vectors, summary
 
 
+def build_predicate_reference_identifier_vector(
+    synthetic: SyntheticFixtures,
+) -> tuple[list[Vector], dict[str, Any]]:
+    key_pair = key_pair_from_seed(SYNTHETIC_SEEDS["predicate_issuer"])
+    base = without_signature(
+        copy.deepcopy(synthetic.predicates[P2_A2_PREDICATE_MUTATION_FIXTURE])
+    )
+    base["references"][0]["id"] = f"{base['references'][0]['id']}\n"
+    # This vector signs the raw conformance preimage directly. The SDK writer
+    # refuses this shape before signing, but the runner must still reject a
+    # third-party signed object at the schema boundary.
+    base["signature"] = sign_b64url(key_pair.private_key, canonical_json(base))
+    preimage = canonical_json(without_signature(base))
+    vector = Vector(
+        vector_id="mut-synthetic-predicate-reference-id-newline",
+        title="predicate: reference identifier has trailing newline",
+        source_fixture=(
+            f"{SYNTHETIC_SOURCE_PREDICATE}/{P2_A2_PREDICATE_MUTATION_FIXTURE}.json"
+        ),
+        record_type="predicate",
+        verification_profile="predicate-v1",
+        input_data=base,
+        context={
+            "canonical_sha256": "sha256:" + hashlib.sha256(preimage).hexdigest(),
+            "now": fixed_iso_now(),
+            "public_key_b64url": synthetic.predicate_seed_manifest[
+                "seeds_PUBLIC_test_only_do_not_reuse"
+            ]["predicate_issuer"]["public_key_b64url"],
+        },
+        expected="reject",
+        expected_reason_class="schema",
+        notes="schema-reject: referenced identifiers do not allow trailing bytes",
+        canonical_preimage=preimage,
+    )
+    evaluation = evaluate_vector(vector)
+    if evaluation.accepted or evaluation.reason_class != "schema":
+        raise GenerationError(
+            f"{vector.vector_id}: reference identifier newline must reject as schema, "
+            f"got {evaluation}"
+        )
+    summary = {
+        "battery_name": (
+            "synthetic/predicate/"
+            f"{P2_A2_PREDICATE_MUTATION_FIXTURE}.json::reference-id-newline"
+        ),
+        "source_fixture": vector.source_fixture,
+        "object_name": "predicate_reference_identifier",
+        "record_type": "predicate",
+        "verification_profile": "predicate-v1",
+        "total": 1,
+        "reject": 1,
+        "accept": 0,
+        "selection_note": "cross-resource reference identifier schema pattern",
+    }
+    return [vector], summary
+
+
 def receipt_set_binding_vector(
     *,
     vector_id: str,
@@ -2696,11 +2748,7 @@ def receipt_set_binding_vector(
         input_data=input_data,
         context=probe.context,
         expected=outcome_name(evaluation.accepted),
-        expected_reason_class=(
-            None
-            if evaluation.accepted
-            else expected_reason_class or evaluation.reason_class
-        ),
+        expected_reason_class=None if evaluation.accepted else evaluation.reason_class,
         notes=notes,
         canonical_preimage=canonical_json(input_data),
         discriminates=discriminates,
@@ -2850,7 +2898,7 @@ def build_receipt_set_binding_mutation_vectors(
             title="receipt_set_binding: attestation version has trailing newline",
             input_data=newline_version,
             context=context,
-            expected_reason_class="binding",
+            expected_reason_class="schema",
         ),
         receipt_set_binding_vector(
             vector_id="mut-synthetic-receipt-set-binding-0007",
@@ -3119,6 +3167,12 @@ def build_mutation_battery(
     position_vectors, position_summary = build_chain_position_vectors(synthetic)
     vectors.extend(position_vectors)
     battery_summaries.append(position_summary)
+
+    predicate_reference_vectors, predicate_reference_summary = (
+        build_predicate_reference_identifier_vector(synthetic)
+    )
+    vectors.extend(predicate_reference_vectors)
+    battery_summaries.append(predicate_reference_summary)
 
     receipt_vectors, receipt_summary = build_receipt_set_binding_mutation_vectors(
         synthetic

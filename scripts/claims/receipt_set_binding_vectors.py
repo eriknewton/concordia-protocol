@@ -131,7 +131,7 @@ def check_positive(vector: dict[str, Any]) -> None:
 def check_reject(vector: dict[str, Any], vector_id: str) -> None:
     receipt, messages = receipt_pair(vector)
     require(vector.get("expected") == "reject", f"{vector_id} must reject")
-    expected_reason = "schema" if vector_id.endswith(("0007", "0008")) else "binding"
+    expected_reason = "schema" if vector_id.endswith(("0006", "0007", "0008")) else "binding"
     require(
         vector.get("expected_reason_class") == expected_reason,
         f"{vector_id} must reject as {expected_reason}",

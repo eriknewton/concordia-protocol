@@ -18,9 +18,9 @@ EXPECTED_REASON_CLASSES = {
     "privacy",
     "transition",
 }
-EXPECTED_MUTATION_REJECTS = 1453
+EXPECTED_MUTATION_REJECTS = 1454
 EXPECTED_MUTATION_ACCEPTS = 39
-EXPECTED_MUTATION_TOTAL = 1492
+EXPECTED_MUTATION_TOTAL = 1493
 EXPECTED_BATTERY_COUNTS = {
     "1404/approval_receipt.json": (63, 63, 0),
     "1404/cascade_decision_deny.json": (35, 35, 0),
@@ -50,6 +50,7 @@ EXPECTED_BATTERY_COUNTS = {
     "synthetic/mandate/delegated_mandate.json": (82, 82, 0),
     "synthetic/mandate/mandate.json": (51, 51, 0),
     "synthetic/predicate/vector_02.json": (87, 87, 0),
+    "synthetic/predicate/vector_02.json::reference-id-newline": (1, 1, 0),
 }
 EXPECTED_ACCEPTED_IDS = {
     "mut-synthetic-agent-profile-0072",

@@ -2,9 +2,9 @@
   "check_command": "python3 scripts/conformance/generate_vectors.py --check",
   "counts": {
     "canary": 5,
-    "diag_canonical_bytes": 1396,
+    "diag_canonical_bytes": 1397,
     "fixtures": 61,
-    "mutation": 1492,
+    "mutation": 1493,
     "positive": 53,
     "schemas": 14
   },
@@ -1029,6 +1029,7 @@
       "conformance/diag/canonical-bytes/mut-synthetic-message-chain-position-0002.jcs",
       "conformance/diag/canonical-bytes/mut-synthetic-message-chain-position-0003.jcs",
       "conformance/diag/canonical-bytes/mut-synthetic-message-chain-position-0004.jcs",
+      "conformance/diag/canonical-bytes/mut-synthetic-predicate-reference-id-newline.jcs",
       "conformance/diag/canonical-bytes/mut-synthetic-predicate-vector-02-0001.jcs",
       "conformance/diag/canonical-bytes/mut-synthetic-predicate-vector-02-0002.jcs",
       "conformance/diag/canonical-bytes/mut-synthetic-predicate-vector-02-0003.jcs",
@@ -2619,6 +2620,7 @@
       "conformance/vectors/mutation/mut-synthetic-message-chain-position-0002.json",
       "conformance/vectors/mutation/mut-synthetic-message-chain-position-0003.json",
       "conformance/vectors/mutation/mut-synthetic-message-chain-position-0004.json",
+      "conformance/vectors/mutation/mut-synthetic-predicate-reference-id-newline.json",
       "conformance/vectors/mutation/mut-synthetic-predicate-vector-02-0001.json",
       "conformance/vectors/mutation/mut-synthetic-predicate-vector-02-0002.json",
       "conformance/vectors/mutation/mut-synthetic-predicate-vector-02-0003.json",
@@ -3287,6 +3289,17 @@
       "selection_note": "richest predicate fixture: nested condition, constraints, delegation_chain, metadata, revocation_endpoint, references, and windowed validity",
       "source_fixture": "synthetic/predicate",
       "total": 87,
+      "verification_profile": "predicate-v1"
+    },
+    {
+      "accept": 0,
+      "battery_name": "synthetic/predicate/vector_02.json::reference-id-newline",
+      "object_name": "predicate_reference_identifier",
+      "record_type": "predicate",
+      "reject": 1,
+      "selection_note": "cross-resource reference identifier schema pattern",
+      "source_fixture": "synthetic/predicate/vector_02.json",
+      "total": 1,
       "verification_profile": "predicate-v1"
     }
   ],

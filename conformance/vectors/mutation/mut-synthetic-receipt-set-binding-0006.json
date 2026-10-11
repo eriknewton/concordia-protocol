@@ -6,7 +6,7 @@
     }
   },
   "expected": "reject",
-  "expected_reason_class": "binding",
+  "expected_reason_class": "schema",
   "id": "mut-synthetic-receipt-set-binding-0006",
   "input": {
     "messages": [

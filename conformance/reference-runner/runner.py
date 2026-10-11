@@ -37,6 +37,15 @@ with warnings.catch_warnings():
 from nacl.exceptions import BadSignatureError
 from nacl.signing import SigningKey, VerifyKey
 
+CONFORMANCE_ROOT = Path(__file__).resolve().parents[1]
+if str(CONFORMANCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(CONFORMANCE_ROOT))
+
+from json_schema_pattern import (  # noqa: E402
+    json_schema_pattern_for_python,
+    rewrite_json_schema_patterns_for_python,
+)
+
 Json = Any
 Outcome = Literal["accept", "reject"]
 Regression = Literal[
@@ -126,35 +135,6 @@ def is_date_time(value: object) -> bool:
     return parsed.tzinfo is not None
 
 
-def json_schema_pattern_for_python(pattern: str) -> str:
-    """Translate JSON Schema's true-end `$` anchor to Python `re` semantics."""
-    translated: list[str] = []
-    escaped = False
-    in_character_class = False
-    for char in pattern:
-        if escaped:
-            translated.append(char)
-            escaped = False
-            continue
-        if char == "\\":
-            translated.append(char)
-            escaped = True
-            continue
-        if char == "[" and not in_character_class:
-            in_character_class = True
-            translated.append(char)
-            continue
-        if char == "]" and in_character_class:
-            in_character_class = False
-            translated.append(char)
-            continue
-        if char == "$" and not in_character_class:
-            translated.append(r"\Z")
-            continue
-        translated.append(char)
-    return "".join(translated)
-
-
 def json_schema_pattern_validator(
     validator: Any,
     pattern: str,
@@ -166,7 +146,7 @@ def json_schema_pattern_validator(
         return
     try:
         compiled = re.compile(json_schema_pattern_for_python(pattern))
-    except re.error as exc:
+    except (re.error, ValueError) as exc:
         error = ValidationError(f"{pattern!r} is not a valid regular expression")
         error.__cause__ = exc
         yield error
@@ -250,14 +230,19 @@ def schema_store(suite_base: Path) -> dict[str, Json]:
     schemas: dict[str, Json] = {}
     schema_dir = suite_base / "conformance" / "vectors" / "schemas"
     for path in schema_dir.glob("*.json"):
-        schema = load_json(path)
+        schema = rewrite_json_schema_patterns_for_python(load_json(path))
         if isinstance(schema, dict) and isinstance(schema.get("$id"), str):
             schemas[schema["$id"]] = schema
     return schemas
 
 
 def validate_schema(suite_base: Path, schema_name: str, data: Json) -> None:
-    schema = load_json(schema_file(suite_base, schema_name))
+    try:
+        schema = rewrite_json_schema_patterns_for_python(
+            load_json(schema_file(suite_base, schema_name))
+        )
+    except ValueError as exc:
+        raise Reject("schema validation failed") from exc
     resolver = RefResolver.from_schema(schema, store=schema_store(suite_base))
     errors = list(
         JSON_SCHEMA_VALIDATOR(
@@ -451,7 +436,11 @@ def validate_action(schema: Json, action: Json) -> None:
     if action is None:
         return
     validate_json_schema_object(schema)
-    errors = list(JSON_SCHEMA_VALIDATOR(schema).iter_errors(action))
+    try:
+        rewritten = rewrite_json_schema_patterns_for_python(schema)
+    except ValueError as exc:
+        raise Reject("constraint schema is invalid") from exc
+    errors = list(JSON_SCHEMA_VALIDATOR(rewritten).iter_errors(action))
     if errors:
         raise Reject("action violates constraints")
 

@@ -19,7 +19,7 @@ from scripts.conformance import generate_vectors as vector_generator
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNNER = REPO_ROOT / "conformance" / "reference-runner" / "runner.py"
 FULL_SUITE = REPO_ROOT / "conformance" / "vectors"
-EXPECTED_FULL_SUMMARY = "[SUMMARY] positive=53 mutation=1492 canary=5 ok=1550 fail=0"
+EXPECTED_FULL_SUMMARY = "[SUMMARY] positive=53 mutation=1493 canary=5 ok=1551 fail=0"
 LONG_VERSION_COMPONENT_DIGITS = 5_000
 CANARY_REGRESSIONS = {
     "canary-chain-splice": "skip-linkage-walk",
@@ -144,6 +144,77 @@ print(json.dumps({"matched": match is not None}))
     return cast(dict[str, Any], json.loads(result.stdout))
 
 
+def run_pattern_rewrite_probe(tmp_path: Path) -> dict[str, Any]:
+    clean_site = clean_site_packages(tmp_path)
+    script = r"""
+import importlib.util
+import json
+import sys
+
+runner_spec = importlib.util.spec_from_file_location("runner_probe", sys.argv[1])
+runner = importlib.util.module_from_spec(runner_spec)
+assert runner_spec.loader is not None
+sys.modules["runner_probe"] = runner
+runner_spec.loader.exec_module(runner)
+
+sys.path.insert(0, sys.argv[3])
+generator_spec = importlib.util.spec_from_file_location("generator_probe", sys.argv[2])
+generator = importlib.util.module_from_spec(generator_spec)
+assert generator_spec.loader is not None
+sys.modules["generator_probe"] = generator
+generator_spec.loader.exec_module(generator)
+
+cases = [
+    [r"\$", r"\$"],
+    [r"a\$", r"a\$"],
+    [r"[$]$", r"[$]\Z"],
+    [r"[^$]+$", r"[^$]+\Z"],
+    [r"a$|b$", r"a\Z|b\Z"],
+    [r"^(a|b)$", r"^(a|b)\Z"],
+    [r"(ab)$", r"(ab)\Z"],
+    [r"^abc", r"^abc"],
+    [r"a$b$", r"a\Zb\Z"],
+]
+invalid = [r"[]", r"[^]", r"[]a]"]
+result = {"runner": [], "generator": [], "invalid": []}
+for source, expected in cases:
+    result["runner"].append([source, runner.json_schema_pattern_for_python(source)])
+    result["generator"].append([source, generator.json_schema_pattern_for_python(source)])
+for source in invalid:
+    for module_name, module in [("runner", runner), ("generator", generator)]:
+        try:
+            module.json_schema_pattern_for_python(source)
+        except ValueError:
+            result["invalid"].append([module_name, source, "raised"])
+        else:
+            result["invalid"].append([module_name, source, "accepted"])
+print(json.dumps(result))
+"""
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONPATH": str(clean_site),
+    }
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-S",
+            "-c",
+            script,
+            str(RUNNER),
+            str(REPO_ROOT / "scripts" / "conformance" / "generate_vectors.py"),
+            str(REPO_ROOT),
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    return cast(dict[str, Any], json.loads(result.stdout))
+
+
 def copy_vector_file(tmp_root: Path, rel_path: str) -> None:
     source = REPO_ROOT / rel_path
     dest = tmp_root / rel_path
@@ -169,6 +240,70 @@ def write_minimal_suite(tmp_path: Path, canary_id: str) -> Path:
     mini_manifest["files"]["positive"] = [positive_file]
     mini_manifest["files"]["mutation"] = []
     mini_manifest["files"]["canary"] = [canary_file]
+    mini_manifest["files"]["diag_canonical_bytes"] = []
+    manifest_path = tmp_root / "conformance" / "vectors" / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(mini_manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return tmp_root / "conformance" / "vectors"
+
+
+def write_predicate_reference_id_suite(tmp_path: Path) -> Path:
+    manifest = load_json(REPO_ROOT / "conformance" / "vectors" / "manifest.json")
+    files = cast(dict[str, list[str]], manifest["files"])
+    fixtures = vector_generator.build_synthetic_fixtures()
+    key_pair = vector_generator.key_pair_from_seed(
+        vector_generator.SYNTHETIC_SEEDS["predicate_issuer"]
+    )
+    predicate = vector_generator.without_signature(
+        copy.deepcopy(fixtures.predicates["vector_02"])
+    )
+    predicate["references"][0]["id"] = f"{predicate['references'][0]['id']}\n"
+    predicate["signature"] = vector_generator.sign_b64url(
+        key_pair.private_key,
+        vector_generator.canonical_json(predicate),
+    )
+    signed = predicate
+    preimage = vector_generator.canonical_json(vector_generator.without_signature(signed))
+    vector = vector_generator.Vector(
+        vector_id="mut-test-predicate-reference-id-newline",
+        title="predicate: reference identifier has trailing newline",
+        source_fixture="synthetic/predicate/vector_02.json",
+        record_type="predicate",
+        verification_profile="predicate-v1",
+        input_data=signed,
+        context={
+            "canonical_sha256": "sha256:" + vector_generator.hashlib.sha256(preimage).hexdigest(),
+            "now": vector_generator.fixed_iso_now(),
+            "public_key_b64url": fixtures.predicate_seed_manifest[
+                "seeds_PUBLIC_test_only_do_not_reuse"
+            ]["predicate_issuer"]["public_key_b64url"],
+        },
+        expected="reject",
+        expected_reason_class="schema",
+        notes="schema-reject: referenced identifiers do not allow trailing bytes",
+    )
+
+    tmp_root = tmp_path / "suite"
+    for rel_path in files["schemas"]:
+        copy_vector_file(tmp_root, rel_path)
+    vector_rel_path = f"conformance/vectors/mutation/{vector.vector_id}.json"
+    vector_path = tmp_root / vector_rel_path
+    vector_path.parent.mkdir(parents=True, exist_ok=True)
+    vector_path.write_text(
+        json.dumps(vector.to_json(), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    mini_manifest = copy.deepcopy(manifest)
+    mini_manifest["counts"]["positive"] = 0
+    mini_manifest["counts"]["mutation"] = 1
+    mini_manifest["counts"]["canary"] = 0
+    mini_manifest["counts"]["diag_canonical_bytes"] = 0
+    mini_manifest["files"]["positive"] = []
+    mini_manifest["files"]["mutation"] = [vector_rel_path]
+    mini_manifest["files"]["canary"] = []
     mini_manifest["files"]["diag_canonical_bytes"] = []
     manifest_path = tmp_root / "conformance" / "vectors" / "manifest.json"
     manifest_path.write_text(
@@ -256,6 +391,41 @@ def test_reference_runner_accepts_real_suite(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert EXPECTED_FULL_SUMMARY in result.stdout
+
+
+def test_json_schema_pattern_rewrite_cases_match_generator(tmp_path: Path) -> None:
+    result = run_pattern_rewrite_probe(tmp_path)
+
+    expected = [
+        [r"\$", r"\$"],
+        [r"a\$", r"a\$"],
+        [r"[$]$", r"[$]\Z"],
+        [r"[^$]+$", r"[^$]+\Z"],
+        [r"a$|b$", r"a\Z|b\Z"],
+        [r"^(a|b)$", r"^(a|b)\Z"],
+        [r"(ab)$", r"(ab)\Z"],
+        [r"^abc", r"^abc"],
+        [r"a$b$", r"a\Zb\Z"],
+    ]
+    assert result["runner"] == expected
+    assert result["generator"] == expected
+    assert result["invalid"] == [
+        ["runner", r"[]", "raised"],
+        ["generator", r"[]", "raised"],
+            ["runner", r"[^]", "raised"],
+            ["generator", r"[^]", "raised"],
+            ["runner", r"[]a]", "raised"],
+            ["generator", r"[]a]", "raised"],
+        ]
+
+
+def test_reference_runner_rejects_referenced_identifier_newline(tmp_path: Path) -> None:
+    suite = write_predicate_reference_id_suite(tmp_path)
+
+    result = run_runner(tmp_path / "run", suite)
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "[OK] mut-test-predicate-reference-id-newline" in result.stdout
 
 
 def test_canary_regression_discrimination(tmp_path: Path) -> None:
