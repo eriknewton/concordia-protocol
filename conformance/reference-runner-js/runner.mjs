@@ -10,6 +10,7 @@ import {
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 
 const VECTOR_SCHEMA_VERSION = "concordia-conformance-vector/v1-draft";
 const PROFILE_ORDER = new Set([
@@ -141,7 +142,10 @@ const AGENT_PROFILE_ENDPOINT_FIELDS = new Set([
 ]);
 const AGENT_PROFILE_LOCATION_FIELDS = new Set(["regions", "jurisdictions"]);
 const GENESIS_HASH = `sha256:${"0".repeat(64)}`;
-const SEMVER_RE = /^\d+\.\d+\.\d+$/u;
+// Same grammar as _SEMVER_RE in concordia/attestation.py; this clean-room
+// runner keeps the protocol rule local instead of importing Concordia.
+const ATTESTATION_VERSION_RE = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/u;
+const SET_BINDING_VERSION_FLOOR = ["0", "3", "0"];
 const SHA256_HEX_RE = /^sha256:[a-f0-9]{64}$/u;
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 const ED25519_PKCS8_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
@@ -1438,12 +1442,35 @@ function messageHash(message) {
   return sha256Jcs(message);
 }
 
-function attestationVersionAtLeast(value, major, minor) {
-  if (typeof value !== "string" || !SEMVER_RE.test(value)) {
-    return false;
+function parseAttestationVersion(value) {
+  if (typeof value !== "string") {
+    return null;
   }
-  const [actualMajor, actualMinor] = value.split(".").map((item) => Number(item));
-  return actualMajor > major || (actualMajor === major && actualMinor >= minor);
+  const match = ATTESTATION_VERSION_RE.exec(value);
+  if (match === null || match[0] !== value) {
+    return null;
+  }
+  return value.split(".");
+}
+
+function compareDecimalText(left, right) {
+  if (left.length !== right.length) {
+    return left.length < right.length ? -1 : 1;
+  }
+  if (left === right) {
+    return 0;
+  }
+  return left < right ? -1 : 1;
+}
+
+function compareAttestationVersion(left, right) {
+  for (let index = 0; index < 3; index += 1) {
+    const comparison = compareDecimalText(left[index], right[index]);
+    if (comparison !== 0) {
+      return comparison;
+    }
+  }
+  return 0;
 }
 
 function verifyMessageChainReceiptBinding(suiteBase, inputData, messages, context) {
@@ -1452,7 +1479,11 @@ function verifyMessageChainReceiptBinding(suiteBase, inputData, messages, contex
   }
   const receipt = requireObject(inputData.receipt, "message chain receipt");
   validateSchema(suiteBase, "attestation.schema.json", receipt);
-  if (!attestationVersionAtLeast(receipt.concordia_attestation, 0, 3)) {
+  const version = parseAttestationVersion(receipt.concordia_attestation);
+  if (version === null) {
+    reject("receipt concordia_attestation is malformed");
+  }
+  if (compareAttestationVersion(version, SET_BINDING_VERSION_FLOOR) < 0) {
     reject("receipt is legacy set-unbound");
   }
   if (typeof receipt.chain_head !== "string" || !SHA256_HEX_RE.test(receipt.chain_head)) {
@@ -1735,9 +1766,25 @@ function main(argv) {
   return runSuite(argv[0], activeRegression());
 }
 
-try {
-  process.exitCode = main(process.argv.slice(2));
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
+// Run the suite only when this file is the entry point, so tests can import the
+// version helpers. Real paths are compared so a symlinked or relative launch
+// still runs every vector; a mismatch here would exit 0 having checked nothing.
+function isEntryPoint() {
+  if (process.argv[1] === undefined) return false;
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
 }
+
+if (isEntryPoint()) {
+  try {
+    process.exitCode = main(process.argv.slice(2));
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
+}
+
+export { parseAttestationVersion, compareAttestationVersion, SET_BINDING_VERSION_FLOOR };

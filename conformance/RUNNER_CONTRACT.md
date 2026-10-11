@@ -870,7 +870,8 @@ top-level signature)`.
 
 Checks, in order:
 
-1. Require the input object to contain only `messages`.
+1. Require the input object to contain only `messages`, or `messages` and
+   `receipt`.
 2. If `context.expected_message_count` is present, require it to equal
    `len(input.messages)`.
 3. Require `input.messages[0].prev_hash == GENESIS_HASH`.
@@ -884,8 +885,20 @@ Checks, in order:
 7. If `context.expected_message_hashes` is present, recompute
    `MessageHash(message)` for every message and require exact array equality.
 8. If `input.receipt` is present, validate it against
-   `attestation.schema.json`, require `/concordia_attestation >= "0.3.0"` by
-   semver major/minor comparison, require `/chain_head` to match
+   `attestation.schema.json`, parse `/concordia_attestation` as a string that
+   is fully matched, every byte of it, by
+   `(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)` (Python
+   `re.fullmatch`, or an anchored match whose length equals the input), and
+   reject empty components, leading zeros other than the literal `0`, or
+   trailing bytes including a newline. A `$` anchor alone is not sufficient,
+   because some regular-expression engines let `$` match before a final
+   newline. Compare canonical
+   non-leading-zero decimal components by component length and then
+   lexicographically, without converting unbounded components to host numeric
+   types, and require the parsed version to be at least `0.3.0`. Rejecting a
+   version above the highest attestation format version a verifier implements
+   is each verifier's own rule, tied to the formats it supports, and is not
+   exercised by this profile. Then require `/chain_head` to match
    `^sha256:[a-f0-9]{64}$`, and require `/message_count` to be an integer
    greater than or equal to 1.
 9. For every receipt party, resolve `/agent_id` in

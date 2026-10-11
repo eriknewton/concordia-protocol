@@ -122,7 +122,12 @@ from concordia.schema_validator import (  # noqa: E402
 )
 from concordia.signing import KeyPair, canonical_json, sign_message  # noqa: E402
 
-SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+\Z")
+# Same grammar as _SEMVER_RE in concordia/attestation.py. The generated vectors
+# exercise the same protocol boundary the clean-room runners enforce.
+ATTESTATION_VERSION_RE = re.compile(
+    r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z"
+)
+SET_BINDING_VERSION_FLOOR = ("0", "3", "0")
 SHA256_HEX_RE = re.compile(r"^sha256:[a-f0-9]{64}\Z")
 
 ReasonClass: TypeAlias = Literal[
@@ -1304,11 +1309,30 @@ def message_chain_messages(input_data: dict[str, Any]) -> list[dict[str, Any]] |
     return normalized
 
 
-def attestation_version_at_least(value: Any, major: int, minor: int) -> bool:
-    if not isinstance(value, str) or SEMVER_RE.match(value) is None:
-        return False
-    parts = value.split(".")
-    return (int(parts[0]), int(parts[1])) >= (major, minor)
+def parse_attestation_version(value: Any) -> tuple[str, str, str] | None:
+    if not isinstance(value, str) or ATTESTATION_VERSION_RE.match(value) is None:
+        return None
+    part0, part1, part2 = value.split(".")
+    return (part0, part1, part2)
+
+
+def compare_decimal_text(left: str, right: str) -> int:
+    if len(left) != len(right):
+        return -1 if len(left) < len(right) else 1
+    if left == right:
+        return 0
+    return -1 if left < right else 1
+
+
+def compare_attestation_version(
+    left: tuple[str, str, str],
+    right: tuple[str, str, str],
+) -> int:
+    for left_part, right_part in zip(left, right, strict=True):
+        comparison = compare_decimal_text(left_part, right_part)
+        if comparison != 0:
+            return comparison
+    return 0
 
 
 def evaluate_message_chain_receipt_binding(
@@ -1325,7 +1349,10 @@ def evaluate_message_chain_receipt_binding(
     schema = load_json(SCHEMA_COPIES["attestation.schema.json"])
     if not schema_is_valid(schema, receipt):
         return Evaluation(False, "schema")
-    if not attestation_version_at_least(receipt.get("concordia_attestation"), 0, 3):
+    version = parse_attestation_version(receipt.get("concordia_attestation"))
+    if version is None:
+        return Evaluation(False, "binding")
+    if compare_attestation_version(version, SET_BINDING_VERSION_FLOOR) < 0:
         return Evaluation(False, "binding")
     if not isinstance(receipt.get("chain_head"), str) or not SHA256_HEX_RE.match(
         receipt["chain_head"]
@@ -2631,6 +2658,22 @@ def receipt_with_resigned_snapshot(
     return resign_attestation(mutated, key_by_agent)
 
 
+def draft_receipt_with_resigned_snapshot(
+    receipt: dict[str, Any],
+    updates: dict[str, Any],
+) -> dict[str, Any]:
+    key_by_agent = receipt_set_binding_key_map()
+    mutated = copy.deepcopy(receipt)
+    mutated.update(updates)
+    mutated["validity_temporal"] = {
+        "mode": "absolute",
+        "from": "2026-05-10T16:05:00Z",
+        "until": "2026-05-11T16:05:00Z",
+    }
+    mutated.pop("fulfillment", None)
+    return resign_attestation(mutated, key_by_agent)
+
+
 def receipt_set_binding_resigned_splice(
     messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -2675,7 +2718,6 @@ def build_receipt_set_binding_mutation_vectors(
         "messages": receipt_set_binding_resigned_splice(base_messages),
         "receipt": copy.deepcopy(base_receipt),
     }
-
     vectors = [
         receipt_set_binding_vector(
             vector_id="mut-synthetic-receipt-set-binding-0001",

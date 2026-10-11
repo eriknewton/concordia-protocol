@@ -1065,7 +1065,12 @@ AGENT_PROFILE_REPUTATION_FIELDS = {
 AGENT_PROFILE_ENDPOINT_FIELDS = {"negotiate", "a2a_card", "mcp_manifest"}
 AGENT_PROFILE_LOCATION_FIELDS = {"regions", "jurisdictions"}
 GENESIS_HASH = "sha256:" + ("0" * 64)
-SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+\Z")
+# Same grammar as _SEMVER_RE in concordia/attestation.py; this clean-room
+# runner keeps the protocol rule local instead of importing Concordia.
+ATTESTATION_VERSION_RE = re.compile(
+    r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z"
+)
+SET_BINDING_VERSION_FLOOR = ("0", "3", "0")
 SHA256_HEX_RE = re.compile(r"^sha256:[a-f0-9]{64}\Z")
 
 
@@ -1256,11 +1261,30 @@ def message_hash(message: Json) -> str:
     return "sha256:" + hashlib.sha256(jcs_bytes(message)).hexdigest()
 
 
-def attestation_version_at_least(value: Json, major: int, minor: int) -> bool:
-    if not isinstance(value, str) or SEMVER_RE.match(value) is None:
-        return False
-    parts = value.split(".")
-    return (int(parts[0]), int(parts[1])) >= (major, minor)
+def parse_attestation_version(value: Json) -> tuple[str, str, str] | None:
+    if not isinstance(value, str) or ATTESTATION_VERSION_RE.match(value) is None:
+        return None
+    part0, part1, part2 = value.split(".")
+    return (part0, part1, part2)
+
+
+def compare_decimal_text(left: str, right: str) -> int:
+    if len(left) != len(right):
+        return -1 if len(left) < len(right) else 1
+    if left == right:
+        return 0
+    return -1 if left < right else 1
+
+
+def compare_attestation_version(
+    left: tuple[str, str, str],
+    right: tuple[str, str, str],
+) -> int:
+    for left_part, right_part in zip(left, right, strict=True):
+        comparison = compare_decimal_text(left_part, right_part)
+        if comparison != 0:
+            return comparison
+    return 0
 
 
 def verify_message_chain_receipt_binding(
@@ -1273,7 +1297,10 @@ def verify_message_chain_receipt_binding(
         return
     receipt = require_object(input_data.get("receipt"), "message chain receipt")
     validate_schema(suite_base, "attestation.schema.json", receipt)
-    if not attestation_version_at_least(receipt.get("concordia_attestation"), 0, 3):
+    version = parse_attestation_version(receipt.get("concordia_attestation"))
+    if version is None:
+        raise Reject("receipt concordia_attestation is malformed")
+    if compare_attestation_version(version, SET_BINDING_VERSION_FLOOR) < 0:
         raise Reject("receipt is legacy set-unbound")
     chain_head = receipt.get("chain_head")
     message_count = receipt.get("message_count")

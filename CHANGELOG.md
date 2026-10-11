@@ -35,6 +35,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- Conformance reference runners now apply the receipt set-binding version rule
+  as a profile rule: strict three-component grammar and the 0.3.0 set-binding
+  floor, without making SDK-local limits part of the public suite.
 - Receipt-bundle and competence-proof outcome binding now share the attestation
   version grammar and implemented-version ceiling used by attestation
   validation.
