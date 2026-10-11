@@ -28,6 +28,7 @@ import { fromBase64Url } from '../src/crypto/base64url.js';
 import { validateAttestation } from '../src/validation/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const repoRoot = join(__dirname, '..', '..');
 
 // ---------------------------------------------------------------------------
 // Fixture shape (generated FROM Python by scripts/gen-attestation-fixtures.py).
@@ -157,6 +158,19 @@ interface AttestationFixtures {
 const fixtures = JSON.parse(
   readFileSync(join(__dirname, 'fixtures/attestation/attestation_vectors.json'), 'utf8'),
 ) as AttestationFixtures;
+const setBindingTranscriptVector = JSON.parse(
+  readFileSync(
+    join(repoRoot, 'tests', 'fixtures', 'receipt_set_binding_transcript_cases.json'),
+    'utf8',
+  ),
+) as {
+  cases: Array<{
+    name: string;
+    transcript: 'omit' | 'empty' | 'mismatched' | 'valid';
+    expected_state: string;
+    expected_error_contains: string | null;
+  }>;
+};
 
 function hexToBytes(hex: string): Uint8Array {
   const out = new Uint8Array(hex.length / 2);
@@ -271,6 +285,17 @@ function attestationReasonClass(errors: string[]): string | null {
     return 'privacy';
   }
   return 'schema';
+}
+
+function transcriptForSetBindingCase(
+  mode: 'empty' | 'mismatched' | 'valid',
+  transcript: Message[],
+): Message[] {
+  if (mode === 'empty') return [];
+  if (mode === 'valid') return transcript;
+  const mismatched = transcript.map((message) => ({ ...message }));
+  mismatched[mismatched.length - 1]!.id = 'msg_mismatched_set_binding';
+  return mismatched;
 }
 
 // ---------------------------------------------------------------------------
@@ -430,6 +455,30 @@ describe('receipt set-binding verifier (v0.3.0)', () => {
       errors: [],
     });
   });
+
+  for (const vectorCase of setBindingTranscriptVector.cases) {
+    it(`applies shared transcript-present rule for ${vectorCase.name}`, () => {
+      const c = fixtures.cases[0]!;
+      const session = rebuildSession(c.session);
+      const attestation = generateAttestation(session, keyPairsFromCase(c), optionsFromCase(c));
+      const result =
+        vectorCase.transcript === 'omit'
+          ? verifyReceiptSetBinding(attestation)
+          : verifyReceiptSetBinding(
+              attestation,
+              transcriptForSetBindingCase(vectorCase.transcript, session.transcript),
+            );
+
+      expect(result.state).toBe(vectorCase.expected_state);
+      if (vectorCase.expected_error_contains === null) {
+        expect(result.errors).toEqual([]);
+      } else {
+        expect(result.errors.some((e) => e.includes(vectorCase.expected_error_contains!))).toBe(
+          true,
+        );
+      }
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------

@@ -30,6 +30,14 @@
   rather than dropped; every bundled schema pattern now gives `\s`
   Python-compatible Unicode `White_Space` semantics; and approval-receipt plus
   fulfillment-attestation `signature` objects reject extra properties.
+- `verifyReceiptSetBinding()` now reports well-formed set-binding fields
+  without a supplied transcript as `fields_present_unverified` instead of
+  `bound`; the exported `ReceiptSetBindingState` union includes the new value.
+- `isValidNow` fails closed on a malformed or absent `concordia_attestation`
+  when `validity_temporal` is missing, mirroring Python `is_valid_now`; the
+  `no_constraint` parity case now expects `false`. The 0.6.0 issuance,
+  validation, and mutation-corpus oracle work in this branch now exercises the
+  current Python-generated fixtures.
 
 ## 0.0.1-alpha.13 -- 2026-10-10
 

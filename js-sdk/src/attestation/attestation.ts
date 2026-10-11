@@ -82,7 +82,8 @@ const SHA256_HEX_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const RFC3339_Z_PATTERN =
   /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,3})?Z$/;
 
-export type ReceiptSetBindingState = 'bound' | 'legacy_set_unbound' | 'error';
+export type ReceiptSetBindingState =
+  'bound' | 'fields_present_unverified' | 'legacy_set_unbound' | 'error';
 
 export interface ReceiptSetBindingResult {
   state: ReceiptSetBindingState;
@@ -116,7 +117,14 @@ export function verifyReceiptSetBinding(
     errors.push(`version ${String(version)} requires message_count as an integer >= 1`);
   }
 
-  if (transcript !== null) {
+  if (transcript === null) {
+    // Set-binding credit requires the caller to present the transcript whose
+    // head and count are named by the receipt fields; field presence alone is
+    // only an unverified claim about an unavailable set. This no-transcript
+    // branch must match evaluate_receipt_set_binding in
+    // concordia/attestation.py.
+    if (errors.length === 0) return { state: 'fields_present_unverified', errors: [] };
+  } else {
     if (!Array.isArray(transcript)) {
       errors.push('transcript must be a list when verifying set binding');
     } else if (transcript.length === 0) {
