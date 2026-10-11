@@ -1061,6 +1061,67 @@ class TestMcpToolIntegration:
         assert verify_result["valid"] is False
         assert any("invalid signature" in error for error in verify_result["errors"])
 
+    def test_verify_bundle_via_tool_checks_non_session_party_against_registry(self):
+        """A listed party outside the attestation's session is verified, not skipped."""
+        from concordia.mcp_server import _key_registry, handle_tool_call
+
+        ctx = self._setup_negotiation()
+        bundle_result = handle_tool_call("concordia_create_receipt_bundle", {
+            "agent_id": "seller_01",
+            "auth_token": ctx["agent_token"],
+        })
+        bundle_result = json.loads(json.dumps(bundle_result))
+        attestation = bundle_result["attestations"][0]
+        extra_party = dict(attestation["parties"][0])
+        extra_party["agent_id"] = "observer_03"
+        extra_party.pop("signature", None)
+        _key_registry["observer_03"] = KeyPair.generate().public_key
+        extra_party["signature"] = sign_message(extra_party, KeyPair.generate())
+        attestation["parties"].append(extra_party)
+        self._recountersign_attestation(attestation)
+        self._resign_bundle_response(bundle_result)
+
+        verify_result = handle_tool_call("concordia_verify_receipt_bundle", {
+            "bundle": bundle_result,
+        })
+
+        assert verify_result["valid"] is False
+        assert any(
+            "observer_03" in error and "invalid signature" in error
+            for error in verify_result["errors"]
+        ), verify_result["errors"]
+
+    def test_verify_bundle_via_tool_accepts_attestations_from_two_sessions(self):
+        """One bundle spanning two live sessions verifies; a tampered outcome does not."""
+        from concordia.mcp_server import handle_tool_call
+
+        self._setup_negotiation()
+        ctx_s2 = self._setup_negotiation(
+            seller_id="seller_01",
+            buyer_id="buyer_02",
+            reset=False,
+        )
+        bundle_result = handle_tool_call("concordia_create_receipt_bundle", {
+            "agent_id": "seller_01",
+            "auth_token": ctx_s2["agent_token"],
+        })
+        bundle_result = json.loads(json.dumps(bundle_result))
+        assert len({att["session_id"] for att in bundle_result["attestations"]}) == 2
+
+        verify_result = handle_tool_call("concordia_verify_receipt_bundle", {
+            "bundle": bundle_result,
+        })
+        assert verify_result["valid"] is True, verify_result.get("errors")
+        self._assert_tool_matches_library(bundle_result)
+
+        tampered = json.loads(json.dumps(bundle_result))
+        tampered["attestations"][1]["outcome"]["status"] = "rejected"
+        self._resign_bundle_response(tampered)
+        tampered_result = handle_tool_call("concordia_verify_receipt_bundle", {
+            "bundle": tampered,
+        })
+        assert tampered_result["valid"] is False
+
     @pytest.mark.parametrize(
         "version",
         ["0.6.1", "1.0.0", "v1.0.0"],

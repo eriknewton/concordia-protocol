@@ -3017,11 +3017,13 @@ def tool_verify_receipt_bundle(
         session_id: str,
     ) -> Ed25519PublicKey | None:
         keys_for_session = session_keys.get(session_id)
-        if keys_for_session is not None:
-            # Must match the deleted MCP verifier branch in origin/main:
-            # attestation party signatures bind to their own session's key; a
-            # later session for the same agent must never satisfy this check.
-            return keys_for_session.get(agent_id)
+        if keys_for_session is not None and agent_id in keys_for_session:
+            # A session party's signature binds to that session's key; a later
+            # session for the same agent must never satisfy this check.
+            return keys_for_session[agent_id]
+        # Any other listed party resolves through the registry, as on main, so
+        # its signature is checked and fails rather than being skipped as
+        # unresolvable.
         return _key_registry.get(agent_id)
 
     result = verify_bundle(
