@@ -10,7 +10,7 @@ import {
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const VECTOR_SCHEMA_VERSION = "concordia-conformance-vector/v1-draft";
 const PROFILE_ORDER = new Set([
@@ -1766,7 +1766,19 @@ function main(argv) {
   return runSuite(argv[0], activeRegression());
 }
 
-if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// Run the suite only when this file is the entry point, so tests can import the
+// version helpers. Real paths are compared so a symlinked or relative launch
+// still runs every vector; a mismatch here would exit 0 having checked nothing.
+function isEntryPoint() {
+  if (process.argv[1] === undefined) return false;
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isEntryPoint()) {
   try {
     process.exitCode = main(process.argv.slice(2));
   } catch (error) {

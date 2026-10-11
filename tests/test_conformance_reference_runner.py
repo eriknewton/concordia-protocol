@@ -279,6 +279,10 @@ def test_reference_runner_accepts_long_valid_version_component(tmp_path: Path) -
         ("0.3.0\n", None, None),
         ("0.03.0", None, None),
         ("0.2.9", ["0", "2", "9"], -1),
+        # Length decides before digit order: "10" > "3" although "1" < "3".
+        ("0.10.0", ["0", "10", "0"], 1),
+        ("0.2.10", ["0", "2", "10"], -1),
+        ("1.0.0", ["1", "0", "0"], 1),
     ],
 )
 def test_reference_runner_version_parser_uses_protocol_rule(

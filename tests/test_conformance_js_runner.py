@@ -247,6 +247,10 @@ def test_js_reference_runner_accepts_long_valid_version_component(tmp_path: Path
         ("0.3.0\n", None, None),
         ("0.03.0", None, None),
         ("0.2.9", ["0", "2", "9"], -1),
+        # Length decides before digit order: "10" > "3" although "1" < "3".
+        ("0.10.0", ["0", "10", "0"], 1),
+        ("0.2.10", ["0", "2", "10"], -1),
+        ("1.0.0", ["1", "0", "0"], 1),
     ],
 )
 def test_js_reference_runner_version_parser_uses_protocol_rule(
@@ -260,3 +264,19 @@ def test_js_reference_runner_version_parser_uses_protocol_rule(
         expected_parsed = version.split(".")
     assert parsed["parsed"] == expected_parsed
     assert parsed["floorComparison"] == floor_comparison
+
+
+def test_symlinked_runner_still_runs_every_vector(tmp_path: Path) -> None:
+    """A launch through a symlink runs the full suite instead of exiting early."""
+    link = tmp_path / "runner.mjs"
+    link.symlink_to(RUNNER)
+    result = subprocess.run(
+        [cast(str, NODE), str(link), str(FULL_SUITE)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().splitlines()[-1] == EXPECTED_FULL_SUMMARY
