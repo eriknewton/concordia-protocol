@@ -394,6 +394,11 @@ class BundleVerificationResult:
     attestation with a missing/invalid countersignature is a hard ERROR (the
     bundle is invalid), so it never appears as merely "unbound."
 
+    Receipt-set binding can only be credited when a verifier has the presented
+    transcript. Bundle verification has attestations only, so
+    ``set_unbound_attestations`` includes both legacy set-unbound receipts and
+    modern receipts whose set fields are present but unverified.
+
     ``summary_accurate`` is a SELF-CONSISTENCY check (claimed summary == summary
     recomputed over ALL attestations), retained for backward compatibility. It
     is NOT an integrity signal on its own: for legacy ``outcome_unbound_attestations``
@@ -584,7 +589,7 @@ def verify_bundle(
         set_state, set_errors = evaluate_receipt_set_binding(att)
         if set_state == "bound":
             set_bound_count += 1
-        elif set_state == "legacy_set_unbound":
+        elif set_state in {"legacy_set_unbound", "fields_present_unverified"}:
             set_unbound_attestations.append(att_id)
         else:
             errors.extend(f"Attestation {i}: {err}" for err in set_errors)

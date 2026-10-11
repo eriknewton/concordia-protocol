@@ -1,0 +1,33 @@
+{
+  "description": "Shared receipt set-binding verification cases for public verifier entry points.",
+  "cases": [
+    {
+      "name": "no transcript",
+      "transcript": "omit",
+      "expected_state": "fields_present_unverified",
+      "expected_valid": true,
+      "expected_error_contains": null
+    },
+    {
+      "name": "empty transcript",
+      "transcript": "empty",
+      "expected_state": "error",
+      "expected_valid": false,
+      "expected_error_contains": "transcript must contain at least one message"
+    },
+    {
+      "name": "mismatched transcript",
+      "transcript": "mismatched",
+      "expected_state": "error",
+      "expected_valid": false,
+      "expected_error_contains": "chain_head mismatch"
+    },
+    {
+      "name": "valid transcript",
+      "transcript": "valid",
+      "expected_state": "bound",
+      "expected_valid": true,
+      "expected_error_contains": null
+    }
+  ]
+}
