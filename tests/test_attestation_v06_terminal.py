@@ -984,6 +984,40 @@ def test_overlong_version_component_is_a_structure_error_everywhere() -> None:
     assert is_valid_now({"concordia_attestation": "0.4.0"}) is True
 
 
+def test_is_valid_now_matches_main_for_no_window_version_shapes() -> None:
+    """No-window artifacts only use the legacy lane for strict valid versions."""
+    from concordia.attestation import MAX_ATTESTATION_VERSION_COMPONENT_DIGITS, is_valid_now
+
+    overlong = "9" * (MAX_ATTESTATION_VERSION_COMPONENT_DIGITS + 1)
+    corpus = [
+        ("legacy", "0.4.0", True),
+        ("floor", "0.5.0", False),
+        ("implemented", "0.6.0", False),
+        ("overlong-major", f"{overlong}.0.0", False),
+        ("overlong-minor", f"0.{overlong}.0", False),
+        ("overlong-patch", f"0.5.{overlong}", False),
+        ("leading-zero-major", "00.6.0", False),
+        ("leading-zero-minor", "0.06.0", False),
+        ("leading-zero-patch", "0.6.00", False),
+        ("suffix", "0.6.0-rc1", False),
+        ("build", "0.6.0+b", False),
+        ("prefix", "v0.6.0", False),
+        ("trailing-newline", "0.6.0\n", False),
+        ("leading-space", " 0.6.0", False),
+        ("short", "0.6", False),
+        ("long", "0.6.0.0", False),
+        ("empty", "", False),
+        ("none", None, False),
+        ("int", 6, False),
+        ("list", ["0.6.0"], False),
+        ("bool", True, False),
+        ("float", 0.6, False),
+    ]
+
+    for name, version, expected in corpus:
+        assert is_valid_now({"concordia_attestation": version}) is expected, name
+
+
 def test_version_component_bound_holds_when_interpreter_limit_is_disabled() -> None:
     """The shared version grammar owns its digit bound before integer parsing."""
     from concordia.attestation import (

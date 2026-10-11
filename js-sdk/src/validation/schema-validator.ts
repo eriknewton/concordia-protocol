@@ -58,6 +58,14 @@ import {
   type SchemaError,
 } from '../internal/jsonschema.js';
 import { isCpythonIsoDateTime, cpythonIsoDateTimeToEpochMs } from '../internal/iso-datetime.js';
+import {
+  compareVersion,
+  IMPLEMENTED_ATTESTATION_VERSION,
+  LEGACY_FLOOR_VERSION,
+  MAX_ATTESTATION_VERSION_COMPONENT_DIGITS,
+  parseStrictVersion,
+} from '../attestation/constants.js';
+export { MAX_ATTESTATION_VERSION_COMPONENT_DIGITS } from '../attestation/constants.js';
 import { pyJsonDumps, type FloatConstraintMap } from '../internal/py-json.js';
 import {
   MESSAGE_SCHEMA,
@@ -177,12 +185,6 @@ const FREE_TEXT_TERM_ERROR = 'free-text field must not contain obvious raw deal 
 const DRAFT_STRUCTURE_ERROR = '$: violates draft-newton-agreement-evidence-00 structure';
 const DRAFT_VERSION_GRAMMAR_ERROR =
   '$.concordia_attestation: violates draft-newton-agreement-evidence-00 version grammar';
-type VersionTuple = readonly [bigint, bigint, bigint];
-const IMPLEMENTED_ATTESTATION_VERSION: VersionTuple = [0n, 6n, 0n];
-const LEGACY_FLOOR_VERSION: VersionTuple = [0n, 5n, 0n];
-const STRICT_SEMVER_PATTERN = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
-// Must match MAX_ATTESTATION_VERSION_COMPONENT_DIGITS in concordia/attestation.py.
-export const MAX_ATTESTATION_VERSION_COMPONENT_DIGITS = 4300;
 const RFC3339_Z_PATTERN =
   /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,3})?Z$/;
 const SHA256_HEX_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -425,10 +427,11 @@ function validateAttestationDraftStructure(attestation: unknown): string[] {
   if (!isPlainObject(attestation)) return [];
   const versionValue = attestation.concordia_attestation;
   if (typeof versionValue !== 'string') return [];
-  const version = parseStrictVersion(versionValue);
-  if (version === null) {
+  const parsedVersion = parseStrictVersion(versionValue);
+  if (!parsedVersion.ok) {
     return [DRAFT_VERSION_GRAMMAR_ERROR];
   }
+  const { version } = parsedVersion;
   if (compareVersion(version, LEGACY_FLOOR_VERSION) < 0) return [];
   if (compareVersion(version, IMPLEMENTED_ATTESTATION_VERSION) > 0) {
     return [DRAFT_STRUCTURE_ERROR];
@@ -470,24 +473,6 @@ function isDraftStructureValid(attestation: Record<string, unknown>): boolean {
   }
   if ('references' in attestation && !isReferencesShape(attestation.references)) return false;
   return true;
-}
-
-function parseStrictVersion(value: string): VersionTuple | null {
-  if (!STRICT_SEMVER_PATTERN.test(value)) return null;
-  const stringParts = value.split('.');
-  if (stringParts.length !== 3) return null;
-  if (stringParts.some((part) => part.length > MAX_ATTESTATION_VERSION_COMPONENT_DIGITS)) {
-    return null;
-  }
-  return [BigInt(stringParts[0]!), BigInt(stringParts[1]!), BigInt(stringParts[2]!)];
-}
-
-function compareVersion(a: VersionTuple, b: VersionTuple): number {
-  for (let i = 0; i < 3; i += 1) {
-    if (a[i]! < b[i]!) return -1;
-    if (a[i]! > b[i]!) return 1;
-  }
-  return 0;
 }
 
 function hasOnlyKeys(

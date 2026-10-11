@@ -19,6 +19,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from .attestation import (
     _IMPLEMENTED_ATTESTATION_VERSION,
     _AttestationStructureError,
+    _VERSION_COMPONENT_TOO_LONG_ERROR_TEXT,
     _version_tuple,
     evaluate_receipt_set_binding,
     verify_attestation_countersignature,
@@ -75,9 +76,8 @@ def evaluate_outcome_binding(
         # it would let an outcome-tampered artifact pass verify_bundle with
         # valid=True. Matches -00 section 10 step 2 (malformed version is
         # not-bound before any signature work).
-        message = str(exc)
-        if message == "concordia_attestation component is too long":
-            return "error", message
+        if exc.reason == "version_component_too_long":
+            return "error", _VERSION_COMPONENT_TOO_LONG_ERROR_TEXT
         return "error", "concordia_attestation is malformed; outcome not bound"
     if version > _IMPLEMENTED_ATTESTATION_VERSION:
         return (

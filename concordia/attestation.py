@@ -12,7 +12,6 @@ import binascii
 import json
 import math
 import re
-import sys
 import unicodedata
 import uuid
 from collections.abc import Callable, Mapping
@@ -57,17 +56,20 @@ _SET_BINDING_MIN = (0, 3)
 _SET_BINDING_UNVERIFIED_WARNING = (
     "set-binding fields are present but not verified; no transcript supplied"
 )
-# Must match STRICT_VERSION_PATTERN in js-sdk/src/attestation/attestation.ts
-# and STRICT_SEMVER_PATTERN in js-sdk/src/validation/schema-validator.ts.
+# Must match STRICT_VERSION_PATTERN in js-sdk/src/attestation/constants.ts.
 _SEMVER_RE = re.compile(
     r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z"
 )
-# CPython's default int-string guard (4300 decimal digits) is the compatibility
-# ceiling for the wire grammar. Owning the check here keeps hosts that raise or
-# disable their interpreter limit on the same structure-error boundary.
-# Must match MAX_ATTESTATION_VERSION_COMPONENT_DIGITS in the JS SDK parsers.
-MAX_ATTESTATION_VERSION_COMPONENT_DIGITS = getattr(
-    sys.int_info, "default_max_str_digits", 4300
+# Equals CPython's default int_max_str_digits, chosen so default-settings
+# behavior is unchanged. Must match
+# MAX_ATTESTATION_VERSION_COMPONENT_DIGITS in js-sdk/src/attestation/constants.ts.
+MAX_ATTESTATION_VERSION_COMPONENT_DIGITS = 4300
+_VERSION_GRAMMAR_ERROR_TEXT = (
+    "concordia_attestation must be three dot-separated non-negative "
+    "integers without leading zeros"
+)
+_VERSION_COMPONENT_TOO_LONG_ERROR_TEXT = (
+    "concordia_attestation component is too long"
 )
 _SHA256_HEX_RE = re.compile(r"^sha256:[a-f0-9]{64}\Z")
 _TIMESTAMP_Z_RE = re.compile(
@@ -123,6 +125,10 @@ class AttestationTerminalResult:
 
 class _AttestationStructureError(ValueError):
     """Internal marker for Section 10 step 2 not-bound failures."""
+
+    def __init__(self, message: str, *, reason: str = "structure") -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 @dataclass(frozen=True)
@@ -236,14 +242,12 @@ def _diagnostic_path(path: str) -> str:
 
 def _version_tuple(value: str) -> tuple[int, int, int]:
     if not isinstance(value, str) or not _SEMVER_RE.match(value):
-        raise _AttestationStructureError(
-            "concordia_attestation must be three dot-separated non-negative "
-            "integers without leading zeros"
-        )
+        raise _AttestationStructureError(_VERSION_GRAMMAR_ERROR_TEXT)
     parts = value.split(".")
     if any(len(part) > MAX_ATTESTATION_VERSION_COMPONENT_DIGITS for part in parts):
         raise _AttestationStructureError(
-            "concordia_attestation component is too long"
+            _VERSION_COMPONENT_TOO_LONG_ERROR_TEXT,
+            reason="version_component_too_long",
         )
     try:
         return (int(parts[0]), int(parts[1]), int(parts[2]))
@@ -251,7 +255,8 @@ def _version_tuple(value: str) -> tuple[int, int, int]:
         # Conversion is never allowed to leak a raw exception at composition
         # boundaries or route a non-convertible version into a legacy lane.
         raise _AttestationStructureError(
-            "concordia_attestation component is too long"
+            _VERSION_COMPONENT_TOO_LONG_ERROR_TEXT,
+            reason="version_component_too_long",
         ) from exc
 
 
@@ -630,14 +635,13 @@ def is_valid_now(
     vt = attestation.get("validity_temporal")
     if vt is None:
         ver = attestation.get("concordia_attestation", "")
-        if not isinstance(ver, str) or not _SEMVER_RE.match(ver):
-            # A malformed version is never a legacy signal; fail closed here
-            # as the binding evaluators do.
-            return False
         try:
-            return not _attestation_version_at_least(ver, 0, 5)
-        except ValueError:
+            # A malformed or unsupported version is never a legacy signal; the
+            # no-window compatibility lane is only for strict pre-0.5 artifacts.
+            version = _version_tuple(ver)
+        except _AttestationStructureError:
             return False
+        return version < _LEGACY_FLOOR_VERSION
     if not isinstance(vt, dict) or "mode" not in vt:
         return False
     now_dt = now or datetime.now(timezone.utc)
@@ -1047,9 +1051,8 @@ def evaluate_receipt_set_binding(
         # a version cannot be credited by one verifier and refused by another.
         version = _version_tuple(ver)
     except _AttestationStructureError as exc:
-        message = str(exc)
-        if message == "concordia_attestation component is too long":
-            return "error", [message]
+        if exc.reason == "version_component_too_long":
+            return "error", [_VERSION_COMPONENT_TOO_LONG_ERROR_TEXT]
         return "error", ["concordia_attestation is malformed; set not bound"]
     if version > _IMPLEMENTED_ATTESTATION_VERSION:
         return (

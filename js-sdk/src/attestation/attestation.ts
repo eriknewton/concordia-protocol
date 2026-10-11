@@ -68,10 +68,17 @@ import {
 import { validateReference } from '../predicate/references.js';
 import { computeHash, type Session } from '../session/index.js';
 import {
+  compareVersion,
   DEFAULT_ATTESTATION_VALIDITY_SECONDS,
+  IMPLEMENTED_ATTESTATION_VERSION,
+  LEGACY_FLOOR_VERSION,
   MAX_ATTESTATION_VALIDITY_SECONDS,
+  MAX_ATTESTATION_VERSION_COMPONENT_DIGITS,
   MAX_RELYING_VALIDITY_LIFETIME_SECONDS,
+  parseStrictVersion,
   REFERENCE_ATTESTATION_VALIDITY_SECONDS,
+  SET_BINDING_MIN,
+  VERSION_COMPONENT_TOO_LONG_ERROR,
 } from './constants.js';
 
 /** Attestation schema version, byte-identical to Python `ATTESTATION_VERSION`. */
@@ -80,20 +87,10 @@ export const ATTESTATION_VERSION = '0.6.0';
 export {
   DEFAULT_ATTESTATION_VALIDITY_SECONDS,
   MAX_ATTESTATION_VALIDITY_SECONDS,
+  MAX_ATTESTATION_VERSION_COMPONENT_DIGITS,
   MAX_RELYING_VALIDITY_LIFETIME_SECONDS,
   REFERENCE_ATTESTATION_VALIDITY_SECONDS,
 };
-type VersionTuple = readonly [bigint, bigint, bigint];
-const SET_BINDING_MIN: VersionTuple = [0n, 3n, 0n];
-const LEGACY_FLOOR_VERSION: VersionTuple = [0n, 5n, 0n];
-const IMPLEMENTED_ATTESTATION_VERSION: VersionTuple = [0n, 6n, 0n];
-// Must match `_SEMVER_RE` in concordia/attestation.py: ASCII digits, no leading
-// zeros and no trailing newline. The version grammar is a structure gate, not a
-// coercion site.
-const STRICT_VERSION_PATTERN = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
-// Must match MAX_ATTESTATION_VERSION_COMPONENT_DIGITS in concordia/attestation.py
-// and js-sdk/src/validation/schema-validator.ts.
-export const MAX_ATTESTATION_VERSION_COMPONENT_DIGITS = 4300;
 const SHA256_HEX_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const RFC3339_Z_PATTERN =
   /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,3})?Z$/;
@@ -106,44 +103,23 @@ export interface ReceiptSetBindingResult {
   errors: string[];
 }
 
-function parseStrictVersion(version: unknown): VersionTuple | null {
-  if (typeof version !== 'string' || !STRICT_VERSION_PATTERN.test(version)) return null;
-  const parts = version.split('.');
-  if (
-    parts.length !== 3 ||
-    parts.some((part) => part.length > MAX_ATTESTATION_VERSION_COMPONENT_DIGITS)
-  ) {
-    return null;
-  }
-  try {
-    return [BigInt(parts[0]!), BigInt(parts[1]!), BigInt(parts[2]!)];
-  } catch {
-    return null;
-  }
-}
-
-function compareVersion(a: VersionTuple, b: VersionTuple): number {
-  for (let index = 0; index < 3; index += 1) {
-    if (a[index]! < b[index]!) return -1;
-    if (a[index]! > b[index]!) return 1;
-  }
-  return 0;
-}
-
 export function verifyReceiptSetBinding(
   attestation: Record<string, unknown>,
   transcript: Array<Record<string, unknown>> | null = null,
 ): ReceiptSetBindingResult {
   const versionValue = attestation.concordia_attestation;
-  const version = parseStrictVersion(versionValue);
-  if (version === null) {
+  const parsedVersion = parseStrictVersion(versionValue);
+  if (!parsedVersion.ok) {
     return {
       state: 'error',
       errors: [
-        'concordia_attestation must be three dot-separated non-negative integers without leading zeros',
+        parsedVersion.reason === 'component_too_long'
+          ? VERSION_COMPONENT_TOO_LONG_ERROR
+          : 'concordia_attestation must be three dot-separated non-negative integers without leading zeros',
       ],
     };
   }
+  const { version } = parsedVersion;
   if (compareVersion(version, IMPLEMENTED_ATTESTATION_VERSION) > 0) {
     return {
       state: 'error',
@@ -789,10 +765,10 @@ export function isValidNow(attestation: Record<string, unknown>, now?: number): 
     // A malformed or absent version is never a legacy signal; fail closed
     // here as Python `is_valid_now` does (parity fixture `no_constraint`).
     const parsedVersion = parseStrictVersion(version);
-    if (parsedVersion === null) {
+    if (!parsedVersion.ok) {
       return false;
     }
-    return compareVersion(parsedVersion, LEGACY_FLOOR_VERSION) < 0;
+    return compareVersion(parsedVersion.version, LEGACY_FLOOR_VERSION) < 0;
   }
   if (!isPlainObject(vt) || !('mode' in vt)) {
     return false;
