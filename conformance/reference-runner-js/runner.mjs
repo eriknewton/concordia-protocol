@@ -144,12 +144,13 @@ const AGENT_PROFILE_LOCATION_FIELDS = new Set(["regions", "jurisdictions"]);
 const GENESIS_HASH = `sha256:${"0".repeat(64)}`;
 // Same grammar as _SEMVER_RE in concordia/attestation.py; this clean-room
 // runner keeps the protocol rule local instead of importing Concordia.
-// Must match ATTESTATION_VERSION_RE in conformance/reference-runner/runner.py.
-const ATTESTATION_VERSION_RE = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)/u;
+// Must match ATTESTATION_VERSION_RE in conformance/reference-runner/runner.py:
+// the constant is a full pattern, and the helper also compares matched bytes.
+const ATTESTATION_VERSION_RE = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/u;
 const SET_BINDING_VERSION_FLOOR = ["0", "3", "0"];
-// Must match SHA256_HEX_RE in conformance/reference-runner/runner.py; callers
-// compare match length so check 8 full-matches every byte, including newlines.
-const SHA256_HEX_RE = /^sha256:[a-f0-9]{64}/u;
+// Must match SHA256_HEX_RE in conformance/reference-runner/runner.py: the
+// constant is a full pattern, and the helper also compares matched bytes.
+const SHA256_HEX_RE = /^sha256:[a-f0-9]{64}$/u;
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 const ED25519_PKCS8_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
 

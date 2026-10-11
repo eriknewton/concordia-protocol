@@ -13,17 +13,15 @@ import rfc8785
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_PATH = REPO_ROOT / "conformance" / "vectors" / "manifest.json"
+RECEIPT_SET_BINDING_MUTATION_IDS = tuple(
+    f"mut-synthetic-receipt-set-binding-{index:04d}" for index in range(1, 9)
+)
 
 EXPECTED_VECTORS = {
     "positive": {
         "pos-synthetic-receipt-set-binding": "accept",
     },
-    "mutation": {
-        "mut-synthetic-receipt-set-binding-0001": "reject",
-        "mut-synthetic-receipt-set-binding-0002": "reject",
-        "mut-synthetic-receipt-set-binding-0003": "reject",
-        "mut-synthetic-receipt-set-binding-0004": "reject",
-    },
+    "mutation": dict.fromkeys(RECEIPT_SET_BINDING_MUTATION_IDS, "reject"),
     "canary": {
         "canary-receipt-set-unchecked": "reject",
     },
@@ -44,6 +42,11 @@ def jcs_bytes(value: Any) -> bytes:
 
 def message_hash(message: dict[str, Any]) -> str:
     return "sha256:" + hashlib.sha256(jcs_bytes(message)).hexdigest()
+
+
+def transcript_hash(messages: list[dict[str, Any]]) -> str:
+    combined = b"".join(jcs_bytes(message) for message in messages)
+    return "sha256:" + hashlib.sha256(combined).hexdigest()
 
 
 def strip_signatures_recursive(value: Any) -> Any:
@@ -128,7 +131,11 @@ def check_positive(vector: dict[str, Any]) -> None:
 def check_reject(vector: dict[str, Any], vector_id: str) -> None:
     receipt, messages = receipt_pair(vector)
     require(vector.get("expected") == "reject", f"{vector_id} must reject")
-    require(vector.get("expected_reason_class") == "binding", f"{vector_id} must reject as binding")
+    expected_reason = "schema" if vector_id.endswith(("0007", "0008")) else "binding"
+    require(
+        vector.get("expected_reason_class") == expected_reason,
+        f"{vector_id} must reject as {expected_reason}",
+    )
     head_matches = receipt.get("chain_head") == message_hash(messages[-1])
     count_matches = receipt.get("message_count") == len(messages)
     if vector_id.endswith("0001"):
@@ -139,6 +146,23 @@ def check_reject(vector: dict[str, Any], vector_id: str) -> None:
         require(not head_matches and not count_matches, "0003 must truncate the transcript")
     elif vector_id.endswith("0004"):
         require(not head_matches and not count_matches, "0004 must splice the transcript")
+    elif vector_id.endswith("0005"):
+        require(receipt.get("concordia_attestation") == "0.2.0", "0005 must pin legacy version")
+    elif vector_id.endswith("0006"):
+        require(
+            receipt.get("concordia_attestation") == "0.3.0\n",
+            "0006 must pin version newline",
+        )
+    elif vector_id.endswith("0007"):
+        require(
+            receipt.get("transcript_hash") == transcript_hash(messages) + "\n",
+            "0007 must pin transcript_hash newline",
+        )
+    elif vector_id.endswith("0008"):
+        require(
+            receipt.get("chain_head") == message_hash(messages[-1]) + "\n",
+            "0008 must pin chain_head newline",
+        )
 
 
 def main() -> int:

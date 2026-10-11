@@ -923,12 +923,16 @@ The receipt pair vectors use `message-chain-v1` with both `messages` and
 `receipt` in the input object. Public vectors carry the parsed JSON objects and
 diagnostic canonical bytes live under `conformance/diag/`, which runners do
 not read. The positive vector verifies a countersigned agreed receipt against
-the exact five-message transcript. The mutation vectors reject a countersigned
-wrong `chain_head`, a countersigned off-by-one `message_count`, a truncated
-transcript with the original receipt, and a re-signed deletion splice with the
-original receipt. The canary `canary-receipt-set-unchecked` is accepted only by
-a deliberately regressed runner that skips this receipt comparison after
-checking message links and signatures.
+the exact five-message transcript. The mutation vectors
+`mut-synthetic-receipt-set-binding-0001` through
+`mut-synthetic-receipt-set-binding-0008` reject a countersigned wrong
+`chain_head`, a countersigned off-by-one `message_count`, a truncated
+transcript with the original receipt, a re-signed deletion splice with the
+original receipt, a legacy attestation version, and final-newline forms of the
+attestation version, `transcript_hash` and `chain_head`. The canary
+`canary-receipt-set-unchecked` is accepted only by a deliberately regressed
+runner that skips this receipt comparison after checking message links and
+signatures.
 
 #### Chain position
 

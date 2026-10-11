@@ -19,7 +19,7 @@ from scripts.conformance import generate_vectors as vector_generator
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNNER = REPO_ROOT / "conformance" / "reference-runner" / "runner.py"
 FULL_SUITE = REPO_ROOT / "conformance" / "vectors"
-EXPECTED_FULL_SUMMARY = "[SUMMARY] positive=53 mutation=1490 canary=5 ok=1548 fail=0"
+EXPECTED_FULL_SUMMARY = "[SUMMARY] positive=53 mutation=1492 canary=5 ok=1550 fail=0"
 LONG_VERSION_COMPONENT_DIGITS = 5_000
 CANARY_REGRESSIONS = {
     "canary-chain-splice": "skip-linkage-walk",

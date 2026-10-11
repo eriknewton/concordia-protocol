@@ -18,7 +18,7 @@ import os
 import re
 import sys
 import warnings
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -27,7 +27,13 @@ import rfc8785
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", DeprecationWarning)
-    from jsonschema import Draft202012Validator, FormatChecker, RefResolver
+    from jsonschema import (
+        Draft202012Validator,
+        FormatChecker,
+        RefResolver,
+        ValidationError,
+        validators,
+    )
 from nacl.exceptions import BadSignatureError
 from nacl.signing import SigningKey, VerifyKey
 
@@ -120,6 +126,63 @@ def is_date_time(value: object) -> bool:
     return parsed.tzinfo is not None
 
 
+def json_schema_pattern_for_python(pattern: str) -> str:
+    """Translate JSON Schema's true-end `$` anchor to Python `re` semantics."""
+    translated: list[str] = []
+    escaped = False
+    in_character_class = False
+    for char in pattern:
+        if escaped:
+            translated.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            translated.append(char)
+            escaped = True
+            continue
+        if char == "[" and not in_character_class:
+            in_character_class = True
+            translated.append(char)
+            continue
+        if char == "]" and in_character_class:
+            in_character_class = False
+            translated.append(char)
+            continue
+        if char == "$" and not in_character_class:
+            translated.append(r"\Z")
+            continue
+        translated.append(char)
+    return "".join(translated)
+
+
+def json_schema_pattern_validator(
+    validator: Any,
+    pattern: str,
+    instance: Any,
+    schema: Any,
+) -> Iterator[ValidationError]:
+    del validator, schema
+    if not isinstance(instance, str):
+        return
+    try:
+        compiled = re.compile(json_schema_pattern_for_python(pattern))
+    except re.error as exc:
+        error = ValidationError(f"{pattern!r} is not a valid regular expression")
+        error.__cause__ = exc
+        yield error
+        return
+    # JSON Schema `pattern` is an unanchored search, but ECMA-262 `$` does not
+    # match before a final newline. Python `re` does, so `$` is rewritten above.
+    if compiled.search(instance) is None:
+        yield ValidationError(f"{instance!r} does not match {pattern!r}")
+
+
+JSON_SCHEMA_VALIDATOR = validators.extend(
+    Draft202012Validator,
+    validators={"pattern": json_schema_pattern_validator},
+)
+
+
 class Reject(Exception):
     """The vector does not satisfy its verification profile."""
 
@@ -197,7 +260,7 @@ def validate_schema(suite_base: Path, schema_name: str, data: Json) -> None:
     schema = load_json(schema_file(suite_base, schema_name))
     resolver = RefResolver.from_schema(schema, store=schema_store(suite_base))
     errors = list(
-        Draft202012Validator(
+        JSON_SCHEMA_VALIDATOR(
             schema,
             resolver=resolver,
             format_checker=FORMAT_CHECKER,
@@ -379,7 +442,7 @@ def validate_json_schema_object(schema: Json) -> None:
     if not isinstance(schema, dict):
         raise Reject("constraint schema is not an object")
     try:
-        Draft202012Validator.check_schema(schema)
+        JSON_SCHEMA_VALIDATOR.check_schema(schema)
     except Exception as exc:
         raise Reject("constraint schema is invalid") from exc
 
@@ -388,7 +451,7 @@ def validate_action(schema: Json, action: Json) -> None:
     if action is None:
         return
     validate_json_schema_object(schema)
-    errors = list(Draft202012Validator(schema).iter_errors(action))
+    errors = list(JSON_SCHEMA_VALIDATOR(schema).iter_errors(action))
     if errors:
         raise Reject("action violates constraints")
 

@@ -22,7 +22,13 @@ from typing import Any, Literal, TypeAlias
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", DeprecationWarning)
-    from jsonschema import Draft202012Validator, FormatChecker, RefResolver
+    from jsonschema import (
+        Draft202012Validator,
+        FormatChecker,
+        RefResolver,
+        ValidationError,
+        validators,
+    )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -270,6 +276,63 @@ def is_date_time(value: object) -> bool:
         return True
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     return parsed.tzinfo is not None
+
+
+def json_schema_pattern_for_python(pattern: str) -> str:
+    """Translate JSON Schema's true-end `$` anchor to Python `re` semantics."""
+    translated: list[str] = []
+    escaped = False
+    in_character_class = False
+    for char in pattern:
+        if escaped:
+            translated.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            translated.append(char)
+            escaped = True
+            continue
+        if char == "[" and not in_character_class:
+            in_character_class = True
+            translated.append(char)
+            continue
+        if char == "]" and in_character_class:
+            in_character_class = False
+            translated.append(char)
+            continue
+        if char == "$" and not in_character_class:
+            translated.append(r"\Z")
+            continue
+        translated.append(char)
+    return "".join(translated)
+
+
+def json_schema_pattern_validator(
+    validator: Any,
+    pattern: str,
+    instance: Any,
+    schema: Any,
+) -> Iterator[ValidationError]:
+    del validator, schema
+    if not isinstance(instance, str):
+        return
+    try:
+        compiled = re.compile(json_schema_pattern_for_python(pattern))
+    except re.error as exc:
+        error = ValidationError(f"{pattern!r} is not a valid regular expression")
+        error.__cause__ = exc
+        yield error
+        return
+    # JSON Schema `pattern` is an unanchored search, but ECMA-262 `$` does not
+    # match before a final newline. Python `re` does, so `$` is rewritten above.
+    if compiled.search(instance) is None:
+        yield ValidationError(f"{instance!r} does not match {pattern!r}")
+
+
+JSON_SCHEMA_VALIDATOR = validators.extend(
+    Draft202012Validator,
+    validators={"pattern": json_schema_pattern_validator},
+)
 
 
 class GenerationError(RuntimeError):
@@ -600,7 +663,7 @@ def schema_store() -> dict[str, dict[str, Any]]:
 def schema_is_valid(schema: dict[str, Any], data: Any) -> bool:
     resolver = RefResolver.from_schema(schema, store=schema_store())
     return not any(
-        Draft202012Validator(
+        JSON_SCHEMA_VALIDATOR(
             schema,
             resolver=resolver,
             format_checker=FORMAT_CHECKER,
@@ -1758,8 +1821,8 @@ RECEIPT_BUNDLE_VERSION_TOLERANCE_NOTE = (
 CHAIN_POSITION_RESIGNED_SPLICE_TOLERANCE_NOTE = (
     "tolerated-accept: per-message signatures authenticate links, not the complete message set"
 )
-EXPECTED_MUTATION_TOTAL = 1490
-EXPECTED_MUTATION_REJECTS = 1451
+EXPECTED_MUTATION_TOTAL = 1492
+EXPECTED_MUTATION_REJECTS = 1453
 EXPECTED_MUTATION_ACCEPTS = 39
 EXPECTED_CANARY_TOTAL = 5
 EXPECTED_RAW_TYPED_DIVERGENCES = (
@@ -1796,7 +1859,7 @@ EXPECTED_MUTATION_BATTERY_COUNTS: dict[str, tuple[int, int, int]] = {
     "synthetic/longtail/competence_proof.json": (157, 155, 2),
     "synthetic/longtail/message_chain.json": (99, 99, 0),
     "synthetic/longtail/message_chain_position.json": (4, 3, 1),
-    "synthetic/longtail/receipt_set_binding.json": (6, 6, 0),
+    "synthetic/longtail/receipt_set_binding.json": (8, 8, 0),
     "synthetic/longtail/receipt_bundle.json": (256, 255, 1),
     "synthetic/mandate/delegated_mandate.json": (82, 82, 0),
     "synthetic/mandate/mandate.json": (51, 51, 0),
@@ -2732,6 +2795,20 @@ def build_receipt_set_binding_mutation_vectors(
             {"concordia_attestation": "0.3.0\n"},
         ),
     }
+    newline_transcript_hash = {
+        "messages": copy.deepcopy(base_messages),
+        "receipt": receipt_with_resigned_snapshot(
+            base_receipt,
+            {"transcript_hash": f"{base_receipt['transcript_hash']}\n"},
+        ),
+    }
+    newline_chain_head = {
+        "messages": copy.deepcopy(base_messages),
+        "receipt": receipt_with_resigned_snapshot(
+            base_receipt,
+            {"chain_head": f"{base_receipt['chain_head']}\n"},
+        ),
+    }
     vectors = [
         receipt_set_binding_vector(
             vector_id="mut-synthetic-receipt-set-binding-0001",
@@ -2774,6 +2851,20 @@ def build_receipt_set_binding_mutation_vectors(
             input_data=newline_version,
             context=context,
             expected_reason_class="binding",
+        ),
+        receipt_set_binding_vector(
+            vector_id="mut-synthetic-receipt-set-binding-0007",
+            title="receipt_set_binding: transcript_hash has trailing newline",
+            input_data=newline_transcript_hash,
+            context=context,
+            expected_reason_class="schema",
+        ),
+        receipt_set_binding_vector(
+            vector_id="mut-synthetic-receipt-set-binding-0008",
+            title="receipt_set_binding: chain_head has trailing newline",
+            input_data=newline_chain_head,
+            context=context,
+            expected_reason_class="schema",
         ),
     ]
     summary = {

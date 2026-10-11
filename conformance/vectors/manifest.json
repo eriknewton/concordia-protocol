@@ -2,9 +2,9 @@
   "check_command": "python3 scripts/conformance/generate_vectors.py --check",
   "counts": {
     "canary": 5,
-    "diag_canonical_bytes": 1394,
+    "diag_canonical_bytes": 1396,
     "fixtures": 61,
-    "mutation": 1490,
+    "mutation": 1492,
     "positive": 53,
     "schemas": 14
   },
@@ -1378,6 +1378,8 @@
       "conformance/diag/canonical-bytes/mut-synthetic-receipt-set-binding-0004.jcs",
       "conformance/diag/canonical-bytes/mut-synthetic-receipt-set-binding-0005.jcs",
       "conformance/diag/canonical-bytes/mut-synthetic-receipt-set-binding-0006.jcs",
+      "conformance/diag/canonical-bytes/mut-synthetic-receipt-set-binding-0007.jcs",
+      "conformance/diag/canonical-bytes/mut-synthetic-receipt-set-binding-0008.jcs",
       "conformance/diag/canonical-bytes/pos-1404-approval-receipt.jcs",
       "conformance/diag/canonical-bytes/pos-1404-capability-digest.jcs",
       "conformance/diag/canonical-bytes/pos-1404-cascade-deny.jcs",
@@ -2965,7 +2967,9 @@
       "conformance/vectors/mutation/mut-synthetic-receipt-set-binding-0003.json",
       "conformance/vectors/mutation/mut-synthetic-receipt-set-binding-0004.json",
       "conformance/vectors/mutation/mut-synthetic-receipt-set-binding-0005.json",
-      "conformance/vectors/mutation/mut-synthetic-receipt-set-binding-0006.json"
+      "conformance/vectors/mutation/mut-synthetic-receipt-set-binding-0006.json",
+      "conformance/vectors/mutation/mut-synthetic-receipt-set-binding-0007.json",
+      "conformance/vectors/mutation/mut-synthetic-receipt-set-binding-0008.json"
     ],
     "positive": [
       "conformance/vectors/positive/binding-1734-context-set-mismatch.json",
@@ -3248,10 +3252,10 @@
       "battery_name": "synthetic/longtail/receipt_set_binding.json",
       "object_name": "receipt_set_binding",
       "record_type": "message_chain",
-      "reject": 6,
+      "reject": 8,
       "selection_note": "explicit receipt set-binding attack vectors over a five-message agreed transcript",
       "source_fixture": "synthetic/longtail/receipt_set_binding.json",
-      "total": 6,
+      "total": 8,
       "verification_profile": "message-chain-v1"
     },
     {
