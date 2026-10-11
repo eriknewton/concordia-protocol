@@ -81,10 +81,7 @@ const SEMVER_PATTERN = /^\d+\.\d+\.\d+$/;
 const SHA256_HEX_PATTERN = /^sha256:[a-f0-9]{64}$/;
 
 export type ReceiptSetBindingState =
-  | 'bound'
-  | 'fields_present_unverified'
-  | 'legacy_set_unbound'
-  | 'error';
+  'bound' | 'fields_present_unverified' | 'legacy_set_unbound' | 'error';
 
 export interface ReceiptSetBindingResult {
   state: ReceiptSetBindingState;
