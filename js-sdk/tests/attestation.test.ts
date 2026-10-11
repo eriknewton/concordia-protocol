@@ -20,6 +20,7 @@ import {
   ATTESTATION_VERSION,
   DEFAULT_ATTESTATION_VALIDITY_SECONDS,
   MAX_ATTESTATION_VALIDITY_SECONDS,
+  MAX_ATTESTATION_VERSION_COMPONENT_DIGITS,
   MAX_RELYING_VALIDITY_LIFETIME_SECONDS,
   type GenerateAttestationOptions,
 } from '../src/attestation/index.js';
@@ -454,6 +455,20 @@ describe('receipt set-binding verifier (v0.3.0)', () => {
     expect(verifyReceiptSetBinding(legacy)).toEqual({
       state: 'legacy_set_unbound',
       errors: [],
+    });
+  });
+
+  it('refuses set-binding credit above the implemented attestation version', () => {
+    const c = fixtures.cases[0]!;
+    const session = rebuildSession(c.session);
+    const attestation = generateAttestation(session, keyPairsFromCase(c), optionsFromCase(c));
+    attestation.concordia_attestation = '0.6.1';
+
+    const result = verifyReceiptSetBinding(attestation);
+
+    expect(result).toEqual({
+      state: 'error',
+      errors: ['concordia_attestation exceeds the implemented attestation version; set not bound'],
     });
   });
 
@@ -938,6 +953,20 @@ describe('isValidNow temporal containment parity', () => {
       expect(isValidNow(c.attestation, c.now_ms)).toBe(c.expected);
     });
   }
+});
+
+describe('version ceiling diagnostics', () => {
+  it('reports the shared component-length reason for set binding', () => {
+    const attestation = {
+      concordia_attestation: `0.${'9'.repeat(MAX_ATTESTATION_VERSION_COMPONENT_DIGITS + 1)}.0`,
+    };
+
+    expect(verifyReceiptSetBinding(attestation)).toEqual({
+      state: 'error',
+      errors: ['concordia_attestation component is too long'],
+    });
+    expect(isValidNow(attestation)).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

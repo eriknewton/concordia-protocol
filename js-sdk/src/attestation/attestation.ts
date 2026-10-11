@@ -68,10 +68,17 @@ import {
 import { validateReference } from '../predicate/references.js';
 import { computeHash, type Session } from '../session/index.js';
 import {
+  compareVersion,
   DEFAULT_ATTESTATION_VALIDITY_SECONDS,
+  IMPLEMENTED_ATTESTATION_VERSION,
+  LEGACY_FLOOR_VERSION,
   MAX_ATTESTATION_VALIDITY_SECONDS,
+  MAX_ATTESTATION_VERSION_COMPONENT_DIGITS,
   MAX_RELYING_VALIDITY_LIFETIME_SECONDS,
+  parseStrictVersion,
   REFERENCE_ATTESTATION_VALIDITY_SECONDS,
+  SET_BINDING_MIN,
+  VERSION_COMPONENT_TOO_LONG_ERROR,
 } from './constants.js';
 
 /** Attestation schema version, byte-identical to Python `ATTESTATION_VERSION`. */
@@ -80,14 +87,10 @@ export const ATTESTATION_VERSION = '0.6.0';
 export {
   DEFAULT_ATTESTATION_VALIDITY_SECONDS,
   MAX_ATTESTATION_VALIDITY_SECONDS,
+  MAX_ATTESTATION_VERSION_COMPONENT_DIGITS,
   MAX_RELYING_VALIDITY_LIFETIME_SECONDS,
   REFERENCE_ATTESTATION_VALIDITY_SECONDS,
 };
-const SET_BINDING_MIN = { major: 0, minor: 3 } as const;
-// Must match `_SEMVER_RE` in concordia/attestation.py: ASCII digits, no leading
-// zeros and no trailing newline. The version grammar is a structure gate, not a
-// coercion site.
-const STRICT_VERSION_PATTERN = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
 const SHA256_HEX_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const RFC3339_Z_PATTERN =
   /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,3})?Z$/;
@@ -100,20 +103,31 @@ export interface ReceiptSetBindingResult {
   errors: string[];
 }
 
-function attestationVersionAtLeast(version: unknown, major: number, minor: number): boolean {
-  if (typeof version !== 'string' || !STRICT_VERSION_PATTERN.test(version)) return false;
-  const parts = version.split('.');
-  const gotMajor = Number.parseInt(parts[0] ?? '0', 10);
-  const gotMinor = Number.parseInt(parts[1] ?? '0', 10);
-  return gotMajor > major || (gotMajor === major && gotMinor >= minor);
-}
-
 export function verifyReceiptSetBinding(
   attestation: Record<string, unknown>,
   transcript: Array<Record<string, unknown>> | null = null,
 ): ReceiptSetBindingResult {
-  const version = attestation.concordia_attestation;
-  if (!attestationVersionAtLeast(version, SET_BINDING_MIN.major, SET_BINDING_MIN.minor)) {
+  const versionValue = attestation.concordia_attestation;
+  const parsedVersion = parseStrictVersion(versionValue);
+  if (!parsedVersion.ok) {
+    return {
+      state: 'error',
+      errors: [
+        parsedVersion.reason === 'component_too_long'
+          ? VERSION_COMPONENT_TOO_LONG_ERROR
+          : // Must match the set-binding grammar sentence in evaluate_receipt_set_binding (concordia/attestation.py).
+            'concordia_attestation is malformed; set not bound',
+      ],
+    };
+  }
+  const { version } = parsedVersion;
+  if (compareVersion(version, IMPLEMENTED_ATTESTATION_VERSION) > 0) {
+    return {
+      state: 'error',
+      errors: ['concordia_attestation exceeds the implemented attestation version; set not bound'],
+    };
+  }
+  if (compareVersion(version, SET_BINDING_MIN) < 0) {
     return { state: 'legacy_set_unbound', errors: [] };
   }
 
@@ -121,10 +135,10 @@ export function verifyReceiptSetBinding(
   const chainHead = attestation.chain_head;
   const messageCount = attestation.message_count;
   if (typeof chainHead !== 'string' || !SHA256_HEX_PATTERN.test(chainHead)) {
-    errors.push(`version ${String(version)} requires chain_head as sha256:<64 lowercase hex>`);
+    errors.push(`version ${String(versionValue)} requires chain_head as sha256:<64 lowercase hex>`);
   }
   if (typeof messageCount !== 'number' || !Number.isInteger(messageCount) || messageCount < 1) {
-    errors.push(`version ${String(version)} requires message_count as an integer >= 1`);
+    errors.push(`version ${String(versionValue)} requires message_count as an integer >= 1`);
   }
 
   if (transcript === null) {
@@ -751,10 +765,11 @@ export function isValidNow(attestation: Record<string, unknown>, now?: number): 
     const version = attestation.concordia_attestation;
     // A malformed or absent version is never a legacy signal; fail closed
     // here as Python `is_valid_now` does (parity fixture `no_constraint`).
-    if (typeof version !== 'string' || !STRICT_VERSION_PATTERN.test(version)) {
+    const parsedVersion = parseStrictVersion(version);
+    if (!parsedVersion.ok) {
       return false;
     }
-    return !attestationVersionAtLeast(version, 0, 5);
+    return compareVersion(parsedVersion.version, LEGACY_FLOOR_VERSION) < 0;
   }
   if (!isPlainObject(vt) || !('mode' in vt)) {
     return false;

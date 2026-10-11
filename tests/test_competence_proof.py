@@ -16,11 +16,10 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
-
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from concordia.competence_proof import (
@@ -28,11 +27,10 @@ from concordia.competence_proof import (
     CompetenceVerificationResult,
     build_merkle_tree,
     generate_merkle_proof,
-    verify_merkle_proof,
     verify_competence_proof,
+    verify_merkle_proof,
 )
-from concordia.signing import KeyPair, sign_message, canonical_json
-
+from concordia.signing import KeyPair, sign_message
 
 # ---------------------------------------------------------------------------
 # Test helpers
@@ -978,7 +976,22 @@ class TestAggregateHonesty:
 
 from concordia import Agent, generate_attestation  # noqa: E402
 from concordia import BasicOffer as _BasicOffer  # noqa: E402
-from concordia.attestation import countersign_attestation  # noqa: E402
+from concordia.attestation import (  # noqa: E402
+    MAX_ATTESTATION_VERSION_COMPONENT_DIGITS,
+    countersign_attestation,
+)
+
+_OVERSIZED_VERSION_COMPONENT = "1" * (MAX_ATTESTATION_VERSION_COMPONENT_DIGITS + 1)
+_UNSUPPORTED_ATTESTATION_VERSIONS = [
+    ("patch_next", "0.6.1"),
+    ("major_next", "1.0.0"),
+    ("major_component_size", f"{_OVERSIZED_VERSION_COMPONENT}.6.0"),
+    ("minor_component_size", f"0.{_OVERSIZED_VERSION_COMPONENT}.0"),
+    ("patch_component_size", f"0.6.{_OVERSIZED_VERSION_COMPONENT}"),
+    ("grammar", "0.6.0\n"),
+]
+_SUPPORTED_ATTESTATION_VERSIONS = ["0.2.0", "0.5.9", "0.6.0"]
+_LEGACY_UNBOUND_ATTESTATION_VERSIONS = ["0.1.1", "0.1.999", "0.0.5"]
 
 
 def _mint_bound_attestation(
@@ -1019,6 +1032,19 @@ def _mint_bound_attestation(
     att = generate_attestation(session, key_pairs, category=category)
     assert att["concordia_attestation"] == "0.6.0"
     assert isinstance(att.get("countersignatures"), dict) and att["countersignatures"]
+    return att
+
+
+def _set_version_and_countersign(
+    att: dict[str, Any],
+    version: str,
+    party_ids: tuple[str, str],
+) -> dict[str, Any]:
+    att["concordia_attestation"] = version
+    att["countersignatures"] = {
+        party_id: countersign_attestation(att, _KEY_REGISTRY[party_id])
+        for party_id in party_ids
+    }
     return att
 
 
@@ -1265,6 +1291,92 @@ class TestSoundAggregateVerification:
             "root does not match" in e.lower() or "not bound to the commitment" in e.lower()
             for e in result.errors
         ), f"expected a root/count-binding error, got: {result.errors}"
+
+    @pytest.mark.parametrize(
+        ("case_name", "version"),
+        _UNSUPPORTED_ATTESTATION_VERSIONS,
+        ids=[case_name for case_name, _ in _UNSUPPORTED_ATTESTATION_VERSIONS],
+    )
+    def test_versions_outside_implemented_range_are_not_credited(
+        self,
+        case_name: str,
+        version: str,
+    ):
+        """Versions outside the implemented attestation range do not verify aggregates."""
+        prover = f"ceil_prover_{case_name}"
+        counterparty = f"ceil_cp_{case_name}"
+        att = _mint_bound_attestation(prover, counterparty, status="agreed")
+        _set_version_and_countersign(att, version, (prover, counterparty))
+        kp = _KEY_REGISTRY[prover]
+        proof = CompetenceProof.create(
+            prover,
+            [att],
+            kp,
+            reveal_ids=[att["attestation_id"]],
+        )
+
+        result = verify_competence_proof(proof.to_dict(), _test_resolver)
+
+        assert result.valid is False
+        assert result.aggregate_verified is False
+        assert result.claims_asserted_not_verified is True
+        assert att["attestation_id"] in result.revealed_outcome_unbound
+        if case_name == "grammar":
+            assert any("is malformed; outcome not bound" in error for error in result.errors)
+        elif "component_size" in case_name:
+            assert any("component is too long" in error for error in result.errors)
+        else:
+            assert any("exceeds the implemented attestation version" in error for error in result.errors)
+
+    @pytest.mark.parametrize("version", _LEGACY_UNBOUND_ATTESTATION_VERSIONS)
+    def test_below_floor_versions_remain_legacy_unbound_in_proofs(
+        self,
+        version: str,
+    ):
+        """Grammar-valid versions below 0.2.0 stay accepted but uncredited."""
+        prover = f"ceil_legacy_prover_{version.replace('.', '_')}"
+        counterparty = f"ceil_legacy_cp_{version.replace('.', '_')}"
+        att = _mint_bound_attestation(prover, counterparty, status="agreed")
+        _set_version_and_countersign(att, version, (prover, counterparty))
+        kp = _KEY_REGISTRY[prover]
+        proof = CompetenceProof.create(
+            prover,
+            [att],
+            kp,
+            reveal_ids=[att["attestation_id"]],
+        )
+
+        result = verify_competence_proof(proof.to_dict(), _test_resolver)
+
+        assert result.valid is True
+        assert result.aggregate_verified is False
+        assert result.claims_asserted_not_verified is True
+        assert att["attestation_id"] in result.revealed_outcome_unbound
+
+    @pytest.mark.parametrize("version", _SUPPORTED_ATTESTATION_VERSIONS)
+    def test_versions_at_or_below_implemented_range_keep_aggregate_binding(
+        self,
+        version: str,
+    ):
+        """Implemented and prior outcome-binding versions keep aggregate credit."""
+        prover = f"ceil_ok_prover_{version.replace('.', '_')}"
+        counterparty = f"ceil_ok_cp_{version.replace('.', '_')}"
+        att = _mint_bound_attestation(prover, counterparty, status="agreed")
+        _set_version_and_countersign(att, version, (prover, counterparty))
+        kp = _KEY_REGISTRY[prover]
+        proof = CompetenceProof.create(
+            prover,
+            [att],
+            kp,
+            reveal_ids=[att["attestation_id"]],
+        )
+
+        result = verify_competence_proof(proof.to_dict(), _test_resolver)
+
+        assert result.valid is True, result.errors
+        assert result.aggregate_verified is True
+        assert result.claims_asserted_not_verified is False
+        assert att["attestation_id"] not in result.revealed_outcome_unbound
 
     def test_cherrypick_subset_verifies_but_is_not_completeness(self):
         """STOLEN-HISTORY FINDING 1 (completeness, inherent to selective

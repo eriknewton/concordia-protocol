@@ -8,6 +8,7 @@ export {
   validateFulfillmentAttestation,
   isValidFulfillmentAttestation,
   conformsFormat,
+  MAX_ATTESTATION_VERSION_COMPONENT_DIGITS,
 } from './schema-validator.js';
 export {
   MESSAGE_SCHEMA,
