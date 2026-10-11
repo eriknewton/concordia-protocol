@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import difflib
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -109,6 +110,13 @@ TOP_LEVEL_FIELDS = {
     "status_vocabulary",
     "dimensions",
 }
+SUMMARY_RE = re.compile(
+    r"\[SUMMARY\] positive=(?P<positive>\d+) mutation=(?P<mutation>\d+) "
+    r"canary=(?P<canary>\d+) ok=(?P<ok>\d+) fail=(?P<fail>\d+)"
+)
+VECTOR_COUNT_RE = re.compile(
+    r"\b(?P<count>\d{1,3}(?:,\d{3})+)(?:[- ]vectors?|-vector)\b"
+)
 
 
 class AssuranceError(ValueError):
@@ -148,6 +156,39 @@ def conformance_summary_line() -> str:
         f"[SUMMARY] positive={counts['positive']} mutation={counts['mutation']} "
         f"canary={counts['canary']} ok={counts['ok']} fail=0"
     )
+
+
+def _iter_strings(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [item for entry in value for item in _iter_strings(entry)]
+    if isinstance(value, dict):
+        return [item for entry in value.values() for item in _iter_strings(entry)]
+    return []
+
+
+def _validate_conformance_count_mentions(data: Any) -> None:
+    counts = _conformance_counts()
+    expected_summary_counts = {
+        "positive": str(counts["positive"]),
+        "mutation": str(counts["mutation"]),
+        "canary": str(counts["canary"]),
+        "ok": str(counts["ok"]),
+        "fail": "0",
+    }
+    expected_count = conformance_vector_count_text()
+    for text in _iter_strings(data):
+        for match in SUMMARY_RE.finditer(text):
+            if match.groupdict() != expected_summary_counts:
+                raise AssuranceError(
+                    f"conformance summary count must match manifest: {match.group(0)!r}"
+                )
+        for match in VECTOR_COUNT_RE.finditer(text):
+            if match.group("count") != expected_count:
+                raise AssuranceError(
+                    f"conformance vector count must match manifest: {match.group(0)!r}"
+                )
 
 
 def _nonempty_string(value: Any, field: str) -> str:
@@ -248,6 +289,8 @@ def validate(data: Any) -> dict[str, Any]:
             _validate_evidence(evidence, dimension_id, index)
         _string_list(item["limitations"], f"dimensions[{dimension_id}].limitations")
         _string_list(item["dependencies"], f"dimensions[{dimension_id}].dependencies")
+
+    _validate_conformance_count_mentions(data)
 
     integrity = dimensions[0]
     integrity_text = " ".join(

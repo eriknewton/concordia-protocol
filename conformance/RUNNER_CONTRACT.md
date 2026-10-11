@@ -150,6 +150,16 @@ carry explicit timezone information. This rule is scoped only to `date-time`;
 all other JSON Schema formats remain annotations unless a profile states a
 separate explicit check.
 
+Schema `pattern` and `patternProperties` use ECMA-262 regular expression
+semantics. `$` without the `m` flag matches only at the end of the input. A
+runner on an engine where `$` also matches before a final newline must translate
+that anchor, for example to `\Z` in Python `re`; `conformance/json_schema_pattern.py`
+is one such translation, and the reference `runner.py` imports that sibling
+module. ECMA-262 `\d`, `\s`, and `.` semantics are also the reference; engines
+whose classes are wider must narrow them. The Python reference runner currently
+follows Python semantics for those classes, which is a known gap being
+addressed.
+
 Allowed `expected_reason_class` values are `schema`, `signature`, `digest`,
 `binding`, `temporal`, `privacy`, and `transition`.
 
