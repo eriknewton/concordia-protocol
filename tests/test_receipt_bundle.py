@@ -1215,7 +1215,22 @@ class TestMcpToolIntegration:
 
 from concordia import Agent, generate_attestation  # noqa: E402
 from concordia import BasicOffer as _BasicOffer  # noqa: E402
-from concordia.attestation import countersign_attestation  # noqa: E402
+from concordia.attestation import (  # noqa: E402
+    MAX_ATTESTATION_VERSION_COMPONENT_DIGITS,
+    countersign_attestation,
+)
+
+_OVERSIZED_VERSION_COMPONENT = "1" * (MAX_ATTESTATION_VERSION_COMPONENT_DIGITS + 1)
+_UNSUPPORTED_ATTESTATION_VERSIONS = [
+    ("patch_next", "0.6.1"),
+    ("major_next", "1.0.0"),
+    ("major_component_size", f"{_OVERSIZED_VERSION_COMPONENT}.6.0"),
+    ("minor_component_size", f"0.{_OVERSIZED_VERSION_COMPONENT}.0"),
+    ("patch_component_size", f"0.6.{_OVERSIZED_VERSION_COMPONENT}"),
+    ("grammar", "0.6.0\n"),
+]
+_SUPPORTED_ATTESTATION_VERSIONS = ["0.2.0", "0.5.9", "0.6.0"]
+_LEGACY_UNBOUND_ATTESTATION_VERSIONS = ["0.1.1", "0.1.999", "0.0.5"]
 
 
 def _mint_bound_attestation(
@@ -1251,6 +1266,19 @@ def _mint_bound_attestation(
     key_pairs = {seller_id: seller.key_pair, buyer_id: buyer.key_pair}
     att = generate_attestation(session, key_pairs, category=category)
     return att, seller_id, buyer_id
+
+
+def _set_version_and_countersign(
+    att: dict[str, Any],
+    version: str,
+    party_ids: tuple[str, str],
+) -> dict[str, Any]:
+    att["concordia_attestation"] = version
+    att["countersignatures"] = {
+        party_id: countersign_attestation(att, _KEY_REGISTRY[party_id])
+        for party_id in party_ids
+    }
+    return att
 
 
 class TestOutcomeBindingBundle:
@@ -1446,3 +1474,72 @@ class TestOutcomeBindingBundle:
         assert not any(
             "not cryptographically bound" in w.lower() for w in result.warnings
         ), f"unexpected unbound-outcome warning on a fully bound bundle: {result.warnings}"
+
+    @pytest.mark.parametrize(
+        ("case_name", "version"),
+        _UNSUPPORTED_ATTESTATION_VERSIONS,
+        ids=[case_name for case_name, _ in _UNSUPPORTED_ATTESTATION_VERSIONS],
+    )
+    def test_versions_outside_implemented_range_are_not_credited(
+        self,
+        case_name: str,
+        version: str,
+    ):
+        """Versions outside the implemented attestation range are not outcome-bound."""
+        att, seller_id, buyer_id = _mint_bound_attestation(
+            f"ceil_bundle_s_{case_name}",
+            f"ceil_bundle_b_{case_name}",
+        )
+        _set_version_and_countersign(att, version, (seller_id, buyer_id))
+        kp = _KEY_REGISTRY[seller_id]
+        bundle = ReceiptBundle.create(seller_id, [att], kp)
+
+        result = verify_bundle(bundle.to_dict(), _test_resolver)
+
+        assert result.valid is False
+        assert result.outcome_bound_count == 0
+        assert att["attestation_id"] in result.outcome_unbound_attestations
+        if case_name == "grammar":
+            assert any("is malformed; outcome not bound" in error for error in result.errors)
+        elif "component_size" in case_name:
+            assert any("component is too long" in error for error in result.errors)
+        else:
+            assert any("exceeds the implemented attestation version" in error for error in result.errors)
+
+    @pytest.mark.parametrize("version", _LEGACY_UNBOUND_ATTESTATION_VERSIONS)
+    def test_below_floor_versions_remain_legacy_unbound(self, version: str):
+        """Grammar-valid versions below 0.2.0 stay accepted but uncredited."""
+        att, seller_id, buyer_id = _mint_bound_attestation(
+            f"ceil_legacy_s_{version.replace('.', '_')}",
+            f"ceil_legacy_b_{version.replace('.', '_')}",
+        )
+        _set_version_and_countersign(att, version, (seller_id, buyer_id))
+        kp = _KEY_REGISTRY[seller_id]
+        bundle = ReceiptBundle.create(seller_id, [att], kp)
+
+        result = verify_bundle(bundle.to_dict(), _test_resolver)
+
+        assert result.valid is True
+        assert result.outcome_bound_count == 0
+        assert att["attestation_id"] in result.outcome_unbound_attestations
+        assert any("not cryptographically bound" in warning.lower() for warning in result.warnings)
+
+    @pytest.mark.parametrize("version", _SUPPORTED_ATTESTATION_VERSIONS)
+    def test_versions_at_or_below_implemented_range_keep_binding(
+        self,
+        version: str,
+    ):
+        """Implemented and prior outcome-binding versions keep existing credit."""
+        att, seller_id, buyer_id = _mint_bound_attestation(
+            f"ceil_ok_s_{version.replace('.', '_')}",
+            f"ceil_ok_b_{version.replace('.', '_')}",
+        )
+        _set_version_and_countersign(att, version, (seller_id, buyer_id))
+        kp = _KEY_REGISTRY[seller_id]
+        bundle = ReceiptBundle.create(seller_id, [att], kp)
+
+        result = verify_bundle(bundle.to_dict(), _test_resolver)
+
+        assert result.valid is True, result.errors
+        assert result.outcome_bound_count == 1
+        assert att["attestation_id"] not in result.outcome_unbound_attestations

@@ -15,6 +15,7 @@ import {
   verifyApprovalReceipt,
   approvalReceiptResultToDict,
   conformsFormat,
+  MAX_ATTESTATION_VERSION_COMPONENT_DIGITS,
 } from '../src/validation/index.js';
 import { iterErrors } from '../src/internal/jsonschema.js';
 import { isCpythonIsoDateTime, cpythonIsoDateTimeToEpochMs } from '../src/internal/iso-datetime.js';
@@ -426,6 +427,15 @@ describe('validateAttestation — Python parity and fail-closed behavior', () =>
   it('accepts implemented attestations and refuses above-ceiling versions', () => {
     const attestation = validAttestation();
     expect(validateAttestation(attestation)).toEqual([]);
+    const atDigitBound = structuredClone(attestation);
+    atDigitBound.concordia_attestation = `0.1.${'9'.repeat(MAX_ATTESTATION_VERSION_COMPONENT_DIGITS)}`;
+    expect(validateAttestation(atDigitBound)).toEqual([]);
+
+    const pastDigitBound = structuredClone(attestation);
+    pastDigitBound.concordia_attestation = `0.1.${'9'.repeat(MAX_ATTESTATION_VERSION_COMPONENT_DIGITS + 1)}`;
+    expect(validateAttestation(pastDigitBound)).toEqual([
+      '$.concordia_attestation: violates draft-newton-agreement-evidence-00 version grammar',
+    ]);
 
     for (const version of [
       '0.6.1',
