@@ -1118,11 +1118,18 @@ class TestMcpToolIntegration:
 
         tampered = json.loads(json.dumps(bundle_result))
         tampered["attestations"][1]["outcome"]["status"] = "rejected"
+        # Recompute the summary so only outcome binding can reject the change.
+        tampered["summary"] = _compute_summary(
+            tampered["agent_id"],
+            tampered["attestations"],
+        ).to_dict()
         self._resign_bundle_response(tampered)
         tampered_result = handle_tool_call("concordia_verify_receipt_bundle", {
             "bundle": tampered,
         })
         assert tampered_result["valid"] is False
+        assert tampered_result["outcome_bound_count"] == 1
+        assert len(tampered_result["outcome_unbound_attestations"]) == 1
 
     @pytest.mark.parametrize(
         "version",
