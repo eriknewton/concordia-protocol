@@ -105,6 +105,7 @@ from .receipt_bundle import (
     BundleStore,
     ReceiptBundle,
     check_freshness,
+    verify_bundle,
 )
 from .registry import AgentRegistry
 from .relay import NegotiationRelay
@@ -580,7 +581,9 @@ def tool_open_session(
         }
         return json.dumps(error_result, indent=2)
 
-    # Register public keys for bundle verification
+    # Register public keys for bundle verification. Every live session party is
+    # also in the registry; tool_verify_receipt_bundle's key resolution relies on
+    # that to stay no wider than a registry lookup.
     _key_registry[initiator_id] = ctx.initiator_key.public_key
     _key_registry[responder_id] = ctx.responder_key.public_key
 
@@ -2988,7 +2991,8 @@ def _find_agent_key_pair(agent_id: str) -> KeyPair | None:
         "top-level message field is response text outside the signed bundle "
         "and is unwrapped before signature checking. Checks the bundle "
         "signature, each attestation's party signatures, summary accuracy, "
-        "deduplication, and Sybil screening. No reputation service is needed."
+        "deduplication, attestation outcome binding, receipt-set binding "
+        "status, and Sybil screening. No reputation service is needed."
     ),
 )
 def tool_verify_receipt_bundle(
@@ -2998,159 +3002,39 @@ def tool_verify_receipt_bundle(
     """Verify a received receipt bundle."""
     bundle_to_verify = _unwrap_receipt_bundle_response(bundle)
 
-    # Build a resolver that looks up keys from session contexts first
-    # (per-attestation), then falls back to the global key registry
-    def resolve_key(aid: str) -> Ed25519PublicKey | None:
-        # Check global registry first (covers the bundle signer)
-        key = _key_registry.get(aid)
-        if key is not None:
-            return key
-        # Fall back to searching all session contexts
-        for ctx in _store._sessions.values():
-            if aid == ctx.initiator.agent_id:
-                return ctx.initiator_key.public_key
-            if aid == ctx.responder.agent_id:
-                return ctx.responder_key.public_key
-        return None
-
-    # For multi-session bundles, we need per-attestation key resolution.
-    # Build a mapping from session_id to session context keys.
-    _session_keys: dict[str, dict[str, Ed25519PublicKey]] = {}
+    session_keys: dict[str, dict[str, Ed25519PublicKey]] = {}
     for ctx in _store._sessions.values():
-        _session_keys[ctx.session.session_id] = {
+        session_keys[ctx.session.session_id] = {
             ctx.initiator.agent_id: ctx.initiator_key.public_key,
             ctx.responder.agent_id: ctx.responder_key.public_key,
         }
 
-    # Override the verify_bundle to use session-aware resolution
-    from concordia.receipt_bundle import (
-        BundleSummary,
-        BundleVerificationResult,
-        _compute_summary,
+    def resolve_bundle_key(agent_id: str) -> Ed25519PublicKey | None:
+        # Bundle signatures verify against the registry key only; accepting a
+        # historical session key here would make a stale bundle signer current.
+        return _key_registry.get(agent_id)
+
+    def resolve_attestation_key(
+        agent_id: str,
+        session_id: str,
+    ) -> Ed25519PublicKey | None:
+        keys_for_session = session_keys.get(session_id)
+        if keys_for_session is not None and agent_id in keys_for_session:
+            # A session party's signature binds to that session's key; a later
+            # session for the same agent must never satisfy this check.
+            return keys_for_session[agent_id]
+        # Any other listed party resolves through the registry, as on main, so
+        # its signature is checked and fails rather than being skipped as
+        # unresolvable. Session parties are always registered too (see the
+        # registration in tool_open_session), so no party falls through to None
+        # here while its session is live.
+        return _key_registry.get(agent_id)
+
+    result = verify_bundle(
+        bundle_to_verify,
+        resolve_bundle_key,
+        resolve_attestation_key,
     )
-    from concordia.receipt_bundle import (
-        screen_bundle as _screen_bundle,
-    )
-
-    def _verify_with_sessions(bdict: dict) -> BundleVerificationResult:
-        """Verify using session-scoped keys for attestation signatures."""
-        errors: list[str] = []
-        warnings: list[str] = []
-
-        for f in ("bundle_id", "agent_id", "created_at", "attestations", "summary", "agent_signature"):
-            if f not in bdict:
-                errors.append(f"Missing required field: '{f}'")
-        if errors:
-            return BundleVerificationResult(valid=False, errors=errors)
-
-        agent_id = bdict["agent_id"]
-        attestations = bdict["attestations"]
-        signature = bdict["agent_signature"]
-
-        # Verify bundle signature with the agent's current key
-        agent_key = resolve_key(agent_id)
-        if agent_key is None:
-            errors.append(f"Cannot resolve public key for bundle agent '{agent_id}'")
-        else:
-            from concordia.signing import verify_signature as _vsig
-            signable = {
-                k: v for k, v in bdict.items()
-                if k not in ("agent_signature", "concordia_receipt_bundle")
-            }
-            if not _vsig(signable, signature, agent_key):
-                errors.append("Bundle signature verification failed")
-
-        # Check agent in every attestation
-        for i, att in enumerate(attestations):
-            parties = att.get("parties", [])
-            party_ids = [p.get("agent_id", "") for p in parties]
-            if agent_id not in party_ids:
-                errors.append(f"Agent '{agent_id}' not a party in attestation {i}")
-
-        # Verify attestation signatures using session-scoped keys.
-        # Credit a counterparty as reputation only if its co-signature verifies.
-        verified_cp: set[str] = set()
-        unverified_cp: set[str] = set()
-        for i, att in enumerate(attestations):
-            sess_id = att.get("session_id", "")
-            sess_keys = _session_keys.get(sess_id, {})
-            for j, party in enumerate(att.get("parties", [])):
-                pid = party.get("agent_id", "")
-                is_counterparty = pid != agent_id
-                sig = party.get("signature", "")
-                if not sig:
-                    errors.append(f"Attestation {i}, party {j} ('{pid}'): empty signature")
-                    if is_counterparty:
-                        unverified_cp.add(pid)
-                    continue
-                # Try session-scoped key first, then global
-                party_key = sess_keys.get(pid) or resolve_key(pid)
-                if party_key is None:
-                    warnings.append(f"Attestation {i}, party {j} ('{pid}'): cannot resolve key")
-                    if is_counterparty:
-                        unverified_cp.add(pid)
-                    continue
-                from concordia.signing import verify_signature as _vsig
-                signable_party = {k: v for k, v in party.items() if k != "signature"}
-                if _vsig(signable_party, sig, party_key):
-                    if is_counterparty:
-                        verified_cp.add(pid)
-                else:
-                    errors.append(f"Attestation {i}, party {j} ('{pid}'): invalid signature")
-                    if is_counterparty:
-                        unverified_cp.add(pid)
-
-        unverified_cp -= verified_cp
-        verified_counterparties = len(verified_cp)
-        claimed_cp = bdict.get("summary", {}).get("unique_counterparties", 0)
-        if isinstance(claimed_cp, int) and claimed_cp > verified_counterparties:
-            warnings.append(
-                f"Summary claims {claimed_cp} unique counterpart"
-                f"{'y' if claimed_cp == 1 else 'ies'} but only {verified_counterparties} "
-                f"had a verifiable co-signature; reputation must credit only the verified count."
-            )
-
-        # Dedup
-        att_ids = [a.get("attestation_id", "") for a in attestations]
-        session_ids = [a.get("session_id", "") for a in attestations]
-        if len(set(att_ids)) != len(att_ids):
-            errors.append("Duplicate attestation_ids in bundle")
-        if len(set(session_ids)) != len(session_ids):
-            errors.append("Duplicate session_ids in bundle")
-
-        # Summary accuracy
-        summary_accurate = True
-        if attestations:
-            recomputed = _compute_summary(agent_id, attestations)
-            claimed = BundleSummary.from_dict(bdict["summary"])
-            mismatches = []
-            if claimed.total_negotiations != recomputed.total_negotiations:
-                mismatches.append("total_negotiations")
-            if claimed.agreements != recomputed.agreements:
-                mismatches.append("agreements")
-            if abs(claimed.agreement_rate - recomputed.agreement_rate) > 0.001:
-                mismatches.append("agreement_rate")
-            if claimed.unique_counterparties != recomputed.unique_counterparties:
-                mismatches.append("unique_counterparties")
-            if mismatches:
-                summary_accurate = False
-                for m in mismatches:
-                    errors.append(f"Summary mismatch: {m}")
-
-        sybil_flags = _screen_bundle(bdict)
-        if sybil_flags.get("flagged"):
-            for flag, val in sybil_flags.items():
-                if flag != "flagged" and val:
-                    warnings.append(f"Sybil signal: {flag}")
-
-        return BundleVerificationResult(
-            valid=len(errors) == 0, errors=errors, warnings=warnings,
-            summary_accurate=summary_accurate, sybil_flags=sybil_flags,
-            verified_counterparties=verified_counterparties,
-            unverified_counterparties=sorted(unverified_cp),
-        )
-
-    result = _verify_with_sessions(bundle_to_verify)
     is_fresh, freshness_msg = check_freshness(bundle_to_verify, max_age_hours)
 
     if not is_fresh:
@@ -3167,6 +3051,13 @@ def tool_verify_receipt_bundle(
         # the bundle's self-asserted summary.unique_counterparties.
         "verified_counterparties": result.verified_counterparties,
         "unverified_counterparties": result.unverified_counterparties,
+        # Must match BundleVerificationResult in concordia/receipt_bundle.py:
+        # these fields carry the shared verifier's integrity-bound outcome and
+        # receipt-set status without changing the tool's input schema.
+        "outcome_bound_count": result.outcome_bound_count,
+        "outcome_unbound_attestations": result.outcome_unbound_attestations,
+        "set_bound_count": result.set_bound_count,
+        "set_unbound_attestations": result.set_unbound_attestations,
         "claimed_counterparties": bundle_to_verify.get("summary", {}).get("unique_counterparties", 0),
         "freshness": {"fresh": is_fresh, "message": freshness_msg},
         "attestation_count": len(bundle_to_verify.get("attestations", [])),

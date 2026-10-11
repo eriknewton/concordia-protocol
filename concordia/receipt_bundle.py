@@ -26,6 +26,9 @@ from .attestation import (
 )
 from .signing import KeyPair, canonical_json, sign_message, verify_signature
 
+KeyResolver = Callable[[str], Ed25519PublicKey | None]
+AttestationKeyResolver = Callable[[str, str], Ed25519PublicKey | None]
+
 # C-H2 outcome-binding (Option B): attestations at or above this version MUST
 # carry a valid issuance ``countersignatures`` map or the bundle is rejected
 # (fail-closed). Below this version, the outcome is legacy prover-asserted:
@@ -37,7 +40,7 @@ _OUTCOME_BINDING_MIN = (0, 2)
 
 def evaluate_outcome_binding(
     att: dict[str, Any],
-    resolve_key: Callable[[str], Ed25519PublicKey | None],
+    resolve_key: KeyResolver,
 ) -> tuple[str, str | None]:
     """Decide whether one attestation's OUTCOME is cryptographically bound to its
     issuance snapshot. Single source of truth shared by ``verify_bundle`` step
@@ -423,7 +426,8 @@ class BundleVerificationResult:
 
 def verify_bundle(
     bundle_dict: dict[str, Any],
-    resolve_key: Callable[[str], Ed25519PublicKey | None],
+    resolve_key: KeyResolver,
+    resolve_attestation_key: AttestationKeyResolver | None = None,
 ) -> BundleVerificationResult:
     """Verify a received receipt bundle.
 
@@ -460,6 +464,9 @@ def verify_bundle(
     Args:
         bundle_dict: The bundle as a dict (from ReceiptBundle.to_dict()).
         resolve_key: Callback that maps agent_id to Ed25519PublicKey, or None.
+        resolve_attestation_key: Optional callback that maps
+            (agent_id, session_id) to Ed25519PublicKey for per-attestation
+            party verification. When omitted, ``resolve_key`` is used.
 
     Returns:
         BundleVerificationResult with errors/warnings.
@@ -477,6 +484,14 @@ def verify_bundle(
     agent_id = bundle_dict["agent_id"]
     attestations = bundle_dict["attestations"]
     signature = bundle_dict["agent_signature"]
+
+    def key_for_attestation_party(
+        party_id: str,
+        session_id: str,
+    ) -> Ed25519PublicKey | None:
+        if resolve_attestation_key is None:
+            return resolve_key(party_id)
+        return resolve_attestation_key(party_id, session_id)
 
     # (a) Verify bundle signature
     agent_key = resolve_key(agent_id)
@@ -505,6 +520,7 @@ def verify_bundle(
     verified_cp: set[str] = set()
     unverified_cp: set[str] = set()
     for i, att in enumerate(attestations):
+        session_id = att.get("session_id", "")
         parties = att.get("parties", [])
         for j, party in enumerate(parties):
             pid = party.get("agent_id", "")
@@ -515,7 +531,7 @@ def verify_bundle(
                 if is_counterparty:
                     unverified_cp.add(pid)
                 continue
-            party_key = resolve_key(pid)
+            party_key = key_for_attestation_party(pid, session_id)
             if party_key is None:
                 warnings.append(
                     f"Attestation {i}, party {j} ('{pid}'): cannot resolve key, signature not verified"
@@ -573,7 +589,14 @@ def verify_bundle(
         # proof verifier cannot drift. An outcome is bound ONLY when every listed
         # party countersigned and verified; a holder cannot self-rebind a flipped
         # outcome with its own key alone.
-        state, reason = evaluate_outcome_binding(att, resolve_key)
+        def resolve_outcome_party_key(
+            party_id: str,
+            *,
+            att_session_id: str = att.get("session_id", ""),
+        ) -> Ed25519PublicKey | None:
+            return key_for_attestation_party(party_id, att_session_id)
+
+        state, reason = evaluate_outcome_binding(att, resolve_outcome_party_key)
         if state == "bound":
             outcome_bound_count += 1
         elif state == "unbound":
@@ -605,7 +628,11 @@ def verify_bundle(
             if isinstance(cpa, dict):
                 cp_id = cpa.get("agent_id", "")
                 cp_sig = cpa.get("signature", "")
-                cp_key = resolve_key(cp_id) if cp_id else None
+                cp_key = (
+                    key_for_attestation_party(cp_id, att.get("session_id", ""))
+                    if cp_id
+                    else None
+                )
                 if cp_sig and cp_key is not None and verify_signature(
                     cpa, cp_sig, cp_key
                 ):
