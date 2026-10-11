@@ -24,6 +24,7 @@ import {
 } from '../src/attestation/index.js';
 import { PartyRole, ResolutionMechanism, SessionState } from '../src/types/index.js';
 import { KeyPair, verify } from '../src/crypto/signing.js';
+import { fromBase64Url } from '../src/crypto/base64url.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -559,6 +560,55 @@ describe('generateAttestation rejects a non-concluded session', () => {
   });
 });
 
+describe('generateAttestation 0.6.0 issuance refusals', () => {
+  it('refuses to issue when any listed party lacks a signing key', () => {
+    const c = fixtures.cases[0]!;
+    const session = rebuildSession(c.session);
+
+    expect(() => generateAttestation(session, { [AGENT_A]: KP_A }, optionsFromCase(c))).toThrow(
+      'Cannot generate attestation: every listed party must have a signing key',
+    );
+  });
+});
+
+describe('shared conformance attestation vector', () => {
+  it('verifies the 0.6.0 countersignature vector consumed by the Python suite', () => {
+    const vector = JSON.parse(
+      readFileSync(
+        join(
+          __dirname,
+          '../../conformance/vectors/positive/pos-synthetic-attestation-countersign.json',
+        ),
+        'utf8',
+      ),
+    ) as {
+      input: Record<string, unknown>;
+      context: {
+        countersigners: string[];
+        public_keys_b64url: Record<string, string>;
+      };
+    };
+
+    expect(vector.input.concordia_attestation).toBe('0.6.0');
+    expect('fulfillment' in vector.input).toBe(false);
+    for (const ref of vector.input.references as Array<Record<string, unknown>>) {
+      expect('extensions' in ref).toBe(false);
+    }
+    expect((vector.input.validity_temporal as Record<string, unknown>).mode).toBe('absolute');
+
+    const countersignatures = vector.input.countersignatures as Record<string, string>;
+    for (const signer of vector.context.countersigners) {
+      expect(
+        verifyAttestationCountersignature(
+          vector.input,
+          countersignatures[signer]!,
+          fromBase64Url(vector.context.public_keys_b64url[signer]!),
+        ),
+      ).toBe(true);
+    }
+  });
+});
+
 // ---------------------------------------------------------------------------
 // validate_validity_temporal: normalization parity.
 // ---------------------------------------------------------------------------
@@ -872,7 +922,7 @@ describe('attestation constants parity', () => {
   });
 });
 
-describe('v0.5 required attestation validity policy', () => {
+describe('v0.6 required attestation validity policy', () => {
   it('issues a default 90-day absolute window anchored at timestamp', () => {
     const c = fixtures.cases[0]!;
     const timestamp = '2026-08-21T12:00:00Z';
@@ -881,7 +931,7 @@ describe('v0.5 required attestation validity policy', () => {
       timestamp,
     });
 
-    expect(ATTESTATION_VERSION).toBe('0.5.0');
+    expect(ATTESTATION_VERSION).toBe('0.6.0');
     expect(DEFAULT_ATTESTATION_VALIDITY_SECONDS).toBe(7_776_000);
     expect(MAX_ATTESTATION_VALIDITY_SECONDS).toBe(7_776_000);
     expect(attestation.validity_temporal).toEqual({
@@ -902,12 +952,6 @@ describe('v0.5 required attestation validity policy', () => {
       from: '2026-01-01T00:00:00Z',
       duration_seconds: 7_776_001,
     },
-    {
-      mode: 'window',
-      start: '2026-01-01T00:00:00Z',
-      end: '2026-04-02T00:00:01Z',
-      duration_seconds: 1,
-    },
   ];
 
   for (const validityTemporal of overMaximum) {
@@ -917,6 +961,17 @@ describe('v0.5 required attestation validity policy', () => {
       );
     });
   }
+
+  it('rejects the removed window mode before lifetime checks', () => {
+    expect(() =>
+      validateValidityTemporal({
+        mode: 'window',
+        start: '2026-01-01T00:00:00Z',
+        end: '2026-01-02T00:00:00Z',
+        duration_seconds: 60,
+      }),
+    ).toThrow("validity_temporal.mode 'window' not in ('absolute', 'relative')");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -937,7 +992,7 @@ describe('v0.5 required attestation validity policy', () => {
 // loudly here. The temporal validators are the real attack surface: a forged
 // attestation reaches `parseIso8601` through `validateValidityTemporal`.
 // ---------------------------------------------------------------------------
-describe('attestation timestamp parse is fail-closed (Python parity, not Date.parse)', () => {
+describe('attestation timestamp parse is RFC3339-Z strict for attestation 0.6.0', () => {
   // Forms `Date.parse` ACCEPTS but Python `fromisoformat` REJECTS. Each MUST now
   // raise an AttestationError with the stable "is not a valid ISO 8601
   // timestamp:" prefix (the parser-detail half is implementation-specific).
@@ -961,7 +1016,7 @@ describe('attestation timestamp parse is fail-closed (Python parity, not Date.pa
       };
       expect(() => validateValidityTemporal(vt)).toThrow(AttestationError);
       expect(() => validateValidityTemporal(vt)).toThrow(
-        /validity_temporal\.from is not a valid ISO 8601 timestamp:/,
+        /validity_temporal\.from must be RFC 3339 date-time with Z offset/,
       );
     });
   }
@@ -971,12 +1026,7 @@ describe('attestation timestamp parse is fail-closed (Python parity, not Date.pa
   // assert the validator accepts the window and the instant ordering is right.
   const validForms: Array<{ from: string; until: string }> = [
     { from: '2026-06-01T00:00:00Z', until: '2026-07-01T00:00:00Z' }, // Z
-    { from: '2026-06-01T00:00:00+00:00', until: '2026-07-01T00:00:00+00:00' }, // ±HH:MM
-    { from: '2026-06-01T00:00:00+0000', until: '2026-07-01T00:00:00+0000' }, // ±HHMM
-    { from: '2026-06-01T00:00:00', until: '2026-07-01T00:00:00' }, // naive -> UTC
     { from: '2026-06-01T00:00:00.500Z', until: '2026-07-01T00:00:00Z' }, // dot fraction
-    { from: '2026-06-01T00:00:00,500Z', until: '2026-07-01T00:00:00Z' }, // comma fraction
-    { from: '2026-06-01T00:00:00-05:00', until: '2026-07-01T00:00:00-05:00' }, // negative offset
   ];
   for (const { from, until } of validForms) {
     it(`still accepts valid ISO-8601 form "${from}" (no over-rejection)`, () => {
@@ -996,149 +1046,16 @@ describe('attestation timestamp parse is fail-closed (Python parity, not Date.pa
     expect(() => isValidNow(att, Date.UTC(2026, 5, 15))).toThrow(AttestationError);
   });
 
-  it('isValidNow honors a valid naive-is-UTC absolute window unchanged', () => {
+  it('isValidNow rejects a naive timestamp under the 0.6 structure rule', () => {
     const att = {
       validity_temporal: {
         mode: 'absolute',
-        from: '2026-06-01T00:00:00', // naive -> UTC
+        from: '2026-06-01T00:00:00',
         until: '2026-07-01T00:00:00',
       },
     };
-    expect(isValidNow(att, Date.UTC(2026, 5, 15))).toBe(true); // inside
-    expect(isValidNow(att, Date.UTC(2026, 7, 1))).toBe(false); // after
-  });
-});
-
-// ---------------------------------------------------------------------------
-// FAIL-OPEN FIX (2026-06-01): validity_temporal[window] span comparison must be
-// MICROSECOND-precise, matching Python `(end - start).total_seconds()`, NOT a
-// whole-millisecond floor.
-//
-// The residual: `parseIso8601` floors the fractional second to whole ms (correct
-// for the coarse ordering/expiry comparisons it feeds). Reusing those floored ms
-// for the window SPAN rounded a sub-millisecond span UP to the next ms -- e.g.
-// start=...00.000999Z / end=...01.000000Z is a 0.999001s span that floors to a
-// flat 1.000s, so duration_seconds=1 wrongly passed `1 > 1.0`. Python compares at
-// microsecond precision and REJECTS (`1 > 0.999001`). This was pre-existing on
-// main (the dot-fraction form already failed open under the old `Date.parse`
-// code) and was explicitly out of scope for PR #43 (the RFC-822 fail-open). The
-// fix recomputes the span via `cpythonIsoDateTimeToEpochMicros`.
-//
-// These cases pin the behavior directly (independent of the fixture-driven
-// vt_error_cases / vt_norm_cases) so a regression to the floored-ms span fails
-// loudly. The comma-fraction spelling has identical behavior.
-// ---------------------------------------------------------------------------
-describe('validity_temporal[window] span is microsecond-precise (Python parity)', () => {
-  // Sub-millisecond spans (0.999001s real) that Python REJECTS vs
-  // duration_seconds=1, but a whole-ms floor (span -> 1.000s) would ACCEPT.
-  const subMsRejects: Array<{ name: string; start: string; end: string }> = [
-    {
-      name: 'dot fraction',
-      start: '2026-06-01T00:00:00.000999Z',
-      end: '2026-06-01T00:00:01.000000Z',
-    },
-    {
-      name: 'comma fraction',
-      start: '2026-06-01T00:00:00,000999Z',
-      end: '2026-06-01T00:00:01.000000Z',
-    },
-    {
-      // Past the JS safe-integer microsecond range (~year 2255). An earlier draft
-      // of the micros parser returned null here and the caller fell back to the
-      // coarse-ms span, REOPENING this exact fail-open for a valid far-future
-      // window (confirmed vs python3.12: span 0.999001). The bigint parser is
-      // exact across year 1..9999, so this is still rejected vs duration_seconds=1.
-      name: 'far-future dot fraction (beyond safe-micros range)',
-      start: '2256-01-01T00:00:00.000999Z',
-      end: '2256-01-01T00:00:01.000000Z',
-    },
-  ];
-  for (const { name, start, end } of subMsRejects) {
-    it(`rejects a 0.999001s span vs duration_seconds=1 (${name})`, () => {
-      const vt = { mode: 'window', start, end, duration_seconds: 1 };
-      expect(() => validateValidityTemporal(vt)).toThrow(AttestationError);
-      expect(() => validateValidityTemporal(vt)).toThrow(
-        /validity_temporal\[window\]\.duration_seconds exceeds the window span/,
-      );
-    });
-  }
-
-  // Over-rejection guard: a span that is EXACTLY duration_seconds (or larger),
-  // including with fractional-second endpoints, must STILL accept -- Python's
-  // `1 > 1.0` is false. The micros fix must not newly reject any of these.
-  const accepts: Array<{
-    name: string;
-    start: string;
-    end: string;
-    duration_seconds: number;
-  }> = [
-    {
-      name: 'exactly 1s',
-      start: '2026-06-01T00:00:00.000000Z',
-      end: '2026-06-01T00:00:01.000000Z',
-      duration_seconds: 1,
-    },
-    {
-      name: 'exactly 2s with fractional endpoints',
-      start: '2026-06-01T00:00:00.250000Z',
-      end: '2026-06-01T00:00:02.250000Z',
-      duration_seconds: 2,
-    },
-    {
-      name: 'span comfortably larger than duration',
-      start: '2026-06-01T00:00:00.000999Z',
-      end: '2026-06-01T00:00:02.000000Z',
-      duration_seconds: 1,
-    },
-    {
-      // Far-future valid window (beyond the safe-micros range) must NOT be
-      // over-rejected: the bigint span is exactly 1.0s because the huge absolute
-      // epoch-microseconds cancel in the difference.
-      name: 'far-future exactly 1s (beyond safe-micros range)',
-      start: '2256-01-01T00:00:00.000000Z',
-      end: '2256-01-01T00:00:01.000000Z',
-      duration_seconds: 1,
-    },
-  ];
-  for (const { name, start, end, duration_seconds } of accepts) {
-    it(`still accepts a span >= duration_seconds (${name})`, () => {
-      expect(validateValidityTemporal({ mode: 'window', start, end, duration_seconds })).toEqual({
-        mode: 'window',
-        start,
-        end,
-        duration_seconds,
-      });
-    });
-  }
-
-  // Full-range edge: a near year-1..year-9999 span. The delta is ~3.15e17 micros,
-  // far past Number.MAX_SAFE_INTEGER, so narrowing the bigint delta to a Number
-  // before dividing rounds it differently than Python's total_seconds()
-  // (315537897599.99994) and would ACCEPT duration_seconds=315537897600 -- a
-  // fail-open. The integer comparison (duration * 1e6 micros vs the bigint span)
-  // rejects exactly, matching python3.12.
-  it('rejects a near-full-range span just under an integer-second duration', () => {
-    const vt = {
-      mode: 'window',
-      start: '0001-01-01T00:00:00.000000Z',
-      end: '9999-12-31T23:59:59.999968Z',
-      duration_seconds: 315537897600,
-    };
-    expect(() => validateValidityTemporal(vt)).toThrow(
-      /validity_temporal\[window\]\.duration_seconds exceeds the window span/,
+    expect(() => isValidNow(att, Date.UTC(2026, 5, 15))).toThrow(
+      /validity_temporal\.from must be RFC 3339 date-time with Z offset/,
     );
-  });
-
-  // The exact-span guard remains important, but v0.5's reference issuer also
-  // refuses any signed window whose overall span exceeds its declared 90-day
-  // maximum, even when duration_seconds itself is small.
-  it('rejects a near-full-range span under the issuer maximum-lifetime policy', () => {
-    const vt = {
-      mode: 'window',
-      start: '0001-01-01T00:00:00.000000Z',
-      end: '9999-12-31T23:59:59.999968Z',
-      duration_seconds: 1,
-    };
-    expect(() => validateValidityTemporal(vt)).toThrow(/maximum lifetime of 7776000 seconds/);
   });
 });

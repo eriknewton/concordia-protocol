@@ -800,15 +800,14 @@ describe('L3 reference snapshot semantics (no getters, no echo, no TOCTOU)', () 
   });
 
   it('the attested references carry the snapshot, not the caller objects', () => {
-    const ext: Record<string, unknown> = { chain_depth: 2 };
     const r = ref();
-    r.extensions = ext;
+    r.version = 'v1';
     const att = generate({ references: [r] });
     const attRefs = att.references as Array<Record<string, unknown>>;
     expect(attRefs[0]).not.toBe(r);
-    expect(attRefs[0]!.extensions).not.toBe(ext);
+    expect(attRefs[0]!.version).toBe('v1');
     // Post-issuance mutation of the caller's object cannot alter the record.
-    ext.smuggled = SECRET;
+    r.version = SECRET;
     expect(JSON.stringify(att)).not.toContain('SECRET_TERMS');
   });
 });

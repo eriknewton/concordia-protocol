@@ -237,8 +237,9 @@ def main() -> None:
         _attestation_case("decline_session", s, {AGENT_A: KP_A, AGENT_B: KP_B})
     )
 
-    # Case 3: AGREED but only ONE agent supplied a key -> the other party gets an
-    # empty-string signature. Exercises the keyPairs-miss branch.
+    # Case 3: AGREED with split resolution. Since attestation 0.6.0, every
+    # listed party must have a signing key; the keyless refusal is covered by a
+    # dedicated JS test rather than a successful fixture case.
     s = _build_concluded_session(
         "partial_keys",
         [
@@ -250,9 +251,9 @@ def main() -> None:
     )
     cases.append(
         _attestation_case(
-            "partial_keys",
+            "split_resolution",
             s,
-            {AGENT_A: KP_A},  # B intentionally omitted
+            {AGENT_A: KP_A, AGENT_B: KP_B},
             kwargs={"resolution_mechanism": ResolutionMechanism.SPLIT},
         )
     )
@@ -304,7 +305,6 @@ def main() -> None:
                         "relationship": "fulfills",
                         "version": "1.0",
                         "signer_did": AGENT_A,
-                        "ignored_extra_key": "DROP_ME",
                     },
                     {
                         # unknown type + relationship preserved as opaque strings
@@ -627,48 +627,6 @@ def main() -> None:
         "relative",
         {"mode": "relative", "from": "2026-01-01T00:00:00Z", "duration_seconds": 3600},
     )
-    _vt_norm(
-        "window",
-        {
-            "mode": "window",
-            "start": "2026-01-01T00:00:00Z",
-            "end": "2026-01-02T00:00:00Z",
-            "duration_seconds": 3600,
-        },
-    )
-    # naive (no offset) timestamps -> treated as UTC; still normalizes/round-trips.
-    _vt_norm(
-        "absolute_naive",
-        {"mode": "absolute", "from": "2026-01-01T00:00:00", "until": "2026-02-01T00:00:00"},
-    )
-    # Alternate VALID ISO-8601 spellings `fromisoformat` accepts -- the strict
-    # parser must NOT over-reject these legitimate forms (no regression from the
-    # fail-open fix). Explicit +HH:MM offset, +HHMM (no colon) offset, and a
-    # comma fractional-second second all parse to real instants in BOTH runtimes.
-    _vt_norm(
-        "absolute_explicit_offset",
-        {
-            "mode": "absolute",
-            "from": "2026-01-01T00:00:00+00:00",
-            "until": "2026-02-01T00:00:00+00:00",
-        },
-    )
-    _vt_norm(
-        "absolute_offset_no_colon",
-        {
-            "mode": "absolute",
-            "from": "2026-01-01T00:00:00+0000",
-            "until": "2026-02-01T00:00:00+0000",
-        },
-    )
-    _vt_norm(
-        "absolute_comma_fraction",
-        {
-            "mode": "absolute",
-            "from": "2026-01-01T00:00:00,500Z",
-            "until": "2026-02-01T00:00:00Z",
-        },
-    )
 
     vt_error_cases = []
 
@@ -700,53 +658,37 @@ def main() -> None:
         "relative_float_duration",
         {"mode": "relative", "from": "2026-01-01T00:00:00Z", "duration_seconds": 1.5},
     )
-    _vt_err("window_missing", {"mode": "window", "start": "2026-01-01T00:00:00Z"})
-    _vt_err(
-        "window_end_not_after",
-        {
-            "mode": "window",
-            "start": "2026-01-02T00:00:00Z",
-            "end": "2026-01-01T00:00:00Z",
-            "duration_seconds": 60,
-        },
-    )
-    _vt_err(
-        "window_duration_exceeds_span",
-        {
-            "mode": "window",
-            "start": "2026-01-01T00:00:00Z",
-            "end": "2026-01-01T01:00:00Z",  # 3600s span
-            "duration_seconds": 7200,
-        },
-    )
-    # SUB-MILLISECOND span fail-open (fixed 2026-06-01; residual left out of scope
-    # by the PR #43 RFC-822 fix). The real span is 0.999001s, so Python compares
-    # `1 > (end - start).total_seconds()` == `1 > 0.999001` -> True -> REJECT. A TS
-    # port that FLOORS both endpoints to whole epoch ms reads a flat 1.000s span
-    # and wrongly ACCEPTS (`1 > 1.0` is False). The fix recomputes the window span
-    # at microsecond precision (cpythonIsoDateTimeToEpochMicros). These two cases
-    # pin the dot- and comma-fraction spellings -- both reject identically here.
-    _vt_err(
-        "window_duration_exceeds_span_subms",
-        {
-            "mode": "window",
-            "start": "2026-06-01T00:00:00.000999Z",  # 999 microseconds
-            "end": "2026-06-01T00:00:01.000000Z",
-            "duration_seconds": 1,  # 0.999001s real span < 1s
-        },
-    )
-    _vt_err(
-        "window_duration_exceeds_span_subms_comma",
-        {
-            "mode": "window",
-            "start": "2026-06-01T00:00:00,000999Z",  # comma fractional spelling
-            "end": "2026-06-01T00:00:01.000000Z",
-            "duration_seconds": 1,
-        },
-    )
     _vt_err(
         "from_not_string",
         {"mode": "absolute", "from": 123, "until": "2026-02-01T00:00:00Z"},
+    )
+    _vt_err(
+        "absolute_naive",
+        {"mode": "absolute", "from": "2026-01-01T00:00:00", "until": "2026-02-01T00:00:00"},
+    )
+    _vt_err(
+        "absolute_explicit_offset",
+        {
+            "mode": "absolute",
+            "from": "2026-01-01T00:00:00+00:00",
+            "until": "2026-02-01T00:00:00+00:00",
+        },
+    )
+    _vt_err(
+        "absolute_offset_no_colon",
+        {
+            "mode": "absolute",
+            "from": "2026-01-01T00:00:00+0000",
+            "until": "2026-02-01T00:00:00+0000",
+        },
+    )
+    _vt_err(
+        "absolute_comma_fraction",
+        {
+            "mode": "absolute",
+            "from": "2026-01-01T00:00:00,500Z",
+            "until": "2026-02-01T00:00:00Z",
+        },
     )
     # FAIL-OPEN FIX (2026-06-01): RFC-822 / RFC-1123 / locale date spellings that
     # JS `Date.parse` ACCEPTS but Python `datetime.fromisoformat` REJECTS with a
@@ -775,15 +717,6 @@ def main() -> None:
         {"mode": "relative", "from": "June 1, 2026", "duration_seconds": 3600},
     )
     _vt_err(
-        "window_slash_date_start",
-        {
-            "mode": "window",
-            "start": "2026/06/01",
-            "end": "2026-06-02T00:00:00Z",
-            "duration_seconds": 60,
-        },
-    )
-    _vt_err(
         "absolute_over_reference_maximum",
         {
             "mode": "absolute",
@@ -797,15 +730,6 @@ def main() -> None:
             "mode": "relative",
             "from": "2026-01-01T00:00:00Z",
             "duration_seconds": 7_776_001,
-        },
-    )
-    _vt_err(
-        "window_over_reference_maximum",
-        {
-            "mode": "window",
-            "start": "2026-01-01T00:00:00Z",
-            "end": "2026-04-02T00:00:01Z",
-            "duration_seconds": 1,
         },
     )
 
@@ -837,7 +761,7 @@ def main() -> None:
     _valid_now("absolute_before", ABS, "2025-12-31T23:59:59Z")
     _valid_now("absolute_after", ABS, "2026-02-01T00:00:01Z")
     _valid_now("absolute_at_from", ABS, "2026-01-01T00:00:00Z")  # inclusive
-    _valid_now("absolute_at_until", ABS, "2026-02-01T00:00:00Z")  # exclusive
+    _valid_now("absolute_at_until", ABS, "2026-02-01T00:00:00Z")  # inclusive
 
     REL = {
         "validity_temporal": {
@@ -848,18 +772,6 @@ def main() -> None:
     }
     _valid_now("relative_inside", REL, "2026-01-01T12:00:00Z")
     _valid_now("relative_after", REL, "2026-01-02T00:00:01Z")
-
-    WIN = {
-        "validity_temporal": {
-            "mode": "window",
-            "start": "2026-01-01T00:00:00Z",
-            "end": "2026-01-02T00:00:00Z",
-            "duration_seconds": 3600,
-        }
-    }
-    _valid_now("window_fits", WIN, "2026-01-01T12:00:00Z")
-    _valid_now("window_tail_too_short", WIN, "2026-01-01T23:30:00Z")  # <3600s left
-    _valid_now("window_before", WIN, "2025-12-31T00:00:00Z")
 
     _valid_now("no_constraint", {}, "2026-01-01T00:00:00Z")
     _valid_now(
@@ -900,39 +812,6 @@ def main() -> None:
         }
     }
     _valid_now("relative_str_int_inside", REL_STR, "2026-01-01T12:00:00Z")
-    # window fractional duration -> int(3600.9) == 3600.
-    WIN_FRAC = {
-        "validity_temporal": {
-            "mode": "window",
-            "start": "2026-01-01T00:00:00Z",
-            "end": "2026-01-02T00:00:00Z",
-            "duration_seconds": 3600.9,
-        }
-    }
-    _valid_now("window_frac_fits", WIN_FRAC, "2026-01-01T12:00:00Z")
-    # window string-int duration.
-    WIN_STR = {
-        "validity_temporal": {
-            "mode": "window",
-            "start": "2026-01-01T00:00:00Z",
-            "end": "2026-01-02T00:00:00Z",
-            "duration_seconds": "3600",
-        }
-    }
-    _valid_now("window_str_int_fits", WIN_STR, "2026-01-01T12:00:00Z")
-    # window mode SHORT-CIRCUITS before reading duration when now is outside the
-    # [start, end] range -> a bad duration is NOT evaluated -> returns False
-    # WITHOUT raising. Parity-critical: the int() coercion must sit AFTER the
-    # range check, exactly as Python.
-    WIN_BAD_DUR_OUTSIDE = {
-        "validity_temporal": {
-            "mode": "window",
-            "start": "2026-01-01T00:00:00Z",
-            "end": "2026-01-02T00:00:00Z",
-            "duration_seconds": "not-a-number",
-        }
-    }
-    _valid_now("window_bad_dur_but_now_before", WIN_BAD_DUR_OUTSIDE, "2025-12-31T00:00:00Z")
 
     # is_valid_now cases where Python's int(duration_seconds) RAISES (a
     # non-integer-formatted string -> ValueError; None -> TypeError). The TS
@@ -979,7 +858,7 @@ def main() -> None:
                 "duration_seconds": "1.5",
             }
         },
-        "2026-01-01T00:00:00.5Z",
+        "2026-01-01T00:00:00.500Z",
     )
     # relative, None -> int(None) TypeError.
     _valid_now_err(
@@ -989,20 +868,6 @@ def main() -> None:
                 "mode": "relative",
                 "from": "2026-01-01T00:00:00Z",
                 "duration_seconds": None,
-            }
-        },
-        "2026-01-01T12:00:00Z",
-    )
-    # window, bad string -- but now MUST be inside [start, end] so the duration
-    # read is reached (outside short-circuits before the read, see case above).
-    _valid_now_err(
-        "window_str_bad_now_inside",
-        {
-            "validity_temporal": {
-                "mode": "window",
-                "start": "2026-01-01T00:00:00Z",
-                "end": "2026-01-02T00:00:00Z",
-                "duration_seconds": "xyz",
             }
         },
         "2026-01-01T12:00:00Z",

@@ -173,6 +173,26 @@ function formatValidationError(error: SchemaError): string {
 }
 
 const FREE_TEXT_TERM_ERROR = 'free-text field must not contain obvious raw deal terms';
+const DRAFT_STRUCTURE_ERROR = '$: violates draft-newton-agreement-evidence-00 structure';
+const DRAFT_VERSION_GRAMMAR_ERROR =
+  '$.concordia_attestation: violates draft-newton-agreement-evidence-00 version grammar';
+const IMPLEMENTED_ATTESTATION_VERSION: [number, number, number] = [0, 6, 0];
+const LEGACY_FLOOR_VERSION: [number, number, number] = [0, 5, 0];
+const STRICT_SEMVER_PATTERN = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
+const RFC3339_Z_PATTERN =
+  /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,3})?Z$/;
+const SHA256_HEX_PATTERN = /^sha256:[a-f0-9]{64}$/;
+const SIGNATURE_B64URL_PATTERN = /^[A-Za-z0-9_-]{86}==$/;
+const NO_FORBIDDEN_WHITESPACE_PATTERN =
+  /^[^\s\u0000-\u001F\u007F-\u009F\u200B-\u200F\u2028-\u202E]+$/u;
+const CATEGORY_PATTERN = /^[a-z0-9_-]+(?:\.[a-z0-9_-]+)*$/;
+const VALUE_RANGE_PATTERN =
+  /^(?:0-100|100-500|500-1000|1000-5000|5000-10000|10000-50000|50000-100000|100000-500000|500000-1000000|1000000\+)_[A-Z]{3}$/;
+const MAX_SAFE_INT = 2 ** 53 - 1;
+const MAX_PARTIES = 64;
+const MAX_REFERENCES = 32;
+const MAX_SUMMARY_SCALARS = 1024;
+const MAX_ATTESTATION_VALIDITY_SECONDS = 90 * 24 * 60 * 60;
 const RAW_TERM_PATTERNS = [
   /[$€£¥]\s*\d/i,
   /\b(?:USD|EUR|GBP|JPY|CAD|AUD|CHF|CNY|INR)\s*\d/i,
@@ -262,9 +282,11 @@ export function isValidMessage(message: unknown): boolean {
  * `date-time` formats and intra-document `$ref` / `oneOf` applicators.
  */
 export function validateAttestation(attestation: unknown): string[] {
+  const schemaErrors = format(iterErrors(ATTESTATION_SCHEMA, attestation, conformsFormat));
   return [
-    ...format(iterErrors(ATTESTATION_SCHEMA, attestation, conformsFormat)),
+    ...schemaErrors,
     ...validateAttestationFreeText(attestation),
+    ...validateAttestationDraftStructure(attestation),
   ];
 }
 
@@ -388,4 +410,309 @@ function validateAttestationFreeText(attestation: unknown): string[] {
 
 function containsObviousRawTerm(value: string): boolean {
   return RAW_TERM_PATTERNS.some((pattern) => pattern.test(value));
+}
+
+function validateAttestationDraftStructure(attestation: unknown): string[] {
+  if (!isPlainObject(attestation)) return [];
+  const versionValue = attestation.concordia_attestation;
+  if (typeof versionValue !== 'string') return [];
+  const version = parseStrictVersion(versionValue);
+  if (version === null) {
+    return [DRAFT_VERSION_GRAMMAR_ERROR];
+  }
+  if (compareVersion(version, LEGACY_FLOOR_VERSION) < 0) return [];
+  if (compareVersion(version, IMPLEMENTED_ATTESTATION_VERSION) > 0) return [];
+  return isDraftStructureValid(attestation) ? [] : [DRAFT_STRUCTURE_ERROR];
+}
+
+function isDraftStructureValid(attestation: Record<string, unknown>): boolean {
+  const required = [
+    'concordia_attestation',
+    'attestation_id',
+    'session_id',
+    'timestamp',
+    'outcome',
+    'parties',
+    'meta',
+    'transcript_hash',
+    'chain_head',
+    'message_count',
+    'validity_temporal',
+    'countersignatures',
+  ];
+  const allowed = new Set([...required, 'summary', 'references']);
+  if (!hasOnlyKeys(attestation, allowed, required)) return false;
+  if (!isBoundedString(attestation.attestation_id, 1, 256, true)) return false;
+  if (!isBoundedString(attestation.session_id, 1, 256, true)) return false;
+  if (!isRfc3339Z(attestation.timestamp)) return false;
+  if (!isOutcomeShape(attestation.outcome)) return false;
+  const agentIds = getPartyAgentIds(attestation.parties);
+  if (agentIds === null) return false;
+  if (!isMetaShape(attestation.meta)) return false;
+  if (!isDigest(attestation.transcript_hash)) return false;
+  if (!isDigest(attestation.chain_head)) return false;
+  if (!isIntInRange(attestation.message_count, 1, 10000)) return false;
+  if (!isValidityTemporalShape(attestation.validity_temporal)) return false;
+  if (!isCountersignatureShape(attestation.countersignatures, agentIds)) return false;
+  if ('summary' in attestation && !isBoundedString(attestation.summary, 0, MAX_SUMMARY_SCALARS)) {
+    return false;
+  }
+  if ('references' in attestation && !isReferencesShape(attestation.references)) return false;
+  return true;
+}
+
+function parseStrictVersion(value: string): [number, number, number] | null {
+  if (!STRICT_SEMVER_PATTERN.test(value)) return null;
+  const parts = value.split('.').map((part) => Number(part));
+  if (parts.length !== 3 || parts.some((part) => !Number.isSafeInteger(part))) return null;
+  return [parts[0]!, parts[1]!, parts[2]!];
+}
+
+function compareVersion(a: [number, number, number], b: [number, number, number]): number {
+  for (let i = 0; i < 3; i += 1) {
+    if (a[i]! < b[i]!) return -1;
+    if (a[i]! > b[i]!) return 1;
+  }
+  return 0;
+}
+
+function hasOnlyKeys(
+  obj: Record<string, unknown>,
+  allowed: Set<string>,
+  required: string[],
+): boolean {
+  return required.every((key) => key in obj) && Object.keys(obj).every((key) => allowed.has(key));
+}
+
+function isBoundedString(
+  value: unknown,
+  minLength: number,
+  maxLength: number,
+  noWhitespace = false,
+): value is string {
+  if (typeof value !== 'string') return false;
+  if (value.length < minLength || value.length > maxLength) return false;
+  if (noWhitespace && !NO_FORBIDDEN_WHITESPACE_PATTERN.test(value)) return false;
+  return true;
+}
+
+function isIntInRange(value: unknown, minimum: number, maximum = MAX_SAFE_INT): boolean {
+  return (
+    typeof value === 'number' &&
+    Number.isInteger(value) &&
+    Number.isSafeInteger(value) &&
+    value >= minimum &&
+    value <= maximum
+  );
+}
+
+function isNumberInRange(value: unknown, minimum: number, maximum?: number): boolean {
+  return (
+    typeof value === 'number' &&
+    Number.isFinite(value) &&
+    value >= minimum &&
+    (maximum === undefined || value <= maximum)
+  );
+}
+
+function isRfc3339Z(value: unknown): value is string {
+  if (typeof value !== 'string' || !RFC3339_Z_PATTERN.test(value)) return false;
+  return Number.isFinite(Date.parse(value));
+}
+
+function epochMs(value: string): number {
+  return Date.parse(value);
+}
+
+function isDigest(value: unknown): value is string {
+  return typeof value === 'string' && SHA256_HEX_PATTERN.test(value);
+}
+
+function isSignature(value: unknown): value is string {
+  return typeof value === 'string' && SIGNATURE_B64URL_PATTERN.test(value);
+}
+
+function isOutcomeShape(value: unknown): boolean {
+  if (!isPlainObject(value)) return false;
+  if (
+    !hasOnlyKeys(
+      value,
+      new Set(['status', 'rounds', 'duration_seconds', 'terms_count', 'resolution_mechanism']),
+      ['status', 'rounds', 'duration_seconds'],
+    )
+  ) {
+    return false;
+  }
+  if (!['agreed', 'rejected', 'expired', 'withdrawn'].includes(String(value.status))) return false;
+  if (!isIntInRange(value.rounds, 0)) return false;
+  if (!isIntInRange(value.duration_seconds, 0)) return false;
+  if ('terms_count' in value && !isIntInRange(value.terms_count, 1)) return false;
+  if (
+    'resolution_mechanism' in value &&
+    !['direct', 'split', 'foa', 'tradeoff', 'escalation', 'none'].includes(
+      String(value.resolution_mechanism),
+    )
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function isBehaviorShape(value: unknown): boolean {
+  if (!isPlainObject(value)) return false;
+  const allowed = new Set([
+    'offers_made',
+    'concessions',
+    'concession_magnitude',
+    'signals_shared',
+    'constraints_declared',
+    'constraints_violated',
+    'reasoning_provided',
+    'withdrawal',
+    'response_time_avg_seconds',
+  ]);
+  if (!Object.keys(value).every((key) => allowed.has(key))) return false;
+  for (const key of [
+    'offers_made',
+    'concessions',
+    'signals_shared',
+    'constraints_declared',
+    'constraints_violated',
+  ]) {
+    if (key in value && !isIntInRange(value[key], 0)) return false;
+  }
+  if ('concession_magnitude' in value && !isNumberInRange(value.concession_magnitude, 0, 1)) {
+    return false;
+  }
+  if (
+    'response_time_avg_seconds' in value &&
+    !isNumberInRange(value.response_time_avg_seconds, 0)
+  ) {
+    return false;
+  }
+  for (const key of ['reasoning_provided', 'withdrawal']) {
+    if (key in value && typeof value[key] !== 'boolean') return false;
+  }
+  return true;
+}
+
+function getPartyAgentIds(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length < 2 || value.length > MAX_PARTIES) return null;
+  const agentIds: string[] = [];
+  for (const party of value) {
+    if (!isPlainObject(party)) return null;
+    if (
+      !hasOnlyKeys(party, new Set(['agent_id', 'role', 'behavior', 'signature']), [
+        'agent_id',
+        'role',
+        'behavior',
+        'signature',
+      ])
+    ) {
+      return null;
+    }
+    if (!isBoundedString(party.agent_id, 1, 256, true)) return null;
+    if (!['initiator', 'responder', 'mediator', 'witness'].includes(String(party.role)))
+      return null;
+    if (!isBehaviorShape(party.behavior)) return null;
+    if (!isSignature(party.signature)) return null;
+    agentIds.push(party.agent_id);
+  }
+  return new Set(agentIds).size === agentIds.length ? agentIds : null;
+}
+
+function isMetaShape(value: unknown): boolean {
+  if (!isPlainObject(value)) return false;
+  if (
+    !Object.keys(value).every((key) =>
+      ['category', 'value_range', 'extensions_used', 'mediator_invoked'].includes(key),
+    )
+  ) {
+    return false;
+  }
+  if (
+    'category' in value &&
+    (typeof value.category !== 'string' ||
+      value.category.length > 64 ||
+      !CATEGORY_PATTERN.test(value.category))
+  ) {
+    return false;
+  }
+  if (
+    'value_range' in value &&
+    (typeof value.value_range !== 'string' ||
+      value.value_range.length > 32 ||
+      !VALUE_RANGE_PATTERN.test(value.value_range))
+  ) {
+    return false;
+  }
+  if ('extensions_used' in value) {
+    if (!Array.isArray(value.extensions_used) || value.extensions_used.length > 16) return false;
+    if (!value.extensions_used.every((item) => isBoundedString(item, 1, 64, true))) return false;
+  }
+  return !('mediator_invoked' in value) || typeof value.mediator_invoked === 'boolean';
+}
+
+function isReferenceShape(value: unknown): boolean {
+  if (!isPlainObject(value)) return false;
+  if (
+    !hasOnlyKeys(
+      value,
+      new Set(['id', 'type', 'relationship', 'version', 'signed_at', 'signer_did']),
+      ['id', 'type', 'relationship'],
+    )
+  ) {
+    return false;
+  }
+  if (!isBoundedString(value.id, 1, 256, true)) return false;
+  if (!isBoundedString(value.type, 1, 64, true)) return false;
+  if (!isBoundedString(value.relationship, 1, 64, true)) return false;
+  for (const key of ['version', 'signer_did']) {
+    if (key in value && !isBoundedString(value[key], 1, 256, true)) return false;
+  }
+  if (
+    'signed_at' in value &&
+    (!isBoundedString(value.signed_at, 1, 256, true) || !isRfc3339Z(value.signed_at))
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function isReferencesShape(value: unknown): boolean {
+  return Array.isArray(value) && value.length <= MAX_REFERENCES && value.every(isReferenceShape);
+}
+
+function isValidityTemporalShape(value: unknown): boolean {
+  if (!isPlainObject(value)) return false;
+  if (value.mode === 'absolute') {
+    if (!hasOnlyKeys(value, new Set(['mode', 'from', 'until']), ['mode', 'from', 'until'])) {
+      return false;
+    }
+    if (!isRfc3339Z(value.from) || !isRfc3339Z(value.until)) return false;
+    return epochMs(value.until) > epochMs(value.from);
+  }
+  if (value.mode === 'relative') {
+    if (
+      !hasOnlyKeys(value, new Set(['mode', 'from', 'duration_seconds']), [
+        'mode',
+        'from',
+        'duration_seconds',
+      ])
+    ) {
+      return false;
+    }
+    if (!isRfc3339Z(value.from)) return false;
+    return isIntInRange(value.duration_seconds, 1, MAX_ATTESTATION_VALIDITY_SECONDS);
+  }
+  return false;
+}
+
+function isCountersignatureShape(value: unknown, agentIds: string[]): boolean {
+  if (!isPlainObject(value)) return false;
+  const keys = Object.keys(value);
+  if (keys.length !== agentIds.length) return false;
+  const expected = new Set(agentIds);
+  if (!keys.every((key) => expected.has(key) && isBoundedString(key, 1, 256, true))) return false;
+  return keys.every((key) => isSignature(value[key]));
 }

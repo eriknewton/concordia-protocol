@@ -2398,7 +2398,8 @@
     },
     "valid_expected": [
       "$.parties: violates 'minItems' constraint: 2",
-      "$.parties[0].role: violates 'enum' constraint: [\"initiator\", \"responder\", \"mediator\", \"witness\"]"
+      "$.parties[0].role: violates 'enum' constraint: [\"initiator\", \"responder\", \"mediator\", \"witness\"]",
+      "$.parties[0].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\""
     ],
     "bad_oneof_attestation": {
       "concordia_attestation": "0.1.0",
@@ -2431,6 +2432,7 @@
     "bad_oneof_expected": [
       "$.parties: violates 'minItems' constraint: 2",
       "$.parties[0].role: violates 'enum' constraint: [\"initiator\", \"responder\", \"mediator\", \"witness\"]",
+      "$.parties[0].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
       "$.validity_temporal: violates 'oneOf' constraint: [{\"additionalProperties\": false, \"description\": \"Absolute clock-bounded validity. Added in v0.4.0 (WP3).\", \"properties\":..."
     ]
   },
@@ -2490,7 +2492,10 @@
         "transcript_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "fulfillment": null
       },
-      "expected": []
+      "expected": [
+        "$.parties[0].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
+        "$.parties[1].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\""
+      ]
     },
     {
       "name": "concession_magnitude_below_float_minimum",
@@ -2548,7 +2553,9 @@
         "fulfillment": null
       },
       "expected": [
-        "$.parties[0].behavior.concession_magnitude: violates 'minimum' constraint: 0.0"
+        "$.parties[0].behavior.concession_magnitude: violates 'minimum' constraint: 0.0",
+        "$.parties[0].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
+        "$.parties[1].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\""
       ]
     },
     {
@@ -2607,7 +2614,9 @@
         "fulfillment": null
       },
       "expected": [
-        "$.parties[1].behavior.concession_magnitude: violates 'maximum' constraint: 1.0"
+        "$.parties[0].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
+        "$.parties[1].behavior.concession_magnitude: violates 'maximum' constraint: 1.0",
+        "$.parties[1].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\""
       ]
     },
     {
@@ -2667,6 +2676,8 @@
         "summary": "SECRET_TERMS price=4350 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
       },
       "expected": [
+        "$.parties[0].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
+        "$.parties[1].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
         "$.summary: violates 'maxLength' constraint: 1024"
       ]
     },
@@ -2730,6 +2741,8 @@
         }
       },
       "expected": [
+        "$.parties[0].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
+        "$.parties[1].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
         "$: violates 'additionalProperties' constraint: false"
       ]
     },
@@ -2793,7 +2806,9 @@
         "fulfillment": null
       },
       "expected": [
-        "$.outcome: violates 'additionalProperties' constraint: false"
+        "$.outcome: violates 'additionalProperties' constraint: false",
+        "$.parties[0].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
+        "$.parties[1].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\""
       ]
     },
     {
@@ -2852,7 +2867,9 @@
         "fulfillment": null
       },
       "expected": [
-        "$.parties[0].role: violates 'enum' constraint: [\"initiator\", \"responder\", \"mediator\", \"witness\"]"
+        "$.parties[0].role: violates 'enum' constraint: [\"initiator\", \"responder\", \"mediator\", \"witness\"]",
+        "$.parties[0].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
+        "$.parties[1].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\""
       ]
     },
     {
@@ -2913,7 +2930,9 @@
         "fulfillment": null
       },
       "expected": [
-        "$.timestamp: violates 'type' constraint: \"string\""
+        "$.timestamp: violates 'type' constraint: \"string\"",
+        "$.parties[0].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
+        "$.parties[1].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\""
       ]
     },
     {
@@ -2972,6 +2991,8 @@
         "fulfillment": null
       },
       "expected": [
+        "$.parties[0].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
+        "$.parties[1].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
         "$.transcript_hash: violates 'pattern' constraint: \"^sha256:[a-f0-9]{64}$\""
       ]
     },
@@ -3038,7 +3059,15 @@
           "agent_a": "sig"
         }
       },
-      "expected": []
+      "expected": [
+        "$.parties[0].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
+        "$.parties[1].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
+        "$.countersignatures.agent_a: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
+        "$: 'chain_head' is a required property",
+        "$: 'message_count' is a required property",
+        "$: violates 'not' constraint: {\"required\": [\"fulfillment\"]}",
+        "$: violates draft-newton-agreement-evidence-00 structure"
+      ]
     },
     {
       "name": "v05_missing_required_validity_rejected",
@@ -3099,7 +3128,14 @@
         }
       },
       "expected": [
-        "$: 'validity_temporal' is a required property"
+        "$.parties[0].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
+        "$.parties[1].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
+        "$.countersignatures.agent_a: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
+        "$: 'chain_head' is a required property",
+        "$: 'message_count' is a required property",
+        "$: 'validity_temporal' is a required property",
+        "$: violates 'not' constraint: {\"required\": [\"fulfillment\"]}",
+        "$: violates draft-newton-agreement-evidence-00 structure"
       ]
     },
     {
@@ -3157,7 +3193,10 @@
         "transcript_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "fulfillment": null
       },
-      "expected": []
+      "expected": [
+        "$.parties[0].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
+        "$.parties[1].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\""
+      ]
     },
     {
       "name": "v010_missing_required_validity_rejected",
@@ -3215,7 +3254,13 @@
         "fulfillment": null
       },
       "expected": [
-        "$: 'validity_temporal' is a required property"
+        "$.parties[0].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
+        "$.parties[1].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
+        "$: 'chain_head' is a required property",
+        "$: 'message_count' is a required property",
+        "$: 'validity_temporal' is a required property",
+        "$: 'countersignatures' is a required property",
+        "$: violates 'not' constraint: {\"required\": [\"fulfillment\"]}"
       ]
     },
     {
@@ -3274,7 +3319,13 @@
         "fulfillment": null
       },
       "expected": [
-        "$: 'validity_temporal' is a required property"
+        "$.parties[0].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
+        "$.parties[1].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
+        "$: 'chain_head' is a required property",
+        "$: 'message_count' is a required property",
+        "$: 'validity_temporal' is a required property",
+        "$: 'countersignatures' is a required property",
+        "$: violates 'not' constraint: {\"required\": [\"fulfillment\"]}"
       ]
     },
     {
@@ -3341,7 +3392,15 @@
         }
       },
       "expected": [
-        "$.countersignatures: violates 'minLength' constraint: 1"
+        "$.parties[0].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
+        "$.parties[1].signature: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
+        "$.countersignatures['']: violates 'pattern' constraint: \"^[A-Za-z0-9_-]{86}==$\"",
+        "$.countersignatures: violates 'minLength' constraint: 1",
+        "$.countersignatures: violates 'pattern' constraint: \"^[^\\\\s\\\\u0000-\\\\u001F\\\\u007F-\\\\u009F\\\\u200B-\\\\u200F\\\\u2028-\\\\u202E]+$\"",
+        "$: 'chain_head' is a required property",
+        "$: 'message_count' is a required property",
+        "$: violates 'not' constraint: {\"required\": [\"fulfillment\"]}",
+        "$: violates draft-newton-agreement-evidence-00 structure"
       ]
     }
   ]

@@ -214,6 +214,9 @@ function validateNode(
       case 'oneOf':
         checkOneOf(value as unknown[], instance, path, errors, ctx);
         break;
+      case 'not':
+        checkNot(value, instance, path, errors, ctx);
+        break;
       case '$ref':
         checkRef(value as string, instance, path, errors, ctx);
         break;
@@ -668,6 +671,24 @@ function checkOneOf(
   });
 }
 
+function checkNot(
+  subschema: unknown,
+  instance: unknown,
+  path: string,
+  errors: SchemaError[],
+  ctx: ValidationContext,
+): void {
+  // Draft 2020-12 `not` rejects exactly when its child schema accepts. The
+  // child errors are discarded; only the containing `not` keyword reports.
+  if (iterErrorsSilent(subschema, instance, ctx).length !== 0) {
+    return;
+  }
+  errors.push({
+    jsonPath: path,
+    message: `${pyRepr(instance)} should not be valid under ${pyRepr(subschema)}`,
+  });
+}
+
 function checkRef(
   ref: string,
   instance: unknown,
@@ -859,6 +880,7 @@ const SUPPORTED_KEYWORDS = new Set<string>([
   'contains',
   'allOf',
   'oneOf',
+  'not',
   'if',
   'then',
   'else',

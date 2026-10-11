@@ -2,8 +2,20 @@
 
 ## Unreleased
 
-- `isValidNow` fails closed on a malformed or absent `concordia_attestation` when `validity_temporal` is missing, mirroring Python `is_valid_now`; the `no_constraint` parity case now expects `false`. Full 0.6.0 parity (closed member set, the three removals, the nine-step verifier) is a separate build; the fixture generator does not run against this Python until then.
+## 0.0.1-alpha.13 -- 2026-10-10
 
+- JavaScript attestation issuance now matches Python attestation format 0.6.0:
+  `ATTESTATION_VERSION` is `0.6.0`, every listed party must have a signing key,
+  and generated records use the closed draft-newton-agreement-evidence-00 member
+  set.
+- Root `fulfillment`, reference `extensions`, and `validity_temporal.window` are
+  rejected for 0.6 attestations while older-version read behavior remains
+  unchanged.
+- Countersignature canonical bytes, validation, and refusal classes are pinned by
+  Python-generated fixtures plus a shared conformance vector consumed by the JS
+  suite.
+- The bundled schema validator now supports JSON Schema `not` and the Python
+  draft-structure companion check for implemented 0.5/0.6 artifacts.
 
 ## 0.0.1-alpha.12 -- 2026-08-02
 
@@ -66,7 +78,7 @@ previously issued attestations are unchanged.
   `validateReference` (and `generateAttestation`'s `references[]` handling)
   now reads input via property descriptors and validates a detached
   plain-data SNAPSHOT, which is what callers get back. Getters are NEVER
-  executed (a throwing getter previously leaked its attacker-controlled
+  executed (a throwing getter previously surfaced its caller-controlled
   error text verbatim, violating the no-echo invariant); accessor
   properties, non-enumerable own properties, symbol keys, array holes,
   non-index array properties, and array subclasses are rejected outright
@@ -141,7 +153,7 @@ the `iter_errors` traversal for the ported keyword subset (`type`, `enum`,
 mandate engine via `src/internal/py-repr.ts` (the engine's private duplicate was
 removed in this PR -- behavior-neutral, its 110 tests still pass).
 
-FORMAT CHECKING is load-bearing for accept/reject parity: Python registers a
+FORMAT CHECKING determines accept/reject parity: Python registers a
 custom `FormatChecker` and PASSES it to `validate_message` /
 `validate_approval_receipt`, so a bad `date-time` (e.g. a naive, tz-less
 timestamp) is REJECTED -- the OPPOSITE of the mandate engine, which ran formats
@@ -155,7 +167,7 @@ support) and a companion `_warn_on_noncanonical_references` that depends on
 of scope for this slice, pinned by a `deferred_attestation` boundary fixture and
 a skipped test that documents the expected Python output for the follow-up.
 
-Byte-level parity against the Python reference is the load-bearing property and is
+Byte-level parity against the Python reference is the release criterion and is
 pinned by Python-generated fixtures (`scripts/gen-schema-validator-fixtures.py`,
 which drives the REAL `concordia.schema_validator` + `concordia.approval_receipt`;
 receipts are signed with deterministic seeded Ed25519 keys so the JS suite
@@ -178,7 +190,7 @@ and `isValidNow` (the three-mode temporal-validity tagged union), plus the
 (`validateReference`) is REUSED from the merged predicate layer rather than
 re-ported.
 
-PRIVACY INVARIANT (load-bearing): an attestation records behavioral signals only
+PRIVACY INVARIANT: an attestation records behavioral signals only
 (`offers_made`, `concession_magnitude`, `reasoning_provided`, ...) and NEVER the
 raw deal terms (prices, quantities, the term values themselves). The only
 term-derived number that ever reaches the attestation is `outcome.terms_count`,
@@ -187,9 +199,9 @@ exactly: it copies each party's `behaviorRecordToDict(...)` and never reads
 `session.terms` except to take its length, so there is no code path that copies
 a term value into the attestation. A dedicated test serializes the whole
 attestation over real negotiations and asserts that no negotiated value
-(1000 / 900 / 850 / 10 / 12) leaks anywhere.
+(1000 / 900 / 850 / 10 / 12) is present anywhere.
 
-Byte-level parity against the Python reference is the load-bearing property and
+Byte-level parity against the Python reference is the release criterion and
 is pinned by Python-generated fixtures (`scripts/gen-attestation-fixtures.py`,
 which drives the REAL `concordia.attestation` over a REAL concluded
 `concordia.session`; the per-party signatures are real Ed25519 `sign_message`
@@ -244,7 +256,7 @@ on -- `computeHash`, `GENESIS_HASH`, and `validateChain` from
 `concordia/message.py` -- ship alongside it. The `computeConcession` static
 helper is exported for direct testing.
 
-Byte-level parity against the Python reference is the load-bearing property and
+Byte-level parity against the Python reference is the release criterion and
 is pinned by Python-generated fixtures (`scripts/gen-session-fixtures.py`, whose
 messages are real signed envelopes built with deterministic seeded keys, so the
 JS suite verifies the SAME Python signatures with the SAME keys):
@@ -335,7 +347,7 @@ serializes (via `mandateVerificationResultToDict`) byte-for-byte with Python's
 
 The schema and constraint validation drives `ajv` (already a dependency) but
 reproduces CPython `jsonschema`'s accept/reject AND message text. Two parity
-properties are load-bearing and pinned by Python-generated fixtures:
+properties are pinned by Python-generated fixtures:
 
 - **No format assertion.** CPython `jsonschema.validate` does NOT check `format`
   by default, so a malformed `date-time` `issued_at` or non-URI
@@ -458,7 +470,7 @@ constants.
 
 Each `*ToDict` reproduces the Python `to_dict()` output exactly: snake_case wire
 keys, the same insertion order, and the same conditional-omission rules. The
-not-None vs truthiness distinction is load-bearing and pinned by fixtures: an
+not-None vs truthiness distinction is pinned by fixtures: an
 empty `constraints` / `metadata` / `delegation_chain` is OMITTED (Python's
 `if self.x:` truthiness guard), whereas an empty-string `revocation_endpoint` /
 `revoked_at` / `failure_reason` is EMITTED (Python's `if x is not None` guard),
@@ -509,7 +521,7 @@ signer), injects `metadata.issuer_public_key_b64`, runs write-validation, and
 signs the canonical bytes -- producing the Python-identical Ed25519 signature.
 `verifyPredicate` reproduces Python's exact check order (schema, profile
 condition, resolver bindings, signature, lifecycle, subject binding, reference
-binding) and its `failure_reason` / per-check map. The ordering is load-bearing:
+binding) and its `failure_reason` / per-check map. The ordering is pinned:
 a predicate whose `status` is changed to `revoked` after signing fails the
 SIGNATURE check (status is inside the signed bytes), so its reason is
 `bad_signature`, not `revoked` -- the Python-generated fixtures capture that.
