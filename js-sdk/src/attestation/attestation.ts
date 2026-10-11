@@ -783,7 +783,7 @@ export interface GenerateAttestationOptions {
   resolutionMechanism?: ResolutionMechanism;
   /** Optional attestation-level references per SPEC §11.5. */
   references?: Array<Record<string, unknown>> | null;
-  /** Temporal validity window (three-mode tagged union); defaults to 90 days. */
+  /** Temporal validity window (two-mode tagged union: absolute or relative); defaults to 90 days. */
   validityTemporal?: Record<string, unknown> | null;
   /**
    * Override for the random `attestation_id` suffix. Defaults to a fresh random

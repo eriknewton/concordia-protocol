@@ -10,20 +10,22 @@
   root schema to artifacts of every version, 0.3.x and 0.4.x included unless a
   schema branch scopes the rule by version: root `timestamp`,
   `validity_temporal.from`/`until`, and reference `signed_at` must be
-  `Z`-only timestamps with at most three fractional digits; version strings use
-  strict semver grammar with no leading zeros; ids (`attestation_id`,
-  `session_id`, party `agent_id`, reference `id`/`version`/`signed_at`/
-  `signer_did`) are capped at 256 characters with the forbidden-character
-  pattern, reference `type`/`relationship` and each `extensions_used` entry are
-  capped at 64 characters, `category` at 64, `value_range` at 32, and `summary`
-  at 1024; `parties` is capped at 64 entries, `references` at 32,
-  `extensions_used` at 16 entries of 1-64 characters, and `message_count` at
-  10000; countersignature names are non-empty and use the same
-  forbidden-character pattern. For versions at or above 0.5.0, `chain_head`,
+  `Z`-only timestamps with at most three fractional digits;
+  `concordia_attestation` uses strict semver grammar with no leading zeros;
+  reference `version` is a whitespace-free artifact-version string capped at
+  256 characters with the forbidden-character pattern; ids (`attestation_id`,
+  `session_id`, party `agent_id`, reference `id`/`signer_did`) are capped at
+  256 characters with the forbidden-character pattern, reference
+  `type`/`relationship` and each `extensions_used` entry are capped at 64
+  characters, `category` at 64, `value_range` at 32, and `summary` at 1024;
+  `parties` is capped at 64 entries, `references` at 32, `extensions_used` at
+  16 entries of 1-64 characters, and `message_count` at 10000;
+  countersignature names are non-empty and use the same forbidden-character
+  pattern. For versions at or above 0.5.0, `chain_head`,
   `message_count`, `validity_temporal`, and `countersignatures` are required
   together, so a 0.5.x artifact without a countersignature map now fails
-  validation. `isValidNow` accepts only `Z`-suffixed timestamps with at most
-  three fractional digits, treats absolute and relative ends as inclusive, and
+  validation. `isValidNow` throws `AttestationError` for malformed or non-`Z`
+  validity timestamps, treats absolute and relative ends as inclusive, and
   returns `false` for `mode: "window"`. Unknown reference members are rejected
   rather than dropped; every bundled schema pattern now gives `\s`
   Python-compatible Unicode `White_Space` semantics; and approval-receipt plus
