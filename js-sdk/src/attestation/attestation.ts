@@ -346,37 +346,14 @@ function validateCategory(category: unknown): string {
 }
 
 /**
- * Parse an ISO 8601 UTC timestamp string, mirroring Python `_parse_iso8601`.
+ * Parse a validity timestamp after the shared RFC 3339 gate.
  *
- * Returns the parsed instant as epoch milliseconds (a number is sufficient for
- * the ordering / span comparisons the validators perform; we never re-emit it).
- * Parity contract:
- * - A non-string input raises {@link AttestationError} with Python's
- *   `<field_name> must be an ISO 8601 string`.
- * - A trailing `Z` is accepted (Python replaces it with `+00:00`).
- * - A value that does not parse raises
- *   `<field_name> is not a valid ISO 8601 timestamp: <detail>`. The `<detail>`
- *   half is the underlying parser's message and is NOT asserted for byte-parity
- *   (CPython's `datetime.fromisoformat` and our port produce different detail
- *   text); the prefix up to and including the colon is the stable, asserted part.
- * - A timestamp with no timezone offset is treated as UTC (Python's
- *   `tzinfo is None -> replace(tzinfo=utc)`), so naive and `Z`-suffixed forms of
- *   the same wall-clock instant compare equal.
- *
- * FAIL-CLOSED PARSE (Python parity, not lenient `Date.parse`). The prior
- * implementation normalized a naive form to UTC and then handed the string to
- * JS `Date.parse`. `Date.parse` is FAR more permissive than Python's
- * `datetime.fromisoformat`: it accepts RFC-822 / RFC-1123 forms like
- * `"Mon, 01 Jun 2026 00:00:00 GMT"`, `"June 1, 2026"`, and `"2026/06/01"`, all
- * of which `fromisoformat` REJECTS with a `ValueError`. That was a fail-OPEN: an
- * attestation carrying such a `validity_temporal` timestamp would be HONORED by
- * the TS SDK while the Python reference rejects it outright. We now delegate to
- * the shared CPython-3.12-`fromisoformat`-faithful parser
- * ({@link cpythonIsoDateTimeToEpochMs}, the same source of truth the schema
- * validator and approval-receipt verifier use), so anything Python's
- * `fromisoformat` rejects is rejected here too, while every valid ISO-8601
- * spelling (extended/basic, `Z` / `±HH:MM` / `±HHMM` / `±HH` offsets, comma or
- * dot fractional seconds, naive-is-UTC) still parses to the identical instant.
+ * The validator accepts only `Z`-offset date-times with at most three fractional
+ * digits, then delegates to the CPython-faithful parser for calendar validity
+ * and epoch-millisecond conversion. The two stable diagnostics are
+ * `<field_name> must be RFC 3339 date-time with Z offset and at most three fractional digits`
+ * for shape/type failures and `<field_name> is not a valid timestamp` for
+ * calendar failures.
  */
 function parseIso8601(ts: unknown, fieldName: string): number {
   const structureError = `${fieldName} must be RFC 3339 date-time with Z offset and at most three fractional digits`;
@@ -418,7 +395,7 @@ function pyTypeName(value: unknown): string {
   return typeof value;
 }
 
-/** A normalized validity_temporal tagged union (the three WP3 modes). */
+/** A normalized validity_temporal tagged union (the validity_temporal modes). */
 export type ValidityTemporal =
   | { mode: 'absolute'; from: string; until: string }
   | { mode: 'relative'; from: string; duration_seconds: number };

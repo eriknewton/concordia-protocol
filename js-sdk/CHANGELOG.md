@@ -3,16 +3,31 @@
 ## Unreleased
 
 - Read-side validation notes for the 0.6.0 parity line are now explicit:
-  root `fulfillment` is accepted for 0.4.x artifacts and refused for every
-  version at or above 0.5.0; reference `extensions` and
-  `validity_temporal.window` are refused at every version by the shared `$defs`
-  schemas, so 0.4.x artifacts refuse them too. `isValidNow` accepts only
-  `Z`-suffixed timestamps with at most three fractional digits, treats `until`
-  as inclusive, and returns `false` for `mode: "window"`. Unknown reference
-  members are rejected rather than dropped; every bundled schema pattern now
-  gives `\s` Python-compatible Unicode `White_Space` semantics; and
-  approval-receipt plus fulfillment-attestation `signature` objects reject
-  extra properties.
+  root `fulfillment` is accepted below 0.5.0 and refused for every version at
+  or above 0.5.0; reference `extensions` and `validity_temporal.window` are
+  refused at every version by the shared `$defs` schemas, so 0.3.x and 0.4.x
+  artifacts refuse them too. `validateAttestation` now applies the shared 0.6
+  root schema to artifacts of every version, 0.3.x and 0.4.x included unless a
+  schema branch scopes the rule by version: root `timestamp`,
+  `validity_temporal.from`/`until`, and reference `signed_at` must be
+  `Z`-only timestamps with at most three fractional digits; version strings use
+  strict semver grammar with no leading zeros; ids (`attestation_id`,
+  `session_id`, party `agent_id`, reference `id`/`version`/`signed_at`/
+  `signer_did`) are capped at 256 characters with the forbidden-character
+  pattern, reference `type`/`relationship` and each `extensions_used` entry are
+  capped at 64 characters, `category` at 64, `value_range` at 32, and `summary`
+  at 1024; `parties` is capped at 64 entries, `references` at 32,
+  `extensions_used` at 16 entries of 1-64 characters, and `message_count` at
+  10000; countersignature names are non-empty and use the same
+  forbidden-character pattern. For versions at or above 0.5.0, `chain_head`,
+  `message_count`, `validity_temporal`, and `countersignatures` are required
+  together, so a 0.5.x artifact without a countersignature map now fails
+  validation. `isValidNow` accepts only `Z`-suffixed timestamps with at most
+  three fractional digits, treats absolute and relative ends as inclusive, and
+  returns `false` for `mode: "window"`. Unknown reference members are rejected
+  rather than dropped; every bundled schema pattern now gives `\s`
+  Python-compatible Unicode `White_Space` semantics; and approval-receipt plus
+  fulfillment-attestation `signature` objects reject extra properties.
 
 ## 0.0.1-alpha.13 -- 2026-10-10
 
