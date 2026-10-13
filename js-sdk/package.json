@@ -43,7 +43,7 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@noble/curves": "1.9.7",
+    "@noble/curves": "2.4.0",
     "ajv": "^8.16",
     "ajv-formats": "^3.0"
   },
