@@ -1,11 +1,13 @@
 {
   "name": "concordia-protocol",
-  "version": "0.1.0",
-  "description": "Structured negotiation protocol for autonomous agents. Gives your agent binding commitments, multi-attribute offers, session receipts, portable reputation, and discovery — as MCP tools.",
+  "version": "0.10.0",
+  "description": "Structured negotiation for autonomous agents as MCP tools: signed multi-term offers and counter-offers, binding commitments, session receipts, portable reputation and discovery. Needs Python 3.10+ and pip install \"concordia-protocol[server]\".",
   "author": {
     "name": "Erik Newton",
     "homepage": "https://github.com/eriknewton/concordia-protocol"
   },
+  "homepage": "https://concordiaprotocol.dev",
+  "repository": "https://github.com/eriknewton/concordia-protocol",
   "license": "Apache-2.0",
   "keywords": [
     "negotiation",
