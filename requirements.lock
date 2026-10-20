@@ -23,7 +23,8 @@ httpx-sse==0.4.3
 idna==3.15
 jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
-mcp==1.28.1
+# Pinned at 1.30.0 to clear CVE-2026-59951 (fixed in 1.30.0; 2.2.0 is the 2.x fix, and 2.x is held, see pyproject).
+mcp==1.30.0
 pycparser==3.0
 pydantic==2.12.5
 pydantic-settings==2.14.2
